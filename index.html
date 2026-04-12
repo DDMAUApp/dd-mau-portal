@@ -1380,8 +1380,12 @@
             const staffSide = staffIsFOH ? "FOH" : "BOH";
             const [checklistSide, setChecklistSide] = useState(currentIsAdmin ? "FOH" : staffSide);
             const [activePeriod, setActivePeriod] = useState("before-open");
-            const [checks, setChecks] = useState({});
-            const [customTasks, setCustomTasks] = useState(JSON.parse(JSON.stringify(DEFAULT_CHECKLIST_TASKS)));
+            const [checks, setChecksRaw] = useState({});
+            const checksRef = React.useRef(checks);
+            const setChecks = (val) => { checksRef.current = val; setChecksRaw(val); };
+            const [customTasks, setCustomTasksRaw] = useState(JSON.parse(JSON.stringify(DEFAULT_CHECKLIST_TASKS)));
+            const customTasksRef = React.useRef(customTasks);
+            const setCustomTasks = (val) => { customTasksRef.current = val; setCustomTasksRaw(val); };
             const [checklistDate, setChecklistDate] = useState("");
             const [invEditMode, setInvEditMode] = useState(false);
             const [invEditingIdx, setInvEditingIdx] = useState(null);
@@ -1644,9 +1648,10 @@
             };
 
             const toggleCheckItem = async (taskId) => {
-                const newChecks = { ...checks, [taskId]: !checks[taskId] };
+                const cur = checksRef.current;
+                const newChecks = { ...cur, [taskId]: !cur[taskId] };
                 setChecks(newChecks);
-                await saveChecklistState(newChecks, customTasks);
+                await saveChecklistState(newChecks, customTasksRef.current);
             };
 
             const addChecklistTask = async () => {
@@ -1655,25 +1660,25 @@
                 if (newRequirePhoto) item.requirePhoto = true;
                 const cleanSubs = newSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) item.subtasks = cleanSubs.map((s, i) => ({ id: item.id + "_s" + i, task: s.task.trim() }));
-                const updated = JSON.parse(JSON.stringify(customTasks));
+                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 if (!updated[checklistSide]) updated[checklistSide] = {};
                 if (!updated[checklistSide][activePeriod]) updated[checklistSide][activePeriod] = [];
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
-                await saveChecklistState(checks, updated);
+                await saveChecklistState(checksRef.current, updated);
                 setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
                 if (!editTask.trim()) return;
-                const updated = JSON.parse(JSON.stringify(customTasks));
+                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][activePeriod][idx];
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
                 item.subtasks = cleanSubs.length > 0 ? cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })) : undefined;
                 setCustomTasks(updated);
-                await saveChecklistState(checks, updated);
+                await saveChecklistState(checksRef.current, updated);
                 setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]);
             };
 
@@ -1687,33 +1692,31 @@
                     const ref = storage.ref().child("checklist-photos/" + todayKey + "/" + taskId + "_" + Date.now() + ".jpg");
                     await ref.put(file);
                     const url = await ref.getDownloadURL();
-                    const newChecks = { ...checks, [taskId + "_photo"]: url, [taskId + "_photoTime"]: new Date().toISOString() };
+                    const newChecks = { ...checksRef.current, [taskId + "_photo"]: url, [taskId + "_photoTime"]: new Date().toISOString() };
                     setChecks(newChecks);
-                    await saveChecklistState(newChecks, customTasks);
+                    await saveChecklistState(newChecks, customTasksRef.current);
                 } catch (err) { console.error("Error uploading photo:", err); alert(language === "es" ? "Error al subir foto" : "Error uploading photo"); }
                 setCapturingPhoto(null);
             };
 
             const deleteChecklistTask = async (idx) => {
-                const updated = JSON.parse(JSON.stringify(customTasks));
+                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 updated[checklistSide][activePeriod].splice(idx, 1);
                 setCustomTasks(updated);
-                await saveChecklistState(checks, updated);
+                await saveChecklistState(checksRef.current, updated);
             };
 
             const resetAllChecklists = async () => {
                 if (!confirm(language === "es" ? "¿Guardar y reiniciar todas las tareas?" : "Save & reset all checklists?")) return;
-                // Save current state to history first
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 try {
                     await db.collection("checklistHistory").doc(todayKey + "_saved").set({
-                        checks, customTasks, date: now, savedBy: staffName
+                        checks: checksRef.current, customTasks: customTasksRef.current, date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
-                // Clear all checks
                 setChecks({});
-                await saveChecklistState({}, customTasks);
+                await saveChecklistState({}, customTasksRef.current);
             };
 
             const saveInventorySnapshot = async (counts, items) => {
