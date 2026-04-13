@@ -1515,7 +1515,7 @@
             const updateStationAssignment = (posId, name) => {
                 const newPlan = { ...breakPlan, stations: { ...breakPlan.stations, [posId]: name } };
                 setBreakPlan(newPlan);
-                if (currentIsAdmin) saveBreakPlan(newPlan);
+                saveBreakPlan(newPlan);
             };
 
             const clearBreakPlan = () => {
@@ -1550,7 +1550,7 @@
                 const newWaves = { ...breakPlan.waves, [waveId + "_breakers"]: breakers };
                 const newPlan = { ...breakPlan, waves: newWaves };
                 setBreakPlan(newPlan);
-                if (currentIsAdmin) saveBreakPlan(newPlan);
+                saveBreakPlan(newPlan);
             };
 
             // Get/set who covers a specific position during a wave
@@ -1559,7 +1559,7 @@
                 const newWaves = { ...breakPlan.waves, [waveId + "_cover_" + posId]: coverName };
                 const newPlan = { ...breakPlan, waves: newWaves };
                 setBreakPlan(newPlan);
-                if (currentIsAdmin) saveBreakPlan(newPlan);
+                saveBreakPlan(newPlan);
             };
 
             // Get all assigned people
@@ -1634,65 +1634,75 @@
             }, []);
 
             // ── PUSH NOTIFICATION SYSTEM ──
-            const notifiedTasksRef = React.useRef(new Set());
+            // ── NOTIFICATION SYSTEM ──
+            const [activeAlerts, setActiveAlerts] = useState([]);
+            const dismissedAlertsRef = React.useRef(new Set());
+
+            const checkDeadlines = () => {
+                const now = new Date();
+                const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                const tasks = customTasksRef.current;
+                const ch = checksRef.current;
+                const todayKey = getTodayKey();
+                const alerts = [];
+                ["FOH", "BOH"].forEach(side => {
+                    ["morning", "afternoon"].forEach(period => {
+                        const periodTasks = (tasks[side] && tasks[side][period]) || [];
+                        periodTasks.forEach(item => {
+                            if (!item.completeBy || !item.assignTo) return;
+                            if (item.assignTo !== staffName) return;
+                            const done = item.subtasks && item.subtasks.length > 0
+                                ? item.subtasks.every(s => ch[s.id])
+                                : !!ch[item.id];
+                            if (done) return;
+                            const [h, m] = item.completeBy.split(":").map(Number);
+                            const deadlineMinutes = h * 60 + m;
+                            const taskName = item.task.includes("\n") ? item.task.split("\n")[0] : item.task;
+                            const timeStr = item.completeBy.replace(/^0/, "");
+                            // 30-minute warning
+                            const warn30Key = item.id + "_30_" + todayKey;
+                            if (currentMinutes >= deadlineMinutes - 30 && currentMinutes < deadlineMinutes && !dismissedAlertsRef.current.has(warn30Key)) {
+                                const minsLeft = deadlineMinutes - currentMinutes;
+                                alerts.push({ key: warn30Key, type: "warning", taskName, timeStr, message: `${minsLeft} min left` });
+                            }
+                            // At deadline or overdue
+                            const dueKey = item.id + "_due_" + todayKey;
+                            if (currentMinutes >= deadlineMinutes && !dismissedAlertsRef.current.has(dueKey)) {
+                                const overBy = currentMinutes - deadlineMinutes;
+                                alerts.push({ key: dueKey, type: "overdue", taskName, timeStr, message: overBy === 0 ? "Due NOW" : `${overBy} min overdue` });
+                            }
+                        });
+                    });
+                });
+                setActiveAlerts(alerts);
+                // Also try browser notification for new alerts
+                if ("Notification" in window && Notification.permission === "granted") {
+                    alerts.forEach(a => {
+                        const nKey = "notif_" + a.key;
+                        if (!dismissedAlertsRef.current.has(nKey)) {
+                            dismissedAlertsRef.current.add(nKey);
+                            new Notification(a.type === "overdue" ? "DD Mau - Task Due!" : "DD Mau - Reminder", {
+                                body: `"${a.taskName}" — ${a.message}`,
+                                tag: nKey
+                            });
+                        }
+                    });
+                }
+            };
+
             useEffect(() => {
-                // Request notification permission on mount
                 if ("Notification" in window && Notification.permission === "default") {
                     Notification.requestPermission();
                 }
-                // Check deadlines every 30 seconds — notify at 30 min before and at deadline
-                const interval = setInterval(() => {
-                    if (!("Notification" in window) || Notification.permission !== "granted") return;
-                    const now = new Date();
-                    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-                    const tasks = customTasksRef.current;
-                    const ch = checksRef.current;
-                    ["FOH", "BOH"].forEach(side => {
-                        ["morning", "afternoon"].forEach(period => {
-                            const periodTasks = (tasks[side] && tasks[side][period]) || [];
-                            periodTasks.forEach(item => {
-                                if (!item.completeBy || !item.assignTo) return;
-                                if (item.assignTo !== staffName) return;
-                                const done = item.subtasks && item.subtasks.length > 0
-                                    ? item.subtasks.every(s => ch[s.id])
-                                    : !!ch[item.id];
-                                if (done) return;
-                                const [h, m] = item.completeBy.split(":").map(Number);
-                                const deadlineMinutes = h * 60 + m;
-                                const taskName = item.task.includes("\n") ? item.task.split("\n")[0] : item.task;
-                                const timeStr = item.completeBy.replace(/^0/, "");
-                                const todayKey = getTodayKey();
-                                // 30-minute warning
-                                const warn30 = deadlineMinutes - 30;
-                                if (currentMinutes >= warn30 && currentMinutes < deadlineMinutes - 5) {
-                                    const nKey30 = item.id + "_30_" + todayKey;
-                                    if (!notifiedTasksRef.current.has(nKey30)) {
-                                        notifiedTasksRef.current.add(nKey30);
-                                        new Notification("DD Mau - 30 Min Reminder", {
-                                            body: `"${taskName}" is due at ${timeStr} — 30 minutes left!`,
-                                            icon: "🍜",
-                                            tag: nKey30
-                                        });
-                                    }
-                                }
-                                // At deadline
-                                if (currentMinutes >= deadlineMinutes && currentMinutes <= deadlineMinutes + 5) {
-                                    const nKeyNow = item.id + "_due_" + todayKey;
-                                    if (!notifiedTasksRef.current.has(nKeyNow)) {
-                                        notifiedTasksRef.current.add(nKeyNow);
-                                        new Notification("DD Mau - Task Due NOW", {
-                                            body: `"${taskName}" was due at ${timeStr}! Please complete it.`,
-                                            icon: "🍜",
-                                            tag: nKeyNow
-                                        });
-                                    }
-                                }
-                            });
-                        });
-                    });
-                }, 30000);
+                checkDeadlines(); // run immediately
+                const interval = setInterval(checkDeadlines, 30000);
                 return () => clearInterval(interval);
             }, [staffName]);
+
+            const dismissAlert = (key) => {
+                dismissedAlertsRef.current.add(key);
+                setActiveAlerts(prev => prev.filter(a => a.key !== key));
+            };
 
             const getTodayKey = () => {
                 const d = new Date();
@@ -2296,6 +2306,34 @@
                         </button>
                     </div>
 
+                    {/* ── TASK DEADLINE ALERTS ── */}
+                    {activeAlerts.length > 0 && (
+                        <div className="space-y-2 mb-3">
+                            {activeAlerts.map(a => (
+                                <div key={a.key} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 shadow-sm animate-pulse ${
+                                    a.type === "overdue" ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"
+                                }`}>
+                                    <span className="text-xl">{a.type === "overdue" ? "🚨" : "⏰"}</span>
+                                    <div className="flex-1 min-w-0">
+                                        <p className={`text-sm font-bold ${a.type === "overdue" ? "text-red-700" : "text-yellow-800"}`}>
+                                            {a.taskName}
+                                        </p>
+                                        <p className={`text-xs ${a.type === "overdue" ? "text-red-500" : "text-yellow-600"}`}>
+                                            {a.type === "overdue"
+                                                ? (language === "es" ? `Venció a las ${a.timeStr} — ${a.message}` : `Due at ${a.timeStr} — ${a.message}`)
+                                                : (language === "es" ? `Vence a las ${a.timeStr} — ${a.message}` : `Due at ${a.timeStr} — ${a.message}`)
+                                            }
+                                        </p>
+                                    </div>
+                                    <button onClick={() => dismissAlert(a.key)}
+                                        className={`text-xs font-bold px-2 py-1 rounded-lg ${a.type === "overdue" ? "bg-red-200 text-red-700" : "bg-yellow-200 text-yellow-700"}`}>
+                                        ✕
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
                     {activeTab === "checklist" && renderChecklist()}
 
                     {activeTab === "inventory" && (
@@ -2435,16 +2473,14 @@
                                 <p className="text-sm text-gray-600">
                                     {language === "es" ? "Asigna estaciones y planifica los breaks" : "Assign stations & plan breaks"}
                                 </p>
-                                {currentIsAdmin && (
-                                    <div className="flex gap-2">
-                                        <button onClick={() => setShowMatrix(!showMatrix)} className={`text-xs underline ${showMatrix ? "text-mint-700 font-bold" : "text-blue-500"}`}>
-                                            {showMatrix ? (language === "es" ? "Ocultar matriz" : "Hide matrix") : (language === "es" ? "Matriz de habilidades" : "Skills matrix")}
-                                        </button>
-                                        <button onClick={clearBreakPlan} className="text-xs text-red-500 underline">
-                                            {language === "es" ? "Borrar todo" : "Clear all"}
-                                        </button>
-                                    </div>
-                                )}
+                                <div className="flex gap-2">
+                                    <button onClick={() => setShowMatrix(!showMatrix)} className={`text-xs underline ${showMatrix ? "text-mint-700 font-bold" : "text-blue-500"}`}>
+                                        {showMatrix ? (language === "es" ? "Ocultar matriz" : "Hide matrix") : (language === "es" ? "Matriz de habilidades" : "Skills matrix")}
+                                    </button>
+                                    <button onClick={clearBreakPlan} className="text-xs text-red-500 underline">
+                                        {language === "es" ? "Borrar todo" : "Clear all"}
+                                    </button>
+                                </div>
                             </div>
                             {breakPlanSaved && (
                                 <div className="bg-green-100 border border-green-300 text-green-700 text-sm rounded-lg px-3 py-2 text-center font-bold">
@@ -2453,7 +2489,7 @@
                             )}
 
                             {/* ── SKILLS MATRIX ── */}
-                            {showMatrix && currentIsAdmin && (
+                            {showMatrix && (
                                 <div className="bg-white border-2 border-purple-200 rounded-xl overflow-hidden">
                                     <div className="bg-purple-600 text-white px-4 py-2.5">
                                         <h3 className="font-bold text-sm">{language === "es" ? "🧠 Matriz de Habilidades" : "🧠 Skills Matrix"}</h3>
@@ -2579,22 +2615,16 @@
                                                     <span className="text-lg">{pos.emoji}</span>
                                                     <span className="font-bold text-xs text-charcoal">{language === "es" ? pos.nameEs : pos.nameEn}</span>
                                                 </div>
-                                                {currentIsAdmin ? (
-                                                    <select
-                                                        className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs bg-gray-50"
-                                                        value={person}
-                                                        onChange={e => updateStationAssignment(pos.id, e.target.value)}
-                                                    >
-                                                        <option value="">—</option>
-                                                        {(pos.id === "manager" ? (staffList || []).filter(s => ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role)) : bohStaff).map(s => (
-                                                            <option key={s.id} value={s.name}>{s.name}</option>
-                                                        ))}
-                                                    </select>
-                                                ) : (
-                                                    <div className={`text-xs font-medium px-2 py-1.5 rounded ${person ? "bg-mint-50 text-mint-800" : "bg-gray-100 text-gray-400"}`}>
-                                                        {person || (language === "es" ? "Vacío" : "Empty")}
-                                                    </div>
-                                                )}
+                                                <select
+                                                    className="w-full border border-gray-200 rounded px-2 py-1.5 text-xs bg-gray-50"
+                                                    value={person}
+                                                    onChange={e => updateStationAssignment(pos.id, e.target.value)}
+                                                >
+                                                    <option value="">—</option>
+                                                    {(pos.id === "manager" ? (staffList || []).filter(s => ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role)) : bohStaff).map(s => (
+                                                        <option key={s.id} value={s.name}>{s.name}</option>
+                                                    ))}
+                                                </select>
                                             </div>
                                         );
                                     })}
@@ -2675,7 +2705,7 @@
                                                                     </span>
                                                                 );
                                                             }
-                                                            return currentIsAdmin ? (
+                                                            return (
                                                                 <button key={name}
                                                                     onClick={() => toggleBreaker(wave.id, name)}
                                                                     className={`px-2.5 py-1.5 rounded-full text-xs font-bold transition border-2 ${
@@ -2686,16 +2716,6 @@
                                                                 >
                                                                     {positions} {name.split(" ")[0]}
                                                                 </button>
-                                                            ) : (
-                                                                <span key={name}
-                                                                    className={`px-2.5 py-1.5 rounded-full text-xs font-bold border-2 ${
-                                                                        onBreak
-                                                                            ? "bg-orange-500 text-white border-orange-500"
-                                                                            : "bg-white text-gray-700 border-gray-200"
-                                                                    }`}
-                                                                >
-                                                                    {positions} {name.split(" ")[0]}
-                                                                </span>
                                                             );
                                                         })}
                                                     </div>
@@ -2715,32 +2735,26 @@
                                                                                 <span className="font-bold text-gray-500">{language === "es" ? nc.pos.nameEs : nc.pos.nameEn}</span>
                                                                                 <span className="text-orange-500 ml-1">({nc.person.split(" ")[0]} {language === "es" ? "en break" : "on break"})</span>
                                                                             </div>
-                                                                            {currentIsAdmin ? (
-                                                                                <select
-                                                                                    className={`w-full mt-1 border rounded px-2 py-1.5 text-xs font-bold ${nc.cover ? "border-mint-400 bg-mint-50 text-mint-800" : "border-red-300 bg-red-50 text-red-700"}`}
-                                                                                    value={nc.cover}
-                                                                                    onChange={e => setWaveCover(wave.id, nc.pos.id, e.target.value)}
-                                                                                >
-                                                                                    <option value="">{language === "es" ? "⚠️ Seleccionar cobertura..." : "⚠️ Select cover..."}</option>
-                                                                                    {(() => {
-                                                                                        const qualified = getQualifiedCovers(nc.pos.id, available, wave.id);
-                                                                                        const unqualified = available.filter(n => !qualified.includes(n));
-                                                                                        return [
-                                                                                            ...qualified.map(n => (
-                                                                                                <option key={n} value={n}>✓ {n} {(staffMap[n] || []).map(p => p.emoji).join("")}</option>
-                                                                                            )),
-                                                                                            unqualified.length > 0 && qualified.length > 0 ? <option key="_sep" disabled>───────</option> : null,
-                                                                                            ...unqualified.map(n => (
-                                                                                                <option key={n} value={n} style={{color:"#999"}}>{n}</option>
-                                                                                            ))
-                                                                                        ];
-                                                                                    })()}
-                                                                                </select>
-                                                                            ) : (
-                                                                                <div className={`mt-1 text-xs font-bold ${nc.cover ? "text-mint-700" : "text-red-600"}`}>
-                                                                                    {nc.cover ? `→ ${nc.cover.split(" ")[0]}` : (language === "es" ? "⚠️ Sin cubrir" : "⚠️ No cover")}
-                                                                                </div>
-                                                                            )}
+                                                                            <select
+                                                                                className={`w-full mt-1 border rounded px-2 py-1.5 text-xs font-bold ${nc.cover ? "border-mint-400 bg-mint-50 text-mint-800" : "border-red-300 bg-red-50 text-red-700"}`}
+                                                                                value={nc.cover}
+                                                                                onChange={e => setWaveCover(wave.id, nc.pos.id, e.target.value)}
+                                                                            >
+                                                                                <option value="">{language === "es" ? "⚠️ Seleccionar cobertura..." : "⚠️ Select cover..."}</option>
+                                                                                {(() => {
+                                                                                    const qualified = getQualifiedCovers(nc.pos.id, available, wave.id);
+                                                                                    const unqualified = available.filter(n => !qualified.includes(n));
+                                                                                    return [
+                                                                                        ...qualified.map(n => (
+                                                                                            <option key={n} value={n}>✓ {n} {(staffMap[n] || []).map(p => p.emoji).join("")}</option>
+                                                                                        )),
+                                                                                        unqualified.length > 0 && qualified.length > 0 ? <option key="_sep" disabled>───────</option> : null,
+                                                                                        ...unqualified.map(n => (
+                                                                                            <option key={n} value={n} style={{color:"#999"}}>{n}</option>
+                                                                                        ))
+                                                                                    ];
+                                                                                })()}
+                                                                            </select>
                                                                         </div>
                                                                     </div>
                                                                 ))}
