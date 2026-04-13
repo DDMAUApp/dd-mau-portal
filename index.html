@@ -2683,6 +2683,80 @@
                                     </div>
                                 );
                             })}
+                            {/* ── PRINT BUTTON ── */}
+                            {(() => {
+                                const assigned = getAssignedStaff();
+                                if (assigned.length === 0) return null;
+                                return (
+                                    <button onClick={() => {
+                                        const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+                                        const staffMap = getStaffPositionMap();
+                                        let html = `<html><head><title>Break Plan - ${today}</title><style>
+                                            * { margin: 0; padding: 0; box-sizing: border-box; }
+                                            body { font-family: Arial, sans-serif; padding: 20px; max-width: 700px; margin: 0 auto; }
+                                            h1 { font-size: 22px; text-align: center; margin-bottom: 2px; }
+                                            .date { text-align: center; color: #666; font-size: 13px; margin-bottom: 16px; }
+                                            .section { border: 2px solid #333; border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+                                            .section-header { background: #333; color: white; padding: 6px 12px; font-weight: bold; font-size: 14px; }
+                                            .station-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+                                            .station { padding: 6px 12px; border-bottom: 1px solid #ddd; border-right: 1px solid #ddd; font-size: 13px; }
+                                            .station:nth-child(even) { border-right: none; }
+                                            .station-name { font-weight: bold; color: #333; font-size: 11px; text-transform: uppercase; }
+                                            .station-person { color: #000; font-size: 14px; margin-top: 1px; }
+                                            .wave { margin-bottom: 12px; }
+                                            .wave-header { background: #2563eb; color: white; padding: 6px 12px; font-weight: bold; font-size: 14px; }
+                                            .wave-body { padding: 8px 12px; }
+                                            .wave-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid #eee; font-size: 13px; }
+                                            .wave-row:last-child { border-bottom: none; }
+                                            .breakers { font-weight: bold; color: #ea580c; }
+                                            .cover-label { color: #666; font-size: 11px; }
+                                            .cover-name { font-weight: bold; color: #15803d; }
+                                            .working { color: #666; font-size: 12px; margin-top: 6px; }
+                                            @media print { body { padding: 10px; } }
+                                        </style></head><body>`;
+                                        html += `<h1>🍜 DD Mau Break Plan</h1><div class="date">${today}</div>`;
+
+                                        // Stations
+                                        html += `<div class="section"><div class="section-header">📋 Today's Stations</div><div class="station-grid">`;
+                                        ALL_POSITIONS.forEach(pos => {
+                                            const person = breakPlan.stations?.[pos.id] || "—";
+                                            html += `<div class="station"><div class="station-name">${pos.emoji} ${pos.nameEn}</div><div class="station-person">${person}</div></div>`;
+                                        });
+                                        html += `</div></div>`;
+
+                                        // Break waves
+                                        BREAK_WAVES.forEach((wave, waveIdx) => {
+                                            const breakers = getWaveBreakers(wave.id);
+                                            const available = getAvailableCovers(wave.id);
+                                            const needCover = getPositionsNeedingCover(wave.id);
+                                            html += `<div class="section"><div class="wave-header">${wave.nameEn}</div><div class="wave-body">`;
+                                            if (breakers.length > 0) {
+                                                html += `<div style="margin-bottom:6px"><span class="breakers">On break: ${breakers.map(n => n.split(" ")[0]).join(", ")}</span></div>`;
+                                                needCover.forEach(nc => {
+                                                    const coverName = nc.cover ? nc.cover.split(" ")[0] : "⚠️ UNCOVERED";
+                                                    html += `<div class="wave-row"><span>${nc.pos.emoji} ${nc.pos.nameEn} <span class="cover-label">(${nc.person.split(" ")[0]} on break)</span></span><span class="cover-name">→ ${coverName}</span></div>`;
+                                                });
+                                                if (available.length > 0) {
+                                                    html += `<div class="working">Still working: ${available.map(n => { const positions = (staffMap[n] || []).map(p => p.emoji).join(""); return positions + " " + n.split(" ")[0]; }).join(", ")}</div>`;
+                                                }
+                                            } else {
+                                                html += `<div style="color:#999;font-size:13px">No breaks assigned</div>`;
+                                            }
+                                            html += `</div></div>`;
+                                        });
+
+                                        html += `</body></html>`;
+                                        const printWindow = window.open("", "_blank");
+                                        printWindow.document.write(html);
+                                        printWindow.document.close();
+                                        printWindow.focus();
+                                        setTimeout(() => printWindow.print(), 300);
+                                    }}
+                                        className="w-full mt-4 py-3 rounded-xl font-bold text-sm bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition flex items-center justify-center gap-2">
+                                        🖨️ {language === "es" ? "Imprimir Plan de Breaks" : "Print Break Plan"}
+                                    </button>
+                                );
+                            })()}
                         </div>
                     )}
                 </div>
