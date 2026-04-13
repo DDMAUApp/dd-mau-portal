@@ -1598,7 +1598,7 @@
                 const unsubChecklist = db.collection("ops").doc("checklists2").onSnapshot((doc) => {
                     if (doc.exists) {
                         const data = doc.data();
-                        const todayKey = new Date().toISOString().split("T")[0];
+                        const todayKey = getTodayKey();
                         // Auto-reset: if stored date != today, reset checks but keep tasks
                         if (data.date && data.date !== todayKey) {
                             setChecks({});
@@ -1625,7 +1625,10 @@
                 return () => { unsubChecklist(); unsubInventorySnapshot(); };
             }, []);
 
-            const getTodayKey = () => new Date().toISOString().split("T")[0];
+            const getTodayKey = () => {
+                const d = new Date();
+                return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+            };
 
             // Strip undefined values from nested objects before Firestore save
             const cleanForFirestore = (obj) => {
