@@ -1676,7 +1676,7 @@
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
-                item.subtasks = cleanSubs.length > 0 ? cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })) : undefined;
+                if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
                 setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]);
