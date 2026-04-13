@@ -795,101 +795,147 @@
             { id: "after-close", nameEn: "After Close", nameEs: "Después de Cerrar", emoji: "🏠" }
         ];
 
+        // Version — bump this to push new default tasks to all users
+        const CHECKLIST_VERSION = 2;
+
         // Default tasks per period, per side (FOH/BOH)
         const DEFAULT_CHECKLIST_TASKS = {
             FOH: {
                 "before-open": [
-                    { id: "f-bo-0", task: "Turn on lights — dining & restrooms" },
-                    { id: "f-bo-1", task: "Set up POS system & test terminals" },
-                    { id: "f-bo-2", task: "Prep dining area — tables, chairs, menus" },
-                    { id: "f-bo-3", task: "Stock beverage station — coffee, ice, cups, lids" },
-                    { id: "f-bo-4", task: "Review daily specials with team" }
+                    { id: "f-bo-0", task: "Turn on lights — dining, restrooms, signage" },
+                    { id: "f-bo-1", task: "Set up POS system & test all terminals" },
+                    { id: "f-bo-2", task: "Prep dining area — wipe tables, set chairs, menus" },
+                    { id: "f-bo-3", task: "Stock beverage station — coffee, tea, ice, cups, lids" },
+                    { id: "f-bo-4", task: "Check and restock condiment station" },
+                    { id: "f-bo-5", task: "Check restroom supplies — paper, soap, clean" },
+                    { id: "f-bo-6", task: "Review daily specials and 86 list with team" }
                 ],
                 "after-open": [
-                    { id: "f-ao-0", task: "Verify all POS orders flowing correctly" },
-                    { id: "f-ao-1", task: "Check restroom supplies" }
+                    { id: "f-ao-0", task: "Verify all POS orders flowing to kitchen correctly" },
+                    { id: "f-ao-1", task: "Check music and A/C — comfortable for guests" },
+                    { id: "f-ao-2", task: "Make sure all staff is in position and greeting guests" }
                 ],
                 "lunch": [
-                    { id: "f-lu-0", task: "Monitor wait times" },
-                    { id: "f-lu-1", task: "Restock napkins, utensils, condiments" },
-                    { id: "f-lu-2", task: "Bus tables quickly during rush" }
+                    { id: "f-lu-0", task: "Monitor wait times — greet and seat efficiently" },
+                    { id: "f-lu-1", task: "Bus tables quickly during rush" },
+                    { id: "f-lu-2", task: "Restock napkins, utensils, condiments as needed" },
+                    { id: "f-lu-3", task: "Check restrooms mid-rush" }
                 ],
                 "before-break": [
-                    { id: "f-bb-0", task: "Restock service stations" },
+                    { id: "f-bb-0", task: "Restock all service stations before break" },
                     { id: "f-bb-1", task: "Confirm break coverage with manager" }
                 ],
                 "after-break": [
                     { id: "f-ab-0", task: "Check tables and floor for cleanliness" },
-                    { id: "f-ab-1", task: "Restock anything used during break" }
+                    { id: "f-ab-1", task: "Restock anything used during break" },
+                    { id: "f-ab-2", task: "Verify everyone back at their position" }
                 ],
                 "dinner": [
-                    { id: "f-di-0", task: "Refresh dining area — wipe tables, sweep" },
-                    { id: "f-di-1", task: "Monitor wait times and customer flow" }
+                    { id: "f-di-0", task: "Refresh dining area — wipe tables, sweep floor" },
+                    { id: "f-di-1", task: "Restock beverage and condiment stations" },
+                    { id: "f-di-2", task: "Monitor wait times and customer flow" },
+                    { id: "f-di-3", task: "Check restroom supplies" }
                 ],
                 "before-close": [
                     { id: "f-bc-0", task: "Last call for dine-in orders" },
-                    { id: "f-bc-1", task: "Start consolidating condiment stations" }
+                    { id: "f-bc-1", task: "Start consolidating condiment stations" },
+                    { id: "f-bc-2", task: "Assign closing duties evenly to all FOH staff" }
                 ],
                 "closing": [
-                    { id: "f-cl-0", task: "Lock front doors" },
-                    { id: "f-cl-1", task: "Close out registers, count sales" },
-                    { id: "f-cl-2", task: "Clean dining area — tables, chairs, floors" },
-                    { id: "f-cl-3", task: "Sanitize POS terminals" },
-                    { id: "f-cl-4", task: "Return all serving items to kitchen" }
+                    { id: "f-cl-0", task: "Lock front doors at closing time" },
+                    { id: "f-cl-1", task: "Close out all registers — count drawers, run reports" },
+                    { id: "f-cl-2", task: "Clean all tables, chairs, and booths" },
+                    { id: "f-cl-3", task: "Sanitize POS terminals and screens" },
+                    { id: "f-cl-4", task: "Break down beverage and condiment stations" },
+                    { id: "f-cl-5", task: "Return all serving items to kitchen" },
+                    { id: "f-cl-6", task: "Clean and restock restrooms for next day" }
                 ],
                 "after-close": [
-                    { id: "f-ac-0", task: "Take out trash and recycling" },
+                    { id: "f-ac-0", task: "Take out all trash and recycling" },
                     { id: "f-ac-1", task: "Final sweep and mop dining floor" },
-                    { id: "f-ac-2", task: "Turn off dining lights" },
-                    { id: "f-ac-3", task: "Check restrooms one last time" }
+                    { id: "f-ac-2", task: "Manager check each person's closing work" },
+                    { id: "f-ac-3", task: "Check everyone out — don't leave until approved" },
+                    { id: "f-ac-4", task: "Turn off dining lights, signs, A/C" },
+                    { id: "f-ac-5", task: "Final walkthrough — everything off and locked" }
                 ]
             },
             BOH: {
                 "before-open": [
-                    { id: "b-bo-0", task: "Check walk-in fridge/freezer temps" },
-                    { id: "b-bo-1", task: "Prep cooking stations — mise en place" },
-                    { id: "b-bo-2", task: "Fire up fryers, grills, woks" },
-                    { id: "b-bo-3", task: "Do line check — food quality, dates, temps" },
-                    { id: "b-bo-4", task: "Prep sauces and broths" }
+                    { id: "b-bo-0", task: "Check walk-in fridge/freezer temps", requirePhoto: true },
+                    { id: "b-bo-1", task: "Pull speed racks from walk-in — put away thawed meats from overnight" },
+                    { id: "b-bo-2", task: "Verify walk-in storage — chicken on bottom, ready-to-eat on top, FIFO" },
+                    { id: "b-bo-3", task: "Fire up fryers, grills, woks, pho burners" },
+                    { id: "b-bo-4", task: "Prep all stations — mise en place, pans, utensils" },
+                    { id: "b-bo-5", task: "Line check — every station: dates, freshness, temps, rotation" },
+                    { id: "b-bo-6", task: "Prep sauces, broths, dressings as needed" },
+                    { id: "b-bo-7", task: "Check all ticket printers working" },
+                    { id: "b-bo-8", task: "Review prep list — assign prep tasks to staff" }
                 ],
                 "after-open": [
-                    { id: "b-ao-0", task: "Verify all stations ready for orders" },
-                    { id: "b-ao-1", task: "Check ticket printer working" }
+                    { id: "b-ao-0", task: "Verify all stations fully stocked and ready for orders" },
+                    { id: "b-ao-1", task: "Check each cook is at their station and focused" },
+                    { id: "b-ao-2", task: "Confirm prep staff is on task and on schedule" },
+                    { id: "b-ao-3", task: "Check any morning delivery — put away meats and veggies immediately" }
                 ],
                 "lunch": [
-                    { id: "b-lu-0", task: "Keep stations stocked during rush" },
-                    { id: "b-lu-1", task: "Monitor food temps" },
-                    { id: "b-lu-2", task: "Manage ticket times" }
+                    { id: "b-lu-0", task: "Monitor ticket times — keep under target" },
+                    { id: "b-lu-1", task: "Walk stations — ensure food freshness and quality" },
+                    { id: "b-lu-2", task: "Restock stations as items run low during rush" },
+                    { id: "b-lu-3", task: "Monitor staff pace — no one lingering too long on one task" },
+                    { id: "b-lu-4", task: "Check food temps on all hot and cold holding" },
+                    { id: "b-lu-5", task: "Spot check dates on open items at each station" }
                 ],
                 "before-break": [
-                    { id: "b-bb-0", task: "Prep station for coverage person" },
-                    { id: "b-bb-1", task: "Brief cover on current tickets/status" }
+                    { id: "b-bb-0", task: "Plan breaks — confirm who goes when and who covers", requirePhoto: true },
+                    { id: "b-bb-1", task: "All stations restocked before anyone leaves for break" },
+                    { id: "b-bb-2", task: "Light cleaning — wipe down surfaces, change dirty towels" },
+                    { id: "b-bb-3", task: "All exposed meats and foods covered or put away before break" },
+                    { id: "b-bb-4", task: "Brief coverage person on station status and any active tickets" },
+                    { id: "b-bb-5", task: "Check if any delivery arrived — put away meats/veggies, don't leave out" }
                 ],
                 "after-break": [
-                    { id: "b-ab-0", task: "Restock station — proteins, veggies, sauces" },
-                    { id: "b-ab-1", task: "Check food temps after break" }
+                    { id: "b-ab-0", task: "Verify everyone is back and at their station on time" },
+                    { id: "b-ab-1", task: "Restock stations — proteins, veggies, sauces" },
+                    { id: "b-ab-2", task: "Check food temps after break" },
+                    { id: "b-ab-3", task: "Game plan for rest of night — discuss with team" },
+                    { id: "b-ab-4", task: "Create extra cleaning task list for slow periods" },
+                    { id: "b-ab-5", task: "Think ahead — what needs to be prepped or thawed for tomorrow?" },
+                    { id: "b-ab-6", task: "Set up thaw items in walk-in for tomorrow (speed rack)" }
                 ],
                 "dinner": [
-                    { id: "b-di-0", task: "Restock all stations for dinner rush" },
+                    { id: "b-di-0", task: "Full restock all stations for dinner rush" },
                     { id: "b-di-1", task: "Fresh batch of pho broth if low" },
-                    { id: "b-di-2", task: "Monitor ticket times" }
+                    { id: "b-di-2", task: "Monitor ticket times — stay on top of flow" },
+                    { id: "b-di-3", task: "Walk all stations — freshness check, dates, FIFO" },
+                    { id: "b-di-4", task: "Monitor staff pace — redirect anyone falling behind" },
+                    { id: "b-di-5", task: "Check food temps on holding items" }
                 ],
                 "before-close": [
                     { id: "b-bc-0", task: "Start breaking down low-volume stations" },
-                    { id: "b-bc-1", task: "Begin labeling and dating prep items" }
+                    { id: "b-bc-1", task: "Label and date all prep items for storage" },
+                    { id: "b-bc-2", task: "Assign closing duties — make sure work is split evenly" },
+                    { id: "b-bc-3", task: "Begin wrapping and storing items that won't be needed" },
+                    { id: "b-bc-4", task: "Start cleaning equipment that's done for the night" }
                 ],
                 "closing": [
-                    { id: "b-cl-0", task: "Deep clean all cooking surfaces" },
-                    { id: "b-cl-1", task: "Store all perishables — label & date" },
-                    { id: "b-cl-2", task: "Check walk-in temps (final)" },
-                    { id: "b-cl-3", task: "Turn off fryers, grills, woks" },
-                    { id: "b-cl-4", task: "Clean dish pit area" }
+                    { id: "b-cl-0", task: "Deep clean all cooking surfaces — grills, flattops, woks" },
+                    { id: "b-cl-1", task: "Store all perishables — label, date, FIFO in walk-in" },
+                    { id: "b-cl-2", task: "Verify walk-in storage — chicken on bottom, ready-to-eat on top" },
+                    { id: "b-cl-3", task: "Check walk-in fridge/freezer temps (final)", requirePhoto: true },
+                    { id: "b-cl-4", task: "Turn off fryers, grills, woks, burners" },
+                    { id: "b-cl-5", task: "Clean and sanitize all prep surfaces and cutting boards" },
+                    { id: "b-cl-6", task: "Clean dish pit area — catch up on all dishes" },
+                    { id: "b-cl-7", task: "Break down and clean fry station — filter or change oil" },
+                    { id: "b-cl-8", task: "Empty and sanitize steam table / bain-marie" },
+                    { id: "b-cl-9", task: "Wipe down shelving and storage racks" }
                 ],
                 "after-close": [
-                    { id: "b-ac-0", task: "Take out kitchen trash" },
-                    { id: "b-ac-1", task: "Mop kitchen floors" },
-                    { id: "b-ac-2", task: "Turn off non-essential equipment" },
-                    { id: "b-ac-3", task: "Final walkthrough — all off, all stored" }
+                    { id: "b-ac-0", task: "Take out all kitchen trash and recycling" },
+                    { id: "b-ac-1", task: "Mop all kitchen floors" },
+                    { id: "b-ac-2", task: "Manager walkthrough — check each person's closing work" },
+                    { id: "b-ac-3", task: "Check everyone out individually — don't leave until approved" },
+                    { id: "b-ac-4", task: "Turn off all non-essential equipment and lights" },
+                    { id: "b-ac-5", task: "Final walkthrough — everything off, stored, locked", requirePhoto: true }
                 ]
             }
         };
@@ -1595,10 +1641,23 @@
 
             useEffect(() => {
                 // Load checklist data (new system)
-                const unsubChecklist = db.collection("ops").doc("checklists2").onSnapshot((doc) => {
+                const unsubChecklist = db.collection("ops").doc("checklists2").onSnapshot(async (doc) => {
                     if (doc.exists) {
                         const data = doc.data();
                         const todayKey = getTodayKey();
+                        // Auto-update tasks when version changes
+                        if (!data.version || data.version < CHECKLIST_VERSION) {
+                            const freshTasks = JSON.parse(JSON.stringify(DEFAULT_CHECKLIST_TASKS));
+                            setCustomTasks(freshTasks);
+                            setChecks({});
+                            setChecklistDate(todayKey);
+                            try {
+                                await db.collection("ops").doc("checklists2").set({
+                                    checks: {}, customTasks: freshTasks, date: todayKey, updatedAt: new Date().toISOString(), version: CHECKLIST_VERSION
+                                });
+                            } catch (err) { console.error("Error updating checklist version:", err); }
+                            return;
+                        }
                         // Auto-reset: if stored date != today, reset checks but keep tasks
                         if (data.date && data.date !== todayKey) {
                             setChecks({});
@@ -1650,11 +1709,11 @@
                 const safeTasks = cleanForFirestore(newTasks);
                 try {
                     await db.collection("ops").doc("checklists2").set({
-                        checks: safeChecks, customTasks: safeTasks, date: todayKey, updatedAt: now
+                        checks: safeChecks, customTasks: safeTasks, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
                     });
                     // Also save to daily history
                     await db.collection("checklistHistory").doc(todayKey).set({
-                        checks: safeChecks, customTasks: safeTasks, date: now
+                        checks: safeChecks, customTasks: safeTasks, date: now, version: CHECKLIST_VERSION
                     });
                 } catch (err) { console.error("Error saving checklist:", err); }
             };
