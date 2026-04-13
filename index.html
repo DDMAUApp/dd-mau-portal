@@ -784,136 +784,91 @@
         // Opening Checklist
         // Time periods for checklists
         const TIME_PERIODS = [
-            { id: "before-open", nameEn: "Before Opening", nameEs: "Antes de Abrir", emoji: "🌅" },
-            { id: "after-open", nameEn: "After Opening", nameEs: "Después de Abrir", emoji: "🚪" },
-            { id: "lunch", nameEn: "During Lunch", nameEs: "Durante Almuerzo", emoji: "☀️" },
-            { id: "before-break", nameEn: "Before Break", nameEs: "Antes del Break", emoji: "⏸️" },
-            { id: "after-break", nameEn: "After Break", nameEs: "Después del Break", emoji: "▶️" },
-            { id: "dinner", nameEn: "During Dinner", nameEs: "Durante Cena", emoji: "🌙" },
-            { id: "before-close", nameEn: "Before Close", nameEs: "Antes de Cerrar", emoji: "🔔" },
-            { id: "closing", nameEn: "Closing", nameEs: "Cerrando", emoji: "🔒" },
-            { id: "after-close", nameEn: "After Close", nameEs: "Después de Cerrar", emoji: "🏠" }
+            { id: "morning", nameEn: "Morning", nameEs: "Mañana", emoji: "☀️" },
+            { id: "afternoon", nameEn: "Afternoon", nameEs: "Tarde", emoji: "🌙" }
         ];
 
         // Version — bump this to push new default tasks to all users
-        const CHECKLIST_VERSION = 3;
+        const CHECKLIST_VERSION = 4;
 
         // Default tasks per period, per side (FOH/BOH)
         const DEFAULT_CHECKLIST_TASKS = {
             FOH: {
-                "before-open": [
-                    { id: "f-bo-0", task: "Turn on lights — dining, restrooms, signage" },
-                    { id: "f-bo-1", task: "Set up POS system & test all terminals" },
-                    { id: "f-bo-2", task: "Prep dining area — wipe tables, set chairs, menus" },
-                    { id: "f-bo-3", task: "Stock beverage station — coffee, tea, ice, cups, lids" },
-                    { id: "f-bo-4", task: "Check and restock condiment station" },
-                    { id: "f-bo-5", task: "Check restroom supplies — paper, soap, clean" },
-                    { id: "f-bo-6", task: "Review daily specials and 86 list with team" }
+                "morning": [
+                    { id: "f-m-0", task: "Turn on lights — dining, restrooms, signage\nEncender luces — comedor, baños, letreros" },
+                    { id: "f-m-1", task: "Set up POS system & test all terminals\nConfigurar POS y probar todas las terminales" },
+                    { id: "f-m-2", task: "Prep dining area — wipe tables, set chairs, menus\nPreparar comedor — limpiar mesas, acomodar sillas, menús" },
+                    { id: "f-m-3", task: "Stock beverage station — coffee, tea, ice, cups, lids\nAbastecer estación de bebidas — café, té, hielo, vasos, tapas" },
+                    { id: "f-m-4", task: "Check and restock condiment station\nRevisar y reabastecer estación de condimentos" },
+                    { id: "f-m-5", task: "Check restroom supplies — paper, soap, clean\nRevisar suministros de baño — papel, jabón, limpieza" },
+                    { id: "f-m-6", task: "Review daily specials and 86 list with team\nRevisar especiales del día y lista 86 con el equipo" },
+                    { id: "f-m-7", task: "Check music and A/C — comfortable for guests\nRevisar música y aire — cómodo para clientes" },
+                    { id: "f-m-8", task: "Make sure all staff is in position and greeting guests\nAsegurarse de que todo el personal esté en posición y saludando clientes" },
+                    { id: "f-m-9", task: "Monitor wait times — greet and seat efficiently\nMonitorear tiempos de espera — saludar y sentar eficientemente" },
+                    { id: "f-m-10", task: "Bus tables quickly during rush\nRecoger mesas rápido durante hora pico" },
+                    { id: "f-m-11", task: "Restock napkins, utensils, condiments as needed\nReabastecer servilletas, cubiertos, condimentos según necesidad" },
+                    { id: "f-m-12", task: "Check restrooms mid-rush\nRevisar baños durante hora pico" }
                 ],
-                "after-open": [
-                    { id: "f-ao-0", task: "Verify all POS orders flowing to kitchen correctly" },
-                    { id: "f-ao-1", task: "Check music and A/C — comfortable for guests" },
-                    { id: "f-ao-2", task: "Make sure all staff is in position and greeting guests" }
-                ],
-                "lunch": [
-                    { id: "f-lu-0", task: "Monitor wait times — greet and seat efficiently" },
-                    { id: "f-lu-1", task: "Bus tables quickly during rush" },
-                    { id: "f-lu-2", task: "Restock napkins, utensils, condiments as needed" },
-                    { id: "f-lu-3", task: "Check restrooms mid-rush" }
-                ],
-                "before-break": [
-                    { id: "f-bb-0", task: "Restock all service stations before break" },
-                    { id: "f-bb-1", task: "Confirm break coverage with manager" }
-                ],
-                "after-break": [
-                    { id: "f-ab-0", task: "Check tables and floor for cleanliness" },
-                    { id: "f-ab-1", task: "Restock anything used during break" },
-                    { id: "f-ab-2", task: "Verify everyone back at their position" }
-                ],
-                "dinner": [
-                    { id: "f-di-0", task: "Refresh dining area — wipe tables, sweep floor" },
-                    { id: "f-di-1", task: "Restock beverage and condiment stations" },
-                    { id: "f-di-2", task: "Monitor wait times and customer flow" },
-                    { id: "f-di-3", task: "Check restroom supplies" }
-                ],
-                "before-close": [
-                    { id: "f-bc-0", task: "Last call for dine-in orders" },
-                    { id: "f-bc-1", task: "Start consolidating condiment stations" },
-                    { id: "f-bc-2", task: "Assign closing duties evenly to all FOH staff" }
-                ],
-                "closing": [
-                    { id: "f-cl-0", task: "Lock front doors at closing time" },
-                    { id: "f-cl-1", task: "Close out all registers — count drawers, run reports" },
-                    { id: "f-cl-2", task: "Clean all tables, chairs, and booths" },
-                    { id: "f-cl-3", task: "Sanitize POS terminals and screens" },
-                    { id: "f-cl-4", task: "Break down beverage and condiment stations" },
-                    { id: "f-cl-5", task: "Return all serving items to kitchen" },
-                    { id: "f-cl-6", task: "Clean and restock restrooms for next day" }
-                ],
-                "after-close": [
-                    { id: "f-ac-0", task: "Take out all trash and recycling" },
-                    { id: "f-ac-1", task: "Final sweep and mop dining floor" },
-                    { id: "f-ac-2", task: "Manager check each person's closing work" },
-                    { id: "f-ac-3", task: "Check everyone out — don't leave until approved" },
-                    { id: "f-ac-4", task: "Turn off dining lights, signs, A/C" },
-                    { id: "f-ac-5", task: "Final walkthrough — everything off and locked" }
+                "afternoon": [
+                    { id: "f-a-0", task: "Restock all service stations before break\nReabastecer todas las estaciones de servicio antes del descanso" },
+                    { id: "f-a-1", task: "Check tables and floor for cleanliness\nRevisar mesas y piso por limpieza" },
+                    { id: "f-a-2", task: "Refresh dining area — wipe tables, sweep floor\nRefrescar comedor — limpiar mesas, barrer piso" },
+                    { id: "f-a-3", task: "Restock beverage and condiment stations\nReabastecer estaciones de bebidas y condimentos" },
+                    { id: "f-a-4", task: "Monitor wait times and customer flow\nMonitorear tiempos de espera y flujo de clientes" },
+                    { id: "f-a-5", task: "Check restroom supplies\nRevisar suministros de baño" },
+                    { id: "f-a-6", task: "Assign closing duties evenly to all FOH staff\nAsignar tareas de cierre equitativamente a todo el personal FOH" },
+                    { id: "f-a-7", task: "Last call for dine-in orders\nÚltima llamada para pedidos en comedor" },
+                    { id: "f-a-8", task: "Close out all registers — count drawers, run reports\nCerrar todas las cajas — contar gavetas, correr reportes" },
+                    { id: "f-a-9", task: "Clean all tables, chairs, and booths\nLimpiar todas las mesas, sillas y cabinas" },
+                    { id: "f-a-10", task: "Break down beverage and condiment stations\nDesarmar estaciones de bebidas y condimentos" },
+                    { id: "f-a-11", task: "Clean and restock restrooms for next day\nLimpiar y reabastecer baños para el siguiente día" },
+                    { id: "f-a-12", task: "Final sweep and mop dining floor\nBarrida y trapeado final del comedor" },
+                    { id: "f-a-13", task: "Manager check each person's closing work\nGerente revisa el trabajo de cierre de cada persona" },
+                    { id: "f-a-14", task: "Turn off dining lights, signs, A/C\nApagar luces del comedor, letreros, aire" },
+                    { id: "f-a-15", task: "Final walkthrough — everything off and locked\nRecorrido final — todo apagado y cerrado" }
                 ]
             },
             BOH: {
-                "before-open": [
-                    { id: "b-bo-0", task: "Turn on all equipment\nEncender todo el equipo" },
-                    { id: "b-bo-1", task: "Put away all deliveries\nGuardar todas las entregas" },
-                    { id: "b-bo-2", task: "Keep meats in fridge until ready to process\nMantener carnes en refrigerador hasta que estén listas para procesar" },
-                    { id: "b-bo-3", task: "Check all staff is there and on time — if late, question why\nVerificar que todo el personal esté presente y a tiempo — si llegan tarde, preguntar por qué" },
-                    { id: "b-bo-4", task: "Make list for prep\nHacer lista de preparación" },
-                    { id: "b-bo-5", task: "Assign prep tasks to staff\nAsignar tareas de preparación al personal" },
-                    { id: "b-bo-6", task: "Do we have everything we need for the day?\n¿Tenemos todo lo que necesitamos para el día?" },
-                    { id: "b-bo-7", task: "Make break schedule\nHacer horario de descansos" },
-                    { id: "b-bo-8", task: "Talk to managers about plan for the day\nHablar con los gerentes sobre el plan del día" },
-                    { id: "b-bo-9", task: "Team huddle — talk to the team about the plan for the day\nReunión de equipo — hablar con el equipo sobre el plan del día" }
+                "morning": [
+                    { id: "b-m-0", task: "Turn on all equipment\nEncender todo el equipo" },
+                    { id: "b-m-1", task: "Put away all deliveries\nGuardar todas las entregas" },
+                    { id: "b-m-2", task: "Keep meats in fridge until ready to process\nMantener carnes en refrigerador hasta que estén listas para procesar" },
+                    { id: "b-m-3", task: "Check all staff is there and on time — if late, question why\nVerificar que todo el personal esté presente y a tiempo — si llegan tarde, preguntar por qué" },
+                    { id: "b-m-4", task: "Make list for prep\nHacer lista de preparación" },
+                    { id: "b-m-5", task: "Assign prep tasks to staff\nAsignar tareas de preparación al personal" },
+                    { id: "b-m-6", task: "Do we have everything we need for the day?\n¿Tenemos todo lo que necesitamos para el día?" },
+                    { id: "b-m-7", task: "Make break schedule\nHacer horario de descansos" },
+                    { id: "b-m-8", task: "Talk to managers about plan for the day\nHablar con los gerentes sobre el plan del día" },
+                    { id: "b-m-9", task: "Team huddle — talk to the team about the plan for the day\nReunión de equipo — hablar con el equipo sobre el plan del día" },
+                    { id: "b-m-10", task: "Check lines are ready for service\nVerificar que las líneas estén listas para el servicio" },
+                    { id: "b-m-11", task: "Make sure prep helps line when needed\nAsegurarse de que prep ayude a la línea cuando sea necesario" },
+                    { id: "b-m-12", task: "Check kitchen for meat left out too long\nRevisar la cocina por carnes dejadas afuera demasiado tiempo" },
+                    { id: "b-m-13", task: "Check prep sinks for proper use\nRevisar los fregaderos de prep para uso adecuado" },
+                    { id: "b-m-14", task: "Check freshness and dates\nRevisar frescura y fechas" },
+                    { id: "b-m-15", task: "Check soups for taste\nProbar las sopas" },
+                    { id: "b-m-16", task: "Ensure everyone is getting food out fast\nAsegurarse de que todos saquen la comida rápido" },
+                    { id: "b-m-17", task: "Check quality\nRevisar calidad" },
+                    { id: "b-m-18", task: "Help where needed\nAyudar donde sea necesario" }
                 ],
-                "after-open": [
-                    { id: "b-ao-0", task: "Check lines are ready for service\nVerificar que las líneas estén listas para el servicio" },
-                    { id: "b-ao-1", task: "Make sure prep helps line when needed\nAsegurarse de que prep ayude a la línea cuando sea necesario" }
-                ],
-                "lunch": [
-                    { id: "b-lu-0", task: "Check kitchen for meat left out too long\nRevisar la cocina por carnes dejadas afuera demasiado tiempo" },
-                    { id: "b-lu-1", task: "Check prep sinks for proper use\nRevisar los fregaderos de prep para uso adecuado" },
-                    { id: "b-lu-2", task: "Check freshness and dates\nRevisar frescura y fechas" },
-                    { id: "b-lu-3", task: "Check soups for taste\nProbar las sopas" },
-                    { id: "b-lu-4", task: "Ensure everyone is getting food out fast\nAsegurarse de que todos saquen la comida rápido" },
-                    { id: "b-lu-5", task: "Check quality\nRevisar calidad" },
-                    { id: "b-lu-6", task: "Help where needed\nAyudar donde sea necesario" }
-                ],
-                "before-break": [
-                    { id: "b-bb-0", task: "Make sure everyone is getting ready for breaks\nAsegurarse de que todos se preparen para los descansos" },
-                    { id: "b-bb-1", task: "Check stations are restocked before breaks\nVerificar que las estaciones estén reabastecidas antes de los descansos" },
-                    { id: "b-bb-2", task: "Put away prep and meats before breaks\nGuardar prep y carnes antes de los descansos" },
-                    { id: "b-bb-3", task: "Make sure cleaning is done before breaks\nAsegurarse de que la limpieza esté hecha antes de los descansos" },
-                    { id: "b-bb-4", task: "Make sure station coverage is planned\nAsegurarse de que la cobertura de estaciones esté planeada" }
-                ],
-                "after-break": [
-                    { id: "b-ab-0", task: "Check soups\nRevisar las sopas" },
-                    { id: "b-ab-1", task: "Check everyone's station\nRevisar la estación de cada uno" },
-                    { id: "b-ab-2", task: "Check fridge for proper storage\nRevisar refrigerador para almacenamiento adecuado" },
-                    { id: "b-ab-3", task: "Check kitchen for meats left out too long\nRevisar la cocina por carnes dejadas afuera demasiado tiempo" },
-                    { id: "b-ab-4", task: "Check prep sinks\nRevisar fregaderos de prep" },
-                    { id: "b-ab-5", task: "Make sure everyone is working\nAsegurarse de que todos estén trabajando" }
-                ],
-                "dinner": [
-                    { id: "b-di-0", task: "Make sure positions are good for dinner\nAsegurarse de que las posiciones estén bien para la cena" },
-                    { id: "b-di-1", task: "Make sure prep staff helps line when needed\nAsegurarse de que el personal de prep ayude a la línea cuando sea necesario" }
-                ],
-                "before-close": [
-                    { id: "b-bc-0", task: "Check out all staff after cleaning and closing their stations\nRevisar a todo el personal después de limpiar y cerrar sus estaciones" },
-                    { id: "b-bc-1", task: "Make sure all staff is helping close\nAsegurarse de que todo el personal ayude a cerrar" }
-                ],
-                "closing": [
-                    { id: "b-cl-0", task: "Check all equipment is off\nVerificar que todo el equipo esté apagado" },
-                    { id: "b-cl-1", task: "Check all fridges for doors and power\nRevisar todas las refrigeradoras — puertas y energía" }
-                ],
-                "after-close": [
-                    { id: "b-ac-0", task: "Make sure we have everything we need for tomorrow\nAsegurarse de que tengamos todo lo que necesitamos para mañana" }
+                "afternoon": [
+                    { id: "b-a-0", task: "Make sure everyone is getting ready for breaks\nAsegurarse de que todos se preparen para los descansos" },
+                    { id: "b-a-1", task: "Check stations are restocked before breaks\nVerificar que las estaciones estén reabastecidas antes de los descansos" },
+                    { id: "b-a-2", task: "Put away prep and meats before breaks\nGuardar prep y carnes antes de los descansos" },
+                    { id: "b-a-3", task: "Make sure cleaning is done before breaks\nAsegurarse de que la limpieza esté hecha antes de los descansos" },
+                    { id: "b-a-4", task: "Make sure station coverage is planned\nAsegurarse de que la cobertura de estaciones esté planeada" },
+                    { id: "b-a-5", task: "Check soups\nRevisar las sopas" },
+                    { id: "b-a-6", task: "Check everyone's station\nRevisar la estación de cada uno" },
+                    { id: "b-a-7", task: "Check fridge for proper storage\nRevisar refrigerador para almacenamiento adecuado" },
+                    { id: "b-a-8", task: "Check kitchen for meats left out too long\nRevisar la cocina por carnes dejadas afuera demasiado tiempo" },
+                    { id: "b-a-9", task: "Check prep sinks\nRevisar fregaderos de prep" },
+                    { id: "b-a-10", task: "Make sure everyone is working\nAsegurarse de que todos estén trabajando" },
+                    { id: "b-a-11", task: "Make sure positions are good for dinner\nAsegurarse de que las posiciones estén bien para la cena" },
+                    { id: "b-a-12", task: "Make sure prep staff helps line when needed\nAsegurarse de que el personal de prep ayude a la línea cuando sea necesario" },
+                    { id: "b-a-13", task: "Check out all staff after cleaning and closing their stations\nRevisar a todo el personal después de limpiar y cerrar sus estaciones" },
+                    { id: "b-a-14", task: "Make sure all staff is helping close\nAsegurarse de que todo el personal ayude a cerrar" },
+                    { id: "b-a-15", task: "Check all equipment is off\nVerificar que todo el equipo esté apagado" },
+                    { id: "b-a-16", task: "Check all fridges for doors and power\nRevisar todas las refrigeradoras — puertas y energía" },
+                    { id: "b-a-17", task: "Make sure we have everything we need for tomorrow\nAsegurarse de que tengamos todo lo que necesitamos para mañana" }
                 ]
             }
         };
@@ -1391,10 +1346,12 @@
             const [editTask, setEditTask] = useState("");
             const [editRequirePhoto, setEditRequirePhoto] = useState(false);
             const [editSubtasks, setEditSubtasks] = useState([]);
+            const [editCompleteBy, setEditCompleteBy] = useState("");
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
             const [newSubtasks, setNewSubtasks] = useState([]);
+            const [newCompleteBy, setNewCompleteBy] = useState("");
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
             const photoInputRef = React.useRef(null);
 
@@ -1403,7 +1360,7 @@
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
             const staffSide = staffIsFOH ? "FOH" : "BOH";
             const [checklistSide, setChecklistSide] = useState(currentIsAdmin ? "FOH" : staffSide);
-            const [activePeriod, setActivePeriod] = useState("before-open");
+            const [activePeriod, setActivePeriod] = useState("morning");
             const [checks, setChecksRaw] = useState({});
             const checksRef = React.useRef(checks);
             const setChecks = (val) => { checksRef.current = val; setChecksRaw(val); };
@@ -1781,6 +1738,7 @@
                 if (!newTask.trim()) return;
                 const item = { id: Date.now().toString(), task: newTask.trim() };
                 if (newRequirePhoto) item.requirePhoto = true;
+                if (newCompleteBy) item.completeBy = newCompleteBy;
                 const cleanSubs = newSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) item.subtasks = cleanSubs.map((s, i) => ({ id: item.id + "_s" + i, task: s.task.trim() }));
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
@@ -1789,7 +1747,7 @@
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setShowAddForm(false);
+                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -1798,11 +1756,12 @@
                 const item = updated[checklistSide][activePeriod][idx];
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
+                if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]);
+                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy("");
             };
 
             // Photo capture and upload
@@ -2099,6 +2058,13 @@
                                     <div key={item.id} className="p-3 rounded-lg border-2 border-blue-300 bg-blue-50">
                                         <input type="text" value={editTask} onChange={e => setEditTask(e.target.value)}
                                             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:border-blue-400" autoFocus />
+                                        {/* Complete by time */}
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <label className="text-xs font-bold text-gray-600">⏰ {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
+                                            <input type="time" value={editCompleteBy} onChange={e => setEditCompleteBy(e.target.value)}
+                                                className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                            {editCompleteBy && <button onClick={() => setEditCompleteBy("")} className="text-red-400 text-xs">✕</button>}
+                                        </div>
                                         {/* Photo toggle */}
                                         <label className="flex items-center gap-2 mb-2 text-xs cursor-pointer">
                                             <input type="checkbox" checked={editRequirePhoto} onChange={e => setEditRequirePhoto(e.target.checked)} className="w-4 h-4" />
@@ -2121,7 +2087,7 @@
                                         <div className="flex items-center gap-2">
                                             <button onClick={() => saveChecklistEdit(idx)}
                                                 className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Guardar" : "Save"}</button>
-                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); }}
+                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); }}
                                                 className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                         </div>
                                     </div>
@@ -2146,12 +2112,17 @@
                                                         )) : item.task}
                                                     </p>
                                                     {item.requirePhoto && <span className="text-xs">📸</span>}
+                                                    {item.completeBy && (
+                                                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${taskComplete ? "bg-green-100 text-green-600" : "bg-orange-100 text-orange-600"}`}>
+                                                            ⏰ {item.completeBy.replace(/^0/, "")}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">✏️</button>
                                                 <button onClick={() => deleteChecklistTask(idx)}
                                                     className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">🗑️</button>
@@ -2218,6 +2189,13 @@
                                 <input type="text" value={newTask} onChange={e => setNewTask(e.target.value)}
                                     placeholder={language === "es" ? "Nueva tarea..." : "New task..."}
                                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:border-green-400" autoFocus />
+                                {/* Complete by time */}
+                                <div className="flex items-center gap-2 mb-2">
+                                    <label className="text-xs font-bold text-gray-600">⏰ {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
+                                    <input type="time" value={newCompleteBy} onChange={e => setNewCompleteBy(e.target.value)}
+                                        className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                    {newCompleteBy && <button onClick={() => setNewCompleteBy("")} className="text-red-400 text-xs">✕</button>}
+                                </div>
                                 {/* Photo toggle */}
                                 <label className="flex items-center gap-2 mb-2 text-xs cursor-pointer">
                                     <input type="checkbox" checked={newRequirePhoto} onChange={e => setNewRequirePhoto(e.target.checked)} className="w-4 h-4" />
@@ -2240,7 +2218,7 @@
                                 <div className="flex items-center gap-2">
                                     <button onClick={addChecklistTask}
                                         className="px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Agregar" : "Add"}</button>
-                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); }}
+                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); }}
                                         className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                 </div>
                             </div>
