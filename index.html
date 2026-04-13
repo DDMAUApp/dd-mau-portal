@@ -47,6 +47,16 @@
         .navbar-shadow {
             box-shadow: 0 -2px 4px rgba(0,0,0,0.05);
         }
+        @keyframes flash-yellow {
+            0%, 100% { background-color: #fef9c3; border-color: #facc15; }
+            50% { background-color: #fef08a; border-color: #eab308; }
+        }
+        @keyframes flash-red {
+            0%, 100% { background-color: #fee2e2; border-color: #f87171; }
+            50% { background-color: #fecaca; border-color: #ef4444; }
+        }
+        .task-flash-yellow { animation: flash-yellow 1.5s ease-in-out infinite; }
+        .task-flash-red { animation: flash-red 1s ease-in-out infinite; }
     </style>
 </head>
 <body>
@@ -1679,6 +1689,7 @@
             // ── PUSH NOTIFICATION SYSTEM ──
             // ── NOTIFICATION SYSTEM ──
             const [activeAlerts, setActiveAlerts] = useState([]);
+            const [clockTick, setClockTick] = useState(0);
             const dismissedAlertsRef = React.useRef(new Set());
 
             const checkDeadlines = () => {
@@ -1738,7 +1749,7 @@
                     Notification.requestPermission();
                 }
                 checkDeadlines(); // run immediately
-                const interval = setInterval(checkDeadlines, 30000);
+                const interval = setInterval(() => { checkDeadlines(); setClockTick(t => t + 1); }, 30000);
                 return () => clearInterval(interval);
             }, [staffName]);
 
@@ -2115,6 +2126,17 @@
                             const photoUrl = checks[item.id + "_photo"];
                             const photoNeeded = item.requirePhoto && !photoUrl;
 
+                            // Compute urgency for flashing: "warning" (30 min before), "overdue" (past time)
+                            let taskUrgency = null;
+                            if (item.completeBy && !taskComplete) {
+                                const now = new Date();
+                                const curMin = now.getHours() * 60 + now.getMinutes();
+                                const [dh, dm] = item.completeBy.split(":").map(Number);
+                                const deadMin = dh * 60 + dm;
+                                if (curMin >= deadMin) taskUrgency = "overdue";
+                                else if (curMin >= deadMin - 30) taskUrgency = "warning";
+                            }
+
                             if (editingIdx === idx) {
                                 return (
                                     <div key={item.id} className="p-3 rounded-lg border-2 border-blue-300 bg-blue-50">
@@ -2172,7 +2194,10 @@
 
                             return (
                                 <div key={item.id} className={"rounded-lg border-2 transition overflow-hidden " +
-                                    (taskComplete ? "border-green-300 bg-green-50" : "border-gray-200 bg-white")}>
+                                    (taskComplete ? "border-green-300 bg-green-50"
+                                        : taskUrgency === "overdue" ? "task-flash-red"
+                                        : taskUrgency === "warning" ? "task-flash-yellow"
+                                        : "border-gray-200 bg-white")}>
                                     <div className="flex items-center gap-1">
                                         <div className={"flex-1 flex items-start p-3 " + (!editMode && !hasSubtasks ? "cursor-pointer" : "")}>
                                             {!editMode && !hasSubtasks && (
@@ -2189,8 +2214,13 @@
                                                     </p>
                                                     {item.requirePhoto && <span className="text-xs">📸</span>}
                                                     {item.completeBy && (
-                                                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${taskComplete ? "bg-green-100 text-green-600" : "bg-orange-100 text-orange-600"}`}>
-                                                            ⏰ {item.completeBy.replace(/^0/, "")}
+                                                        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
+                                                            taskComplete ? "bg-green-100 text-green-600"
+                                                            : taskUrgency === "overdue" ? "bg-red-600 text-white"
+                                                            : taskUrgency === "warning" ? "bg-yellow-400 text-yellow-900"
+                                                            : "bg-orange-100 text-orange-600"
+                                                        }`}>
+                                                            {taskUrgency === "overdue" ? "🚨" : "⏰"} {item.completeBy.replace(/^0/, "")}
                                                         </span>
                                                     )}
                                                     {item.assignTo && (
