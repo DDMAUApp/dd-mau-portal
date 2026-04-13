@@ -1627,16 +1627,31 @@
 
             const getTodayKey = () => new Date().toISOString().split("T")[0];
 
+            // Strip undefined values from nested objects before Firestore save
+            const cleanForFirestore = (obj) => {
+                if (Array.isArray(obj)) return obj.map(cleanForFirestore);
+                if (obj && typeof obj === "object") {
+                    const clean = {};
+                    Object.keys(obj).forEach(k => {
+                        if (obj[k] !== undefined) clean[k] = cleanForFirestore(obj[k]);
+                    });
+                    return clean;
+                }
+                return obj;
+            };
+
             const saveChecklistState = async (newChecks, newTasks) => {
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
+                const safeChecks = cleanForFirestore(newChecks);
+                const safeTasks = cleanForFirestore(newTasks);
                 try {
                     await db.collection("ops").doc("checklists2").set({
-                        checks: newChecks, customTasks: newTasks, date: todayKey, updatedAt: now
+                        checks: safeChecks, customTasks: safeTasks, date: todayKey, updatedAt: now
                     });
                     // Also save to daily history
                     await db.collection("checklistHistory").doc(todayKey).set({
-                        checks: newChecks, customTasks: newTasks, date: now
+                        checks: safeChecks, customTasks: safeTasks, date: now
                     });
                 } catch (err) { console.error("Error saving checklist:", err); }
             };
