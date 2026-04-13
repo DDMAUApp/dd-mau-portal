@@ -1291,11 +1291,13 @@
             const [editRequirePhoto, setEditRequirePhoto] = useState(false);
             const [editSubtasks, setEditSubtasks] = useState([]);
             const [editCompleteBy, setEditCompleteBy] = useState("");
+            const [editAssignTo, setEditAssignTo] = useState("");
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
             const [newSubtasks, setNewSubtasks] = useState([]);
             const [newCompleteBy, setNewCompleteBy] = useState("");
+            const [newAssignTo, setNewAssignTo] = useState("");
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
             const photoInputRef = React.useRef(null);
 
@@ -1631,6 +1633,67 @@
                 return () => { unsubChecklist(); unsubInventorySnapshot(); };
             }, []);
 
+            // ── PUSH NOTIFICATION SYSTEM ──
+            const notifiedTasksRef = React.useRef(new Set());
+            useEffect(() => {
+                // Request notification permission on mount
+                if ("Notification" in window && Notification.permission === "default") {
+                    Notification.requestPermission();
+                }
+                // Check deadlines every 30 seconds — notify at 30 min before and at deadline
+                const interval = setInterval(() => {
+                    if (!("Notification" in window) || Notification.permission !== "granted") return;
+                    const now = new Date();
+                    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                    const tasks = customTasksRef.current;
+                    const ch = checksRef.current;
+                    ["FOH", "BOH"].forEach(side => {
+                        ["morning", "afternoon"].forEach(period => {
+                            const periodTasks = (tasks[side] && tasks[side][period]) || [];
+                            periodTasks.forEach(item => {
+                                if (!item.completeBy || !item.assignTo) return;
+                                if (item.assignTo !== staffName) return;
+                                const done = item.subtasks && item.subtasks.length > 0
+                                    ? item.subtasks.every(s => ch[s.id])
+                                    : !!ch[item.id];
+                                if (done) return;
+                                const [h, m] = item.completeBy.split(":").map(Number);
+                                const deadlineMinutes = h * 60 + m;
+                                const taskName = item.task.includes("\n") ? item.task.split("\n")[0] : item.task;
+                                const timeStr = item.completeBy.replace(/^0/, "");
+                                const todayKey = getTodayKey();
+                                // 30-minute warning
+                                const warn30 = deadlineMinutes - 30;
+                                if (currentMinutes >= warn30 && currentMinutes < deadlineMinutes - 5) {
+                                    const nKey30 = item.id + "_30_" + todayKey;
+                                    if (!notifiedTasksRef.current.has(nKey30)) {
+                                        notifiedTasksRef.current.add(nKey30);
+                                        new Notification("DD Mau - 30 Min Reminder", {
+                                            body: `"${taskName}" is due at ${timeStr} — 30 minutes left!`,
+                                            icon: "🍜",
+                                            tag: nKey30
+                                        });
+                                    }
+                                }
+                                // At deadline
+                                if (currentMinutes >= deadlineMinutes && currentMinutes <= deadlineMinutes + 5) {
+                                    const nKeyNow = item.id + "_due_" + todayKey;
+                                    if (!notifiedTasksRef.current.has(nKeyNow)) {
+                                        notifiedTasksRef.current.add(nKeyNow);
+                                        new Notification("DD Mau - Task Due NOW", {
+                                            body: `"${taskName}" was due at ${timeStr}! Please complete it.`,
+                                            icon: "🍜",
+                                            tag: nKeyNow
+                                        });
+                                    }
+                                }
+                            });
+                        });
+                    });
+                }, 30000);
+                return () => clearInterval(interval);
+            }, [staffName]);
+
             const getTodayKey = () => {
                 const d = new Date();
                 return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
@@ -1683,6 +1746,7 @@
                 const item = { id: Date.now().toString(), task: newTask.trim() };
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
+                if (newAssignTo) item.assignTo = newAssignTo;
                 const cleanSubs = newSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) item.subtasks = cleanSubs.map((s, i) => ({ id: item.id + "_s" + i, task: s.task.trim() }));
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
@@ -1691,7 +1755,7 @@
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setShowAddForm(false);
+                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -1701,11 +1765,12 @@
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
+                if (editAssignTo) { item.assignTo = editAssignTo; } else { delete item.assignTo; }
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy("");
+                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo("");
             };
 
             // Photo capture and upload
@@ -2009,6 +2074,20 @@
                                                 className="border border-gray-200 rounded px-2 py-1 text-xs" />
                                             {editCompleteBy && <button onClick={() => setEditCompleteBy("")} className="text-red-400 text-xs">✕</button>}
                                         </div>
+                                        {/* Notify / assign to */}
+                                        {editCompleteBy && (
+                                            <div className="flex items-center gap-2 mb-2">
+                                                <label className="text-xs font-bold text-gray-600">🔔 {language === "es" ? "Notificar a:" : "Notify:"}</label>
+                                                <select value={editAssignTo} onChange={e => setEditAssignTo(e.target.value)}
+                                                    className="border border-gray-200 rounded px-2 py-1 text-xs flex-1">
+                                                    <option value="">{language === "es" ? "— Nadie —" : "— Nobody —"}</option>
+                                                    {(staffList || []).map(s => (
+                                                        <option key={s.id} value={s.name}>{s.name}</option>
+                                                    ))}
+                                                </select>
+                                                {editAssignTo && <button onClick={() => setEditAssignTo("")} className="text-red-400 text-xs">✕</button>}
+                                            </div>
+                                        )}
                                         {/* Photo toggle */}
                                         <label className="flex items-center gap-2 mb-2 text-xs cursor-pointer">
                                             <input type="checkbox" checked={editRequirePhoto} onChange={e => setEditRequirePhoto(e.target.checked)} className="w-4 h-4" />
@@ -2031,7 +2110,7 @@
                                         <div className="flex items-center gap-2">
                                             <button onClick={() => saveChecklistEdit(idx)}
                                                 className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Guardar" : "Save"}</button>
-                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); }}
+                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo(""); }}
                                                 className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                         </div>
                                     </div>
@@ -2061,12 +2140,17 @@
                                                             ⏰ {item.completeBy.replace(/^0/, "")}
                                                         </span>
                                                     )}
+                                                    {item.assignTo && (
+                                                        <span className="text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap bg-blue-100 text-blue-600">
+                                                            🔔 {item.assignTo.split(" ")[0]}
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo || ""); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">✏️</button>
                                                 <button onClick={() => deleteChecklistTask(idx)}
                                                     className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">🗑️</button>
@@ -2140,6 +2224,20 @@
                                         className="border border-gray-200 rounded px-2 py-1 text-xs" />
                                     {newCompleteBy && <button onClick={() => setNewCompleteBy("")} className="text-red-400 text-xs">✕</button>}
                                 </div>
+                                {/* Notify / assign to */}
+                                {newCompleteBy && (
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <label className="text-xs font-bold text-gray-600">🔔 {language === "es" ? "Notificar a:" : "Notify:"}</label>
+                                        <select value={newAssignTo} onChange={e => setNewAssignTo(e.target.value)}
+                                            className="border border-gray-200 rounded px-2 py-1 text-xs flex-1">
+                                            <option value="">{language === "es" ? "— Nadie —" : "— Nobody —"}</option>
+                                            {(staffList || []).map(s => (
+                                                <option key={s.id} value={s.name}>{s.name}</option>
+                                            ))}
+                                        </select>
+                                        {newAssignTo && <button onClick={() => setNewAssignTo("")} className="text-red-400 text-xs">✕</button>}
+                                    </div>
+                                )}
                                 {/* Photo toggle */}
                                 <label className="flex items-center gap-2 mb-2 text-xs cursor-pointer">
                                     <input type="checkbox" checked={newRequirePhoto} onChange={e => setNewRequirePhoto(e.target.checked)} className="w-4 h-4" />
@@ -2162,7 +2260,7 @@
                                 <div className="flex items-center gap-2">
                                     <button onClick={addChecklistTask}
                                         className="px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Agregar" : "Add"}</button>
-                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); }}
+                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); }}
                                         className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                 </div>
                             </div>
