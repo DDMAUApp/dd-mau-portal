@@ -796,7 +796,7 @@
         ];
 
         // Version — bump this to push new default tasks to all users
-        const CHECKLIST_VERSION = 2;
+        const CHECKLIST_VERSION = 3;
 
         // Default tasks per period, per side (FOH/BOH)
         const DEFAULT_CHECKLIST_TASKS = {
@@ -861,81 +861,59 @@
             },
             BOH: {
                 "before-open": [
-                    { id: "b-bo-0", task: "Check walk-in fridge/freezer temps", requirePhoto: true },
-                    { id: "b-bo-1", task: "Pull speed racks from walk-in — put away thawed meats from overnight" },
-                    { id: "b-bo-2", task: "Verify walk-in storage — chicken on bottom, ready-to-eat on top, FIFO" },
-                    { id: "b-bo-3", task: "Fire up fryers, grills, woks, pho burners" },
-                    { id: "b-bo-4", task: "Prep all stations — mise en place, pans, utensils" },
-                    { id: "b-bo-5", task: "Line check — every station: dates, freshness, temps, rotation" },
-                    { id: "b-bo-6", task: "Prep sauces, broths, dressings as needed" },
-                    { id: "b-bo-7", task: "Check all ticket printers working" },
-                    { id: "b-bo-8", task: "Review prep list — assign prep tasks to staff" }
+                    { id: "b-bo-0", task: "Turn on all equipment\nEncender todo el equipo" },
+                    { id: "b-bo-1", task: "Put away all deliveries\nGuardar todas las entregas" },
+                    { id: "b-bo-2", task: "Keep meats in fridge until ready to process\nMantener carnes en refrigerador hasta que estén listas para procesar" },
+                    { id: "b-bo-3", task: "Check all staff is there and on time — if late, question why\nVerificar que todo el personal esté presente y a tiempo — si llegan tarde, preguntar por qué" },
+                    { id: "b-bo-4", task: "Make list for prep\nHacer lista de preparación" },
+                    { id: "b-bo-5", task: "Assign prep tasks to staff\nAsignar tareas de preparación al personal" },
+                    { id: "b-bo-6", task: "Do we have everything we need for the day?\n¿Tenemos todo lo que necesitamos para el día?" },
+                    { id: "b-bo-7", task: "Make break schedule\nHacer horario de descansos" },
+                    { id: "b-bo-8", task: "Talk to managers about plan for the day\nHablar con los gerentes sobre el plan del día" },
+                    { id: "b-bo-9", task: "Team huddle — talk to the team about the plan for the day\nReunión de equipo — hablar con el equipo sobre el plan del día" }
                 ],
                 "after-open": [
-                    { id: "b-ao-0", task: "Verify all stations fully stocked and ready for orders" },
-                    { id: "b-ao-1", task: "Check each cook is at their station and focused" },
-                    { id: "b-ao-2", task: "Confirm prep staff is on task and on schedule" },
-                    { id: "b-ao-3", task: "Check any morning delivery — put away meats and veggies immediately" }
+                    { id: "b-ao-0", task: "Check lines are ready for service\nVerificar que las líneas estén listas para el servicio" },
+                    { id: "b-ao-1", task: "Make sure prep helps line when needed\nAsegurarse de que prep ayude a la línea cuando sea necesario" }
                 ],
                 "lunch": [
-                    { id: "b-lu-0", task: "Monitor ticket times — keep under target" },
-                    { id: "b-lu-1", task: "Walk stations — ensure food freshness and quality" },
-                    { id: "b-lu-2", task: "Restock stations as items run low during rush" },
-                    { id: "b-lu-3", task: "Monitor staff pace — no one lingering too long on one task" },
-                    { id: "b-lu-4", task: "Check food temps on all hot and cold holding" },
-                    { id: "b-lu-5", task: "Spot check dates on open items at each station" }
+                    { id: "b-lu-0", task: "Check kitchen for meat left out too long\nRevisar la cocina por carnes dejadas afuera demasiado tiempo" },
+                    { id: "b-lu-1", task: "Check prep sinks for proper use\nRevisar los fregaderos de prep para uso adecuado" },
+                    { id: "b-lu-2", task: "Check freshness and dates\nRevisar frescura y fechas" },
+                    { id: "b-lu-3", task: "Check soups for taste\nProbar las sopas" },
+                    { id: "b-lu-4", task: "Ensure everyone is getting food out fast\nAsegurarse de que todos saquen la comida rápido" },
+                    { id: "b-lu-5", task: "Check quality\nRevisar calidad" },
+                    { id: "b-lu-6", task: "Help where needed\nAyudar donde sea necesario" }
                 ],
                 "before-break": [
-                    { id: "b-bb-0", task: "Plan breaks — confirm who goes when and who covers", requirePhoto: true },
-                    { id: "b-bb-1", task: "All stations restocked before anyone leaves for break" },
-                    { id: "b-bb-2", task: "Light cleaning — wipe down surfaces, change dirty towels" },
-                    { id: "b-bb-3", task: "All exposed meats and foods covered or put away before break" },
-                    { id: "b-bb-4", task: "Brief coverage person on station status and any active tickets" },
-                    { id: "b-bb-5", task: "Check if any delivery arrived — put away meats/veggies, don't leave out" }
+                    { id: "b-bb-0", task: "Make sure everyone is getting ready for breaks\nAsegurarse de que todos se preparen para los descansos" },
+                    { id: "b-bb-1", task: "Check stations are restocked before breaks\nVerificar que las estaciones estén reabastecidas antes de los descansos" },
+                    { id: "b-bb-2", task: "Put away prep and meats before breaks\nGuardar prep y carnes antes de los descansos" },
+                    { id: "b-bb-3", task: "Make sure cleaning is done before breaks\nAsegurarse de que la limpieza esté hecha antes de los descansos" },
+                    { id: "b-bb-4", task: "Make sure station coverage is planned\nAsegurarse de que la cobertura de estaciones esté planeada" }
                 ],
                 "after-break": [
-                    { id: "b-ab-0", task: "Verify everyone is back and at their station on time" },
-                    { id: "b-ab-1", task: "Restock stations — proteins, veggies, sauces" },
-                    { id: "b-ab-2", task: "Check food temps after break" },
-                    { id: "b-ab-3", task: "Game plan for rest of night — discuss with team" },
-                    { id: "b-ab-4", task: "Create extra cleaning task list for slow periods" },
-                    { id: "b-ab-5", task: "Think ahead — what needs to be prepped or thawed for tomorrow?" },
-                    { id: "b-ab-6", task: "Set up thaw items in walk-in for tomorrow (speed rack)" }
+                    { id: "b-ab-0", task: "Check soups\nRevisar las sopas" },
+                    { id: "b-ab-1", task: "Check everyone's station\nRevisar la estación de cada uno" },
+                    { id: "b-ab-2", task: "Check fridge for proper storage\nRevisar refrigerador para almacenamiento adecuado" },
+                    { id: "b-ab-3", task: "Check kitchen for meats left out too long\nRevisar la cocina por carnes dejadas afuera demasiado tiempo" },
+                    { id: "b-ab-4", task: "Check prep sinks\nRevisar fregaderos de prep" },
+                    { id: "b-ab-5", task: "Make sure everyone is working\nAsegurarse de que todos estén trabajando" }
                 ],
                 "dinner": [
-                    { id: "b-di-0", task: "Full restock all stations for dinner rush" },
-                    { id: "b-di-1", task: "Fresh batch of pho broth if low" },
-                    { id: "b-di-2", task: "Monitor ticket times — stay on top of flow" },
-                    { id: "b-di-3", task: "Walk all stations — freshness check, dates, FIFO" },
-                    { id: "b-di-4", task: "Monitor staff pace — redirect anyone falling behind" },
-                    { id: "b-di-5", task: "Check food temps on holding items" }
+                    { id: "b-di-0", task: "Make sure positions are good for dinner\nAsegurarse de que las posiciones estén bien para la cena" },
+                    { id: "b-di-1", task: "Make sure prep staff helps line when needed\nAsegurarse de que el personal de prep ayude a la línea cuando sea necesario" }
                 ],
                 "before-close": [
-                    { id: "b-bc-0", task: "Start breaking down low-volume stations" },
-                    { id: "b-bc-1", task: "Label and date all prep items for storage" },
-                    { id: "b-bc-2", task: "Assign closing duties — make sure work is split evenly" },
-                    { id: "b-bc-3", task: "Begin wrapping and storing items that won't be needed" },
-                    { id: "b-bc-4", task: "Start cleaning equipment that's done for the night" }
+                    { id: "b-bc-0", task: "Check out all staff after cleaning and closing their stations\nRevisar a todo el personal después de limpiar y cerrar sus estaciones" },
+                    { id: "b-bc-1", task: "Make sure all staff is helping close\nAsegurarse de que todo el personal ayude a cerrar" }
                 ],
                 "closing": [
-                    { id: "b-cl-0", task: "Deep clean all cooking surfaces — grills, flattops, woks" },
-                    { id: "b-cl-1", task: "Store all perishables — label, date, FIFO in walk-in" },
-                    { id: "b-cl-2", task: "Verify walk-in storage — chicken on bottom, ready-to-eat on top" },
-                    { id: "b-cl-3", task: "Check walk-in fridge/freezer temps (final)", requirePhoto: true },
-                    { id: "b-cl-4", task: "Turn off fryers, grills, woks, burners" },
-                    { id: "b-cl-5", task: "Clean and sanitize all prep surfaces and cutting boards" },
-                    { id: "b-cl-6", task: "Clean dish pit area — catch up on all dishes" },
-                    { id: "b-cl-7", task: "Break down and clean fry station — filter or change oil" },
-                    { id: "b-cl-8", task: "Empty and sanitize steam table / bain-marie" },
-                    { id: "b-cl-9", task: "Wipe down shelving and storage racks" }
+                    { id: "b-cl-0", task: "Check all equipment is off\nVerificar que todo el equipo esté apagado" },
+                    { id: "b-cl-1", task: "Check all fridges for doors and power\nRevisar todas las refrigeradoras — puertas y energía" }
                 ],
                 "after-close": [
-                    { id: "b-ac-0", task: "Take out all kitchen trash and recycling" },
-                    { id: "b-ac-1", task: "Mop all kitchen floors" },
-                    { id: "b-ac-2", task: "Manager walkthrough — check each person's closing work" },
-                    { id: "b-ac-3", task: "Check everyone out individually — don't leave until approved" },
-                    { id: "b-ac-4", task: "Turn off all non-essential equipment and lights" },
-                    { id: "b-ac-5", task: "Final walkthrough — everything off, stored, locked", requirePhoto: true }
+                    { id: "b-ac-0", task: "Make sure we have everything we need for tomorrow\nAsegurarse de que tengamos todo lo que necesitamos para mañana" }
                 ]
             }
         };
@@ -2162,7 +2140,11 @@
                                             )}
                                             <div className={"flex-1 " + (!editMode && !hasSubtasks ? "ml-3" : "")}>
                                                 <div className="flex items-center gap-1.5">
-                                                    <p className={"font-bold text-gray-800 " + (taskComplete ? "line-through text-green-700" : "")}>{item.task}</p>
+                                                    <p className={"font-bold text-gray-800 " + (taskComplete ? "line-through text-green-700" : "")}>
+                                                        {item.task.includes("\n") ? item.task.split("\n").map((line, li) => (
+                                                            <span key={li}>{li === 0 ? line : <><br/><span className="font-normal text-xs text-gray-500">{line}</span></>}</span>
+                                                        )) : item.task}
+                                                    </p>
                                                     {item.requirePhoto && <span className="text-xs">📸</span>}
                                                 </div>
                                             </div>
@@ -3558,7 +3540,11 @@
                                     <div key={idx} className={`p-2 rounded-lg text-sm ${fullyDone ? "bg-green-50" : "bg-red-50"}`}>
                                         <div className="flex items-center gap-2">
                                             <span className="text-base">{fullyDone ? "✅" : "❌"}</span>
-                                            <span className={fullyDone ? "text-gray-700" : "text-red-700 font-medium"}>{task.task}</span>
+                                            <span className={fullyDone ? "text-gray-700" : "text-red-700 font-medium"}>
+                                                {task.task.includes("\n") ? task.task.split("\n").map((line, li) => (
+                                                    <span key={li}>{li === 0 ? line : <><br/><span className="font-normal text-xs text-gray-500">{line}</span></>}</span>
+                                                )) : task.task}
+                                            </span>
                                         </div>
                                         {hasSubtasks && (
                                             <div className="ml-7 mt-1 space-y-0.5">
@@ -4476,7 +4462,7 @@
                                     >
                                         <div className="text-3xl mb-2">📚</div>
                                         <div className="font-bold text-blue-700">{t("trainingHub", language)}</div>
-                                        <div className="text-xs text-blue-600">Complete your training modules<br/><span className="text-blue-400">Completa tus módulos de capacitación</span></div>
+                                        <div className="text-xs text-blue-600">{language === "es" ? "Completa tus módulos de capacitación" : "Complete your training modules"}</div>
                                     </button>
                                     <button
                                         onClick={() => setActiveTab("operations")}
@@ -4484,7 +4470,7 @@
                                     >
                                         <div className="text-3xl mb-2">📋</div>
                                         <div className="font-bold text-purple-700">{t("dailyOps", language)}</div>
-                                        <div className="text-xs text-purple-600">Checklists and inventory<br/><span className="text-purple-400">Listas de verificación e inventario</span></div>
+                                        <div className="text-xs text-purple-600">{language === "es" ? "Listas de verificación e inventario" : "Checklists and inventory"}</div>
                                     </button>
                                     <button
                                         onClick={() => setActiveTab("menu")}
@@ -4492,7 +4478,7 @@
                                     >
                                         <div className="text-3xl mb-2">🍜</div>
                                         <div className="font-bold text-green-700">{t("menuReference", language)}</div>
-                                        <div className="text-xs text-green-600">Browse the menu<br/><span className="text-green-400">Explora el menú</span></div>
+                                        <div className="text-xs text-green-600">{language === "es" ? "Explora el menú" : "Browse the menu"}</div>
                                     </button>
                                     <button
                                         onClick={() => setActiveTab("schedule")}
@@ -4500,7 +4486,7 @@
                                     >
                                         <div className="text-3xl mb-2">📅</div>
                                         <div className="font-bold text-orange-700">{t("weeklySchedule", language)}</div>
-                                        <div className="text-xs text-orange-600">Check your shifts<br/><span className="text-orange-400">Revisa tus turnos</span></div>
+                                        <div className="text-xs text-orange-600">{language === "es" ? "Revisa tus turnos" : "Check your shifts"}</div>
                                     </button>
                                     {isAtDDMau ? (
                                         <button
