@@ -1730,7 +1730,7 @@
                 const now = new Date().toISOString();
                 try {
                     await db.collection("checklistHistory").doc(todayKey + "_saved").set({
-                        checks: checksRef.current, customTasks: customTasksRef.current, date: now, savedBy: staffName
+                        checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
                 setChecks({});
@@ -3324,6 +3324,9 @@
                 if (!selectedDate) return;
                 const fetchDay = async () => {
                     try {
+                        // Prefer the _saved version (has completed checks before reset)
+                        const savedDoc = await db.collection("checklistHistory").doc(selectedDate + "_saved").get();
+                        if (savedDoc.exists) { setDayData(savedDoc.data()); return; }
                         const doc = await db.collection("checklistHistory").doc(selectedDate).get();
                         if (doc.exists) setDayData(doc.data());
                         else setDayData(null);
