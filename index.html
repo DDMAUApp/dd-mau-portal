@@ -2065,9 +2065,13 @@
                                     {item.requirePhoto && !editMode && (
                                         <div className="px-3 pb-3 border-t border-gray-100 pt-2">
                                             {photoUrl ? (
-                                                <div className="flex items-center gap-2">
-                                                    <span className="text-xs text-green-600 font-bold">✓ {language === "es" ? "Foto tomada" : "Photo taken"}</span>
-                                                    <span className="text-xs text-gray-400">{checks[item.id + "_photoTime"] ? new Date(checks[item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
+                                                <div>
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-xs text-green-600 font-bold">✓ {language === "es" ? "Foto tomada" : "Photo taken"}</span>
+                                                        <span className="text-xs text-gray-400">{checks[item.id + "_photoTime"] ? new Date(checks[item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
+                                                    </div>
+                                                    <img src={photoUrl} alt="Task photo" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
+                                                        onClick={() => window.open(photoUrl, "_blank")} />
                                                 </div>
                                             ) : (
                                                 <div>
@@ -3297,7 +3301,7 @@
             const [selectedDate, setSelectedDate] = useState(null);
             const [dayData, setDayData] = useState(null);
             const [loading, setLoading] = useState(true);
-            const [historySide, setHistorySide] = useState("foh");
+            const [historySide, setHistorySide] = useState("FOH");
             const [expandedPhoto, setExpandedPhoto] = useState(null);
 
             useEffect(() => {
@@ -3437,12 +3441,12 @@
 
                     {/* FOH / BOH toggle */}
                     <div className="flex gap-2 mb-4">
-                        <button onClick={() => setHistorySide("foh")}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${historySide === "foh" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600"}`}>
+                        <button onClick={() => setHistorySide("FOH")}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${historySide === "FOH" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600"}`}>
                             FOH
                         </button>
-                        <button onClick={() => setHistorySide("boh")}
-                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${historySide === "boh" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600"}`}>
+                        <button onClick={() => setHistorySide("BOH")}
+                            className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${historySide === "BOH" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600"}`}>
                             BOH
                         </button>
                     </div>
