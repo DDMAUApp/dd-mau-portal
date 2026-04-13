@@ -1449,7 +1449,7 @@
             const [inventorySaving, setInventorySaving] = useState(false);
 
             // Break Planner state
-            const BOH_STATIONS = [
+            const DEFAULT_STATIONS = [
                 { id: "fry", nameEn: "Fry", nameEs: "Freidora", emoji: "🍟" },
                 { id: "pho", nameEn: "Pho", nameEs: "Pho", emoji: "🍲" },
                 { id: "grill", nameEn: "Grill", nameEs: "Parrilla", emoji: "🔥" },
@@ -1460,15 +1460,12 @@
                 { id: "friedrice1", nameEn: "Fried Rice 1", nameEs: "Arroz Frito 1", emoji: "🍳" },
                 { id: "friedrice2", nameEn: "Fried Rice 2", nameEs: "Arroz Frito 2", emoji: "🍳" },
                 { id: "dish", nameEn: "Dish", nameEs: "Platos", emoji: "🧽" },
-                { id: "manager", nameEn: "Manager", nameEs: "Gerente", emoji: "👔" }
-            ];
-            const PREP_SLOTS = [
+                { id: "manager", nameEn: "Manager", nameEs: "Gerente", emoji: "👔" },
                 { id: "prep1", nameEn: "Prep 1", nameEs: "Prep 1", emoji: "🔪" },
                 { id: "prep2", nameEn: "Prep 2", nameEs: "Prep 2", emoji: "🔪" },
                 { id: "prep3", nameEn: "Prep 3", nameEs: "Prep 3", emoji: "🔪" },
                 { id: "prep4", nameEn: "Prep 4", nameEs: "Prep 4", emoji: "🔪" }
             ];
-            const ALL_POSITIONS = [...BOH_STATIONS, ...PREP_SLOTS];
             const BREAK_WAVES = [
                 { id: "wave1", time: "1:30 PM", nameEn: "Wave 1 — 1:30 PM", nameEs: "Grupo 1 — 1:30 PM" },
                 { id: "wave2", time: "2:30 PM", nameEn: "Wave 2 — 2:30 PM", nameEs: "Grupo 2 — 2:30 PM" }
@@ -1493,6 +1490,12 @@
                 return posId;
             };
 
+            const [customStations, setCustomStations] = useState(JSON.parse(JSON.stringify(DEFAULT_STATIONS)));
+            const [editingStations, setEditingStations] = useState(false);
+            const [newStationName, setNewStationName] = useState("");
+            const [newStationEmoji, setNewStationEmoji] = useState("📍");
+            const ALL_POSITIONS = customStations;
+
             const [breakPlan, setBreakPlan] = useState({ stations: {}, waves: {} });
             const [breakPlanSaved, setBreakPlanSaved] = useState(false);
             const [skillsMatrix, setSkillsMatrix] = useState({});
@@ -1510,6 +1513,71 @@
                 });
                 return () => unsubMatrix();
             }, []);
+
+            // Load custom stations from Firestore
+            useEffect(() => {
+                const unsubStations = db.collection("config").doc("stations").onSnapshot((doc) => {
+                    if (doc.exists && doc.data().stations && doc.data().stations.length > 0) {
+                        setCustomStations(doc.data().stations);
+                    }
+                });
+                return () => unsubStations();
+            }, []);
+
+            const saveStations = async (stations) => {
+                try {
+                    await db.collection("config").doc("stations").set({ stations, updatedAt: new Date().toISOString() });
+                } catch (err) { console.error("Error saving stations:", err); }
+            };
+
+            const addStation = () => {
+                const name = newStationName.trim();
+                if (!name) return;
+                const id = name.toLowerCase().replace(/[^a-z0-9]/g, "") + "_" + Date.now();
+                const station = { id, nameEn: name, nameEs: name, emoji: newStationEmoji || "📍" };
+                const updated = [...customStations, station];
+                setCustomStations(updated);
+                saveStations(updated);
+                setNewStationName("");
+                setNewStationEmoji("📍");
+            };
+
+            const removeStation = (stationId) => {
+                if (!confirm(language === "es" ? "¿Eliminar esta estación?" : "Remove this station?")) return;
+                const updated = customStations.filter(s => s.id !== stationId);
+                setCustomStations(updated);
+                saveStations(updated);
+            };
+
+            const renameStation = (stationId, newName) => {
+                const updated = customStations.map(s => s.id === stationId ? { ...s, nameEn: newName, nameEs: newName } : s);
+                setCustomStations(updated);
+                saveStations(updated);
+            };
+
+            const updateStationEmoji = (stationId, newEmoji) => {
+                const updated = customStations.map(s => s.id === stationId ? { ...s, emoji: newEmoji } : s);
+                setCustomStations(updated);
+                saveStations(updated);
+            };
+
+            const moveStation = (stationId, direction) => {
+                const idx = customStations.findIndex(s => s.id === stationId);
+                if (idx < 0) return;
+                const newIdx = idx + direction;
+                if (newIdx < 0 || newIdx >= customStations.length) return;
+                const updated = [...customStations];
+                [updated[idx], updated[newIdx]] = [updated[newIdx], updated[idx]];
+                setCustomStations(updated);
+                saveStations(updated);
+            };
+
+            const resetStationsToDefault = () => {
+                if (!confirm(language === "es" ? "¿Restaurar estaciones predeterminadas?" : "Reset stations to defaults?")) return;
+                const fresh = JSON.parse(JSON.stringify(DEFAULT_STATIONS));
+                setCustomStations(fresh);
+                saveStations(fresh);
+            };
 
             const toggleSkill = async (staffName, skillId) => {
                 const key = staffName + "_" + skillId;
@@ -1545,7 +1613,7 @@
 
             // Load break plan from Firestore
             useEffect(() => {
-                const todayKey = new Date().toISOString().split("T")[0];
+                const todayKey = getTodayKey();
                 const unsubBreakPlan = db.collection("ops").doc("breakPlan").onSnapshot((doc) => {
                     if (doc.exists && doc.data().date === todayKey) {
                         setBreakPlan(doc.data().plan || { stations: {}, waves: {} });
@@ -1555,7 +1623,7 @@
             }, []);
 
             const saveBreakPlan = async (plan) => {
-                const todayKey = new Date().toISOString().split("T")[0];
+                const todayKey = getTodayKey();
                 try {
                     await db.collection("ops").doc("breakPlan").set({ plan, date: todayKey, updatedAt: new Date().toISOString() });
                     setBreakPlanSaved(true);
@@ -2448,9 +2516,58 @@
 
                             {/* ── STATION BOARD ── */}
                             <div className="bg-charcoal rounded-xl p-4">
-                                <h3 className="text-white font-bold text-sm mb-3 uppercase tracking-wider">
-                                    {language === "es" ? "📋 Estaciones de Hoy" : "📋 Today's Stations"}
-                                </h3>
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-white font-bold text-sm uppercase tracking-wider">
+                                        {language === "es" ? "📋 Estaciones de Hoy" : "📋 Today's Stations"}
+                                    </h3>
+                                    {currentIsAdmin && (
+                                        <button onClick={() => setEditingStations(!editingStations)}
+                                            className={`text-xs px-2.5 py-1 rounded-full font-bold ${editingStations ? "bg-red-500 text-white" : "bg-white bg-opacity-20 text-white"}`}>
+                                            {editingStations ? (language === "es" ? "✕ Cerrar" : "✕ Done") : (language === "es" ? "✏️ Editar" : "✏️ Edit")}
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* ── EDIT MODE ── */}
+                                {editingStations && currentIsAdmin && (
+                                    <div className="mb-3 space-y-2">
+                                        {customStations.map((pos, idx) => (
+                                            <div key={pos.id} className="bg-white bg-opacity-10 rounded-lg p-2 flex items-center gap-2">
+                                                <div className="flex flex-col gap-0.5">
+                                                    <button onClick={() => moveStation(pos.id, -1)} disabled={idx === 0}
+                                                        className={`text-xs leading-none ${idx === 0 ? "text-gray-600" : "text-gray-300 hover:text-white"}`}>▲</button>
+                                                    <button onClick={() => moveStation(pos.id, 1)} disabled={idx === customStations.length - 1}
+                                                        className={`text-xs leading-none ${idx === customStations.length - 1 ? "text-gray-600" : "text-gray-300 hover:text-white"}`}>▼</button>
+                                                </div>
+                                                <input type="text" value={pos.emoji} onChange={e => updateStationEmoji(pos.id, e.target.value)}
+                                                    className="w-10 text-center text-lg bg-white bg-opacity-10 rounded border border-gray-600 text-white" style={{padding: "2px"}} />
+                                                <input type="text" value={pos.nameEn} onChange={e => renameStation(pos.id, e.target.value)}
+                                                    className="flex-1 bg-white bg-opacity-10 rounded border border-gray-600 text-white text-xs px-2 py-1.5 font-bold" />
+                                                <button onClick={() => removeStation(pos.id)}
+                                                    className="text-red-400 hover:text-red-300 text-sm font-bold px-1">✕</button>
+                                            </div>
+                                        ))}
+                                        {/* Add new station */}
+                                        <div className="bg-white bg-opacity-5 rounded-lg p-2 flex items-center gap-2 border border-dashed border-gray-600">
+                                            <input type="text" value={newStationEmoji} onChange={e => setNewStationEmoji(e.target.value)}
+                                                className="w-10 text-center text-lg bg-white bg-opacity-10 rounded border border-gray-600 text-white" style={{padding: "2px"}}
+                                                placeholder="📍" />
+                                            <input type="text" value={newStationName} onChange={e => setNewStationName(e.target.value)}
+                                                className="flex-1 bg-white bg-opacity-10 rounded border border-gray-600 text-white text-xs px-2 py-1.5"
+                                                placeholder={language === "es" ? "Nueva estación..." : "New station name..."}
+                                                onKeyDown={e => { if (e.key === "Enter") addStation(); }} />
+                                            <button onClick={addStation}
+                                                className="bg-mint text-white text-xs font-bold px-3 py-1.5 rounded hover:opacity-90">+</button>
+                                        </div>
+                                        {/* Reset to defaults */}
+                                        <button onClick={resetStationsToDefault}
+                                            className="text-xs text-gray-400 hover:text-gray-200 underline mt-1">
+                                            {language === "es" ? "Restaurar predeterminados" : "Reset to defaults"}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* ── ASSIGNMENT GRID ── */}
                                 <div className="grid grid-cols-2 gap-2">
                                     {ALL_POSITIONS.map(pos => {
                                         const person = breakPlan.stations?.[pos.id] || "";
@@ -3725,6 +3842,216 @@
             );
         }
 
+        // Maintenance Request Component
+        function MaintenanceRequest({ language, staffName }) {
+            const [description, setDescription] = useState("");
+            const [location, setLocation] = useState("");
+            const [urgency, setUrgency] = useState("normal");
+            const [reason, setReason] = useState("");
+            const [photoFile, setPhotoFile] = useState(null);
+            const [photoPreview, setPhotoPreview] = useState(null);
+            const [submitting, setSubmitting] = useState(false);
+            const [submitted, setSubmitted] = useState(false);
+            const [myRequests, setMyRequests] = useState([]);
+
+            const locationOptions = [
+                { en: "Kitchen — Line", es: "Cocina — Línea" },
+                { en: "Kitchen — Prep Area", es: "Cocina — Área de Prep" },
+                { en: "Kitchen — Walk-in", es: "Cocina — Walk-in" },
+                { en: "Kitchen — Dish Pit", es: "Cocina — Lavaplatos" },
+                { en: "Dining Room", es: "Comedor" },
+                { en: "Restroom", es: "Baño" },
+                { en: "Bar Area", es: "Área de Bar" },
+                { en: "Front Entrance", es: "Entrada Principal" },
+                { en: "Back of House — Office", es: "Trastienda — Oficina" },
+                { en: "Back of House — Storage", es: "Trastienda — Almacén" },
+                { en: "Exterior / Parking", es: "Exterior / Estacionamiento" },
+                { en: "Other", es: "Otro" }
+            ];
+
+            // Load this person's recent requests
+            useEffect(() => {
+                const unsub = db.collection("maintenanceRequests")
+                    .orderBy("createdAt", "desc")
+                    .limit(50)
+                    .onSnapshot((snap) => {
+                        const reqs = [];
+                        snap.forEach(doc => {
+                            const d = doc.data();
+                            if (d.submittedBy === staffName) reqs.push({ id: doc.id, ...d });
+                        });
+                        setMyRequests(reqs.slice(0, 10));
+                    }, (err) => { console.error("Error loading requests:", err); });
+                return () => unsub();
+            }, [staffName]);
+
+            const handlePhotoSelect = (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                setPhotoFile(file);
+                const reader = new FileReader();
+                reader.onload = (ev) => setPhotoPreview(ev.target.result);
+                reader.readAsDataURL(file);
+            };
+
+            const handleSubmit = async () => {
+                if (!description.trim() || !location) return;
+                setSubmitting(true);
+                try {
+                    let photoUrl = null;
+                    if (photoFile) {
+                        const ref = storage.ref().child("maintenance-photos/" + Date.now() + "_" + photoFile.name);
+                        await ref.put(photoFile);
+                        photoUrl = await ref.getDownloadURL();
+                    }
+                    const now = new Date();
+                    await db.collection("maintenanceRequests").add({
+                        description: description.trim(),
+                        location,
+                        urgency,
+                        reason: reason.trim(),
+                        photoUrl,
+                        submittedBy: staffName,
+                        createdAt: now.toISOString(),
+                        date: now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0"),
+                        status: "open"
+                    });
+                    setDescription("");
+                    setLocation("");
+                    setUrgency("normal");
+                    setReason("");
+                    setPhotoFile(null);
+                    setPhotoPreview(null);
+                    setSubmitted(true);
+                    setTimeout(() => setSubmitted(false), 3000);
+                } catch (err) {
+                    console.error("Error submitting request:", err);
+                    alert(language === "es" ? "Error al enviar solicitud" : "Error submitting request");
+                }
+                setSubmitting(false);
+            };
+
+            const statusColors = { open: "bg-yellow-100 text-yellow-700", "in-progress": "bg-blue-100 text-blue-700", completed: "bg-green-100 text-green-700", declined: "bg-red-100 text-red-700" };
+            const statusLabels = { open: language === "es" ? "Abierto" : "Open", "in-progress": language === "es" ? "En Progreso" : "In Progress", completed: language === "es" ? "Completado" : "Completed", declined: language === "es" ? "Rechazado" : "Declined" };
+
+            return (
+                <div className="p-4 pb-24">
+                    <h2 className="text-2xl font-bold text-mint-700 mb-2">🔧 {language === "es" ? "Solicitud de Mantenimiento" : "Maintenance Request"}</h2>
+                    <p className="text-xs text-gray-500 mb-4">{language === "es" ? "Reporta cualquier problema o reparación necesaria" : "Report any issue or repair needed"}</p>
+
+                    {submitted && (
+                        <div className="mb-4 p-3 bg-green-100 border border-green-300 rounded-lg text-center text-green-700 font-bold text-sm">
+                            ✅ {language === "es" ? "¡Solicitud enviada!" : "Request submitted!"}
+                        </div>
+                    )}
+
+                    <div className="bg-white rounded-xl border-2 border-gray-200 p-4 space-y-4 mb-6">
+                        {/* What — description */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 uppercase tracking-wide block mb-1">
+                                {language === "es" ? "¿Qué necesita arreglo?" : "What needs fixing?"} *
+                            </label>
+                            <textarea value={description} onChange={e => setDescription(e.target.value)}
+                                rows={3} placeholder={language === "es" ? "Describe el problema..." : "Describe the issue..."}
+                                className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none" />
+                        </div>
+
+                        {/* Where — location */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 uppercase tracking-wide block mb-1">
+                                {language === "es" ? "¿Dónde?" : "Where?"} *
+                            </label>
+                            <select value={location} onChange={e => setLocation(e.target.value)}
+                                className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none">
+                                <option value="">{language === "es" ? "Selecciona ubicación..." : "Select location..."}</option>
+                                {locationOptions.map(loc => (
+                                    <option key={loc.en} value={loc.en}>{language === "es" ? loc.es : loc.en}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Urgency */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 uppercase tracking-wide block mb-1">
+                                {language === "es" ? "Urgencia" : "Urgency"}
+                            </label>
+                            <div className="flex gap-2">
+                                {[
+                                    { val: "low", en: "Low", es: "Baja", color: "bg-gray-100 text-gray-700 border-gray-300", active: "bg-gray-700 text-white border-gray-700" },
+                                    { val: "normal", en: "Normal", es: "Normal", color: "bg-yellow-50 text-yellow-700 border-yellow-300", active: "bg-yellow-600 text-white border-yellow-600" },
+                                    { val: "high", en: "High", es: "Alta", color: "bg-orange-50 text-orange-700 border-orange-300", active: "bg-orange-600 text-white border-orange-600" },
+                                    { val: "urgent", en: "Urgent", es: "Urgente", color: "bg-red-50 text-red-700 border-red-300", active: "bg-red-600 text-white border-red-600" }
+                                ].map(u => (
+                                    <button key={u.val} onClick={() => setUrgency(u.val)}
+                                        className={`flex-1 py-2 rounded-lg text-xs font-bold border-2 transition ${urgency === u.val ? u.active : u.color}`}>
+                                        {language === "es" ? u.es : u.en}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Why */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 uppercase tracking-wide block mb-1">
+                                {language === "es" ? "¿Por qué es importante? (opcional)" : "Why is this important? (optional)"}
+                            </label>
+                            <input type="text" value={reason} onChange={e => setReason(e.target.value)}
+                                placeholder={language === "es" ? "Riesgo de seguridad, afecta servicio, etc." : "Safety risk, affects service, etc."}
+                                className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none" />
+                        </div>
+
+                        {/* Photo */}
+                        <div>
+                            <label className="text-xs font-bold text-gray-600 uppercase tracking-wide block mb-1">
+                                {language === "es" ? "📷 Foto (opcional)" : "📷 Photo (optional)"}
+                            </label>
+                            {photoPreview ? (
+                                <div className="relative">
+                                    <img src={photoPreview} alt="Preview" className="rounded-lg border border-gray-200 max-w-full" style={{maxHeight: "200px"}} />
+                                    <button onClick={() => { setPhotoFile(null); setPhotoPreview(null); }}
+                                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-6 h-6 text-xs font-bold">✕</button>
+                                </div>
+                            ) : (
+                                <label className="block w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-center text-sm text-gray-500 cursor-pointer hover:border-mint-400 hover:text-mint-600 transition">
+                                    📷 {language === "es" ? "Toca para tomar foto" : "Tap to take photo"}
+                                    <input type="file" accept="image/*" capture="environment" onChange={handlePhotoSelect} className="hidden" />
+                                </label>
+                            )}
+                        </div>
+
+                        {/* Submit */}
+                        <button onClick={handleSubmit}
+                            disabled={submitting || !description.trim() || !location}
+                            className={`w-full py-3 rounded-lg font-bold text-white text-lg transition ${
+                                submitting || !description.trim() || !location ? "bg-gray-300 cursor-not-allowed" : "bg-mint-700 hover:bg-mint-800"}`}>
+                            {submitting ? (language === "es" ? "Enviando..." : "Submitting...") : (language === "es" ? "📩 Enviar Solicitud" : "📩 Submit Request")}
+                        </button>
+                    </div>
+
+                    {/* My recent requests */}
+                    {myRequests.length > 0 && (
+                        <div>
+                            <h3 className="text-lg font-bold text-gray-700 mb-2">{language === "es" ? "Mis Solicitudes Recientes" : "My Recent Requests"}</h3>
+                            <div className="space-y-2">
+                                {myRequests.map(req => (
+                                    <div key={req.id} className="bg-white rounded-lg border border-gray-200 p-3">
+                                        <div className="flex items-start justify-between mb-1">
+                                            <p className="text-sm font-bold text-gray-800 flex-1">{req.description}</p>
+                                            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ml-2 whitespace-nowrap ${statusColors[req.status] || "bg-gray-100 text-gray-600"}`}>
+                                                {statusLabels[req.status] || req.status}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs text-gray-500">📍 {req.location} • {new Date(req.createdAt).toLocaleDateString()}</p>
+                                        {req.adminNote && <p className="text-xs text-blue-600 mt-1">💬 {req.adminNote}</p>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         // Admin Panel Component
         function AdminPanel({ language, staffList, setStaffList }) {
             const [editingId, setEditingId] = useState(null);
@@ -3736,8 +4063,47 @@
             const [newPin, setNewPin] = useState("");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+            const [staffExpanded, setStaffExpanded] = useState(false);
+            const [maintenanceRequests, setMaintenanceRequests] = useState([]);
+            const [maintenanceExpanded, setMaintenanceExpanded] = useState(true);
+            const [selectedRequest, setSelectedRequest] = useState(null);
+            const [adminNote, setAdminNote] = useState("");
 
             const showSaved = () => { setSavedMsg(true); setTimeout(() => setSavedMsg(null), 1500); };
+
+            // Load maintenance requests
+            useEffect(() => {
+                const unsub = db.collection("maintenanceRequests")
+                    .orderBy("createdAt", "desc")
+                    .limit(50)
+                    .onSnapshot((snap) => {
+                        const reqs = [];
+                        snap.forEach(doc => reqs.push({ id: doc.id, ...doc.data() }));
+                        setMaintenanceRequests(reqs);
+                    }, (err) => { console.error("Error loading maintenance requests:", err); });
+                return () => unsub();
+            }, []);
+
+            const updateRequestStatus = async (reqId, newStatus) => {
+                try {
+                    const updates = { status: newStatus, updatedAt: new Date().toISOString() };
+                    if (adminNote.trim()) updates.adminNote = adminNote.trim();
+                    await db.collection("maintenanceRequests").doc(reqId).update(updates);
+                    setAdminNote("");
+                    showSaved();
+                } catch (err) { console.error("Error updating request:", err); }
+            };
+
+            const addAdminNoteToRequest = async (reqId) => {
+                if (!adminNote.trim()) return;
+                try {
+                    await db.collection("maintenanceRequests").doc(reqId).update({
+                        adminNote: adminNote.trim(), updatedAt: new Date().toISOString()
+                    });
+                    setAdminNote("");
+                    showSaved();
+                } catch (err) { console.error("Error adding note:", err); }
+            };
 
             const saveStaffToFirestore = async (updatedList) => {
                 try {
@@ -3797,112 +4163,231 @@
                         </div>
                     )}
 
-                    <div className="space-y-2 mb-4">
-                        {staffList.map(person => (
-                            <div key={person.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
-                                {editingId === person.id ? (
-                                    <div className="p-3 bg-blue-50 space-y-2">
-                                        <p className="font-bold text-gray-800">{person.name}</p>
+                    {/* ── MAINTENANCE REQUESTS ── */}
+                    <div className="mb-6">
+                        <button onClick={() => setMaintenanceExpanded(!maintenanceExpanded)}
+                            className="w-full flex items-center justify-between bg-red-50 border-2 border-red-200 rounded-xl p-4 hover:bg-red-100 transition">
+                            <div className="flex items-center gap-2">
+                                <span className="text-2xl">🔧</span>
+                                <div className="text-left">
+                                    <h3 className="font-bold text-red-700">{language === "es" ? "Solicitudes de Mantenimiento" : "Maintenance Requests"}</h3>
+                                    <p className="text-xs text-red-500">
+                                        {maintenanceRequests.filter(r => r.status === "open").length} {language === "es" ? "abiertos" : "open"}
+                                        {maintenanceRequests.filter(r => r.status === "in-progress").length > 0 && (
+                                            ` • ${maintenanceRequests.filter(r => r.status === "in-progress").length} ${language === "es" ? "en progreso" : "in progress"}`
+                                        )}
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-gray-400 text-xl">{maintenanceExpanded ? "▼" : "▶"}</span>
+                        </button>
+
+                        {maintenanceExpanded && (
+                            <div className="mt-2 space-y-2">
+                                {maintenanceRequests.length === 0 ? (
+                                    <p className="text-center text-gray-400 text-sm py-4">{language === "es" ? "No hay solicitudes" : "No requests yet"}</p>
+                                ) : maintenanceRequests.map(req => {
+                                    const isExpanded = selectedRequest === req.id;
+                                    const statusColors = { open: "bg-yellow-100 text-yellow-700 border-yellow-300", "in-progress": "bg-blue-100 text-blue-700 border-blue-300", completed: "bg-green-100 text-green-700 border-green-300", declined: "bg-red-100 text-red-700 border-red-300" };
+                                    const urgencyDot = { low: "🟢", normal: "🟡", high: "🟠", urgent: "🔴" };
+                                    return (
+                                        <div key={req.id} className={`bg-white rounded-lg border-2 overflow-hidden ${req.status === "open" ? "border-yellow-200" : "border-gray-200"}`}>
+                                            <button onClick={() => setSelectedRequest(isExpanded ? null : req.id)}
+                                                className="w-full p-3 text-left">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-1.5 mb-0.5">
+                                                            <span className="text-sm">{urgencyDot[req.urgency] || "🟡"}</span>
+                                                            <p className="text-sm font-bold text-gray-800">{req.description}</p>
+                                                        </div>
+                                                        <p className="text-xs text-gray-500">📍 {req.location} • 👤 {req.submittedBy} • {new Date(req.createdAt).toLocaleDateString()}</p>
+                                                    </div>
+                                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ml-2 whitespace-nowrap ${statusColors[req.status] || "bg-gray-100 text-gray-600 border-gray-300"}`}>
+                                                        {req.status === "in-progress" ? (language === "es" ? "En Progreso" : "In Progress") : req.status === "open" ? (language === "es" ? "Abierto" : "Open") : req.status === "completed" ? (language === "es" ? "Completado" : "Done") : (language === "es" ? "Rechazado" : "Declined")}
+                                                    </span>
+                                                </div>
+                                            </button>
+
+                                            {isExpanded && (
+                                                <div className="px-3 pb-3 border-t border-gray-100 pt-2 space-y-2">
+                                                    {req.reason && <p className="text-xs text-gray-600"><span className="font-bold">{language === "es" ? "Razón:" : "Why:"}</span> {req.reason}</p>}
+                                                    <p className="text-xs text-gray-500">{language === "es" ? "Enviado:" : "Submitted:"} {new Date(req.createdAt).toLocaleString()}</p>
+                                                    {req.photoUrl && (
+                                                        <img src={req.photoUrl} alt="Maintenance" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{maxHeight: "200px"}}
+                                                            onClick={() => window.open(req.photoUrl, "_blank")} />
+                                                    )}
+                                                    {req.adminNote && <p className="text-xs bg-blue-50 border border-blue-200 rounded p-2 text-blue-700">💬 {req.adminNote}</p>}
+
+                                                    {/* Admin note input */}
+                                                    <div className="flex gap-1">
+                                                        <input type="text" value={adminNote} onChange={e => setAdminNote(e.target.value)}
+                                                            placeholder={language === "es" ? "Agregar nota..." : "Add note..."}
+                                                            className="flex-1 border border-gray-200 rounded px-2 py-1.5 text-xs" />
+                                                        <button onClick={() => addAdminNoteToRequest(req.id)}
+                                                            className="bg-blue-500 text-white text-xs font-bold px-2 py-1.5 rounded">💬</button>
+                                                    </div>
+
+                                                    {/* Status buttons */}
+                                                    <div className="flex gap-1.5">
+                                                        {req.status !== "in-progress" && (
+                                                            <button onClick={() => updateRequestStatus(req.id, "in-progress")}
+                                                                className="flex-1 py-1.5 bg-blue-500 text-white rounded text-xs font-bold">
+                                                                {language === "es" ? "En Progreso" : "In Progress"}
+                                                            </button>
+                                                        )}
+                                                        {req.status !== "completed" && (
+                                                            <button onClick={() => updateRequestStatus(req.id, "completed")}
+                                                                className="flex-1 py-1.5 bg-green-600 text-white rounded text-xs font-bold">
+                                                                {language === "es" ? "Completado" : "Done"}
+                                                            </button>
+                                                        )}
+                                                        {req.status !== "declined" && req.status !== "completed" && (
+                                                            <button onClick={() => updateRequestStatus(req.id, "declined")}
+                                                                className="flex-1 py-1.5 bg-red-500 text-white rounded text-xs font-bold">
+                                                                {language === "es" ? "Rechazar" : "Decline"}
+                                                            </button>
+                                                        )}
+                                                        {(req.status === "completed" || req.status === "declined") && (
+                                                            <button onClick={() => updateRequestStatus(req.id, "open")}
+                                                                className="flex-1 py-1.5 bg-yellow-500 text-white rounded text-xs font-bold">
+                                                                {language === "es" ? "Reabrir" : "Reopen"}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ── STAFF LIST (collapsible) ── */}
+                    <div className="mb-6">
+                        <button onClick={() => setStaffExpanded(!staffExpanded)}
+                            className="w-full flex items-center justify-between bg-blue-50 border-2 border-blue-200 rounded-xl p-4 hover:bg-blue-100 transition">
+                            <div className="flex items-center gap-2">
+                                <span className="text-2xl">👥</span>
+                                <div className="text-left">
+                                    <h3 className="font-bold text-blue-700">{language === "es" ? "Personal" : "Staff"}</h3>
+                                    <p className="text-xs text-blue-500">{staffList.length} {language === "es" ? "empleados" : "members"}</p>
+                                </div>
+                            </div>
+                            <span className="text-gray-400 text-xl">{staffExpanded ? "▼" : "▶"}</span>
+                        </button>
+
+                        {staffExpanded && (
+                            <div className="mt-2">
+                                <div className="space-y-2 mb-4">
+                                    {staffList.map(person => (
+                                        <div key={person.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
+                                            {editingId === person.id ? (
+                                                <div className="p-3 bg-blue-50 space-y-2">
+                                                    <p className="font-bold text-gray-800">{person.name}</p>
+                                                    <div>
+                                                        <label className="text-xs text-gray-600 font-semibold">{t("staffRole", language)}</label>
+                                                        <select value={editRole} onChange={(e) => setEditRole(e.target.value)}
+                                                            className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm">
+                                                            {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-xs text-gray-600 font-semibold">{t("newPIN", language)}</label>
+                                                        <input type="text" inputMode="numeric" maxLength={4} value={editPin}
+                                                            onChange={(e) => setEditPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                                                            placeholder="0000"
+                                                            className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-mint-700 focus:outline-none" />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => handleSavePin(person.id)}
+                                                            disabled={editPin.length !== 4}
+                                                            className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
+                                                            {t("save", language)}
+                                                        </button>
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); }}
+                                                            className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
+                                                            {t("cancel", language)}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="p-3 flex items-center justify-between">
+                                                    <div>
+                                                        <p className="font-bold text-gray-800">{person.name}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • PIN: {person.pin}</p>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); }}
+                                                            className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
+                                                            ✏️ {t("changePIN", language)}
+                                                        </button>
+                                                        {!isAdmin(person.name) && (
+                                                            confirmRemoveId === person.id ? (
+                                                                <div className="flex gap-1">
+                                                                    <button onClick={() => handleRemoveStaff(person.id)}
+                                                                        className="px-2 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700">✓</button>
+                                                                    <button onClick={() => setConfirmRemoveId(null)}
+                                                                        className="px-2 py-1.5 bg-gray-400 text-white rounded-lg text-xs font-bold hover:bg-gray-500">✕</button>
+                                                                </div>
+                                                            ) : (
+                                                                <button onClick={() => setConfirmRemoveId(person.id)}
+                                                                    className="px-2 py-1.5 bg-mint-100 text-mint-700 rounded-lg text-xs font-bold hover:bg-mint-200 transition">
+                                                                    🗑️
+                                                                </button>
+                                                            )
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {showAdd ? (
+                                    <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 space-y-3">
+                                        <h3 className="font-bold text-green-800">{t("addStaff", language)}</h3>
+                                        <div>
+                                            <label className="text-xs text-gray-600 font-semibold">{t("staffName", language)}</label>
+                                            <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
+                                                placeholder={language === "es" ? "Nombre completo" : "Full name"}
+                                                className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none" />
+                                        </div>
                                         <div>
                                             <label className="text-xs text-gray-600 font-semibold">{t("staffRole", language)}</label>
-                                            <select value={editRole} onChange={(e) => setEditRole(e.target.value)}
-                                                className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm">
+                                            <select value={newRole} onChange={(e) => setNewRole(e.target.value)}
+                                                className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none text-sm">
                                                 {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
                                             </select>
                                         </div>
                                         <div>
-                                            <label className="text-xs text-gray-600 font-semibold">{t("newPIN", language)}</label>
-                                            <input type="text" inputMode="numeric" maxLength={4} value={editPin}
-                                                onChange={(e) => setEditPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                                            <label className="text-xs text-gray-600 font-semibold">{t("staffPIN", language)} (4 {language === "es" ? "dígitos" : "digits"})</label>
+                                            <input type="text" inputMode="numeric" maxLength={4} value={newPin}
+                                                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
                                                 placeholder="0000"
-                                                className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-mint-700 focus:outline-none" />
+                                                className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-green-700 focus:outline-none" />
                                         </div>
                                         <div className="flex gap-2">
-                                            <button onClick={() => handleSavePin(person.id)}
-                                                disabled={editPin.length !== 4}
-                                                className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
-                                                {t("save", language)}
+                                            <button onClick={handleAddStaff}
+                                                disabled={!newName.trim() || newPin.length !== 4}
+                                                className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
+                                                {t("addStaff", language)}
                                             </button>
-                                            <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); }}
+                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); }}
                                                 className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                 {t("cancel", language)}
                                             </button>
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="p-3 flex items-center justify-between">
-                                        <div>
-                                            <p className="font-bold text-gray-800">{person.name}</p>
-                                            <p className="text-xs text-gray-500">{person.role} • PIN: {person.pin}</p>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); }}
-                                                className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
-                                                ✏️ {t("changePIN", language)}
-                                            </button>
-                                            {!isAdmin(person.name) && (
-                                                confirmRemoveId === person.id ? (
-                                                    <div className="flex gap-1">
-                                                        <button onClick={() => handleRemoveStaff(person.id)}
-                                                            className="px-2 py-1.5 bg-red-600 text-white rounded-lg text-xs font-bold hover:bg-red-700">✓</button>
-                                                        <button onClick={() => setConfirmRemoveId(null)}
-                                                            className="px-2 py-1.5 bg-gray-400 text-white rounded-lg text-xs font-bold hover:bg-gray-500">✕</button>
-                                                    </div>
-                                                ) : (
-                                                    <button onClick={() => setConfirmRemoveId(person.id)}
-                                                        className="px-2 py-1.5 bg-mint-100 text-mint-700 rounded-lg text-xs font-bold hover:bg-mint-200 transition">
-                                                        🗑️
-                                                    </button>
-                                                )
-                                            )}
-                                        </div>
-                                    </div>
+                                    <button onClick={() => setShowAdd(true)}
+                                        className="w-full py-3 bg-green-700 text-white font-bold rounded-lg hover:bg-green-800 transition text-lg">
+                                        + {t("addStaff", language)}
+                                    </button>
                                 )}
                             </div>
-                        ))}
+                        )}
                     </div>
-
-                    {showAdd ? (
-                        <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 space-y-3">
-                            <h3 className="font-bold text-green-800">{t("addStaff", language)}</h3>
-                            <div>
-                                <label className="text-xs text-gray-600 font-semibold">{t("staffName", language)}</label>
-                                <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-                                    placeholder={language === "es" ? "Nombre completo" : "Full name"}
-                                    className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none" />
-                            </div>
-                            <div>
-                                <label className="text-xs text-gray-600 font-semibold">{t("staffRole", language)}</label>
-                                <select value={newRole} onChange={(e) => setNewRole(e.target.value)}
-                                    className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none text-sm">
-                                    {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-xs text-gray-600 font-semibold">{t("staffPIN", language)} (4 {language === "es" ? "dígitos" : "digits"})</label>
-                                <input type="text" inputMode="numeric" maxLength={4} value={newPin}
-                                    onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
-                                    placeholder="0000"
-                                    className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-green-700 focus:outline-none" />
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={handleAddStaff}
-                                    disabled={!newName.trim() || newPin.length !== 4}
-                                    className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
-                                    {t("addStaff", language)}
-                                </button>
-                                <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); }}
-                                    className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
-                                    {t("cancel", language)}
-                                </button>
-                            </div>
-                        </div>
-                    ) : (
-                        <button onClick={() => setShowAdd(true)}
-                            className="w-full py-3 bg-green-700 text-white font-bold rounded-lg hover:bg-green-800 transition text-lg">
-                            + {t("addStaff", language)}
-                        </button>
-                    )}
 
                     {/* Checklist History Section */}
                     <div className="mt-8 pt-6 border-t-2 border-gray-200">
@@ -4038,6 +4523,14 @@
                                             </div>
                                         </div>
                                     )}
+                                    <button
+                                        onClick={() => setActiveTab("maintenance")}
+                                        className="p-4 bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-lg hover:shadow-lg transition text-left"
+                                    >
+                                        <div className="text-3xl mb-2">🔧</div>
+                                        <div className="font-bold text-red-700">{language === "es" ? "Mantenimiento" : "Maintenance"}</div>
+                                        <div className="text-xs text-red-600">{language === "es" ? "Reportar un problema" : "Report an issue"}</div>
+                                    </button>
                                     {staffIsAdmin && (
                                         <button
                                             onClick={() => setActiveTab("admin")}
@@ -4057,6 +4550,7 @@
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} />}
                         {activeTab === "recipes" && isAtDDMau && <Recipes language={language} staffName={staffName} />}
+                        {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
                     </div>
 
