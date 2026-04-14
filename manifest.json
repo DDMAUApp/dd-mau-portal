@@ -1,0 +1,18 @@
+{
+  "name": "DD Mau Staff Portal",
+  "short_name": "DD Mau",
+  "description": "Staff portal for DD Mau Vietnamese Eatery",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f7f1",
+  "theme_color": "#255a37",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
