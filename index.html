@@ -3918,6 +3918,19 @@
             const [dayData, setDayData] = useState(null);
             const [prevData, setPrevData] = useState(null);
             const [loading, setLoading] = useState(true);
+            // Editable list name
+            const [listName, setListName] = useState("");
+            const [editingName, setEditingName] = useState(false);
+            // Ordered checkboxes
+            const [ordered, setOrdered] = useState({});
+            // Edit mode for counts & adding items
+            const [histEditMode, setHistEditMode] = useState(false);
+            const [histCounts, setHistCounts] = useState({});
+            const [addingToCategory, setAddingToCategory] = useState(null);
+            const [newItemName, setNewItemName] = useState("");
+            const [newItemNameEs, setNewItemNameEs] = useState("");
+            const [newItemSupplier, setNewItemSupplier] = useState("");
+            const [saving, setSaving] = useState(false);
 
             useEffect(() => {
                 const fetchHistory = async () => {
@@ -3939,8 +3952,18 @@
                     try {
                         const doc = await db.collection("inventoryHistory")
                             .doc(selectedDate).get();
-                        if (doc.exists) setDayData(doc.data());
-                        else setDayData(null);
+                        if (doc.exists) {
+                            const data = doc.data();
+                            setDayData(data);
+                            setListName(data.listName || "");
+                            setOrdered(data.ordered || {});
+                            setHistCounts(data.counts || {});
+                        } else {
+                            setDayData(null);
+                            setListName("");
+                            setOrdered({});
+                            setHistCounts({});
+                        }
 
                         // Find previous day in history
                         const idx = historyDates.indexOf(selectedDate);
@@ -3953,9 +3976,76 @@
                             setPrevData(null);
                         }
                     } catch (err) { console.error("Error loading day:", err); }
+                    setHistEditMode(false);
+                    setAddingToCategory(null);
                 };
                 fetchDay();
             }, [selectedDate, historyDates]);
+
+            // Save helper — persist changes back to Firestore
+            const saveToFirestore = async (updates) => {
+                if (!selectedDate) return;
+                setSaving(true);
+                try {
+                    await db.collection("inventoryHistory").doc(selectedDate).update(updates);
+                } catch (err) { console.error("Error saving inventory history:", err); }
+                setSaving(false);
+            };
+
+            // Toggle ordered checkbox
+            const toggleOrdered = async (itemId) => {
+                const newOrdered = { ...ordered, [itemId]: !ordered[itemId] };
+                setOrdered(newOrdered);
+                await saveToFirestore({ ordered: newOrdered });
+            };
+
+            // Save list name
+            const saveListName = async () => {
+                setEditingName(false);
+                await saveToFirestore({ listName });
+            };
+
+            // Update a count in edit mode
+            const updateHistCount = (itemId, val) => {
+                const n = Math.max(0, parseInt(val) || 0);
+                setHistCounts(prev => ({ ...prev, [itemId]: n }));
+            };
+
+            // Save edited counts back
+            const saveHistEdits = async () => {
+                // Remove zero-count items from counts
+                const cleanCounts = {};
+                Object.entries(histCounts).forEach(([k, v]) => { if (v && v > 0) cleanCounts[k] = v; });
+                // Rebuild items list to only include items with counts
+                const updatedItems = (dayData.items || []).map(cat => ({
+                    ...cat,
+                    items: cat.items.filter(i => cleanCounts[i.id])
+                })).filter(cat => cat.items.length > 0);
+                const updates = { counts: cleanCounts, items: updatedItems };
+                await saveToFirestore(updates);
+                setDayData(prev => ({ ...prev, counts: cleanCounts, items: updatedItems }));
+                setHistEditMode(false);
+            };
+
+            // Add new item to a category in the saved list
+            const addItemToHistory = async (catIdx) => {
+                if (!newItemName.trim()) return;
+                const cat = dayData.items[catIdx];
+                const newId = "hist_" + Date.now();
+                const newItem = { id: newId, name: newItemName.trim(), nameEs: newItemNameEs.trim(), supplier: newItemSupplier.trim(), orderDay: "" };
+                const updatedItems = dayData.items.map((c, idx) => {
+                    if (idx !== catIdx) return c;
+                    return { ...c, items: [...c.items, newItem] };
+                });
+                const newCounts = { ...histCounts, [newId]: 1 };
+                setHistCounts(newCounts);
+                setDayData(prev => ({ ...prev, items: updatedItems, counts: newCounts }));
+                await saveToFirestore({ items: updatedItems, counts: newCounts });
+                setNewItemName("");
+                setNewItemNameEs("");
+                setNewItemSupplier("");
+                setAddingToCategory(null);
+            };
 
             const formatDate = (dateStr) => {
                 // Keys are like "2026-04-11_143022"
@@ -3977,7 +4067,8 @@
             const printInventory = () => {
                 if (!dayData || !dayData.items) return;
                 const dateLabel = formatDate(selectedDate);
-                let html = `<!DOCTYPE html><html><head><title>DD Mau Inventory - ${dateLabel}</title>
+                const titleName = listName || (language === "es" ? "Conteo de Inventario" : "Inventory Count");
+                let html = `<!DOCTYPE html><html><head><title>DD Mau - ${titleName}</title>
                     <style>
                         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; color: #222; }
                         h1 { font-size: 20px; margin-bottom: 4px; }
@@ -3989,26 +4080,29 @@
                         .diff-pos { color: green; font-size: 11px; }
                         .diff-neg { color: red; font-size: 11px; }
                         .supplier { color: #999; font-size: 11px; }
+                        .ordered { text-decoration: line-through; color: #999; }
+                        .check { color: green; font-weight: bold; }
                         @media print { body { padding: 0; } }
                     </style></head><body>`;
-                html += `<h1>🍜 DD Mau — Inventory Count</h1>`;
+                html += `<h1>🍜 DD Mau — ${titleName}</h1>`;
                 html += `<div class="subtitle">${dateLabel} • ${language === "es" ? "Última actualización" : "Last updated"}: ${new Date(dayData.date).toLocaleString()}</div>`;
 
                 dayData.items.forEach(cat => {
-                    html += `<table><tr><th colspan="3">${cat.category}</th></tr>`;
+                    html += `<table><tr><th colspan="4">${cat.category}</th></tr>`;
                     cat.items.forEach(item => {
                         const count = dayData.counts?.[item.id] || 0;
                         const prevCount = prevData?.counts?.[item.id];
                         const diff = prevCount !== undefined ? count - prevCount : null;
                         const name = language === "es" && item.nameEs ? item.nameEs : item.name;
                         const supplierStr = item.supplier ? ` <span class="supplier">(${item.supplier})</span>` : "";
+                        const isOrdered = ordered[item.id];
                         let diffStr = "";
                         if (diff !== null && diff !== 0) {
                             diffStr = diff > 0
                                 ? ` <span class="diff-pos">+${diff}</span>`
                                 : ` <span class="diff-neg">${diff}</span>`;
                         }
-                        html += `<tr><td>${name}${supplierStr}</td><td class="count">${count}</td><td style="width:40px">${diffStr}</td></tr>`;
+                        html += `<tr><td style="width:30px">${isOrdered ? '<span class="check">✓</span>' : '☐'}</td><td class="${isOrdered ? 'ordered' : ''}">${name}${supplierStr}</td><td class="count">${count}</td><td style="width:40px">${diffStr}</td></tr>`;
                     });
                     html += `</table>`;
                 });
@@ -4033,6 +4127,10 @@
                 );
             }
 
+            // Count ordered vs total
+            const totalItems = dayData?.items?.reduce((sum, cat) => sum + cat.items.length, 0) || 0;
+            const orderedCount = dayData?.items?.reduce((sum, cat) => sum + cat.items.filter(i => ordered[i.id]).length, 0) || 0;
+
             return (
                 <div>
                     <div className="flex gap-2 overflow-x-auto pb-2 mb-4" style={{ scrollbarWidth: "none" }}>
@@ -4048,46 +4146,156 @@
 
                     {selectedDate && dayData && dayData.items && (
                         <div className="space-y-4">
-                            <div className="flex justify-between items-center">
-                                <p className="text-xs text-gray-500">
-                                    {language === "es" ? "Última actualización" : "Last updated"}: {new Date(dayData.date).toLocaleString()}
+                            {/* Date + editable list name */}
+                            <div className="bg-white rounded-xl border-2 border-mint-200 p-3">
+                                <p className="text-xs text-gray-500 mb-1">
+                                    {formatDate(selectedDate)}
                                 </p>
+                                {editingName ? (
+                                    <div className="flex gap-2">
+                                        <input type="text" value={listName}
+                                            onChange={e => setListName(e.target.value)}
+                                            placeholder={language === "es" ? "Nombre de la lista..." : "List name..."}
+                                            className="flex-1 px-3 py-1.5 border-2 border-mint-300 rounded-lg text-sm font-bold focus:outline-none focus:border-mint-700"
+                                            autoFocus
+                                            onKeyDown={e => { if (e.key === "Enter") saveListName(); }} />
+                                        <button onClick={saveListName}
+                                            className="px-3 py-1.5 bg-mint-700 text-white rounded-lg text-xs font-bold hover:bg-mint-800">
+                                            ✓
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-center gap-2 cursor-pointer group" onClick={() => setEditingName(true)}>
+                                        <h4 className="font-bold text-lg text-gray-800">
+                                            {listName || (language === "es" ? "Conteo de Inventario" : "Inventory Count")}
+                                        </h4>
+                                        <span className="text-gray-400 group-hover:text-mint-700 text-sm">✏️</span>
+                                    </div>
+                                )}
+                                {/* Order progress */}
+                                {totalItems > 0 && (
+                                    <div className="mt-2">
+                                        <div className="flex justify-between text-xs mb-1">
+                                            <span className="text-gray-500">{language === "es" ? "Progreso de pedido" : "Order progress"}</span>
+                                            <span className="font-bold text-mint-700">{orderedCount}/{totalItems}</span>
+                                        </div>
+                                        <div className="w-full bg-gray-200 rounded-full h-2">
+                                            <div className="bg-mint-500 h-2 rounded-full transition-all" style={{ width: `${totalItems > 0 ? (orderedCount / totalItems * 100) : 0}%` }}></div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex gap-2">
+                                <button onClick={() => { setHistEditMode(!histEditMode); setAddingToCategory(null); }}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${histEditMode ? "bg-green-700 text-white" : "bg-blue-700 text-white"}`}>
+                                    {histEditMode
+                                        ? (language === "es" ? "✓ Listo" : "✓ Done")
+                                        : (language === "es" ? "✏️ Editar Lista" : "✏️ Edit List")}
+                                </button>
                                 <button onClick={printInventory}
-                                    className="px-3 py-1.5 bg-mint-100 text-mint-700 rounded-lg text-xs font-bold hover:bg-mint-200 transition">
+                                    className="px-4 py-2 bg-mint-100 text-mint-700 rounded-lg text-xs font-bold hover:bg-mint-200 transition">
                                     🖨️ {language === "es" ? "Imprimir" : "Print"}
                                 </button>
                             </div>
+
+                            {/* Items list */}
                             {dayData.items.map((cat, catIdx) => (
                                 <div key={catIdx} className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-                                    <div className="p-2 bg-mint-50 border-b border-gray-200">
+                                    <div className="p-2 bg-mint-50 border-b border-gray-200 flex justify-between items-center">
                                         <h4 className="font-bold text-sm text-mint-800">{cat.category}</h4>
+                                        <span className="text-xs text-gray-400">
+                                            {cat.items.filter(i => ordered[i.id]).length}/{cat.items.length} {language === "es" ? "pedido" : "ordered"}
+                                        </span>
                                     </div>
                                     <div className="divide-y divide-gray-100">
                                         {cat.items.map((item, idx) => {
-                                            const count = dayData.counts?.[item.id] || 0;
+                                            const count = histEditMode ? (histCounts[item.id] || 0) : (dayData.counts?.[item.id] || 0);
                                             const prevCount = prevData?.counts?.[item.id];
-                                            const diff = prevCount !== undefined ? count - prevCount : null;
+                                            const diff = prevCount !== undefined ? (dayData.counts?.[item.id] || 0) - prevCount : null;
+                                            const isOrdered = ordered[item.id];
 
                                             return (
-                                                <div key={idx} className="flex items-center justify-between px-3 py-2 text-sm">
-                                                    <div className="flex-1">
+                                                <div key={idx} className={`flex items-center gap-2 px-2 py-2 text-sm ${isOrdered && !histEditMode ? "bg-green-50" : ""}`}>
+                                                    {/* Checkbox */}
+                                                    {!histEditMode && (
+                                                        <button onClick={() => toggleOrdered(item.id)}
+                                                            className={`w-6 h-6 rounded border-2 flex items-center justify-center flex-shrink-0 transition ${
+                                                                isOrdered ? "bg-green-500 border-green-500 text-white" : "border-gray-300 hover:border-mint-500"}`}>
+                                                            {isOrdered && <span className="text-xs font-bold">✓</span>}
+                                                        </button>
+                                                    )}
+                                                    <div className={`flex-1 min-w-0 ${isOrdered && !histEditMode ? "line-through text-gray-400" : ""}`}>
                                                         <span className="text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
-                                                        {item.supplier && <span className="text-xs text-gray-400 ml-2">({item.supplier})</span>}
+                                                        {item.supplier && <span className="text-xs text-gray-400 ml-1">({item.supplier})</span>}
                                                     </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <span className="font-bold text-gray-800 w-8 text-right">{count}</span>
-                                                        {diff !== null && diff !== 0 && (
-                                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${diff > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-                                                                {diff > 0 ? "+" : ""}{diff}
-                                                            </span>
+                                                    <div className="flex items-center gap-2 flex-shrink-0">
+                                                        {histEditMode ? (
+                                                            <div className="flex items-center gap-1">
+                                                                <button onClick={() => updateHistCount(item.id, (histCounts[item.id] || 0) - 1)}
+                                                                    className="w-7 h-7 rounded bg-gray-200 text-gray-700 font-bold flex items-center justify-center hover:bg-red-100">−</button>
+                                                                <span className="w-8 text-center font-bold">{histCounts[item.id] || 0}</span>
+                                                                <button onClick={() => updateHistCount(item.id, (histCounts[item.id] || 0) + 1)}
+                                                                    className="w-7 h-7 rounded bg-gray-200 text-gray-700 font-bold flex items-center justify-center hover:bg-green-100">+</button>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                <span className="font-bold text-gray-800 w-8 text-right">{count}</span>
+                                                                {diff !== null && diff !== 0 && (
+                                                                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${diff > 0 ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                                                                        {diff > 0 ? "+" : ""}{diff}
+                                                                    </span>
+                                                                )}
+                                                            </>
                                                         )}
                                                     </div>
                                                 </div>
                                             );
                                         })}
+                                        {/* Add item form */}
+                                        {histEditMode && addingToCategory === catIdx && (
+                                            <div className="p-2 border-t-2 border-green-200 bg-green-50 space-y-2">
+                                                <input type="text" value={newItemName} onChange={e => setNewItemName(e.target.value)}
+                                                    placeholder={language === "es" ? "Nombre del artículo" : "Item name"}
+                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded text-sm focus:border-mint-700 focus:outline-none" />
+                                                <input type="text" value={newItemNameEs} onChange={e => setNewItemNameEs(e.target.value)}
+                                                    placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"}
+                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded text-sm focus:border-mint-700 focus:outline-none" />
+                                                <input type="text" value={newItemSupplier} onChange={e => setNewItemSupplier(e.target.value)}
+                                                    placeholder={language === "es" ? "Proveedor" : "Supplier"}
+                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded text-sm focus:border-mint-700 focus:outline-none" />
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => addItemToHistory(catIdx)}
+                                                        className="flex-1 bg-green-700 text-white py-1.5 rounded text-sm font-bold hover:bg-green-800">
+                                                        {language === "es" ? "Agregar" : "Add"}
+                                                    </button>
+                                                    <button onClick={() => setAddingToCategory(null)}
+                                                        className="flex-1 bg-gray-400 text-white py-1.5 rounded text-sm font-bold hover:bg-gray-500">
+                                                        {language === "es" ? "Cancelar" : "Cancel"}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {histEditMode && addingToCategory !== catIdx && (
+                                            <button onClick={() => { setAddingToCategory(catIdx); setNewItemName(""); setNewItemNameEs(""); setNewItemSupplier(""); }}
+                                                className="w-full py-2 text-green-700 font-bold text-xs border-t border-gray-100 hover:bg-green-50 transition">
+                                                + {language === "es" ? "Agregar Artículo" : "Add Item"}
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             ))}
+
+                            {/* Save edits button */}
+                            {histEditMode && (
+                                <button onClick={saveHistEdits} disabled={saving}
+                                    className="w-full py-3 rounded-xl font-bold text-sm bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition disabled:opacity-50">
+                                    {saving
+                                        ? (language === "es" ? "Guardando..." : "Saving...")
+                                        : (language === "es" ? "💾 Guardar Cambios" : "💾 Save Changes")}
+                                </button>
+                            )}
                         </div>
                     )}
 
