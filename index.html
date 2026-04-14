@@ -1874,7 +1874,9 @@
                     await db.collection("inventoryHistory").doc(key).set({
                         counts: cleanCounts,
                         items: filteredItems,
-                        date: now.toISOString()
+                        date: now.toISOString(),
+                        listName: "",
+                        ordered: {}
                     });
                 } catch (err) { console.error("Error saving inventory snapshot:", err); }
             };
@@ -2568,6 +2570,15 @@
                                     )}
                                 </div>
                             )}
+
+                            {/* ── SAVED INVENTORY LISTS ── */}
+                            <div className="mt-6 pt-4 border-t-2 border-gray-200">
+                                <h3 className="text-lg font-bold text-mint-700 mb-1">📦 {language === "es" ? "Listas Guardadas" : "Saved Lists"}</h3>
+                                <p className="text-xs text-gray-500 mb-3">{language === "es"
+                                    ? "Revisa conteos anteriores, marca lo que ya se pidió."
+                                    : "Review past counts, check off what's been ordered."}</p>
+                                <InventoryHistory language={language} />
+                            </div>
                         </div>
                     )}
 
@@ -3982,12 +3993,12 @@
                 fetchDay();
             }, [selectedDate, historyDates]);
 
-            // Save helper — persist changes back to Firestore
+            // Save helper — persist changes back to Firestore (merge to handle new fields)
             const saveToFirestore = async (updates) => {
                 if (!selectedDate) return;
                 setSaving(true);
                 try {
-                    await db.collection("inventoryHistory").doc(selectedDate).update(updates);
+                    await db.collection("inventoryHistory").doc(selectedDate).set(updates, { merge: true });
                 } catch (err) { console.error("Error saving inventory history:", err); }
                 setSaving(false);
             };
@@ -4011,19 +4022,11 @@
                 setHistCounts(prev => ({ ...prev, [itemId]: n }));
             };
 
-            // Save edited counts back
+            // Save edited counts back (keep all items — this is a saved order list)
             const saveHistEdits = async () => {
-                // Remove zero-count items from counts
-                const cleanCounts = {};
-                Object.entries(histCounts).forEach(([k, v]) => { if (v && v > 0) cleanCounts[k] = v; });
-                // Rebuild items list to only include items with counts
-                const updatedItems = (dayData.items || []).map(cat => ({
-                    ...cat,
-                    items: cat.items.filter(i => cleanCounts[i.id])
-                })).filter(cat => cat.items.length > 0);
-                const updates = { counts: cleanCounts, items: updatedItems };
+                const updates = { counts: { ...histCounts } };
                 await saveToFirestore(updates);
-                setDayData(prev => ({ ...prev, counts: cleanCounts, items: updatedItems }));
+                setDayData(prev => ({ ...prev, counts: { ...histCounts } }));
                 setHistEditMode(false);
             };
 
