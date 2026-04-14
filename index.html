@@ -7,9 +7,47 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="DD Mau">
     <meta name="theme-color" content="#255a37">
-    <link rel="manifest" href="manifest.json">
     <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>">
     <title>DD Mau Staff Portal</title>
+    <script>
+        // Inline PWA manifest (no separate file needed)
+        const manifestData = {
+            name: "DD Mau Staff Portal",
+            short_name: "DD Mau",
+            description: "Staff portal for DD Mau Vietnamese Eatery",
+            start_url: window.location.href.split('?')[0],
+            display: "standalone",
+            background_color: "#f0f7f1",
+            theme_color: "#255a37",
+            orientation: "portrait",
+            icons: [{
+                src: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                sizes: "any",
+                type: "image/svg+xml",
+                purpose: "any"
+            }]
+        };
+        const manifestBlob = new Blob([JSON.stringify(manifestData)], { type: 'application/json' });
+        const manifestURL = URL.createObjectURL(manifestBlob);
+        const manifestLink = document.createElement('link');
+        manifestLink.rel = 'manifest';
+        manifestLink.href = manifestURL;
+        document.head.appendChild(manifestLink);
+
+        // Inline service worker (no separate sw.js file needed)
+        const swCode = `
+            self.addEventListener('install', () => self.skipWaiting());
+            self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
+            self.addEventListener('fetch', (e) => {
+                e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
+            });
+        `;
+        if ('serviceWorker' in navigator) {
+            const swBlob = new Blob([swCode], { type: 'application/javascript' });
+            const swURL = URL.createObjectURL(swBlob);
+            navigator.serviceWorker.register(swURL, { scope: '/' }).catch(() => {});
+        }
+    </script>
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -88,9 +126,6 @@
 
         // PWA Install Support
         let deferredInstallPrompt = null;
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').catch(() => {});
-        }
         window.addEventListener('beforeinstallprompt', (e) => {
             e.preventDefault();
             deferredInstallPrompt = e;
