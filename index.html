@@ -101,6 +101,32 @@
         }
         .task-flash-yellow { animation: flash-yellow 1.5s ease-in-out infinite; }
         .task-flash-red { animation: flash-red 1s ease-in-out infinite; }
+        /* Screenshot protection for recipes */
+        .recipe-protected {
+            -webkit-user-select: none;
+            user-select: none;
+            -webkit-touch-callout: none;
+        }
+        .recipe-watermark {
+            position: relative;
+        }
+        .recipe-watermark::after {
+            content: attr(data-watermark);
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%) rotate(-30deg);
+            font-size: 3rem;
+            font-weight: 900;
+            color: rgba(0,0,0,0.04);
+            white-space: nowrap;
+            pointer-events: none;
+            z-index: 1;
+        }
+        .screen-blur {
+            filter: blur(20px) !important;
+            transition: filter 0.15s ease;
+        }
     </style>
 </head>
 <body>
@@ -4066,6 +4092,25 @@
             }
 
             // Edit/Add form
+            // Screenshot protection — blur recipes when app loses focus
+            const [screenBlurred, setScreenBlurred] = useState(false);
+            useEffect(() => {
+                const handleVisChange = () => {
+                    if (document.hidden) setScreenBlurred(true);
+                    else setTimeout(() => setScreenBlurred(false), 300);
+                };
+                const handleBlur = () => setScreenBlurred(true);
+                const handleFocus = () => setTimeout(() => setScreenBlurred(false), 300);
+                document.addEventListener('visibilitychange', handleVisChange);
+                window.addEventListener('blur', handleBlur);
+                window.addEventListener('focus', handleFocus);
+                return () => {
+                    document.removeEventListener('visibilitychange', handleVisChange);
+                    window.removeEventListener('blur', handleBlur);
+                    window.removeEventListener('focus', handleFocus);
+                };
+            }, []);
+
             if (editMode) {
                 return <RecipeForm
                     language={language}
@@ -4076,7 +4121,7 @@
             }
 
             return (
-                <div className="p-4 pb-24">
+                <div className={`p-4 pb-24 recipe-protected ${screenBlurred ? "screen-blur" : ""}`}>
                     <div className="flex items-center justify-between mb-2">
                         <h2 className="text-2xl font-bold text-mint-700">🧑‍🍳 {t("recipesTitle", language)}</h2>
                         {adminUser && (
@@ -4117,7 +4162,7 @@
                                 </div>
 
                                 {isExpanded && (
-                                    <div className="border-t border-gray-200 p-4">
+                                    <div className="border-t border-gray-200 p-4 recipe-watermark overflow-hidden" data-watermark={staffName}>
                                         {adminUser && (
                                             <div className="flex gap-2 mb-3">
                                                 <button onClick={(e) => { e.stopPropagation(); requestEdit(recipe); }} className="text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-full font-bold border border-amber-300">
@@ -5528,14 +5573,16 @@
                                         <div className="font-bold text-orange-700">{t("weeklySchedule", language)}</div>
                                         <div className="text-xs text-orange-600">{language === "es" ? "Revisa tus turnos" : "Check your shifts"}</div>
                                     </button>
-                                    {isAtDDMau ? (
+                                    {(isAtDDMau || staffIsAdmin) ? (
                                         <button
                                             onClick={() => setActiveTab("recipes")}
                                             className="p-4 bg-gradient-to-br from-amber-50 to-amber-100 border-2 border-amber-300 rounded-lg hover:shadow-lg transition text-left"
                                         >
                                             <div className="text-3xl mb-2">🧑‍🍳</div>
                                             <div className="font-bold text-amber-700">{t("recipesTitle", language)}</div>
-                                            <div className="text-xs text-amber-600">{language === "es" ? "Solo disponible en DD Mau" : "Only available at DD Mau"}</div>
+                                            <div className="text-xs text-amber-600">{staffIsAdmin && !isAtDDMau
+                                                ? (language === "es" ? "Acceso de administrador — sin restricción" : "Admin access — no location restriction")
+                                                : (language === "es" ? "Solo disponible en DD Mau" : "Only available at DD Mau")}</div>
                                         </button>
                                     ) : (
                                         <div className="p-4 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-lg text-left opacity-60">
@@ -5576,7 +5623,7 @@
                         {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} />}
-                        {activeTab === "recipes" && isAtDDMau && <Recipes language={language} staffName={staffName} />}
+                        {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
                     </div>
