@@ -799,7 +799,7 @@
         ];
 
         // Version — bump this to push new default tasks to all users
-        const CHECKLIST_VERSION = 6;
+        const CHECKLIST_VERSION = 8;
 
         // Default tasks per period, per side (FOH/BOH)
         const DEFAULT_CHECKLIST_TASKS = {
@@ -839,30 +839,11 @@
                 ]
             },
             BOH: {
-                "morning": [
-                    { id: "b-m-0", task: "Power on all kitchen equipment\nEncender todo el equipo de cocina" },
-                    { id: "b-m-1", task: "Receive & store deliveries — refrigerate meats immediately\nRecibir y guardar entregas — refrigerar carnes de inmediato" },
-                    { id: "b-m-2", task: "Verify all staff present & on time — follow up on tardiness\nVerificar asistencia y puntualidad — dar seguimiento a tardanzas" },
-                    { id: "b-m-3", task: "Build prep list based on pars & inventory\nCrear lista de prep según niveles e inventario" },
-                    { id: "b-m-4", task: "Assign prep tasks & set time expectations\nAsignar tareas de prep y establecer tiempos" },
-                    { id: "b-m-5", task: "Confirm all ingredients & supplies are stocked for the day\nConfirmar que todos los ingredientes y suministros estén listos para el día" },
-                    { id: "b-m-6", task: "Set break schedule & post for team\nProgramar descansos y publicar para el equipo" },
-                    { id: "b-m-7", task: "Align with managers on daily game plan\nAlinear con gerentes sobre el plan del día" },
-                    { id: "b-m-8", task: "Team huddle — communicate goals, specials & 86 list\nReunión de equipo — comunicar metas, especiales y lista 86" },
-                    { id: "b-m-9", task: "Verify all line stations are set & ready for service\nVerificar que todas las estaciones estén montadas y listas" },
-                    { id: "b-m-10", task: "Direct prep staff to support the line during rushes\nDirigir al personal de prep a apoyar la línea durante las horas pico" },
-                    { id: "b-m-11", task: "Temp check — no meats left at room temperature\nControl de temperatura — ninguna carne a temperatura ambiente" },
-                    { id: "b-m-12", task: "Inspect prep sinks — proper sanitizer levels & use\nInspeccionar fregaderos de prep — niveles de sanitizante y uso correcto" },
-                    { id: "b-m-13", task: "Check dates & freshness on all prepped items\nRevisar fechas y frescura de todos los productos preparados" },
-                    { id: "b-m-14", task: "Taste-test soups & broths for quality\nProbar sopas y caldos para verificar calidad" },
-                    { id: "b-m-15", task: "Monitor ticket times — keep food moving fast\nMonitorear tiempos de tickets — mantener la comida saliendo rápido" },
-                    { id: "b-m-16", task: "Spot-check plating & food quality on outgoing orders\nRevisar presentación y calidad de los pedidos que salen" },
-                    { id: "b-m-17", task: "Float & assist wherever the team needs support\nApoyar donde el equipo necesite ayuda" }
-                ],
+                "morning": [],
                 "afternoon": [
-                    { id: "b-a-0", task: "Check fridge is stored properly\nRevisar que el refrigerador esté almacenado correctamente" },
-                    { id: "b-a-1", task: "Check product rotation — first in first out (line & fridge)\nRevisar rotación de producto — primero en entrar, primero en salir (línea y refrigerador)" },
-                    { id: "b-a-2", task: "Check every station to make sure they are ready — enough backups\nRevisar cada estación para asegurar que estén listas — suficientes respaldos", subtasks: [
+                    { id: "b-a-0", task: "Verify fridge storage — all items labeled, covered & stored properly\nVerificar almacenamiento en refrigerador — todo etiquetado, tapado y almacenado correctamente" },
+                    { id: "b-a-1", task: "Check product rotation — first in, first out (line & fridge)\nRevisar rotación de producto — primero en entrar, primero en salir (línea y refrigerador)" },
+                    { id: "b-a-2", task: "Inspect every station — stocked & ready with enough backups\nInspeccionar cada estación — abastecida y lista con suficientes respaldos", subtasks: [
                         { id: "b-a-2_s0", task: "Pho" },
                         { id: "b-a-2_s1", task: "Fry" },
                         { id: "b-a-2_s2", task: "Grill" },
@@ -871,17 +852,17 @@
                         { id: "b-a-2_s5", task: "Spring Roll\nRollos de Primavera" },
                         { id: "b-a-2_s6", task: "Fried Rice\nArroz Frito" }
                     ]},
-                    { id: "b-a-3", task: "Check soups\nRevisar sopas" },
-                    { id: "b-a-4", task: "Check prep area for meats just sitting out\nRevisar área de prep por carnes dejadas afuera" },
-                    { id: "b-a-5", task: "Check prep sink\nRevisar fregadero de prep" },
-                    { id: "b-a-6", task: "Check stations before break\nRevisar estaciones antes del descanso" },
-                    { id: "b-a-7", task: "Check prep area before people leave for breaks\nRevisar área de prep antes de que salgan a descanso" },
-                    { id: "b-a-8", task: "Make sure there are people covering stations\nAsegurarse de que haya personas cubriendo estaciones" },
-                    { id: "b-a-9", task: "Check all stations for stock for dinner\nRevisar todas las estaciones de abastecimiento para la cena" },
-                    { id: "b-a-10", task: "Check all stations for closing — they have checked out with you\nRevisar todas las estaciones para el cierre — que hayan firmado salida contigo", subtasks: [
+                    { id: "b-a-3", task: "Taste & check all soups — adjust seasoning if needed\nProbar y revisar todas las sopas — ajustar sazón si es necesario" },
+                    { id: "b-a-4", task: "Check prep area — no meats sitting out at room temp\nRevisar área de prep — ninguna carne fuera a temperatura ambiente" },
+                    { id: "b-a-5", task: "Inspect prep sink — clean & sanitized\nInspeccionar fregadero de prep — limpio y sanitizado" },
+                    { id: "b-a-6", task: "Verify all stations are set before breaks begin\nVerificar que todas las estaciones estén listas antes de los descansos" },
+                    { id: "b-a-7", task: "Inspect prep area before staff leaves for break\nInspeccionar área de prep antes de que el personal salga a descanso" },
+                    { id: "b-a-8", task: "Confirm coverage — every station has someone covering\nConfirmar cobertura — cada estación tiene a alguien cubriendo" },
+                    { id: "b-a-9", task: "Check all stations are stocked & ready for dinner service\nRevisar que todas las estaciones estén abastecidas y listas para la cena" },
+                    { id: "b-a-10", task: "Closing walkthrough — each person checks out with you before leaving\nRecorrido de cierre — cada persona firma salida contigo antes de irse", subtasks: [
                         { id: "b-a-10_s0", task: "All stations\nTodas las estaciones" }
                     ]},
-                    { id: "b-a-11", task: "Make sure all equipment is turned off, doors closed, and gas off. Fridge on\nAsegurarse de que todo el equipo esté apagado, puertas cerradas, gas cerrado. Refrigerador encendido" }
+                    { id: "b-a-11", task: "Final shutdown — all equipment off, doors closed, gas off, fridges running\nApagado final — todo el equipo apagado, puertas cerradas, gas cerrado, refrigeradores encendidos" }
                 ]
             }
         };
