@@ -792,77 +792,69 @@
         };
 
         // Opening Checklist
-        // Time periods for checklists
+        // Time periods for checklists (single period — no morning/afternoon split)
         const TIME_PERIODS = [
-            { id: "morning", nameEn: "Morning", nameEs: "Mañana", emoji: "☀️" },
-            { id: "afternoon", nameEn: "Afternoon", nameEs: "Tarde", emoji: "🌙" }
+            { id: "all", nameEn: "Tasks", nameEs: "Tareas", emoji: "📋" }
         ];
 
         // Version — bump this to push new default tasks to all users
-        const CHECKLIST_VERSION = 8;
+        const CHECKLIST_VERSION = 9;
 
         // Default tasks per period, per side (FOH/BOH)
         const DEFAULT_CHECKLIST_TASKS = {
             FOH: {
-                "morning": [
-                    { id: "f-m-0", task: "Turn on lights — dining, restrooms, signage\nEncender luces — comedor, baños, letreros" },
-                    { id: "f-m-1", task: "Set up POS system & test all terminals\nConfigurar POS y probar todas las terminales" },
-                    { id: "f-m-2", task: "Prep dining area — wipe tables, set chairs, menus\nPreparar comedor — limpiar mesas, acomodar sillas, menús" },
-                    { id: "f-m-3", task: "Stock beverage station — coffee, tea, ice, cups, lids\nAbastecer estación de bebidas — café, té, hielo, vasos, tapas" },
-                    { id: "f-m-4", task: "Check and restock condiment station\nRevisar y reabastecer estación de condimentos" },
-                    { id: "f-m-5", task: "Check restroom supplies — paper, soap, clean\nRevisar suministros de baño — papel, jabón, limpieza" },
-                    { id: "f-m-6", task: "Review daily specials and 86 list with team\nRevisar especiales del día y lista 86 con el equipo" },
-                    { id: "f-m-7", task: "Check music and A/C — comfortable for guests\nRevisar música y aire — cómodo para clientes" },
-                    { id: "f-m-8", task: "Make sure all staff is in position and greeting guests\nAsegurarse de que todo el personal esté en posición y saludando clientes" },
-                    { id: "f-m-9", task: "Monitor wait times — greet and seat efficiently\nMonitorear tiempos de espera — saludar y sentar eficientemente" },
-                    { id: "f-m-10", task: "Bus tables quickly during rush\nRecoger mesas rápido durante hora pico" },
-                    { id: "f-m-11", task: "Restock napkins, utensils, condiments as needed\nReabastecer servilletas, cubiertos, condimentos según necesidad" },
-                    { id: "f-m-12", task: "Check restrooms mid-rush\nRevisar baños durante hora pico" }
-                ],
-                "afternoon": [
-                    { id: "f-a-0", task: "Restock all service stations before break\nReabastecer todas las estaciones de servicio antes del descanso" },
-                    { id: "f-a-1", task: "Check tables and floor for cleanliness\nRevisar mesas y piso por limpieza" },
-                    { id: "f-a-2", task: "Refresh dining area — wipe tables, sweep floor\nRefrescar comedor — limpiar mesas, barrer piso" },
-                    { id: "f-a-3", task: "Restock beverage and condiment stations\nReabastecer estaciones de bebidas y condimentos" },
-                    { id: "f-a-4", task: "Monitor wait times and customer flow\nMonitorear tiempos de espera y flujo de clientes" },
-                    { id: "f-a-5", task: "Check restroom supplies\nRevisar suministros de baño" },
-                    { id: "f-a-6", task: "Assign closing duties evenly to all FOH staff\nAsignar tareas de cierre equitativamente a todo el personal FOH" },
-                    { id: "f-a-7", task: "Last call for dine-in orders\nÚltima llamada para pedidos en comedor" },
-                    { id: "f-a-8", task: "Close out all registers — count drawers, run reports\nCerrar todas las cajas — contar gavetas, correr reportes" },
-                    { id: "f-a-9", task: "Clean all tables, chairs, and booths\nLimpiar todas las mesas, sillas y cabinas" },
-                    { id: "f-a-10", task: "Break down beverage and condiment stations\nDesarmar estaciones de bebidas y condimentos" },
-                    { id: "f-a-11", task: "Clean and restock restrooms for next day\nLimpiar y reabastecer baños para el siguiente día" },
-                    { id: "f-a-12", task: "Final sweep and mop dining floor\nBarrida y trapeado final del comedor" },
-                    { id: "f-a-13", task: "Manager check each person's closing work\nGerente revisa el trabajo de cierre de cada persona" },
-                    { id: "f-a-14", task: "Turn off dining lights, signs, A/C\nApagar luces del comedor, letreros, aire" },
-                    { id: "f-a-15", task: "Final walkthrough — everything off and locked\nRecorrido final — todo apagado y cerrado" }
+                "all": [
+                    { id: "f-0", task: "Turn on lights — dining, restrooms, signage\nEncender luces — comedor, baños, letreros" },
+                    { id: "f-1", task: "Set up POS system & test all terminals\nConfigurar POS y probar todas las terminales" },
+                    { id: "f-2", task: "Prep dining area — wipe tables, set chairs, menus\nPreparar comedor — limpiar mesas, acomodar sillas, menús" },
+                    { id: "f-3", task: "Stock beverage station — coffee, tea, ice, cups, lids\nAbastecer estación de bebidas — café, té, hielo, vasos, tapas" },
+                    { id: "f-4", task: "Check and restock condiment station\nRevisar y reabastecer estación de condimentos" },
+                    { id: "f-5", task: "Check restroom supplies — paper, soap, clean\nRevisar suministros de baño — papel, jabón, limpieza" },
+                    { id: "f-6", task: "Review daily specials and 86 list with team\nRevisar especiales del día y lista 86 con el equipo" },
+                    { id: "f-7", task: "Check music and A/C — comfortable for guests\nRevisar música y aire — cómodo para clientes" },
+                    { id: "f-8", task: "Make sure all staff is in position and greeting guests\nAsegurarse de que todo el personal esté en posición y saludando clientes" },
+                    { id: "f-9", task: "Monitor wait times — greet and seat efficiently\nMonitorear tiempos de espera — saludar y sentar eficientemente" },
+                    { id: "f-10", task: "Bus tables quickly during rush\nRecoger mesas rápido durante hora pico" },
+                    { id: "f-11", task: "Restock napkins, utensils, condiments as needed\nReabastecer servilletas, cubiertos, condimentos según necesidad" },
+                    { id: "f-12", task: "Check restrooms mid-rush\nRevisar baños durante hora pico" },
+                    { id: "f-13", task: "Restock all service stations before break\nReabastecer todas las estaciones de servicio antes del descanso" },
+                    { id: "f-14", task: "Refresh dining area — wipe tables, sweep floor\nRefrescar comedor — limpiar mesas, barrer piso" },
+                    { id: "f-15", task: "Assign closing duties evenly to all FOH staff\nAsignar tareas de cierre equitativamente a todo el personal FOH" },
+                    { id: "f-16", task: "Last call for dine-in orders\nÚltima llamada para pedidos en comedor" },
+                    { id: "f-17", task: "Close out all registers — count drawers, run reports\nCerrar todas las cajas — contar gavetas, correr reportes" },
+                    { id: "f-18", task: "Clean all tables, chairs, and booths\nLimpiar todas las mesas, sillas y cabinas" },
+                    { id: "f-19", task: "Break down beverage and condiment stations\nDesarmar estaciones de bebidas y condimentos" },
+                    { id: "f-20", task: "Clean and restock restrooms for next day\nLimpiar y reabastecer baños para el siguiente día" },
+                    { id: "f-21", task: "Final sweep and mop dining floor\nBarrida y trapeado final del comedor" },
+                    { id: "f-22", task: "Manager check each person's closing work\nGerente revisa el trabajo de cierre de cada persona" },
+                    { id: "f-23", task: "Turn off dining lights, signs, A/C\nApagar luces del comedor, letreros, aire" },
+                    { id: "f-24", task: "Final walkthrough — everything off and locked\nRecorrido final — todo apagado y cerrado" }
                 ]
             },
             BOH: {
-                "morning": [],
-                "afternoon": [
-                    { id: "b-a-0", task: "Verify fridge storage — all items labeled, covered & stored properly\nVerificar almacenamiento en refrigerador — todo etiquetado, tapado y almacenado correctamente" },
-                    { id: "b-a-1", task: "Check product rotation — first in, first out (line & fridge)\nRevisar rotación de producto — primero en entrar, primero en salir (línea y refrigerador)" },
-                    { id: "b-a-2", task: "Inspect every station — stocked & ready with enough backups\nInspeccionar cada estación — abastecida y lista con suficientes respaldos", subtasks: [
-                        { id: "b-a-2_s0", task: "Pho" },
-                        { id: "b-a-2_s1", task: "Fry" },
-                        { id: "b-a-2_s2", task: "Grill" },
-                        { id: "b-a-2_s3", task: "Bowls" },
-                        { id: "b-a-2_s4", task: "Baos" },
-                        { id: "b-a-2_s5", task: "Spring Roll\nRollos de Primavera" },
-                        { id: "b-a-2_s6", task: "Fried Rice\nArroz Frito" }
+                "all": [
+                    { id: "b-0", task: "Verify fridge storage — all items labeled, covered & stored properly\nVerificar almacenamiento en refrigerador — todo etiquetado, tapado y almacenado correctamente" },
+                    { id: "b-1", task: "Check product rotation — first in, first out (line & fridge)\nRevisar rotación de producto — primero en entrar, primero en salir (línea y refrigerador)" },
+                    { id: "b-2", task: "Inspect every station — stocked & ready with enough backups\nInspeccionar cada estación — abastecida y lista con suficientes respaldos", subtasks: [
+                        { id: "b-2_s0", task: "Pho" },
+                        { id: "b-2_s1", task: "Fry" },
+                        { id: "b-2_s2", task: "Grill" },
+                        { id: "b-2_s3", task: "Bowls" },
+                        { id: "b-2_s4", task: "Baos" },
+                        { id: "b-2_s5", task: "Spring Roll\nRollos de Primavera" },
+                        { id: "b-2_s6", task: "Fried Rice\nArroz Frito" }
                     ]},
-                    { id: "b-a-3", task: "Taste & check all soups — adjust seasoning if needed\nProbar y revisar todas las sopas — ajustar sazón si es necesario" },
-                    { id: "b-a-4", task: "Check prep area — no meats sitting out at room temp\nRevisar área de prep — ninguna carne fuera a temperatura ambiente" },
-                    { id: "b-a-5", task: "Inspect prep sink — clean & sanitized\nInspeccionar fregadero de prep — limpio y sanitizado" },
-                    { id: "b-a-6", task: "Verify all stations are set before breaks begin\nVerificar que todas las estaciones estén listas antes de los descansos" },
-                    { id: "b-a-7", task: "Inspect prep area before staff leaves for break\nInspeccionar área de prep antes de que el personal salga a descanso" },
-                    { id: "b-a-8", task: "Confirm coverage — every station has someone covering\nConfirmar cobertura — cada estación tiene a alguien cubriendo" },
-                    { id: "b-a-9", task: "Check all stations are stocked & ready for dinner service\nRevisar que todas las estaciones estén abastecidas y listas para la cena" },
-                    { id: "b-a-10", task: "Closing walkthrough — each person checks out with you before leaving\nRecorrido de cierre — cada persona firma salida contigo antes de irse", subtasks: [
-                        { id: "b-a-10_s0", task: "All stations\nTodas las estaciones" }
+                    { id: "b-3", task: "Taste & check all soups — adjust seasoning if needed\nProbar y revisar todas las sopas — ajustar sazón si es necesario" },
+                    { id: "b-4", task: "Check prep area — no meats sitting out at room temp\nRevisar área de prep — ninguna carne fuera a temperatura ambiente" },
+                    { id: "b-5", task: "Inspect prep sink — clean & sanitized\nInspeccionar fregadero de prep — limpio y sanitizado" },
+                    { id: "b-6", task: "Verify all stations are set before breaks begin\nVerificar que todas las estaciones estén listas antes de los descansos" },
+                    { id: "b-7", task: "Inspect prep area before staff leaves for break\nInspeccionar área de prep antes de que el personal salga a descanso" },
+                    { id: "b-8", task: "Confirm coverage — every station has someone covering\nConfirmar cobertura — cada estación tiene a alguien cubriendo" },
+                    { id: "b-9", task: "Check all stations are stocked & ready for dinner service\nRevisar que todas las estaciones estén abastecidas y listas para la cena" },
+                    { id: "b-10", task: "Closing walkthrough — each person checks out with you before leaving\nRecorrido de cierre — cada persona firma salida contigo antes de irse", subtasks: [
+                        { id: "b-10_s0", task: "All stations\nTodas las estaciones" }
                     ]},
-                    { id: "b-a-11", task: "Final shutdown — all equipment off, doors closed, gas off, fridges running\nApagado final — todo el equipo apagado, puertas cerradas, gas cerrado, refrigeradores encendidos" }
+                    { id: "b-11", task: "Final shutdown — all equipment off, doors closed, gas off, fridges running\nApagado final — todo el equipo apagado, puertas cerradas, gas cerrado, refrigeradores encendidos" }
                 ]
             }
         };
@@ -874,24 +866,24 @@
                 name: "Proteins",
                 nameEs: "Proteínas",
                 items: [
-                    { id: "0-0", name: "Beef Ball Tip (LG & FR)", nameEs: "Punta de Cadera de Res", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "0-1", name: "Beef Bones (PHO)", nameEs: "Huesos de Res", supplier: "WS", orderDay: "Fri" },
-                    { id: "0-2", name: "Beef Brisket (PHO)", nameEs: "Pecho de Res", supplier: "Costco", orderDay: "Tue & Fri" },
-                    { id: "0-3", name: "Beef Flank (PHO)", nameEs: "Falda de Res", supplier: "Costco", orderDay: "Tue & Fri" },
-                    { id: "0-4", name: "Beef Meatball (PHO)", nameEs: "Albóndiga de Res", supplier: "J", orderDay: "Tue" },
-                    { id: "0-5", name: "Chicken Breast (Unfrozen)", nameEs: "Pechuga de Pollo Descongelada", supplier: "WS", orderDay: "Fri" },
-                    { id: "0-6", name: "Chicken Dark Leg Meat", nameEs: "Carne Oscura de Pollo", supplier: "WS", orderDay: "Fri" },
-                    { id: "0-7", name: "21/25 Shrimp – Tail ON", nameEs: "Camarón con Cola", supplier: "WS", orderDay: "Tue" },
-                    { id: "0-8", name: "31/40 Shrimp (P&D)", nameEs: "Camarón Pelado y Desvenado", supplier: "US Foods", orderDay: "Tue" },
+                    { id: "0-0", name: "Beef Ball Tip (LG & FR)", nameEs: "Punta de Bola de Res", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "0-1", name: "Beef Bones (PHO)", nameEs: "Hueso de Res (PHO)", supplier: "WS", orderDay: "Fri" },
+                    { id: "0-2", name: "Beef Brisket (PHO)", nameEs: "Pecho de Res (PHO)", supplier: "Costco", orderDay: "Tue & Fri" },
+                    { id: "0-3", name: "Beef Flank (PHO)", nameEs: "Falda de Res (PHO)", supplier: "Costco", orderDay: "Tue & Fri" },
+                    { id: "0-4", name: "Beef Meatball (PHO)", nameEs: "Albóndiga de Res (PHO)", supplier: "J", orderDay: "Tue" },
+                    { id: "0-5", name: "Chicken Breast (Unfrozen)", nameEs: "Pechuga de Pollo (Descongelada)", supplier: "WS", orderDay: "Fri" },
+                    { id: "0-6", name: "Chicken Dark Leg Meat", nameEs: "Carne Oscura de Pierna de Pollo", supplier: "WS", orderDay: "Fri" },
+                    { id: "0-7", name: "21/25 Shrimp – Tail ON", nameEs: "Camarón 21/25 – Con Cola", supplier: "WS", orderDay: "Tue" },
+                    { id: "0-8", name: "31/40 Shrimp (P&D)", nameEs: "Camarón 31/40 (Pelado y Desvenado)", supplier: "US Foods", orderDay: "Tue" },
                     { id: "0-9", name: "Ham", nameEs: "Jamón", supplier: "Costco", orderDay: "Tue & Fri" },
                     { id: "0-10", name: "Firm Tofu", nameEs: "Tofu Firme", supplier: "WS", orderDay: "Fri" },
-                    { id: "0-11", name: "Imitation Crab Sticks/Flakes", nameEs: "Imitación de Cangrejo", supplier: "WS", orderDay: "Fri" },
-                    { id: "0-12", name: "Jumbo Party Wings", nameEs: "Alitas de Pollo Jumbo", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "0-13", name: "Boneless Pork Butt", nameEs: "Costilla de Cerdo sin Hueso", supplier: "Costco", orderDay: "Tue & Fri" },
+                    { id: "0-11", name: "Imitation Crab Sticks/Flakes", nameEs: "Surimi / Imitación de Cangrejo", supplier: "WS", orderDay: "Fri" },
+                    { id: "0-12", name: "Jumbo Party Wings", nameEs: "Alitas Jumbo para Fiesta", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "0-13", name: "Boneless Pork Butt", nameEs: "Espaldilla de Puerco sin Hueso", supplier: "Costco", orderDay: "Tue & Fri" },
                     { id: "0-14", name: "Salmon", nameEs: "Salmón", supplier: "Fabulous Fish", orderDay: "Tue" },
-                    { id: "0-15", name: "Scallops", nameEs: "Vieiras", supplier: "Costco", orderDay: "Tue & Fri" },
-                    { id: "0-16", name: "Squid Tubes U10", nameEs: "Tubos de Calamar", supplier: "WS", orderDay: "Fri" },
-                    { id: "0-17", name: "SWAI Fish", nameEs: "Pez Swai", supplier: "WS", orderDay: "Fri" },
+                    { id: "0-15", name: "Scallops", nameEs: "Callos de Hacha", supplier: "Costco", orderDay: "Tue & Fri" },
+                    { id: "0-16", name: "Squid Tubes U10", nameEs: "Tubos de Calamar U10", supplier: "WS", orderDay: "Fri" },
+                    { id: "0-17", name: "SWAI Fish", nameEs: "Pescado Swai", supplier: "WS", orderDay: "Fri" },
                     { id: "0-18", name: "Vegan Shrimp", nameEs: "Camarón Vegano", supplier: "J", orderDay: "As needed" },
                     { id: "0-19", name: "Vegan Chicken", nameEs: "Pollo Vegano", supplier: "US Foods", orderDay: "As needed" },
                     { id: "0-20", name: "Vegan Beef", nameEs: "Res Vegana", supplier: "YE", orderDay: "As needed" }
@@ -902,25 +894,25 @@
                 name: "Veggies",
                 nameEs: "Verduras",
                 items: [
-                    { id: "1-0", name: "Bean Sprouts", nameEs: "Brotes de Soja", supplier: "WS", orderDay: "Fri" },
-                    { id: "1-1", name: "Broccoli (Iceless)", nameEs: "Brócoli sin Hielo", supplier: "WS", orderDay: "Tue & Fri" },
-                    { id: "1-2", name: "Carrots 50lbs", nameEs: "Zanahorias 50 lbs", supplier: "WS", orderDay: "Tue & Fri" },
-                    { id: "1-3", name: "Cilantro (Iceless)", nameEs: "Cilantro sin Hielo", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "1-0", name: "Bean Sprouts", nameEs: "Germinado de Soya", supplier: "WS", orderDay: "Fri" },
+                    { id: "1-1", name: "Broccoli (Iceless)", nameEs: "Brócoli (Sin Hielo)", supplier: "WS", orderDay: "Tue & Fri" },
+                    { id: "1-2", name: "Carrots 50lbs", nameEs: "Zanahoria 50 lbs", supplier: "WS", orderDay: "Tue & Fri" },
+                    { id: "1-3", name: "Cilantro (Iceless)", nameEs: "Cilantro (Sin Hielo)", supplier: "US Foods", orderDay: "Fri" },
                     { id: "1-4", name: "Cucumbers", nameEs: "Pepinos", supplier: "WS", orderDay: "Tue & Fri" },
-                    { id: "1-5", name: "Daikon/Turnip", nameEs: "Daikon/Nabo", supplier: "WS", orderDay: "Fri" },
+                    { id: "1-5", name: "Daikon/Turnip", nameEs: "Daikon / Nabo", supplier: "WS", orderDay: "Fri" },
                     { id: "1-6", name: "Ginger", nameEs: "Jengibre", supplier: "WS", orderDay: "Fri" },
-                    { id: "1-7", name: "Green Cabbage", nameEs: "Repollo Verde", supplier: "US Foods", orderDay: "Tue" },
-                    { id: "1-8", name: "Green Onion (Iceless)", nameEs: "Cebollín sin Hielo", supplier: "WS", orderDay: "Fri" },
+                    { id: "1-7", name: "Green Cabbage", nameEs: "Col Verde", supplier: "US Foods", orderDay: "Tue" },
+                    { id: "1-8", name: "Green Onion (Iceless)", nameEs: "Cebollita de Cambray (Sin Hielo)", supplier: "WS", orderDay: "Fri" },
                     { id: "1-9", name: "Iceberg Lettuce", nameEs: "Lechuga Iceberg", supplier: "US Foods", orderDay: "Fri" },
                     { id: "1-10", name: "Jalapeños", nameEs: "Jalapeños", supplier: "WS", orderDay: "Fri" },
-                    { id: "1-11", name: "King Oyster Mushroom", nameEs: "Hongo Ostra Rey", supplier: "WS", orderDay: "Fri" },
-                    { id: "1-12", name: "Lemongrass – Chopped", nameEs: "Hierba de Limón Picada", supplier: "Pan-Asia", orderDay: "Tue" },
-                    { id: "1-13", name: "Lemongrass – Fresh", nameEs: "Hierba de Limón Fresca", supplier: "Pan-Asia", orderDay: "Tue" },
-                    { id: "1-14", name: "Limes", nameEs: "Limas", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "1-11", name: "King Oyster Mushroom", nameEs: "Hongo Seta Rey", supplier: "WS", orderDay: "Fri" },
+                    { id: "1-12", name: "Lemongrass – Chopped", nameEs: "Zacate de Limón – Picado", supplier: "Pan-Asia", orderDay: "Tue" },
+                    { id: "1-13", name: "Lemongrass – Fresh", nameEs: "Zacate de Limón – Fresco", supplier: "Pan-Asia", orderDay: "Tue" },
+                    { id: "1-14", name: "Limes", nameEs: "Limones", supplier: "US Foods", orderDay: "Fri" },
                     { id: "1-15", name: "Peeled Garlic", nameEs: "Ajo Pelado", supplier: "WS", orderDay: "Tue & Fri" },
-                    { id: "1-16", name: "Red Cabbage", nameEs: "Repollo Rojo", supplier: "US Foods", orderDay: "Tue" },
+                    { id: "1-16", name: "Red Cabbage", nameEs: "Col Morada", supplier: "US Foods", orderDay: "Tue" },
                     { id: "1-17", name: "Shallots Fresh", nameEs: "Chalotes Frescos", supplier: "US Foods", orderDay: "Tue" },
-                    { id: "1-18", name: "Spring Mix", nameEs: "Mezcla de Primavera", supplier: "Costco", orderDay: "Tue & Fri" },
+                    { id: "1-18", name: "Spring Mix", nameEs: "Mezcla de Lechugas", supplier: "Costco", orderDay: "Tue & Fri" },
                     { id: "1-19", name: "Thai Basil", nameEs: "Albahaca Tailandesa", supplier: "Pan-Asia", orderDay: "Pick-Up" },
                     { id: "1-20", name: "White Onion", nameEs: "Cebolla Blanca", supplier: "WS", orderDay: "Tue & Fri" }
                 ]
@@ -928,17 +920,17 @@
             {
                 id: 2,
                 name: "Dairy",
-                nameEs: "Productos Lácteos",
+                nameEs: "Lácteos",
                 items: [
                     { id: "2-0", name: "Whole Milk", nameEs: "Leche Entera", supplier: "US Foods", orderDay: "Fri" },
                     { id: "2-1", name: "Almond Milk", nameEs: "Leche de Almendra", supplier: "Costco", orderDay: "Fri" },
                     { id: "2-2", name: "Oat Milk", nameEs: "Leche de Avena", supplier: "Costco", orderDay: "Fri" },
-                    { id: "2-3", name: "Buttermilk", nameEs: "Suero de Leche", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "2-4", name: "Cream Cheese – Raska", nameEs: "Queso Crema Raska", supplier: "WS", orderDay: "Fri" },
-                    { id: "2-5", name: "Half & Half", nameEs: "Mitad y Mitad", supplier: "Costco", orderDay: "Fri" },
-                    { id: "2-6", name: "Heavy Cream", nameEs: "Crema Espesa", supplier: "Costco", orderDay: "Fri" },
-                    { id: "2-7", name: "Sour Cream", nameEs: "Crema Agria", supplier: "Costco", orderDay: "Fri" },
-                    { id: "2-8", name: "Sweetened Condensed Milk", nameEs: "Leche Condensada Azucarada", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "2-3", name: "Buttermilk", nameEs: "Jocoque / Buttermilk", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "2-4", name: "Cream Cheese – Raska", nameEs: "Queso Crema – Raska", supplier: "WS", orderDay: "Fri" },
+                    { id: "2-5", name: "Half & Half", nameEs: "Media Crema Líquida", supplier: "Costco", orderDay: "Fri" },
+                    { id: "2-6", name: "Heavy Cream", nameEs: "Crema para Batir", supplier: "Costco", orderDay: "Fri" },
+                    { id: "2-7", name: "Sour Cream", nameEs: "Crema Ácida", supplier: "Costco", orderDay: "Fri" },
+                    { id: "2-8", name: "Sweetened Condensed Milk", nameEs: "Leche Condensada", supplier: "US Foods", orderDay: "Fri" },
                     { id: "2-9", name: "Evaporated Milk", nameEs: "Leche Evaporada", supplier: "US Foods", orderDay: "Fri" }
                 ]
             },
@@ -947,58 +939,58 @@
                 name: "Sauces & Condiments",
                 nameEs: "Salsas y Condimentos",
                 items: [
-                    { id: "3-0", name: "All-Purpose Flour", nameEs: "Harina Multiusos", supplier: "Costco", orderDay: "As needed" },
-                    { id: "3-1", name: "Black Pepper Granulated", nameEs: "Pimienta Negra Granulada", supplier: "US Foods", orderDay: "As needed" },
-                    { id: "3-2", name: "Brown Sugar", nameEs: "Azúcar Moreno", supplier: "Costco", orderDay: "As needed" },
-                    { id: "3-3", name: "Chicken Bouillon", nameEs: "Caldo de Pollo", supplier: "US Foods", orderDay: "As needed" },
-                    { id: "3-4", name: "Cornstarch", nameEs: "Almidón de Maíz", supplier: "US Foods", orderDay: "As needed" },
-                    { id: "3-5", name: "Garlic Powder", nameEs: "Polvo de Ajo", supplier: "US Foods", orderDay: "As needed" },
+                    { id: "3-0", name: "All-Purpose Flour", nameEs: "Harina para Todo Uso", supplier: "Costco", orderDay: "As needed" },
+                    { id: "3-1", name: "Black Pepper Granulated", nameEs: "Pimienta Negra Molida", supplier: "US Foods", orderDay: "As needed" },
+                    { id: "3-2", name: "Brown Sugar", nameEs: "Azúcar Morena", supplier: "Costco", orderDay: "As needed" },
+                    { id: "3-3", name: "Chicken Bouillon", nameEs: "Consomé de Pollo", supplier: "US Foods", orderDay: "As needed" },
+                    { id: "3-4", name: "Cornstarch", nameEs: "Maicena", supplier: "US Foods", orderDay: "As needed" },
+                    { id: "3-5", name: "Garlic Powder", nameEs: "Ajo en Polvo", supplier: "US Foods", orderDay: "As needed" },
                     { id: "3-6", name: "Hellman's Mayo", nameEs: "Mayonesa Hellman's", supplier: "Costco", orderDay: "Fri" },
                     { id: "3-7", name: "Hoisin Sauce", nameEs: "Salsa Hoisin", supplier: "US Foods", orderDay: "As needed" },
                     { id: "3-8", name: "Honey", nameEs: "Miel", supplier: "Costco", orderDay: "As needed" },
-                    { id: "3-9", name: "Hot Sauce (Buffalo)", nameEs: "Salsa Picante Buffalo", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "3-10", name: "Kikkoman Soy Sauce", nameEs: "Salsa de Soja Kikkoman", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "3-9", name: "Hot Sauce (Buffalo)", nameEs: "Salsa Picante (Buffalo)", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "3-10", name: "Kikkoman Soy Sauce", nameEs: "Salsa de Soya Kikkoman", supplier: "US Foods", orderDay: "Fri" },
                     { id: "3-11", name: "Mae Ploy Sweet Chili", nameEs: "Salsa de Chile Dulce Mae Ploy", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "3-12", name: "MSG", nameEs: "Glutamato Monosódico", supplier: "J", orderDay: "As needed" },
-                    { id: "3-13", name: "Oyster Sauce LKK", nameEs: "Salsa de Ostra LKK", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "3-14", name: "Peanut Butter (Creamy)", nameEs: "Mantequilla de Maní Cremosa", supplier: "Costco", orderDay: "As needed" },
-                    { id: "3-15", name: "Sambal Chili Sauce", nameEs: "Salsa Sambal de Chile", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "3-16", name: "Squid Fish Sauce", nameEs: "Salsa de Pescado de Calamar", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "3-12", name: "MSG", nameEs: "Glutamato Monosódico (MSG)", supplier: "J", orderDay: "As needed" },
+                    { id: "3-13", name: "Oyster Sauce LKK", nameEs: "Salsa de Ostión LKK", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "3-14", name: "Peanut Butter (Creamy)", nameEs: "Crema de Cacahuate (Cremosa)", supplier: "Costco", orderDay: "As needed" },
+                    { id: "3-15", name: "Sambal Chili Sauce", nameEs: "Salsa de Chile Sambal", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "3-16", name: "Squid Fish Sauce", nameEs: "Salsa de Pescado Squid", supplier: "US Foods", orderDay: "Fri" },
                     { id: "3-17", name: "Sriracha Sauce", nameEs: "Salsa Sriracha", supplier: "US Foods", orderDay: "Fri" },
                     { id: "3-18", name: "Sugar", nameEs: "Azúcar", supplier: "Costco", orderDay: "As needed" },
-                    { id: "3-19", name: "Soybean Oil", nameEs: "Aceite de Soja", supplier: "Costco", orderDay: "Fri" },
-                    { id: "3-20", name: "Deep Fryer Oil", nameEs: "Aceite para Freidora Profunda", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "3-19", name: "Soybean Oil", nameEs: "Aceite de Soya", supplier: "Costco", orderDay: "Fri" },
+                    { id: "3-20", name: "Deep Fryer Oil", nameEs: "Aceite para Freidora", supplier: "US Foods", orderDay: "Fri" },
                     { id: "3-21", name: "White Vinegar", nameEs: "Vinagre Blanco", supplier: "Costco", orderDay: "As needed" }
                 ]
             },
             {
                 id: 4,
                 name: "Dry Items",
-                nameEs: "Artículos Secos",
+                nameEs: "Productos Secos",
                 items: [
                     { id: "4-0", name: "Coconut Shreds", nameEs: "Coco Rallado", supplier: "US Foods", orderDay: "As needed" },
                     { id: "4-1", name: "Fried Shallots", nameEs: "Chalotes Fritos", supplier: "J", orderDay: "Fri" },
                     { id: "4-2", name: "Fried Rice", nameEs: "Arroz Frito", supplier: "J", orderDay: "Fri" },
                     { id: "4-3", name: "Jasmine Rice", nameEs: "Arroz Jazmín", supplier: "Costco", orderDay: "As needed" },
-                    { id: "4-4", name: "Rice Paper – 3 Ladies", nameEs: "Papel de Arroz 3 Señoras", supplier: "J", orderDay: "Fri" },
-                    { id: "4-5", name: "Woodear Mushroom", nameEs: "Hongo Oído de Madera", supplier: "J", orderDay: "As needed" },
-                    { id: "4-6", name: "Vermicelli Noodles", nameEs: "Fideos Vermicelli", supplier: "J", orderDay: "Fri" },
-                    { id: "4-7", name: "Bean Thread Noodles", nameEs: "Fideos de Hilo de Frijol", supplier: "J", orderDay: "Fri" },
+                    { id: "4-4", name: "Rice Paper – 3 Ladies", nameEs: "Papel de Arroz – 3 Ladies", supplier: "J", orderDay: "Fri" },
+                    { id: "4-5", name: "Woodear Mushroom", nameEs: "Hongo Oreja de Ratón", supplier: "J", orderDay: "As needed" },
+                    { id: "4-6", name: "Vermicelli Noodles", nameEs: "Fideo de Arroz (Vermicelli)", supplier: "J", orderDay: "Fri" },
+                    { id: "4-7", name: "Bean Thread Noodles", nameEs: "Fideo de Frijol (Celofán)", supplier: "J", orderDay: "Fri" },
                     { id: "4-8", name: "Brown Rice", nameEs: "Arroz Integral", supplier: "Costco", orderDay: "As needed" }
                 ]
             },
             {
                 id: 5,
                 name: "Cold Items",
-                nameEs: "Artículos Fríos",
+                nameEs: "Productos Fríos",
                 items: [
-                    { id: "5-0", name: "Sweet Potato Fries", nameEs: "Papas Dulces Fritas", supplier: "Costco", orderDay: "Fri" },
-                    { id: "5-1", name: "Wonton Skin – Regular", nameEs: "Piel de Wonton Regular", supplier: "WS", orderDay: "Fri" },
+                    { id: "5-0", name: "Sweet Potato Fries", nameEs: "Papas de Camote", supplier: "Costco", orderDay: "Fri" },
+                    { id: "5-1", name: "Wonton Skin – Regular", nameEs: "Pasta para Wonton – Regular", supplier: "WS", orderDay: "Fri" },
                     { id: "5-2", name: "Egg Yolks", nameEs: "Yemas de Huevo", supplier: "Costco", orderDay: "Fri" },
                     { id: "5-3", name: "XL Eggs", nameEs: "Huevos XL", supplier: "Costco", orderDay: "Fri" },
-                    { id: "5-4", name: "Pho Noodles", nameEs: "Fideos de Pho", supplier: "WS", orderDay: "Tue & Fri" },
-                    { id: "5-5", name: "Spring Roll Paper", nameEs: "Papel de Rollo Primavera", supplier: "WS", orderDay: "Fri" },
-                    { id: "5-6", name: "Bánh Mì (LBB)", nameEs: "Bánh Mì", supplier: "LBB", orderDay: "Daily" },
+                    { id: "5-4", name: "Pho Noodles", nameEs: "Fideo para Pho", supplier: "WS", orderDay: "Tue & Fri" },
+                    { id: "5-5", name: "Spring Roll Paper", nameEs: "Papel para Rollo Primavera", supplier: "WS", orderDay: "Fri" },
+                    { id: "5-6", name: "Bánh Mì (LBB)", nameEs: "Bánh Mì (LBB)", supplier: "LBB", orderDay: "Daily" },
                     { id: "5-7", name: "Baos", nameEs: "Baos", supplier: "WS", orderDay: "Fri" },
                     { id: "5-8", name: "Churros", nameEs: "Churros", supplier: "US Foods", orderDay: "Fri" },
                     { id: "5-9", name: "Frozen Strawberries", nameEs: "Fresas Congeladas", supplier: "Costco", orderDay: "As needed" },
@@ -1011,22 +1003,22 @@
                 name: "Supplies",
                 nameEs: "Suministros",
                 items: [
-                    { id: "6-0", name: "12oz PET Cups", nameEs: "Tazas PET de 12oz", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-1", name: "16oz PET Cups", nameEs: "Tazas PET de 16oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-0", name: "12oz PET Cups", nameEs: "Vasos PET de 12oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-1", name: "16oz PET Cups", nameEs: "Vasos PET de 16oz", supplier: "US Foods", orderDay: "Fri" },
                     { id: "6-2", name: "16oz PET Lids", nameEs: "Tapas PET de 16oz", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-3", name: "Bag #8 – Kraft", nameEs: "Bolsa #8 Kraft", supplier: "US Foods", orderDay: "As needed" },
-                    { id: "6-4", name: "Bag #12 – Kraft", nameEs: "Bolsa #12 Kraft", supplier: "US Foods", orderDay: "As needed" },
-                    { id: "6-5", name: "32oz Soup Container", nameEs: "Contenedor de Sopa 32oz", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-6", name: "16oz Soup Container", nameEs: "Contenedor de Sopa 16oz", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-7", name: "Black Bowls – 36oz", nameEs: "Cuencos Negros 36oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-3", name: "Bag #8 – Kraft", nameEs: "Bolsa #8 – Kraft", supplier: "US Foods", orderDay: "As needed" },
+                    { id: "6-4", name: "Bag #12 – Kraft", nameEs: "Bolsa #12 – Kraft", supplier: "US Foods", orderDay: "As needed" },
+                    { id: "6-5", name: "32oz Soup Container", nameEs: "Envase para Sopa 32oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-6", name: "16oz Soup Container", nameEs: "Envase para Sopa 16oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-7", name: "Black Bowls – 36oz", nameEs: "Tazones Negros – 36oz", supplier: "US Foods", orderDay: "Fri" },
                     { id: "6-8", name: "Paper Towels", nameEs: "Toallas de Papel", supplier: "Costco", orderDay: "Fri" },
                     { id: "6-9", name: "Black Trash Bags 55gal", nameEs: "Bolsas de Basura Negras 55gal", supplier: "Costco", orderDay: "As needed" },
-                    { id: "6-10", name: "Drink Carrier", nameEs: "Soporte de Bebida", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-11", name: "HOT Cups 12oz", nameEs: "Tazas Calientes 12oz", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-12", name: "HOT Lids 12oz", nameEs: "Tapas Calientes 12oz", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-13", name: "Take Out Box #1", nameEs: "Caja Para Llevar #1", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-14", name: "Take Out Box #8", nameEs: "Caja Para Llevar #8", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "6-15", name: "Gloves S M & L", nameEs: "Guantes S M L", supplier: "Costco", orderDay: "Fri" }
+                    { id: "6-10", name: "Drink Carrier", nameEs: "Portavasos / Charola para Bebidas", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-11", name: "HOT Cups 12oz", nameEs: "Vasos para Caliente 12oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-12", name: "HOT Lids 12oz", nameEs: "Tapas para Caliente 12oz", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-13", name: "Take Out Box #1", nameEs: "Caja para Llevar #1", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-14", name: "Take Out Box #8", nameEs: "Caja para Llevar #8", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "6-15", name: "Gloves S M & L", nameEs: "Guantes Ch, M y G", supplier: "Costco", orderDay: "Fri" }
                 ]
             },
             {
@@ -1034,12 +1026,12 @@
                 name: "Cleaning",
                 nameEs: "Limpieza",
                 items: [
-                    { id: "7-0", name: "Bleach", nameEs: "Blanqueador", supplier: "Costco", orderDay: "As needed" },
-                    { id: "7-1", name: "Dish Soap – Kirkland", nameEs: "Jabón para Platos Kirkland", supplier: "Costco", orderDay: "Fri" },
-                    { id: "7-2", name: "Glass Cleaner", nameEs: "Limpiador de Vidrio", supplier: "Costco", orderDay: "As needed" },
-                    { id: "7-3", name: "Sanitizer Tablets", nameEs: "Tabletas Desinfectantes", supplier: "US Foods", orderDay: "Fri" },
-                    { id: "7-4", name: "Dishwasher Detergent", nameEs: "Detergente para Lavavajillas", supplier: "Costco", orderDay: "Fri" },
-                    { id: "7-5", name: "Dishwasher Rinse Aid", nameEs: "Abrillantador para Lavavajillas", supplier: "Costco", orderDay: "Fri" },
+                    { id: "7-0", name: "Bleach", nameEs: "Cloro", supplier: "Costco", orderDay: "As needed" },
+                    { id: "7-1", name: "Dish Soap – Kirkland", nameEs: "Jabón para Trastes – Kirkland", supplier: "Costco", orderDay: "Fri" },
+                    { id: "7-2", name: "Glass Cleaner", nameEs: "Limpia Vidrios", supplier: "Costco", orderDay: "As needed" },
+                    { id: "7-3", name: "Sanitizer Tablets", nameEs: "Pastillas Sanitizantes", supplier: "US Foods", orderDay: "Fri" },
+                    { id: "7-4", name: "Dishwasher Detergent", nameEs: "Detergente para Lavatrastes", supplier: "Costco", orderDay: "Fri" },
+                    { id: "7-5", name: "Dishwasher Rinse Aid", nameEs: "Abrillantador para Lavatrastes", supplier: "Costco", orderDay: "Fri" },
                     { id: "7-6", name: "Degreaser", nameEs: "Desengrasante", supplier: "Costco", orderDay: "As needed" }
                 ]
             }
@@ -1048,6 +1040,49 @@
         // Utility function to get translation
         const t = (key, lang) => {
             return T[key]?.[lang === "es" ? "es" : "en"] || key;
+        };
+
+        // Auto-translate kitchen items EN↔ES (Mexican Spanish)
+        const KITCHEN_DICT_EN_ES = {
+            "chicken":"pollo","beef":"res","pork":"puerco","shrimp":"camarón","fish":"pescado","salmon":"salmón","tofu":"tofu",
+            "egg":"huevo","eggs":"huevos","rice":"arroz","noodles":"fideos","flour":"harina","sugar":"azúcar","salt":"sal",
+            "pepper":"pimienta","oil":"aceite","vinegar":"vinagre","sauce":"salsa","butter":"mantequilla","cream":"crema",
+            "milk":"leche","cheese":"queso","onion":"cebolla","garlic":"ajo","ginger":"jengibre","cilantro":"cilantro",
+            "lime":"limón","lemon":"limón amarillo","tomato":"jitomate","carrot":"zanahoria","cabbage":"col","lettuce":"lechuga",
+            "mushroom":"hongo","broccoli":"brócoli","cucumber":"pepino","jalapeño":"jalapeño","avocado":"aguacate",
+            "bean":"frijol","beans":"frijoles","corn":"maíz","potato":"papa","sweet potato":"camote",
+            "frozen":"congelado","fresh":"fresco","chopped":"picado","sliced":"rebanado","diced":"en cubos","whole":"entero",
+            "bag":"bolsa","box":"caja","can":"lata","bottle":"botella","container":"envase","cups":"vasos","lids":"tapas",
+            "gloves":"guantes","towels":"toallas","soap":"jabón","bleach":"cloro","napkins":"servilletas",
+            "spoon":"cuchara","fork":"tenedor","knife":"cuchillo","plate":"plato","bowl":"tazón",
+            "large":"grande","small":"chico","medium":"mediano",
+            "white":"blanco","black":"negro","red":"rojo","green":"verde","brown":"café",
+            "hot":"caliente","cold":"frío","dry":"seco","wet":"mojado",
+            "straw":"popote","straws":"popotes","lid":"tapa","cup":"vaso","tray":"charola"
+        };
+        const KITCHEN_DICT_ES_EN = {};
+        Object.entries(KITCHEN_DICT_EN_ES).forEach(([en, es]) => { KITCHEN_DICT_ES_EN[es] = en; });
+
+        // Detect language and translate
+        const autoTranslateItem = (name) => {
+            const lower = name.toLowerCase().trim();
+            // Check if it looks Spanish (common Spanish words/patterns)
+            const spanishMarkers = ["de","del","para","con","sin","en","la","el","los","las","y","o"];
+            const words = lower.split(/\s+/);
+            const hasSpanish = words.some(w => spanishMarkers.includes(w)) || words.some(w => KITCHEN_DICT_ES_EN[w]);
+            const hasEnglish = words.some(w => KITCHEN_DICT_EN_ES[w]);
+
+            if (hasSpanish && !hasEnglish) {
+                // Spanish → English
+                const translated = words.map(w => KITCHEN_DICT_ES_EN[w] || w).join(" ");
+                const cap = translated.charAt(0).toUpperCase() + translated.slice(1);
+                return { name: cap, nameEs: name.trim() };
+            } else {
+                // English → Spanish (default)
+                const translated = words.map(w => KITCHEN_DICT_EN_ES[w] || w).join(" ");
+                const cap = translated.charAt(0).toUpperCase() + translated.slice(1);
+                return { name: name.trim(), nameEs: cap };
+            }
         };
 
         // Home Page Component
@@ -1277,6 +1312,7 @@
             const [passwordEntered, setPasswordEntered] = useState(false);
             const [password, setPassword] = useState("");
             const [inventory, setInventory] = useState({});
+            const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
             const [activeTab, setActiveTab] = useState("checklist");
             const [lastUpdated, setLastUpdated] = useState({});
             const [editMode, setEditMode] = useState(false);
@@ -1286,12 +1322,17 @@
             const [editSubtasks, setEditSubtasks] = useState([]);
             const [editCompleteBy, setEditCompleteBy] = useState("");
             const [editAssignTo, setEditAssignTo] = useState("");
+            const [editFollowUp, setEditFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
             const [newSubtasks, setNewSubtasks] = useState([]);
             const [newCompleteBy, setNewCompleteBy] = useState("");
             const [newAssignTo, setNewAssignTo] = useState("");
+            const [newFollowUp, setNewFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
+            // Follow-up answers state (keyed by task id)
+            const [followUpAnswers, setFollowUpAnswers] = useState({});
+            const [showFollowUpFor, setShowFollowUpFor] = useState(null); // task id to show follow-up prompt
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
             const photoInputRef = React.useRef(null);
 
@@ -1300,7 +1341,7 @@
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
             const staffSide = staffIsFOH ? "FOH" : "BOH";
             const [checklistSide, setChecklistSide] = useState(currentIsAdmin ? "FOH" : staffSide);
-            const [activePeriod, setActivePeriod] = useState("morning");
+            const [activePeriod, setActivePeriod] = useState("all");
             const [checks, setChecksRaw] = useState({});
             const checksRef = React.useRef(checks);
             const setChecks = (val) => { checksRef.current = val; setChecksRaw(val); };
@@ -1654,7 +1695,18 @@
                             setChecks(data.checks || {});
                             setChecklistDate(data.date || todayKey);
                         }
-                        if (data.customTasks) setCustomTasks(data.customTasks);
+                        if (data.customTasks) {
+                            // Migrate old morning/afternoon → single "all" period
+                            const migrated = {};
+                            ["FOH", "BOH"].forEach(side => {
+                                const s = data.customTasks[side] || {};
+                                if (s.all) { migrated[side] = s; }
+                                else {
+                                    migrated[side] = { all: [...(s.morning || []), ...(s.afternoon || [])] };
+                                }
+                            });
+                            setCustomTasks(migrated);
+                        }
                         setLastUpdated(prev => ({ ...prev, checklists: data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "" }));
                     }
                 });
@@ -1664,6 +1716,7 @@
                     if (doc.exists) {
                         const data = doc.data();
                         setInventory(data.counts || {});
+                        setInvCountMeta(data.countMeta || {});
                         if (data.customInventory) setCustomInventory(data.customInventory);
                         setLastUpdated(prev => ({ ...prev, inventory: new Date(data.date).toLocaleString() }));
                     }
@@ -1686,8 +1739,8 @@
                 const todayKey = getTodayKey();
                 const alerts = [];
                 ["FOH", "BOH"].forEach(side => {
-                    ["morning", "afternoon"].forEach(period => {
-                        const periodTasks = (tasks[side] && tasks[side][period]) || [];
+                    TIME_PERIODS.forEach(p => {
+                        const periodTasks = (tasks[side] && tasks[side][p.id]) || [];
                         periodTasks.forEach(item => {
                             if (!item.completeBy || !item.assignTo) return;
                             if (item.assignTo !== staffName) return;
@@ -1784,10 +1837,37 @@
                 else { alert(language === "es" ? "Contraseña incorrecta" : "Incorrect password"); }
             };
 
-            const toggleCheckItem = async (taskId) => {
+            const toggleCheckItem = async (taskId, parentTask) => {
                 const cur = checksRef.current;
-                const newChecks = { ...cur, [taskId]: !cur[taskId] };
+                const newVal = !cur[taskId];
+                const newChecks = { ...cur, [taskId]: newVal };
+                // Store who completed it and when
+                if (newVal) {
+                    const now = new Date();
+                    const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                    newChecks[taskId + "_by"] = staffName;
+                    newChecks[taskId + "_at"] = timeStr;
+                } else {
+                    delete newChecks[taskId + "_by"];
+                    delete newChecks[taskId + "_at"];
+                }
                 setChecks(newChecks);
+                await saveChecklistState(newChecks, customTasksRef.current);
+                // If checking ON and the parent task has a follow-up, check if task is now complete
+                if (newVal && parentTask && parentTask.followUp && parentTask.followUp.question) {
+                    const allDone = parentTask.subtasks && parentTask.subtasks.length > 0
+                        ? parentTask.subtasks.every(s => s.id === taskId ? true : newChecks[s.id])
+                        : true;
+                    if (allDone) setShowFollowUpFor(parentTask.id);
+                }
+            };
+
+            // Save a follow-up answer
+            const saveFollowUpAnswer = async (taskId, answer) => {
+                const newChecks = { ...checksRef.current, [taskId + "_followUp"]: answer };
+                setChecks(newChecks);
+                setFollowUpAnswers(prev => ({ ...prev, [taskId]: answer }));
+                setShowFollowUpFor(null);
                 await saveChecklistState(newChecks, customTasksRef.current);
             };
 
@@ -1797,6 +1877,12 @@
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
                 if (newAssignTo) item.assignTo = newAssignTo;
+                if (newFollowUp && newFollowUp.question.trim()) {
+                    item.followUp = { type: newFollowUp.type, question: newFollowUp.question.trim() };
+                    if (newFollowUp.type === "dropdown" && newFollowUp.options.length > 0) {
+                        item.followUp.options = newFollowUp.options.filter(o => o.trim());
+                    }
+                }
                 const cleanSubs = newSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) item.subtasks = cleanSubs.map((s, i) => ({ id: item.id + "_s" + i, task: s.task.trim() }));
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
@@ -1805,7 +1891,7 @@
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); setShowAddForm(false);
+                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); setNewFollowUp(null); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -1816,11 +1902,17 @@
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
                 if (editAssignTo) { item.assignTo = editAssignTo; } else { delete item.assignTo; }
+                if (editFollowUp && editFollowUp.question.trim()) {
+                    item.followUp = { type: editFollowUp.type, question: editFollowUp.question.trim() };
+                    if (editFollowUp.type === "dropdown" && editFollowUp.options.length > 0) {
+                        item.followUp.options = editFollowUp.options.filter(o => o.trim());
+                    }
+                } else { delete item.followUp; }
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo("");
+                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo(""); setEditFollowUp(null);
             };
 
             // Photo capture and upload
@@ -1871,10 +1963,14 @@
                     category: cat.category || cat.name || "",
                     items: cat.items.filter(i => cleanCounts[i.id]).map(i => ({ id: i.id, name: i.name, nameEs: i.nameEs || "", supplier: i.supplier || "", orderDay: i.orderDay || "" }))
                 })).filter(cat => cat.items.length > 0);
+                // Filter countMeta to only include items with counts
+                const cleanMeta = {};
+                Object.entries(invCountMeta).forEach(([k, v]) => { if (cleanCounts[k]) cleanMeta[k] = v; });
                 try {
                     await db.collection("inventoryHistory").doc(key).set({
                         counts: cleanCounts,
                         items: filteredItems,
+                        countMeta: cleanMeta,
                         date: now.toISOString(),
                         listName: "",
                         ordered: {}
@@ -1883,10 +1979,16 @@
             };
 
             const updateInventoryCount = async (itemId, newCount) => {
-                const newInventory = { ...inventory, [itemId]: parseInt(newCount) || 0 };
+                const count = parseInt(newCount) || 0;
+                const newInventory = { ...inventory, [itemId]: count };
                 setInventory(newInventory);
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const newMeta = { ...invCountMeta, [itemId]: { by: staffName, at: timeStr } };
+                if (count === 0) delete newMeta[itemId];
+                setInvCountMeta(newMeta);
                 try {
-                    await db.collection("ops").doc("inventory").set({ counts: newInventory, customInventory, date: new Date().toISOString() });
+                    await db.collection("ops").doc("inventory").set({ counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
 
@@ -1901,7 +2003,8 @@
                         cat.items.forEach(item => { resetCounts[item.id] = 0; });
                     });
                     setInventory(resetCounts);
-                    await db.collection("ops").doc("inventory").set({ counts: resetCounts, customInventory, date: new Date().toISOString() });
+                    setInvCountMeta({});
+                    await db.collection("ops").doc("inventory").set({ counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
                 setShowSaveConfirm(false);
@@ -1918,11 +2021,12 @@
 
             // Quick write-in add (from the blank line at bottom of each category)
             const quickAddItem = async (catIdx) => {
-                const name = (writeInValues[catIdx] || "").trim();
-                if (!name) return;
+                const input = (writeInValues[catIdx] || "").trim();
+                if (!input) return;
+                const translated = autoTranslateItem(input);
                 const category = customInventory[catIdx];
                 const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
-                const newItem = { id: catIdx + "-" + (maxId + 1), name, nameEs: "", supplier: "", orderDay: "" };
+                const newItem = { id: catIdx + "-" + (maxId + 1), name: translated.name, nameEs: translated.nameEs, supplier: "", orderDay: "" };
                 const updated = customInventory.map((cat, idx) =>
                     idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
                 );
@@ -2077,39 +2181,8 @@
                             </div>
                         </div>
 
-                        {/* Time period selector — horizontal scroll */}
-                        <div className="overflow-x-auto -mx-4 px-4">
-                            <div className="flex gap-2 pb-2" style={{ minWidth: "max-content" }}>
-                                {TIME_PERIODS.map(p => {
-                                    const ps = getPeriodStats(checklistSide, p.id);
-                                    const allDone = ps.total > 0 && ps.done === ps.total;
-                                    return (
-                                        <button key={p.id}
-                                            onClick={() => { setActivePeriod(p.id); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
-                                            className={`flex flex-col items-center px-3 py-2 rounded-lg text-xs font-bold transition whitespace-nowrap border-2 ${
-                                                activePeriod === p.id
-                                                    ? (checklistSide === "FOH" ? "bg-blue-600 text-white border-blue-600" : "bg-amber-600 text-white border-amber-600")
-                                                    : allDone
-                                                        ? "bg-green-50 text-green-700 border-green-300"
-                                                        : "bg-white text-gray-600 border-gray-200"
-                                            }`}>
-                                            <span className="text-base">{p.emoji}</span>
-                                            <span>{language === "es" ? p.nameEs : p.nameEn}</span>
-                                            {ps.total > 0 && <span className="text-[10px] opacity-75">{ps.done}/{ps.total}</span>}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-
-                        {/* Period header */}
-                        <div className="flex justify-between items-center mt-2">
-                            <div>
-                                <h3 className="font-bold text-gray-800">
-                                    {TIME_PERIODS.find(p => p.id === activePeriod)?.[language === "es" ? "nameEs" : "nameEn"]}
-                                </h3>
-                                <p className="text-sm text-gray-500">{periodStats.done}/{periodStats.total} {language === "es" ? "completado" : "completed"}</p>
-                            </div>
+                        {/* Edit button */}
+                        <div className="flex justify-end items-center mt-1">
                             {currentIsAdmin && (
                                 <button onClick={() => { setEditMode(!editMode); setEditingIdx(null); setShowAddForm(false); }}
                                     className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (editMode ? "bg-mint-100 text-mint-700 border border-mint-200" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
@@ -2187,10 +2260,54 @@
                                             <button onClick={() => setEditSubtasks([...editSubtasks, {id: "", task: ""}])}
                                                 className="text-xs text-mint-700 font-bold">+ {language === "es" ? "Agregar subtarea" : "Add subtask"}</button>
                                         </div>
+                                        {/* Follow-up question editor */}
+                                        <div className="mb-2 border-t border-gray-200 pt-2">
+                                            <div className="flex items-center justify-between mb-1">
+                                                <p className="text-xs font-bold text-gray-500">❓ {language === "es" ? "Pregunta al completar" : "Follow-up question"}</p>
+                                                {!editFollowUp ? (
+                                                    <button onClick={() => setEditFollowUp({ type: "dropdown", question: "", options: [""] })}
+                                                        className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar" : "Add"}</button>
+                                                ) : (
+                                                    <button onClick={() => setEditFollowUp(null)} className="text-red-400 text-xs">✕ {language === "es" ? "Quitar" : "Remove"}</button>
+                                                )}
+                                            </div>
+                                            {editFollowUp && (
+                                                <div className="space-y-2 bg-blue-50 p-2 rounded border border-blue-200">
+                                                    <input type="text" value={editFollowUp.question} onChange={e => setEditFollowUp({...editFollowUp, question: e.target.value})}
+                                                        placeholder={language === "es" ? "Escribe la pregunta..." : "Type your question..."}
+                                                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:border-blue-400" />
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => setEditFollowUp({...editFollowUp, type: "dropdown", options: editFollowUp.options?.length ? editFollowUp.options : [""]})}
+                                                            className={`flex-1 py-1 rounded text-xs font-bold ${editFollowUp.type === "dropdown" ? "bg-blue-600 text-white" : "bg-white text-gray-600 border"}`}>
+                                                            {language === "es" ? "Opciones" : "Choices"}
+                                                        </button>
+                                                        <button onClick={() => setEditFollowUp({...editFollowUp, type: "text"})}
+                                                            className={`flex-1 py-1 rounded text-xs font-bold ${editFollowUp.type === "text" ? "bg-blue-600 text-white" : "bg-white text-gray-600 border"}`}>
+                                                            {language === "es" ? "Texto libre" : "Text input"}
+                                                        </button>
+                                                    </div>
+                                                    {editFollowUp.type === "dropdown" && (
+                                                        <div className="space-y-1">
+                                                            {(editFollowUp.options || []).map((opt, oi) => (
+                                                                <div key={oi} className="flex gap-1">
+                                                                    <input className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" value={opt}
+                                                                        onChange={e => { const u = [...editFollowUp.options]; u[oi] = e.target.value; setEditFollowUp({...editFollowUp, options: u}); }}
+                                                                        placeholder={(language === "es" ? "Opción " : "Option ") + (oi+1)} />
+                                                                    <button onClick={() => { const u = editFollowUp.options.filter((_,i) => i !== oi); setEditFollowUp({...editFollowUp, options: u}); }}
+                                                                        className="text-red-400 text-xs px-1">✕</button>
+                                                                </div>
+                                                            ))}
+                                                            <button onClick={() => setEditFollowUp({...editFollowUp, options: [...(editFollowUp.options || []), ""]})}
+                                                                className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar opción" : "Add option"}</button>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
                                         <div className="flex items-center gap-2">
                                             <button onClick={() => saveChecklistEdit(idx)}
                                                 className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Guardar" : "Save"}</button>
-                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo(""); }}
+                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo(""); setEditFollowUp(null); }}
                                                 className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                         </div>
                                     </div>
@@ -2207,7 +2324,7 @@
                                         <div className={"flex-1 flex items-start p-3 " + (!editMode && !hasSubtasks ? "cursor-pointer" : "")}>
                                             {!editMode && !hasSubtasks && (
                                                 <input type="checkbox" checked={checks[item.id] || false}
-                                                    onChange={() => toggleCheckItem(item.id)}
+                                                    onChange={() => toggleCheckItem(item.id, item)}
                                                     className="w-5 h-5 text-mint-700 rounded focus:ring-2 focus:ring-mint-700 mt-0.5" />
                                             )}
                                             <div className={"flex-1 " + (!editMode && !hasSubtasks ? "ml-3" : "")}>
@@ -2234,11 +2351,17 @@
                                                         </span>
                                                     )}
                                                 </div>
+                                                {/* Completed by info — for tasks without subtasks */}
+                                                {!hasSubtasks && checks[item.id] && checks[item.id + "_by"] && (
+                                                    <p className="text-xs text-green-600 mt-0.5">
+                                                        ✓ {checks[item.id + "_by"]} — {checks[item.id + "_at"]}
+                                                    </p>
+                                                )}
                                             </div>
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo || ""); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo || ""); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">✏️</button>
                                                 <button onClick={() => deleteChecklistTask(idx)}
                                                     className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">🗑️</button>
@@ -2250,12 +2373,19 @@
                                     {hasSubtasks && !editMode && (
                                         <div className="px-3 pb-2 space-y-1 ml-4 border-t border-gray-100 pt-2">
                                             {item.subtasks.map(sub => (
-                                                <label key={sub.id} className="flex items-center gap-2 cursor-pointer">
-                                                    <input type="checkbox" checked={checks[sub.id] || false}
-                                                        onChange={() => toggleCheckItem(sub.id)}
-                                                        className="w-4 h-4 text-mint-600 rounded" />
-                                                    <span className={"text-sm " + (checks[sub.id] ? "line-through text-green-600" : "text-gray-700")}>{sub.task}</span>
-                                                </label>
+                                                <div key={sub.id}>
+                                                    <label className="flex items-center gap-2 cursor-pointer">
+                                                        <input type="checkbox" checked={checks[sub.id] || false}
+                                                            onChange={() => toggleCheckItem(sub.id, item)}
+                                                            className="w-4 h-4 text-mint-600 rounded" />
+                                                        <span className={"text-sm " + (checks[sub.id] ? "line-through text-green-600" : "text-gray-700")}>{sub.task}</span>
+                                                    </label>
+                                                    {checks[sub.id] && checks[sub.id + "_by"] && (
+                                                        <p className="text-xs text-green-600 ml-6">
+                                                            ✓ {checks[sub.id + "_by"]} — {checks[sub.id + "_at"]}
+                                                        </p>
+                                                    )}
+                                                </div>
                                             ))}
                                         </div>
                                     )}
@@ -2287,6 +2417,41 @@
                                                     </button>
                                                 </div>
                                             )}
+                                        </div>
+                                    )}
+                                    {/* Follow-up question prompt — shows when task is completed */}
+                                    {item.followUp && item.followUp.question && (showFollowUpFor === item.id || (taskComplete && !checks[item.id + "_followUp"])) && (
+                                        <div className="mx-3 mb-3 p-3 bg-blue-50 border-2 border-blue-300 rounded-xl">
+                                            <p className="text-sm font-bold text-blue-800 mb-2">❓ {item.followUp.question}</p>
+                                            {item.followUp.type === "dropdown" && item.followUp.options ? (
+                                                <div className="space-y-1.5">
+                                                    {item.followUp.options.map((opt, oi) => (
+                                                        <button key={oi} onClick={() => saveFollowUpAnswer(item.id, opt)}
+                                                            className="w-full text-left px-3 py-2 bg-white border border-blue-200 rounded-lg text-sm font-medium hover:bg-blue-100 hover:border-blue-400 transition">
+                                                            {opt}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="flex gap-2">
+                                                    <input type="text" value={followUpAnswers[item.id] || ""}
+                                                        onChange={e => setFollowUpAnswers(prev => ({...prev, [item.id]: e.target.value}))}
+                                                        placeholder={language === "es" ? "Escribe tu respuesta..." : "Type your answer..."}
+                                                        className="flex-1 px-3 py-2 border border-blue-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
+                                                        onKeyDown={e => { if (e.key === "Enter" && followUpAnswers[item.id]?.trim()) saveFollowUpAnswer(item.id, followUpAnswers[item.id].trim()); }} />
+                                                    <button onClick={() => { if (followUpAnswers[item.id]?.trim()) saveFollowUpAnswer(item.id, followUpAnswers[item.id].trim()); }}
+                                                        className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">
+                                                        ✓
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                    {/* Show saved answer */}
+                                    {item.followUp && checks[item.id + "_followUp"] && showFollowUpFor !== item.id && (
+                                        <div className="mx-3 mb-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
+                                            <p className="text-xs text-gray-500">❓ {item.followUp.question}</p>
+                                            <p className="text-sm font-bold text-gray-700">💬 {checks[item.id + "_followUp"]}</p>
                                         </div>
                                     )}
                                 </div>
@@ -2345,10 +2510,54 @@
                                     <button onClick={() => setNewSubtasks([...newSubtasks, {id: "", task: ""}])}
                                         className="text-xs text-mint-700 font-bold">+ {language === "es" ? "Agregar subtarea" : "Add subtask"}</button>
                                 </div>
+                                {/* Follow-up question editor */}
+                                <div className="mb-2 border-t border-gray-200 pt-2">
+                                    <div className="flex items-center justify-between mb-1">
+                                        <p className="text-xs font-bold text-gray-500">❓ {language === "es" ? "Pregunta al completar" : "Follow-up question"}</p>
+                                        {!newFollowUp ? (
+                                            <button onClick={() => setNewFollowUp({ type: "dropdown", question: "", options: [""] })}
+                                                className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar" : "Add"}</button>
+                                        ) : (
+                                            <button onClick={() => setNewFollowUp(null)} className="text-red-400 text-xs">✕ {language === "es" ? "Quitar" : "Remove"}</button>
+                                        )}
+                                    </div>
+                                    {newFollowUp && (
+                                        <div className="space-y-2 bg-blue-50 p-2 rounded border border-blue-200">
+                                            <input type="text" value={newFollowUp.question} onChange={e => setNewFollowUp({...newFollowUp, question: e.target.value})}
+                                                placeholder={language === "es" ? "Escribe la pregunta..." : "Type your question..."}
+                                                className="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:outline-none focus:border-blue-400" />
+                                            <div className="flex gap-2">
+                                                <button onClick={() => setNewFollowUp({...newFollowUp, type: "dropdown", options: newFollowUp.options?.length ? newFollowUp.options : [""]})}
+                                                    className={`flex-1 py-1 rounded text-xs font-bold ${newFollowUp.type === "dropdown" ? "bg-blue-600 text-white" : "bg-white text-gray-600 border"}`}>
+                                                    {language === "es" ? "Opciones" : "Choices"}
+                                                </button>
+                                                <button onClick={() => setNewFollowUp({...newFollowUp, type: "text"})}
+                                                    className={`flex-1 py-1 rounded text-xs font-bold ${newFollowUp.type === "text" ? "bg-blue-600 text-white" : "bg-white text-gray-600 border"}`}>
+                                                    {language === "es" ? "Texto libre" : "Text input"}
+                                                </button>
+                                            </div>
+                                            {newFollowUp.type === "dropdown" && (
+                                                <div className="space-y-1">
+                                                    {(newFollowUp.options || []).map((opt, oi) => (
+                                                        <div key={oi} className="flex gap-1">
+                                                            <input className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" value={opt}
+                                                                onChange={e => { const u = [...newFollowUp.options]; u[oi] = e.target.value; setNewFollowUp({...newFollowUp, options: u}); }}
+                                                                placeholder={(language === "es" ? "Opción " : "Option ") + (oi+1)} />
+                                                            <button onClick={() => { const u = newFollowUp.options.filter((_,i) => i !== oi); setNewFollowUp({...newFollowUp, options: u}); }}
+                                                                className="text-red-400 text-xs px-1">✕</button>
+                                                        </div>
+                                                    ))}
+                                                    <button onClick={() => setNewFollowUp({...newFollowUp, options: [...(newFollowUp.options || []), ""]})}
+                                                        className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar opción" : "Add option"}</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="flex items-center gap-2">
                                     <button onClick={addChecklistTask}
                                         className="px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Agregar" : "Add"}</button>
-                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); }}
+                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); setNewFollowUp(null); }}
                                         className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                 </div>
                             </div>
@@ -2500,6 +2709,9 @@
                                                                 {language === "es" && item.nameEs && <p className="text-xs text-gray-400 italic">{item.name}</p>}
                                                                 {language !== "es" && item.nameEs && <p className="text-xs text-gray-400 italic">{item.nameEs}</p>}
                                                                 <p className="text-xs text-gray-500">{t("supplier", language)}: {item.supplier}</p>
+                                                                {invCountMeta[item.id] && (inventory[item.id] || 0) > 0 && (
+                                                                    <p className="text-xs text-mint-600">✓ {invCountMeta[item.id].by} — {invCountMeta[item.id].at}</p>
+                                                                )}
                                                             </div>
                                                             <div className="flex items-center gap-2">
                                                                 {invEditMode ? (
@@ -3567,6 +3779,40 @@
             const [recipes, setRecipes] = useState(RECIPES);
             const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
             const [unlocked, setUnlocked] = useState(false);
+            const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
+
+            // Scale ingredient quantities
+            const scaleIngredient = (text, multiplier) => {
+                if (!multiplier || multiplier === 1) return text;
+                // Match leading fractions, decimals, or whole numbers (with optional fraction after)
+                return text.replace(/^(\d+\s+\d+\/\d+|\d+\/\d+|\d+\.?\d*)/, (match) => {
+                    let num;
+                    if (match.includes(" ") && match.includes("/")) {
+                        // Mixed number like "1 1/2"
+                        const parts = match.split(" ");
+                        const whole = parseFloat(parts[0]);
+                        const [n, d] = parts[1].split("/").map(Number);
+                        num = whole + n / d;
+                    } else if (match.includes("/")) {
+                        // Fraction like "1/2"
+                        const [n, d] = match.split("/").map(Number);
+                        num = n / d;
+                    } else {
+                        num = parseFloat(match);
+                    }
+                    const scaled = num * multiplier;
+                    // Format nicely
+                    if (scaled === Math.floor(scaled)) return scaled.toString();
+                    // Check for clean fractions
+                    const fracs = [[0.25, "1/4"], [0.333, "1/3"], [0.5, "1/2"], [0.667, "2/3"], [0.75, "3/4"]];
+                    const whole = Math.floor(scaled);
+                    const dec = scaled - whole;
+                    for (const [val, str] of fracs) {
+                        if (Math.abs(dec - val) < 0.05) return whole > 0 ? `${whole} ${str}` : str;
+                    }
+                    return scaled % 1 === 0 ? scaled.toString() : scaled.toFixed(1);
+                });
+            };
             const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
             const [pendingAction, setPendingAction] = useState(null); // "add" | recipe object
             const [passwordInput, setPasswordInput] = useState("");
@@ -3737,19 +3983,73 @@
                                             </div>
                                             <div className="bg-green-50 rounded-lg px-3 py-2 flex-1 text-center">
                                                 <div className="font-bold text-green-700">{t("yields", language)}</div>
-                                                <div className="text-green-600">{language === "es" ? (recipe.yieldsEs || recipe.yieldsEn) : recipe.yieldsEn}</div>
+                                                <div className="text-green-600">{(() => {
+                                                    const mult = recipeMultipliers[recipe.id] || 1;
+                                                    const yieldText = language === "es" ? (recipe.yieldsEs || recipe.yieldsEn) : recipe.yieldsEn;
+                                                    return mult === 1 ? yieldText : scaleIngredient(yieldText, mult);
+                                                })()}</div>
                                             </div>
+                                        </div>
+
+                                        {/* Recipe Multiplier */}
+                                        <div className="mb-4 bg-purple-50 rounded-lg p-3 border border-purple-200">
+                                            <div className="text-xs font-bold text-purple-700 mb-2">🔢 {language === "es" ? "Multiplicador de Receta" : "Recipe Multiplier"}</div>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                {[{label: "½x", val: 0.5}, {label: "1x", val: 1}, {label: "2x", val: 2}, {label: "3x", val: 3}, {label: "5x", val: 5}, {label: "10x", val: 10}].map(btn => {
+                                                    const current = recipeMultipliers[recipe.id] || 1;
+                                                    const isActive = current === btn.val;
+                                                    return (
+                                                        <button
+                                                            key={btn.val}
+                                                            onClick={() => setRecipeMultipliers(prev => ({...prev, [recipe.id]: btn.val}))}
+                                                            className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-all ${isActive ? "bg-purple-600 text-white border-purple-600 shadow-md" : "bg-white text-purple-700 border-purple-300 hover:bg-purple-100"}`}
+                                                        >
+                                                            {btn.label}
+                                                        </button>
+                                                    );
+                                                })}
+                                                <div className="flex items-center gap-1 ml-1">
+                                                    <input
+                                                        type="number"
+                                                        min="0.1"
+                                                        step="0.1"
+                                                        placeholder={language === "es" ? "Otro" : "Custom"}
+                                                        value={(() => {
+                                                            const cur = recipeMultipliers[recipe.id] || 1;
+                                                            const presets = [0.5, 1, 2, 3, 5, 10];
+                                                            return presets.includes(cur) ? "" : cur;
+                                                        })()}
+                                                        onChange={(e) => {
+                                                            const v = parseFloat(e.target.value);
+                                                            if (v > 0) setRecipeMultipliers(prev => ({...prev, [recipe.id]: v}));
+                                                        }}
+                                                        className="w-16 text-center border border-purple-300 rounded-lg px-2 py-1.5 text-xs font-bold text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400"
+                                                    />
+                                                    <span className="text-xs text-purple-500 font-bold">x</span>
+                                                </div>
+                                            </div>
+                                            {(recipeMultipliers[recipe.id] && recipeMultipliers[recipe.id] !== 1) && (
+                                                <div className="mt-2 text-xs text-purple-600 font-medium">
+                                                    📐 {language === "es"
+                                                        ? `Mostrando cantidades para ${recipeMultipliers[recipe.id]}x la receta`
+                                                        : `Showing quantities for ${recipeMultipliers[recipe.id]}x the recipe`}
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="mb-4">
                                             <h4 className="font-bold text-sm text-gray-800 mb-2 border-b pb-1">📝 {t("ingredients", language)}</h4>
                                             <ul className="space-y-1">
-                                                {(language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : recipe.ingredientsEn).map((item, i) => (
-                                                    <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
-                                                        <span className="text-mint-400 mt-1">•</span>
-                                                        <span>{item}</span>
-                                                    </li>
-                                                ))}
+                                                {(language === "es" ? (recipe.ingredientsEs || recipe.ingredientsEn) : recipe.ingredientsEn).map((item, i) => {
+                                                    const mult = recipeMultipliers[recipe.id] || 1;
+                                                    const displayItem = scaleIngredient(item, mult);
+                                                    return (
+                                                        <li key={i} className="text-sm text-gray-700 flex items-start gap-2">
+                                                            <span className="text-mint-400 mt-1">•</span>
+                                                            <span>{displayItem}</span>
+                                                        </li>
+                                                    );
+                                                })}
                                             </ul>
                                         </div>
 
