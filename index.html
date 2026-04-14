@@ -2423,12 +2423,13 @@
 
                             {/* Cart summary — items with counts */}
                             {!invEditMode && (() => {
-                                const cartCount = Object.values(inventory).filter(v => v > 0).length;
-                                if (cartCount === 0) return null;
+                                const itemCount = Object.values(inventory).filter(v => v > 0).length;
+                                const totalQty = Object.values(inventory).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
+                                if (itemCount === 0) return null;
                                 return (
                                     <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
                                         <span className="text-sm font-bold text-mint-700">
-                                            🛒 {cartCount} {language === "es" ? "artículos contados" : "items counted"}
+                                            🛒 {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
                                         </span>
                                         <span className="text-xs text-mint-600">
                                             {language === "es" ? "Solo estos se guardarán" : "Only these will be saved"}
@@ -4191,10 +4192,10 @@
 
                             {/* Action buttons */}
                             <div className="flex gap-2">
-                                <button onClick={() => { setHistEditMode(!histEditMode); setAddingToCategory(null); }}
+                                <button onClick={() => { if (histEditMode) { saveHistEdits(); } else { setHistEditMode(true); } setAddingToCategory(null); }}
                                     className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${histEditMode ? "bg-green-700 text-white" : "bg-blue-700 text-white"}`}>
                                     {histEditMode
-                                        ? (language === "es" ? "✓ Listo" : "✓ Done")
+                                        ? (language === "es" ? "✓ Guardar" : "✓ Save")
                                         : (language === "es" ? "✏️ Editar Lista" : "✏️ Edit List")}
                                 </button>
                                 <button onClick={printInventory}
