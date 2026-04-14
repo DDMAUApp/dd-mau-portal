@@ -1322,6 +1322,7 @@
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
+            const [invSearch, setInvSearch] = useState("");
 
             // Break Planner state
             const DEFAULT_STATIONS = [
@@ -1861,16 +1862,18 @@
             const saveInventorySnapshot = async (counts, items) => {
                 const now = new Date();
                 const key = now.toISOString().split("T")[0] + "_" + now.toTimeString().split(" ")[0].replace(/:/g, "");
-                // Filter out any undefined values from counts
+                // Only save items that have a count > 0 (shopping cart style)
                 const cleanCounts = {};
-                Object.entries(counts).forEach(([k, v]) => { cleanCounts[k] = v ?? 0; });
+                Object.entries(counts).forEach(([k, v]) => { if (v && v > 0) cleanCounts[k] = v; });
+                // Filter categories to only include items with counts
+                const filteredItems = items.map(cat => ({
+                    category: cat.category || cat.name || "",
+                    items: cat.items.filter(i => cleanCounts[i.id]).map(i => ({ id: i.id, name: i.name, nameEs: i.nameEs || "", supplier: i.supplier || "", orderDay: i.orderDay || "" }))
+                })).filter(cat => cat.items.length > 0);
                 try {
                     await db.collection("inventoryHistory").doc(key).set({
                         counts: cleanCounts,
-                        items: items.map(cat => ({
-                            category: cat.category || "",
-                            items: cat.items.map(i => ({ id: i.id, name: i.name, nameEs: i.nameEs || "", supplier: i.supplier || "", orderDay: i.orderDay || "" }))
-                        })),
+                        items: filteredItems,
                         date: now.toISOString()
                     });
                 } catch (err) { console.error("Error saving inventory snapshot:", err); }
@@ -2402,13 +2405,57 @@
                                     {invEditMode ? (language === "es" ? "Listo" : "Done Editing") : (language === "es" ? "Editar" : "Edit")}
                                 </button>
                             </div>
-                            {customInventory.map((category, catIdx) => (
+
+                            {/* Search bar */}
+                            {!invEditMode && (
+                                <div className="relative">
+                                    <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
+                                        placeholder={language === "es" ? "🔍 Buscar artículo..." : "🔍 Search items..."}
+                                        className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white" />
+                                    {invSearch && (
+                                        <button onClick={() => setInvSearch("")}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg">✕</button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Cart summary — items with counts */}
+                            {!invEditMode && (() => {
+                                const cartCount = Object.values(inventory).filter(v => v > 0).length;
+                                if (cartCount === 0) return null;
+                                return (
+                                    <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
+                                        <span className="text-sm font-bold text-mint-700">
+                                            🛒 {cartCount} {language === "es" ? "artículos contados" : "items counted"}
+                                        </span>
+                                        <span className="text-xs text-mint-600">
+                                            {language === "es" ? "Solo estos se guardarán" : "Only these will be saved"}
+                                        </span>
+                                    </div>
+                                );
+                            })()}
+
+                            {customInventory.map((category, catIdx) => {
+                                // Filter items by search
+                                const searchLower = invSearch.toLowerCase().trim();
+                                const filteredItems = searchLower
+                                    ? category.items.filter(item =>
+                                        (item.name || "").toLowerCase().includes(searchLower) ||
+                                        (item.nameEs || "").toLowerCase().includes(searchLower) ||
+                                        (item.supplier || "").toLowerCase().includes(searchLower)
+                                    )
+                                    : category.items;
+                                // Hide empty categories when searching
+                                if (searchLower && filteredItems.length === 0) return null;
+                                return (
                                 <div key={category.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
-                                    <div className="p-3 bg-mint-50 border-b font-bold text-mint-700">
-                                        {language === "es" ? category.nameEs : category.name}
+                                    <div className="p-3 bg-mint-50 border-b font-bold text-mint-700 flex justify-between items-center">
+                                        <span>{language === "es" ? category.nameEs : category.name}</span>
+                                        {!invEditMode && <span className="text-xs font-normal text-gray-500">{filteredItems.length} {language === "es" ? "artículos" : "items"}</span>}
                                     </div>
                                     <div className="p-3 space-y-2">
-                                        {category.items.map((item, itemIdx) => {
+                                        {filteredItems.map((item) => {
+                                            const itemIdx = category.items.indexOf(item);
                                             const isEditing = invEditMode && invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
                                             return (
                                                 <div key={item.id} className={`p-2 rounded border ${isEditing ? "border-blue-500 bg-blue-50" : "border-transparent"}`}>
@@ -2482,7 +2529,7 @@
                                         )}
                                     </div>
                                 </div>
-                            ))}
+                            ); })}
 
                             {/* Save & Reset Button + Confirmation */}
                             {!invEditMode && (
