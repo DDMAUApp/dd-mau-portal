@@ -1323,6 +1323,7 @@
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
+            const [writeInValues, setWriteInValues] = useState({});
 
             // Break Planner state
             const DEFAULT_STATIONS = [
@@ -1913,6 +1914,21 @@
                     });
                     await saveInventorySnapshot(counts, items);
                 } catch (err) { console.error("Error updating inventory:", err); }
+            };
+
+            // Quick write-in add (from the blank line at bottom of each category)
+            const quickAddItem = async (catIdx) => {
+                const name = (writeInValues[catIdx] || "").trim();
+                if (!name) return;
+                const category = customInventory[catIdx];
+                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
+                const newItem = { id: catIdx + "-" + (maxId + 1), name, nameEs: "", supplier: "", orderDay: "" };
+                const updated = customInventory.map((cat, idx) =>
+                    idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
+                );
+                setCustomInventory(updated);
+                setWriteInValues(prev => ({ ...prev, [catIdx]: "" }));
+                await saveInventory(inventory, updated);
             };
 
             const addInvItem = async (catIdx) => {
@@ -2512,6 +2528,25 @@
                                                 </div>
                                             );
                                         })}
+                                        {/* Write-in line — always visible when not in edit mode */}
+                                        {!invEditMode && (
+                                            <div className="p-2 border-t border-dashed border-gray-200">
+                                                <div className="flex items-center gap-2">
+                                                    <input type="text"
+                                                        value={writeInValues[catIdx] || ""}
+                                                        onChange={e => setWriteInValues(prev => ({ ...prev, [catIdx]: e.target.value }))}
+                                                        onKeyDown={e => { if (e.key === "Enter") quickAddItem(catIdx); }}
+                                                        placeholder={language === "es" ? "✍️ Escribir artículo..." : "✍️ Write in item..."}
+                                                        className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:border-mint-500 focus:bg-white" />
+                                                    {(writeInValues[catIdx] || "").trim() && (
+                                                        <button onClick={() => quickAddItem(catIdx)}
+                                                            className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
+                                                            {language === "es" ? "Agregar" : "Add"}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
                                         {invEditMode && invShowAddForm === catIdx ? (
                                             <div className="p-2 border-2 border-green-500 rounded bg-green-50 space-y-2">
                                                 <input type="text" value={invNewName} onChange={(e) => setInvNewName(e.target.value)}
@@ -2578,7 +2613,7 @@
                                 <p className="text-xs text-gray-500 mb-3">{language === "es"
                                     ? "Revisa conteos anteriores, marca lo que ya se pidió."
                                     : "Review past counts, check off what's been ordered."}</p>
-                                <InventoryHistory language={language} />
+                                <InventoryHistory language={language} customInventory={customInventory} />
                             </div>
                         </div>
                     )}
@@ -3924,7 +3959,7 @@
         }
 
         // Inventory History Component (Admin only)
-        function InventoryHistory({ language }) {
+        function InventoryHistory({ language, customInventory: customInventoryProp }) {
             const [historyDates, setHistoryDates] = useState([]);
             const [selectedDate, setSelectedDate] = useState(null);
             const [dayData, setDayData] = useState(null);
@@ -3938,11 +3973,27 @@
             // Edit mode for counts & adding items
             const [histEditMode, setHistEditMode] = useState(false);
             const [histCounts, setHistCounts] = useState({});
-            const [addingToCategory, setAddingToCategory] = useState(null);
-            const [newItemName, setNewItemName] = useState("");
-            const [newItemNameEs, setNewItemNameEs] = useState("");
-            const [newItemSupplier, setNewItemSupplier] = useState("");
             const [saving, setSaving] = useState(false);
+            // Searchable add-item picker
+            const [showAddPicker, setShowAddPicker] = useState(false);
+            const [addSearch, setAddSearch] = useState("");
+            // Full inventory (passed as prop or loaded from Firestore)
+            const [fullInventory, setFullInventory] = useState(customInventoryProp || []);
+
+            // Load full inventory if not passed as prop
+            useEffect(() => {
+                if (customInventoryProp && customInventoryProp.length > 0) {
+                    setFullInventory(customInventoryProp);
+                } else {
+                    const loadInv = async () => {
+                        try {
+                            const doc = await db.collection("ops").doc("inventory").get();
+                            if (doc.exists && doc.data().customInventory) setFullInventory(doc.data().customInventory);
+                        } catch (err) { console.error("Error loading inventory for picker:", err); }
+                    };
+                    loadInv();
+                }
+            }, [customInventoryProp]);
 
             useEffect(() => {
                 const fetchHistory = async () => {
@@ -4031,24 +4082,31 @@
                 setHistEditMode(false);
             };
 
-            // Add new item to a category in the saved list
-            const addItemToHistory = async (catIdx) => {
-                if (!newItemName.trim()) return;
-                const cat = dayData.items[catIdx];
-                const newId = "hist_" + Date.now();
-                const newItem = { id: newId, name: newItemName.trim(), nameEs: newItemNameEs.trim(), supplier: newItemSupplier.trim(), orderDay: "" };
-                const updatedItems = dayData.items.map((c, idx) => {
-                    if (idx !== catIdx) return c;
-                    return { ...c, items: [...c.items, newItem] };
-                });
-                const newCounts = { ...histCounts, [newId]: 1 };
+            // Add item from inventory picker to the saved list
+            const addItemFromPicker = async (item, categoryName) => {
+                // Check if item already exists in the saved list
+                const alreadyExists = (dayData.items || []).some(cat => cat.items.some(i => i.id === item.id));
+                if (alreadyExists) {
+                    // Just increment count
+                    const newCounts = { ...histCounts, [item.id]: (histCounts[item.id] || 0) + 1 };
+                    setHistCounts(newCounts);
+                    setDayData(prev => ({ ...prev, counts: newCounts }));
+                    await saveToFirestore({ counts: newCounts });
+                    return;
+                }
+                // Find or create category in saved list
+                const newItem = { id: item.id, name: item.name, nameEs: item.nameEs || "", supplier: item.supplier || "", orderDay: item.orderDay || "" };
+                let updatedItems = [...(dayData.items || [])];
+                const catIdx = updatedItems.findIndex(c => c.category === categoryName);
+                if (catIdx >= 0) {
+                    updatedItems[catIdx] = { ...updatedItems[catIdx], items: [...updatedItems[catIdx].items, newItem] };
+                } else {
+                    updatedItems.push({ category: categoryName, items: [newItem] });
+                }
+                const newCounts = { ...histCounts, [item.id]: 1 };
                 setHistCounts(newCounts);
                 setDayData(prev => ({ ...prev, items: updatedItems, counts: newCounts }));
                 await saveToFirestore({ items: updatedItems, counts: newCounts });
-                setNewItemName("");
-                setNewItemNameEs("");
-                setNewItemSupplier("");
-                setAddingToCategory(null);
             };
 
             const formatDate = (dateStr) => {
@@ -4192,7 +4250,7 @@
 
                             {/* Action buttons */}
                             <div className="flex gap-2">
-                                <button onClick={() => { if (histEditMode) { saveHistEdits(); } else { setHistEditMode(true); } setAddingToCategory(null); }}
+                                <button onClick={() => { if (histEditMode) { saveHistEdits(); } else { setHistEditMode(true); } setShowAddPicker(false); }}
                                     className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${histEditMode ? "bg-green-700 text-white" : "bg-blue-700 text-white"}`}>
                                     {histEditMode
                                         ? (language === "es" ? "✓ Guardar" : "✓ Save")
@@ -4257,39 +4315,83 @@
                                                 </div>
                                             );
                                         })}
-                                        {/* Add item form */}
-                                        {histEditMode && addingToCategory === catIdx && (
-                                            <div className="p-2 border-t-2 border-green-200 bg-green-50 space-y-2">
-                                                <input type="text" value={newItemName} onChange={e => setNewItemName(e.target.value)}
-                                                    placeholder={language === "es" ? "Nombre del artículo" : "Item name"}
-                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded text-sm focus:border-mint-700 focus:outline-none" />
-                                                <input type="text" value={newItemNameEs} onChange={e => setNewItemNameEs(e.target.value)}
-                                                    placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"}
-                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded text-sm focus:border-mint-700 focus:outline-none" />
-                                                <input type="text" value={newItemSupplier} onChange={e => setNewItemSupplier(e.target.value)}
-                                                    placeholder={language === "es" ? "Proveedor" : "Supplier"}
-                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded text-sm focus:border-mint-700 focus:outline-none" />
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => addItemToHistory(catIdx)}
-                                                        className="flex-1 bg-green-700 text-white py-1.5 rounded text-sm font-bold hover:bg-green-800">
-                                                        {language === "es" ? "Agregar" : "Add"}
-                                                    </button>
-                                                    <button onClick={() => setAddingToCategory(null)}
-                                                        className="flex-1 bg-gray-400 text-white py-1.5 rounded text-sm font-bold hover:bg-gray-500">
-                                                        {language === "es" ? "Cancelar" : "Cancel"}
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {histEditMode && addingToCategory !== catIdx && (
-                                            <button onClick={() => { setAddingToCategory(catIdx); setNewItemName(""); setNewItemNameEs(""); setNewItemSupplier(""); }}
-                                                className="w-full py-2 text-green-700 font-bold text-xs border-t border-gray-100 hover:bg-green-50 transition">
-                                                + {language === "es" ? "Agregar Artículo" : "Add Item"}
-                                            </button>
-                                        )}
                                     </div>
                                 </div>
                             ))}
+
+                            {/* Add item from inventory picker */}
+                            {histEditMode && !showAddPicker && (
+                                <button onClick={() => { setShowAddPicker(true); setAddSearch(""); }}
+                                    className="w-full py-3 rounded-xl font-bold text-sm bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition">
+                                    + {language === "es" ? "Agregar Artículo del Inventario" : "Add Item from Inventory"}
+                                </button>
+                            )}
+                            {histEditMode && showAddPicker && (
+                                <div className="bg-white border-2 border-blue-300 rounded-xl overflow-hidden shadow-lg">
+                                    <div className="p-3 bg-blue-50 border-b border-blue-200 flex items-center gap-2">
+                                        <input type="text" value={addSearch} onChange={e => setAddSearch(e.target.value)}
+                                            placeholder={language === "es" ? "🔍 Buscar artículo para agregar..." : "🔍 Search item to add..."}
+                                            className="flex-1 px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-500"
+                                            autoFocus />
+                                        <button onClick={() => setShowAddPicker(false)}
+                                            className="px-3 py-2 bg-gray-200 text-gray-600 rounded-lg text-sm font-bold hover:bg-gray-300">✕</button>
+                                    </div>
+                                    <div className="max-h-64 overflow-y-auto">
+                                        {(() => {
+                                            const searchLower = addSearch.toLowerCase().trim();
+                                            const existingIds = new Set((dayData.items || []).flatMap(cat => cat.items.map(i => i.id)));
+                                            let hasResults = false;
+                                            return fullInventory.map((cat, ci) => {
+                                                const catName = cat.category || cat.name || "";
+                                                const matchingItems = cat.items.filter(item => {
+                                                    if (!searchLower) return !existingIds.has(item.id);
+                                                    const nameMatch = (item.name || "").toLowerCase().includes(searchLower);
+                                                    const nameEsMatch = (item.nameEs || "").toLowerCase().includes(searchLower);
+                                                    const supplierMatch = (item.supplier || "").toLowerCase().includes(searchLower);
+                                                    return (nameMatch || nameEsMatch || supplierMatch);
+                                                });
+                                                if (matchingItems.length === 0) return null;
+                                                hasResults = true;
+                                                return (
+                                                    <div key={ci}>
+                                                        <div className="px-3 py-1.5 bg-gray-50 border-b text-xs font-bold text-gray-500 uppercase">{catName}</div>
+                                                        {matchingItems.map(item => {
+                                                            const alreadyIn = existingIds.has(item.id);
+                                                            return (
+                                                                <button key={item.id}
+                                                                    onClick={() => { addItemFromPicker(item, catName); }}
+                                                                    className={`w-full text-left px-3 py-2.5 border-b border-gray-100 flex items-center justify-between hover:bg-blue-50 transition ${alreadyIn ? "bg-green-50" : ""}`}>
+                                                                    <div>
+                                                                        <span className="text-sm text-gray-800 font-medium">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
+                                                                        {item.supplier && <span className="text-xs text-gray-400 ml-2">({item.supplier})</span>}
+                                                                    </div>
+                                                                    <span className="text-xs font-bold text-blue-600">
+                                                                        {alreadyIn
+                                                                            ? (language === "es" ? "+1 más" : "+1 more")
+                                                                            : (language === "es" ? "+ Agregar" : "+ Add")}
+                                                                    </span>
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            });
+                                        })()}
+                                        {addSearch && fullInventory.every(cat => {
+                                            const s = addSearch.toLowerCase().trim();
+                                            return cat.items.every(item =>
+                                                !(item.name || "").toLowerCase().includes(s) &&
+                                                !(item.nameEs || "").toLowerCase().includes(s) &&
+                                                !(item.supplier || "").toLowerCase().includes(s)
+                                            );
+                                        }) && (
+                                            <div className="p-4 text-center text-gray-400 text-sm">
+                                                {language === "es" ? "No se encontraron artículos" : "No items found"}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* Save edits button */}
                             {histEditMode && (
@@ -4872,7 +4974,7 @@
                         <p className="text-xs text-gray-500 mb-4">{language === "es"
                             ? "Revisa los conteos de inventario de días anteriores. Los cambios vs el día anterior se muestran en verde/rojo."
                             : "Review inventory counts from previous days. Changes vs the prior day are shown in green/red."}</p>
-                        <InventoryHistory language={language} />
+                        <InventoryHistory language={language} customInventory={null} />
                     </div>
                 </div>
             );
