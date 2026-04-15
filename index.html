@@ -7476,7 +7476,7 @@
                                 <span className="text-2xl">📅</span>
                                 <span className="text-xs font-bold mt-1">{t("schedule", language)}</span>
                             </button>
-                            {isAtDDMau && (
+                            {(isAtDDMau || staffIsAdmin) && (
                                 <button
                                     onClick={() => setActiveTab("recipes")}
                                     className={`flex flex-col items-center justify-center flex-1 h-full transition ${activeTab === "recipes" ? "text-mint-700 bg-mint-50" : "text-gray-600 hover:text-mint-700"}`}
