@@ -1615,7 +1615,7 @@
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
             const photoInputRef = React.useRef(null);
 
-            // New checklist system — FOH/BOH with 9 time periods
+            // New checklist system — FOH/BOH with multiple lists per side
             const staffRole = (staffList || []).find(s => s.name === staffName);
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
             const staffSide = staffIsFOH ? "FOH" : "BOH";
@@ -1630,6 +1630,15 @@
             const [checklistDate, setChecklistDate] = useState("");
             // Assignments: { "FOH_morning": "Emma Liliana", "BOH_afternoon": "Jose Mendoza", ... }
             const [checklistAssignments, setChecklistAssignments] = useState({});
+            // Multi-list: { FOH: [{id:"FOH_0", assignee:""}], BOH: [{id:"BOH_0", assignee:""}] }
+            const DEFAULT_LISTS = { FOH: [{ id: "FOH_0", assignee: "" }], BOH: [{ id: "BOH_0", assignee: "" }] };
+            const [checklistLists, setChecklistListsRaw] = useState(DEFAULT_LISTS);
+            const checklistListsRef = React.useRef(checklistLists);
+            const setChecklistLists = (val) => { checklistListsRef.current = val; setChecklistListsRaw(val); };
+            const [activeListIdx, setActiveListIdx] = useState(0);
+            // Helper: get prefix for check keys based on list index (list 0 has no prefix for backward compat)
+            const getCheckPrefix = (side, listIdx) => listIdx === 0 ? "" : side + "_L" + listIdx + "_";
+            const currentPrefix = getCheckPrefix(checklistSide, activeListIdx);
             const [invEditMode, setInvEditMode] = useState(false);
             const [invEditingIdx, setInvEditingIdx] = useState(null);
             const [invEditName, setInvEditName] = useState("");
@@ -1970,10 +1979,24 @@
                             } catch (err) { console.error("Error updating checklist version:", err); }
                             return;
                         }
-                        // Auto-reset: if stored date != today, reset checks but keep tasks
+                        // Auto-reset: if stored date != today, save previous day's final state then reset
                         if (data.date && data.date !== todayKey) {
+                            // Save the previous day's completed state to history before resetting
+                            try {
+                                const prevChecks = data.checks || {};
+                                const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
+                                if (hasAnyChecks) {
+                                    await db.collection("checklistHistory_" + storeLocation).doc(data.date).set({
+                                        checks: prevChecks, customTasks: data.customTasks || {}, assignments: data.assignments || {}, lists: data.lists || {}, date: data.updatedAt || new Date().toISOString(), version: CHECKLIST_VERSION
+                                    });
+                                }
+                            } catch (err) { console.error("Error saving prev day history:", err); }
                             setChecks({});
                             setChecklistDate(todayKey);
+                            // Also reset the Firestore doc for the new day with empty checks
+                            try {
+                                await db.collection("ops").doc("checklists2_" + storeLocation).update({ checks: {}, date: todayKey, updatedAt: new Date().toISOString() });
+                            } catch (err) { console.error("Error resetting for new day:", err); }
                         } else {
                             setChecks(data.checks || {});
                             setChecklistDate(data.date || todayKey);
@@ -1992,6 +2015,14 @@
                         }
                         // Load checklist assignments
                         if (data.assignments) setChecklistAssignments(data.assignments);
+                        // Load multi-list data
+                        if (data.lists) {
+                            setChecklistLists(data.lists);
+                        } else {
+                            // Migrate from old single-list: build lists from assignments
+                            const migLists = { FOH: [{ id: "FOH_0", assignee: (data.assignments || {})["FOH_all"] || "" }], BOH: [{ id: "BOH_0", assignee: (data.assignments || {})["BOH_all"] || "" }] };
+                            setChecklistLists(migLists);
+                        }
                         setLastUpdated(prev => ({ ...prev, checklists: data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "" }));
                     }
                 });
@@ -2100,28 +2131,66 @@
                 return obj;
             };
 
-            const saveChecklistState = async (newChecks, newTasks, newAssignments) => {
+            const saveChecklistState = async (newChecks, newTasks, newAssignments, newLists) => {
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 const safeChecks = cleanForFirestore(newChecks);
                 const safeTasks = cleanForFirestore(newTasks);
                 const safeAssignments = cleanForFirestore(newAssignments || checklistAssignments);
+                const safeLists = cleanForFirestore(newLists || checklistListsRef.current);
                 try {
                     await db.collection("ops").doc("checklists2_" + storeLocation).set({
-                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
+                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, lists: safeLists, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
                     });
                     // Also save to daily history
                     await db.collection("checklistHistory_" + storeLocation).doc(todayKey).set({
-                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, date: now, version: CHECKLIST_VERSION
+                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, lists: safeLists, date: now, version: CHECKLIST_VERSION
                     });
                 } catch (err) { console.error("Error saving checklist:", err); }
             };
 
-            const assignChecklist = async (side, periodId, staffMemberName) => {
-                const key = side + "_" + periodId;
+            const assignChecklist = async (side, periodId, staffMemberName, listIdx) => {
+                const li = listIdx !== undefined ? listIdx : activeListIdx;
+                const key = li === 0 ? side + "_" + periodId : side + "_L" + li + "_" + periodId;
                 const updated = { ...checklistAssignments, [key]: staffMemberName };
+                // Also update the lists data
+                const updatedLists = JSON.parse(JSON.stringify(checklistListsRef.current));
+                if (updatedLists[side] && updatedLists[side][li]) {
+                    updatedLists[side][li].assignee = staffMemberName;
+                }
                 setChecklistAssignments(updated);
-                await saveChecklistState(checksRef.current, customTasksRef.current, updated);
+                setChecklistLists(updatedLists);
+                await saveChecklistState(checksRef.current, customTasksRef.current, updated, updatedLists);
+            };
+
+            const addChecklistList = async (side) => {
+                const updatedLists = JSON.parse(JSON.stringify(checklistListsRef.current));
+                const newIdx = updatedLists[side].length;
+                updatedLists[side].push({ id: side + "_" + newIdx, assignee: "" });
+                setChecklistLists(updatedLists);
+                setActiveListIdx(newIdx);
+                await saveChecklistState(checksRef.current, customTasksRef.current, checklistAssignments, updatedLists);
+            };
+
+            const removeChecklistList = async (side, listIdx) => {
+                if (listIdx === 0) return; // Can't remove the first list
+                const updatedLists = JSON.parse(JSON.stringify(checklistListsRef.current));
+                updatedLists[side].splice(listIdx, 1);
+                // Clean up checks for that list
+                const prefix = getCheckPrefix(side, listIdx);
+                const newChecks = { ...checksRef.current };
+                if (prefix) {
+                    Object.keys(newChecks).forEach(k => { if (k.startsWith(prefix)) delete newChecks[k]; });
+                }
+                // Clean up assignment
+                const newAssignments = { ...checklistAssignments };
+                const assignKey = side + "_L" + listIdx + "_all";
+                delete newAssignments[assignKey];
+                setChecklistLists(updatedLists);
+                setChecks(newChecks);
+                setChecklistAssignments(newAssignments);
+                setActiveListIdx(Math.min(activeListIdx, updatedLists[side].length - 1));
+                await saveChecklistState(newChecks, customTasksRef.current, newAssignments, updatedLists);
             };
 
             const handlePasswordSubmit = (e) => {
@@ -2132,24 +2201,25 @@
 
             const toggleCheckItem = async (taskId, parentTask) => {
                 const cur = checksRef.current;
-                const newVal = !cur[taskId];
-                const newChecks = { ...cur, [taskId]: newVal };
+                const pKey = currentPrefix + taskId;
+                const newVal = !cur[pKey];
+                const newChecks = { ...cur, [pKey]: newVal };
                 // Store who completed it and when
                 if (newVal) {
                     const now = new Date();
                     const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-                    newChecks[taskId + "_by"] = staffName;
-                    newChecks[taskId + "_at"] = timeStr;
+                    newChecks[pKey + "_by"] = staffName;
+                    newChecks[pKey + "_at"] = timeStr;
                 } else {
-                    delete newChecks[taskId + "_by"];
-                    delete newChecks[taskId + "_at"];
+                    delete newChecks[pKey + "_by"];
+                    delete newChecks[pKey + "_at"];
                 }
                 setChecks(newChecks);
                 await saveChecklistState(newChecks, customTasksRef.current);
                 // If checking ON and the parent task has a follow-up, check if task is now complete
                 if (newVal && parentTask && parentTask.followUp && parentTask.followUp.question) {
                     const allDone = parentTask.subtasks && parentTask.subtasks.length > 0
-                        ? parentTask.subtasks.every(s => s.id === taskId ? true : newChecks[s.id])
+                        ? parentTask.subtasks.every(s => (currentPrefix + s.id) === pKey ? true : newChecks[currentPrefix + s.id])
                         : true;
                     if (allDone) setShowFollowUpFor(parentTask.id);
                 }
@@ -2157,7 +2227,8 @@
 
             // Save a follow-up answer
             const saveFollowUpAnswer = async (taskId, answer) => {
-                const newChecks = { ...checksRef.current, [taskId + "_followUp"]: answer };
+                const pKey = currentPrefix + taskId;
+                const newChecks = { ...checksRef.current, [pKey + "_followUp"]: answer };
                 setChecks(newChecks);
                 setFollowUpAnswers(prev => ({ ...prev, [taskId]: answer }));
                 setShowFollowUpFor(null);
@@ -2218,7 +2289,8 @@
                     const ref = storage.ref().child("checklist-photos/" + todayKey + "/" + taskId + "_" + Date.now() + ".jpg");
                     await ref.put(file);
                     const url = await ref.getDownloadURL();
-                    const newChecks = { ...checksRef.current, [taskId + "_photo"]: url, [taskId + "_photoTime"]: new Date().toISOString() };
+                    const pKey = currentPrefix + taskId;
+                    const newChecks = { ...checksRef.current, [pKey + "_photo"]: url, [pKey + "_photoTime"]: new Date().toISOString() };
                     setChecks(newChecks);
                     await saveChecklistState(newChecks, customTasksRef.current);
                 } catch (err) { console.error("Error uploading photo:", err); alert(language === "es" ? "Error al subir foto" : "Error uploading photo"); }
@@ -2238,7 +2310,7 @@
                 const now = new Date().toISOString();
                 try {
                     await db.collection("checklistHistory_" + storeLocation).doc(todayKey + "_saved").set({
-                        checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), date: now, savedBy: staffName
+                        checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
                 setChecks({});
@@ -2306,9 +2378,8 @@
             const saveInventory = async (counts, items) => {
                 try {
                     await db.collection("ops").doc("inventory_" + storeLocation).set({
-                        counts, customInventory: items, date: new Date().toISOString()
+                        counts, customInventory: items, countMeta: invCountMeta, date: new Date().toISOString()
                     });
-                    await saveInventorySnapshot(counts, items);
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
 
@@ -2379,46 +2450,52 @@
             };
 
             // Count all checkable items (tasks + subtasks) for completion stats
-            const countTaskItems = (task) => {
+            const countTaskItems = (task, prefix) => {
+                const p = prefix || currentPrefix;
                 let total = 0, done = 0;
                 if (task.subtasks && task.subtasks.length > 0) {
                     total += task.subtasks.length;
-                    done += task.subtasks.filter(s => checks[s.id]).length;
+                    done += task.subtasks.filter(s => checks[p + s.id]).length;
                 } else {
                     total += 1;
-                    done += checks[task.id] ? 1 : 0;
+                    done += checks[p + task.id] ? 1 : 0;
                 }
                 if (task.requirePhoto) {
                     total += 1;
-                    done += checks[task.id + "_photo"] ? 1 : 0;
+                    done += checks[p + task.id + "_photo"] ? 1 : 0;
                 }
                 return { total, done };
             };
 
-            const getCompletionStats = (side) => {
+            const getCompletionStats = (side, listIdx) => {
+                const li = listIdx !== undefined ? listIdx : activeListIdx;
+                const prefix = getCheckPrefix(side, li);
                 let total = 0, done = 0;
                 TIME_PERIODS.forEach(p => {
                     const tasks = (customTasks[side] && customTasks[side][p.id]) || [];
-                    tasks.forEach(t => { const c = countTaskItems(t); total += c.total; done += c.done; });
+                    tasks.forEach(t => { const c = countTaskItems(t, prefix); total += c.total; done += c.done; });
                 });
                 return { total, done };
             };
 
-            const getPeriodStats = (side, periodId) => {
+            const getPeriodStats = (side, periodId, listIdx) => {
+                const li = listIdx !== undefined ? listIdx : activeListIdx;
+                const prefix = getCheckPrefix(side, li);
                 const tasks = (customTasks[side] && customTasks[side][periodId]) || [];
                 let total = 0, done = 0;
-                tasks.forEach(t => { const c = countTaskItems(t); total += c.total; done += c.done; });
+                tasks.forEach(t => { const c = countTaskItems(t, prefix); total += c.total; done += c.done; });
                 return { total, done };
             };
 
             // Check if a task is fully complete (all subtasks + photo if required)
             const isTaskComplete = (task) => {
+                const p = currentPrefix;
                 if (task.subtasks && task.subtasks.length > 0) {
-                    if (!task.subtasks.every(s => checks[s.id])) return false;
+                    if (!task.subtasks.every(s => checks[p + s.id])) return false;
                 } else {
-                    if (!checks[task.id]) return false;
+                    if (!checks[p + task.id]) return false;
                 }
-                if (task.requirePhoto && !checks[task.id + "_photo"]) return false;
+                if (task.requirePhoto && !checks[p + task.id + "_photo"]) return false;
                 return true;
             };
 
@@ -2445,40 +2522,61 @@
                 const tasks = getCurrentTasks();
                 const periodStats = getPeriodStats(checklistSide, activePeriod);
                 const overallStats = getCompletionStats(checklistSide);
+                const sideLists = (checklistLists[checklistSide] || [{ id: checklistSide + "_0", assignee: "" }]);
+                const currentAssignKey = activeListIdx === 0 ? checklistSide + "_all" : checklistSide + "_L" + activeListIdx + "_all";
+                const currentAssignee = checklistAssignments[currentAssignKey] || (sideLists[activeListIdx] || {}).assignee || "";
 
                 return (
                     <div className="space-y-3">
-                        {/* FOH / BOH toggle — shows assigned name or FOH/BOH */}
-                        {(() => {
-                            const fohAssignee = checklistAssignments["FOH_all"];
-                            const bohAssignee = checklistAssignments["BOH_all"];
-                            const fohStats = getCompletionStats("FOH");
-                            const bohStats = getCompletionStats("BOH");
-                            return (
-                                <div className="flex gap-2 mb-3">
-                                    <button onClick={() => { setChecklistSide("FOH"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
-                                        className={`flex-1 py-2.5 px-2 rounded-xl font-bold text-sm transition border-2 ${checklistSide === "FOH" ? "bg-blue-600 text-white border-blue-600" : "bg-blue-50 text-blue-700 border-blue-200"}`}>
-                                        <div>{fohAssignee || "FOH"}</div>
-                                        {fohAssignee && <div className={`text-xs mt-0.5 ${checklistSide === "FOH" ? "opacity-70" : "opacity-50"}`}>FOH</div>}
-                                        <div className={`text-xs mt-0.5 ${checklistSide === "FOH" ? "opacity-70" : "opacity-50"}`}>{fohStats.done}/{fohStats.total}</div>
+                        {/* FOH / BOH side selector */}
+                        <div className="flex gap-2 mb-1">
+                            {["FOH", "BOH"].map(side => {
+                                const isActive = checklistSide === side;
+                                const color = side === "FOH" ? "blue" : "amber";
+                                return (
+                                    <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
+                                        className={`flex-1 py-2 px-2 rounded-xl font-bold text-sm transition border-2 ${isActive ? "bg-" + color + "-600 text-white border-" + color + "-600" : "bg-" + color + "-50 text-" + color + "-700 border-" + color + "-200"}`}>
+                                        {side}
                                     </button>
-                                    <button onClick={() => { setChecklistSide("BOH"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
-                                        className={`flex-1 py-2.5 px-2 rounded-xl font-bold text-sm transition border-2 ${checklistSide === "BOH" ? "bg-amber-600 text-white border-amber-600" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                                        <div>{bohAssignee || "BOH"}</div>
-                                        {bohAssignee && <div className={`text-xs mt-0.5 ${checklistSide === "BOH" ? "opacity-70" : "opacity-50"}`}>BOH</div>}
-                                        <div className={`text-xs mt-0.5 ${checklistSide === "BOH" ? "opacity-70" : "opacity-50"}`}>{bohStats.done}/{bohStats.total}</div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Multi-list tabs for current side */}
+                        <div className="flex flex-wrap gap-1.5 mb-2">
+                            {sideLists.map((listItem, li) => {
+                                const liStats = getCompletionStats(checklistSide, li);
+                                const listAssignKey = li === 0 ? checklistSide + "_all" : checklistSide + "_L" + li + "_all";
+                                const assignee = checklistAssignments[listAssignKey] || listItem.assignee || "";
+                                const isActive = activeListIdx === li;
+                                const color = checklistSide === "FOH" ? "blue" : "amber";
+                                return (
+                                    <button key={li} onClick={() => { setActiveListIdx(li); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
+                                        className={`py-1.5 px-3 rounded-lg font-bold text-xs transition border-2 relative ${isActive ? "bg-" + color + "-100 text-" + color + "-800 border-" + color + "-400" : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"}`}>
+                                        <div>{assignee || (language === "es" ? "Lista" : "List") + " " + (li + 1)}</div>
+                                        <div className="text-[10px] opacity-60">{liStats.done}/{liStats.total}</div>
+                                        {currentIsAdmin && isActive && li > 0 && (
+                                            <span onClick={(e) => { e.stopPropagation(); if (confirm(language === "es" ? "¿Eliminar esta lista?" : "Remove this list?")) removeChecklistList(checklistSide, li); }}
+                                                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold cursor-pointer hover:bg-red-600">×</span>
+                                        )}
                                     </button>
-                                </div>
-                            );
-                        })()}
+                                );
+                            })}
+                            {currentIsAdmin && (
+                                <button onClick={() => addChecklistList(checklistSide)}
+                                    className="py-1.5 px-3 rounded-lg text-xs font-bold border-2 border-dashed border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-600 transition">
+                                    + {language === "es" ? "Lista" : "List"}
+                                </button>
+                            )}
+                        </div>
 
                         {/* Admin assign dropdown */}
                         {currentIsAdmin && (
                             <div className="flex items-center gap-2 mb-2 bg-gray-50 rounded-lg p-2">
-                                <span className="text-xs font-bold text-gray-500">👤 {language === "es" ? "Asignar" : "Assign"} {checklistSide}:</span>
+                                <span className="text-xs font-bold text-gray-500">👤 {language === "es" ? "Asignar" : "Assign"}:</span>
                                 <select
-                                    value={checklistAssignments[checklistSide + "_all"] || ""}
-                                    onChange={e => assignChecklist(checklistSide, "all", e.target.value)}
+                                    value={currentAssignee}
+                                    onChange={e => assignChecklist(checklistSide, "all", e.target.value, activeListIdx)}
                                     className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold bg-white">
                                     <option value="">{language === "es" ? "— Sin asignar —" : "— Unassigned —"}</option>
                                     {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").map(s => (
@@ -2489,7 +2587,7 @@
                         )}
 
                         {/* Non-admin sees assignment badge */}
-                        {!currentIsAdmin && checklistAssignments[checklistSide + "_all"] && checklistAssignments[checklistSide + "_all"] === staffName && (
+                        {!currentIsAdmin && currentAssignee && currentAssignee === staffName && (
                             <div className="text-center text-xs font-bold py-1.5 rounded-lg mb-2 bg-green-50 text-green-700 border border-green-200">
                                 {language === "es" ? "✅ Asignado a ti" : "✅ Assigned to you"}
                             </div>
@@ -2527,7 +2625,7 @@
                         {tasks.map((item, idx) => {
                             const hasSubtasks = item.subtasks && item.subtasks.length > 0;
                             const taskComplete = isTaskComplete(item);
-                            const photoUrl = checks[item.id + "_photo"];
+                            const photoUrl = checks[currentPrefix + item.id + "_photo"];
                             const photoNeeded = item.requirePhoto && !photoUrl;
 
                             // Compute urgency for flashing: "warning" (30 min before), "overdue" (past time)
@@ -2649,7 +2747,7 @@
                                     <div className="flex items-center gap-1">
                                         <div className={"flex-1 flex items-start p-3 " + (!editMode && !hasSubtasks ? "cursor-pointer" : "")}>
                                             {!editMode && !hasSubtasks && (
-                                                <input type="checkbox" checked={checks[item.id] || false}
+                                                <input type="checkbox" checked={checks[currentPrefix + item.id] || false}
                                                     onChange={() => toggleCheckItem(item.id, item)}
                                                     className="w-5 h-5 text-mint-700 rounded focus:ring-2 focus:ring-mint-700 mt-0.5" />
                                             )}
@@ -2678,9 +2776,9 @@
                                                     )}
                                                 </div>
                                                 {/* Completed by info — for tasks without subtasks */}
-                                                {!hasSubtasks && checks[item.id] && checks[item.id + "_by"] && (
+                                                {!hasSubtasks && checks[currentPrefix + item.id] && checks[currentPrefix + item.id + "_by"] && (
                                                     <p className="text-xs text-green-600 mt-0.5">
-                                                        ✓ {checks[item.id + "_by"]} — {checks[item.id + "_at"]}
+                                                        ✓ {checks[currentPrefix + item.id + "_by"]} — {checks[currentPrefix + item.id + "_at"]}
                                                     </p>
                                                 )}
                                             </div>
@@ -2701,14 +2799,14 @@
                                             {item.subtasks.map(sub => (
                                                 <div key={sub.id}>
                                                     <label className="flex items-center gap-2 cursor-pointer">
-                                                        <input type="checkbox" checked={checks[sub.id] || false}
+                                                        <input type="checkbox" checked={checks[currentPrefix + sub.id] || false}
                                                             onChange={() => toggleCheckItem(sub.id, item)}
                                                             className="w-4 h-4 text-mint-600 rounded" />
-                                                        <span className={"text-sm " + (checks[sub.id] ? "line-through text-green-600" : "text-gray-700")}>{sub.task}</span>
+                                                        <span className={"text-sm " + (checks[currentPrefix + sub.id] ? "line-through text-green-600" : "text-gray-700")}>{sub.task}</span>
                                                     </label>
-                                                    {checks[sub.id] && checks[sub.id + "_by"] && (
+                                                    {checks[currentPrefix + sub.id] && checks[currentPrefix + sub.id + "_by"] && (
                                                         <p className="text-xs text-green-600 ml-6">
-                                                            ✓ {checks[sub.id + "_by"]} — {checks[sub.id + "_at"]}
+                                                            ✓ {checks[currentPrefix + sub.id + "_by"]} — {checks[currentPrefix + sub.id + "_at"]}
                                                         </p>
                                                     )}
                                                 </div>
@@ -2723,7 +2821,7 @@
                                                 <div>
                                                     <div className="flex items-center gap-2 mb-1">
                                                         <span className="text-xs text-green-600 font-bold">✓ {language === "es" ? "Foto tomada" : "Photo taken"}</span>
-                                                        <span className="text-xs text-gray-400">{checks[item.id + "_photoTime"] ? new Date(checks[item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
+                                                        <span className="text-xs text-gray-400">{checks[currentPrefix + item.id + "_photoTime"] ? new Date(checks[currentPrefix + item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
                                                     </div>
                                                     <img src={photoUrl} alt="Task photo" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
                                                         onClick={() => window.open(photoUrl, "_blank")} />
@@ -2746,7 +2844,7 @@
                                         </div>
                                     )}
                                     {/* Follow-up question prompt — shows when task is completed */}
-                                    {item.followUp && item.followUp.question && (showFollowUpFor === item.id || (taskComplete && !checks[item.id + "_followUp"])) && (
+                                    {item.followUp && item.followUp.question && (showFollowUpFor === item.id || (taskComplete && !checks[currentPrefix + item.id + "_followUp"])) && (
                                         <div className="mx-3 mb-3 p-3 bg-blue-50 border-2 border-blue-300 rounded-xl">
                                             <p className="text-sm font-bold text-blue-800 mb-2">❓ {item.followUp.question}</p>
                                             {item.followUp.type === "dropdown" && item.followUp.options ? (
@@ -2774,10 +2872,10 @@
                                         </div>
                                     )}
                                     {/* Show saved answer */}
-                                    {item.followUp && checks[item.id + "_followUp"] && showFollowUpFor !== item.id && (
+                                    {item.followUp && checks[currentPrefix + item.id + "_followUp"] && showFollowUpFor !== item.id && (
                                         <div className="mx-3 mb-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
                                             <p className="text-xs text-gray-500">❓ {item.followUp.question}</p>
-                                            <p className="text-sm font-bold text-gray-700">💬 {checks[item.id + "_followUp"]}</p>
+                                            <p className="text-sm font-bold text-gray-700">💬 {checks[currentPrefix + item.id + "_followUp"]}</p>
                                         </div>
                                     )}
                                 </div>
