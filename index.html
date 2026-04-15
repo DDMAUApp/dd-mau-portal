@@ -5735,7 +5735,7 @@
             const [orderHistory, setOrderHistory] = useState([]);
             const [showHistory, setShowHistory] = useState(false);
             const [specialNotes, setSpecialNotes] = useState("");
-            const [deliveryFee, setDeliveryFee] = useState(25);
+            const [deliveryFee, setDeliveryFee] = useState("25");
             const [viewingOrder, setViewingOrder] = useState(null); // full invoice view
             const [editingOrderId, setEditingOrderId] = useState(null); // editing existing order
 
@@ -5784,7 +5784,7 @@
 
             const removeFromCart = (id) => setCart(prev => prev.filter(i => i.id !== id));
             const getSubtotal = () => cart.reduce((sum, i) => sum + i.price * i.qty, 0);
-            const getDelFee = () => customer.orderType === "delivery" ? deliveryFee : 0;
+            const getDelFee = () => customer.orderType === "delivery" ? (parseFloat(deliveryFee) || 0) : 0;
             const getTotal = () => getSubtotal() + getDelFee();
 
             const submitOrder = async () => {
@@ -5815,100 +5815,116 @@
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup" });
                 setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
-                setDeliveryFee(25); setEditingOrderId(null);
+                setDeliveryFee("25"); setEditingOrderId(null);
             };
 
             const loadOrderForEdit = (o) => {
                 setCustomer(o.customer || {});
                 setCart((o.items || []).map((item, i) => ({ ...item, id: Date.now() + i })));
                 setSpecialNotes(o.specialNotes || "");
-                setDeliveryFee(o.deliveryFee || 25);
+                setDeliveryFee(String(o.deliveryFee || 25));
                 setEditingOrderId(o.id);
                 setShowHistory(false);
                 setViewingOrder(null);
                 setStep(3);
             };
 
-            // Print invoice
-            const printOrder = (o) => {
-                const w = window.open('', '_blank', 'width=800,height=1100');
+            // Print invoice — builds HTML string used by both print and inline view
+            const buildInvoiceHTML = (o) => {
                 const c = o.customer || {};
                 const itemsHTML = (o.items || []).map((item, i) => {
                     let details = item.size;
-                    if (item.type) details += '<br>Type: ' + item.type;
-                    if (item.proteins && item.proteins.length) details += '<br>Proteins: ' + item.proteins.join(', ');
-                    if (item.sauces && item.sauces.length) details += '<br>Sauces: ' + item.sauces.join(', ');
-                    if (item.singleSauce) details += '<br>Sauce: ' + item.singleSauce;
-                    if (item.base) details += '<br>Base: ' + item.base;
-                    if (item.utensils) details += '<br>Utensils: ' + item.utensils;
+                    if (item.type) details += ' | Type: ' + item.type;
+                    if (item.proteins && item.proteins.length) details += ' | Proteins: ' + item.proteins.join(', ');
+                    if (item.sauces && item.sauces.length) details += ' | Sauces: ' + item.sauces.join(', ');
+                    if (item.singleSauce) details += ' | Sauce: ' + item.singleSauce;
+                    if (item.base) details += ' | Base: ' + item.base;
+                    if (item.utensils) details += ' | ' + item.utensils;
                     if (item.samplerProteins) {
                         const names = ['Banh Mi', 'Mini Bowls', 'Rice Rolls'];
-                        item.samplerProteins.forEach((sp, si) => { if (sp && sp.length) details += '<br>• ' + names[si] + ': ' + sp.join(', '); });
+                        item.samplerProteins.forEach((sp, si) => { if (sp && sp.length) details += ' | ' + names[si] + ': ' + sp.join(', '); });
                     }
-                    if (item.samplerEggRoll) details += '<br>Egg Rolls: ' + item.samplerEggRoll;
-                    if (item.itemNote) details += '<br><em>Note: ' + item.itemNote + '</em>';
+                    if (item.samplerEggRoll) details += ' | Egg Rolls: ' + item.samplerEggRoll;
+                    if (item.itemNote) details += ' | Note: ' + item.itemNote;
                     return `<tr>
-                        <td style="padding:8px;border-bottom:1px solid #eee">${i+1}</td>
-                        <td style="padding:8px;border-bottom:1px solid #eee"><strong>${item.nameEn || item.name}</strong><br><span style="color:#666;font-size:12px">${details}</span></td>
-                        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center">${item.qty}</td>
-                        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">$${item.price?.toFixed(2)}</td>
-                        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">$${(item.price * item.qty)?.toFixed(2)}</td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd;font-weight:bold;vertical-align:top">${i+1}</td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd"><strong>${item.nameEn || item.name}</strong><br><span style="color:#555;font-size:12px">${details}</span></td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:center;font-weight:bold">${item.qty}</td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:right">$${item.price?.toFixed(2)}</td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold">$${(item.price * item.qty)?.toFixed(2)}</td>
                     </tr>`;
                 }).join('');
-                w.document.write(`<!DOCTYPE html><html><head><title>DD Mau Catering - ${c.name}</title><style>
-                    body{font-family:-apple-system,sans-serif;max-width:750px;margin:40px auto;padding:20px;color:#333}
-                    .header{text-align:center;border-bottom:3px solid #255a37;padding-bottom:20px;margin-bottom:20px}
-                    .header h1{color:#255a37;margin:0;font-size:28px} .header p{color:#666;margin:5px 0}
-                    .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
-                    .info-box{background:#f9f9f9;padding:15px;border-radius:8px}
-                    .info-box h3{margin:0 0 8px;color:#255a37;font-size:14px;text-transform:uppercase}
-                    .info-box p{margin:3px 0;font-size:13px}
-                    table{width:100%;border-collapse:collapse;margin-bottom:20px}
-                    th{background:#255a37;color:white;padding:10px 8px;text-align:left;font-size:13px}
-                    th:nth-child(3),th:nth-child(4),th:nth-child(5){text-align:right}
-                    .totals{text-align:right;margin-top:10px}
-                    .totals .line{display:flex;justify-content:flex-end;gap:30px;padding:4px 0;font-size:14px}
-                    .totals .total{font-size:20px;font-weight:bold;color:#255a37;border-top:2px solid #255a37;padding-top:8px;margin-top:8px}
-                    .notes{background:#fff9e6;border:1px solid #f0e0a0;padding:12px;border-radius:8px;margin-bottom:20px;font-size:13px}
-                    .footer{text-align:center;color:#999;font-size:11px;margin-top:30px;border-top:1px solid #eee;padding-top:15px}
-                    @media print{body{margin:0;padding:15px}}
+                return `<!DOCTYPE html><html><head><title>DD Mau Catering - ${c.name}</title>
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+                <style>
+                    *{box-sizing:border-box}
+                    body{font-family:-apple-system,Helvetica,Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333;background:#fff}
+                    .invoice{background:#fff;border:2px solid #255a37;border-radius:8px;overflow:hidden}
+                    .header{background:#255a37;color:white;padding:20px;text-align:center}
+                    .header h1{margin:0;font-size:24px;letter-spacing:1px} .header p{margin:4px 0 0;opacity:.8;font-size:14px}
+                    .order-num{background:#1a4028;color:#8fbc8f;text-align:center;padding:6px;font-size:13px;font-weight:bold;letter-spacing:2px}
+                    .info-grid{display:flex;gap:12px;padding:16px}
+                    .info-box{flex:1;background:#f4faf5;border:1px solid #c8e6c9;border-radius:6px;padding:12px}
+                    .info-box h3{margin:0 0 6px;color:#255a37;font-size:11px;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #c8e6c9;padding-bottom:4px}
+                    .info-box p{margin:2px 0;font-size:13px;line-height:1.5}
+                    .notes{margin:0 16px 12px;background:#fff9e6;border:1px solid #f0d060;border-radius:6px;padding:10px;font-size:13px}
+                    table{width:100%;border-collapse:collapse}
+                    th{background:#2d6e42;color:white;padding:10px 6px;font-size:12px;text-align:left;text-transform:uppercase;letter-spacing:.5px}
+                    th:nth-child(1){width:30px} th:nth-child(3){text-align:center;width:45px} th:nth-child(4),th:nth-child(5){text-align:right;width:75px}
+                    .totals{padding:16px;background:#f4faf5}
+                    .totals .line{display:flex;justify-content:flex-end;gap:40px;padding:4px 0;font-size:14px}
+                    .totals .total-line{font-size:20px;font-weight:bold;color:#255a37;border-top:3px solid #255a37;padding-top:10px;margin-top:8px}
+                    .footer{text-align:center;color:#888;font-size:11px;padding:12px;border-top:1px solid #ddd}
+                    .no-print{margin:16px 0;text-align:center}
+                    .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
+                    .btn-print{background:#255a37;color:white} .btn-edit{background:#f59e0b;color:white} .btn-close{background:#e5e7eb;color:#555}
+                    @media print{.no-print{display:none !important} body{padding:0;margin:0} .invoice{border:none}}
                 </style></head><body>
+                <div class="invoice">
                     <div class="header">
-                        <h1>🍜 DD Mau Vietnamese Eatery</h1>
-                        <p>Catering Order</p>
-                        <p style="font-size:12px;color:#999">Order #${o.id?.slice(-6).toUpperCase() || "------"}</p>
+                        <h1>DD Mau Vietnamese Eatery</h1>
+                        <p>Catering Order Invoice</p>
                     </div>
+                    <div class="order-num">ORDER #${o.id?.slice(-6).toUpperCase() || "------"}</div>
                     <div class="info-grid">
                         <div class="info-box">
                             <h3>Customer</h3>
                             <p><strong>${c.name}</strong></p>
-                            <p>📞 ${c.phone}</p>
-                            <p>✉️ ${c.email}</p>
+                            <p>Phone: ${c.phone}</p>
+                            <p>Email: ${c.email}</p>
                         </div>
                         <div class="info-box">
                             <h3>Event Details</h3>
-                            <p>📅 ${c.date} @ ${c.time}</p>
-                            <p>👥 ${c.guests} guests</p>
-                            <p>${c.orderType === "delivery" ? "🚗 Delivery: " + (c.address || "") : "🏪 Pickup"}</p>
+                            <p>Date: ${c.date} @ ${c.time}</p>
+                            <p>Guests: ${c.guests}</p>
+                            <p>${c.orderType === "delivery" ? "Delivery: " + (c.address || "TBD") : "Pickup"}</p>
                         </div>
                     </div>
-                    ${o.specialNotes ? '<div class="notes"><strong>📝 Special Notes:</strong> ' + o.specialNotes + '</div>' : ''}
+                    ${o.specialNotes ? '<div class="notes"><strong>Special Notes:</strong> ' + o.specialNotes + '</div>' : ''}
                     <table>
-                        <thead><tr><th>#</th><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
+                        <thead><tr><th>#</th><th>Item</th><th>Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
                         <tbody>${itemsHTML}</tbody>
                     </table>
                     <div class="totals">
                         <div class="line"><span>Subtotal:</span><span>$${o.subtotal?.toFixed(2)}</span></div>
                         ${o.deliveryFee > 0 ? '<div class="line"><span>Delivery Fee:</span><span>$' + o.deliveryFee?.toFixed(2) + '</span></div>' : ''}
-                        <div class="line total"><span>Total:</span><span>$${o.total?.toFixed(2)}</span></div>
+                        <div class="line total-line"><span>TOTAL:</span><span>$${o.total?.toFixed(2)}</span></div>
                     </div>
                     <div class="footer">
-                        <p>Order taken by: ${o.takenBy || "Staff"} | ${o.createdAt ? new Date(o.createdAt).toLocaleString() : ""}</p>
-                        <p>DD Mau Vietnamese Eatery — ddmaustl.com — Thank you!</p>
+                        <p>Taken by: ${o.takenBy || "Staff"} | ${o.createdAt ? new Date(o.createdAt).toLocaleString() : ""}</p>
+                        ${o.updatedAt && o.updatedAt !== o.createdAt ? '<p>Updated: ' + new Date(o.updatedAt).toLocaleString() + '</p>' : ''}
+                        <p>DD Mau Vietnamese Eatery — ddmaustl.com</p>
                     </div>
-                    <script>window.print();<\/script>
-                </body></html>`);
+                </div>
+                </body></html>`;
+            };
+
+            const printOrder = (o) => {
+                const w = window.open('', '_blank', 'width=800,height=1100');
+                if (!w) { alert('Please allow popups to print this order, or use the Share button on your phone.'); return; }
+                w.document.write(buildInvoiceHTML(o));
                 w.document.close();
+                setTimeout(() => w.print(), 300);
             };
 
             // Success screen
@@ -5935,78 +5951,83 @@
                 const vo = viewingOrder;
                 const vc = vo.customer || {};
                 return (
-                    <div className="p-4 pb-24">
-                        <div className="flex items-center justify-between mb-4">
-                            <button onClick={() => setViewingOrder(null)} className="text-sm bg-gray-100 px-3 py-1.5 rounded-full font-bold text-gray-600">← {language === "es" ? "Volver" : "Back"}</button>
-                            <div className="flex gap-2">
-                                <button onClick={() => loadOrderForEdit(vo)} className="text-sm bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full font-bold border border-amber-300">✏️ {language === "es" ? "Editar" : "Edit"}</button>
-                                <button onClick={() => printOrder(vo)} className="text-sm bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full font-bold border border-blue-300">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
-                            </div>
+                    <div className="p-2 pb-24">
+                        {/* Big action buttons at top */}
+                        <div className="flex gap-2 mb-3">
+                            <button onClick={() => setViewingOrder(null)} className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg font-bold text-sm">← {language === "es" ? "Volver" : "Back"}</button>
+                            <button onClick={() => loadOrderForEdit(vo)} className="flex-1 py-3 bg-amber-500 text-white rounded-lg font-bold text-sm">✏️ {language === "es" ? "Editar Pedido" : "Edit Order"}</button>
+                            <button onClick={() => printOrder(vo)} className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold text-sm">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
                         </div>
 
-                        {/* Invoice style */}
-                        <div className="bg-white border-2 border-gray-200 rounded-lg overflow-hidden shadow-lg">
-                            {/* Header */}
-                            <div className="bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 text-center">
-                                <h2 className="text-xl font-bold">🍜 DD Mau Vietnamese Eatery</h2>
-                                <p className="text-mint-100 text-sm">{language === "es" ? "Pedido de Catering" : "Catering Order"}</p>
-                                <p className="text-mint-200 text-xs mt-1">#{vo.id?.slice(-6).toUpperCase()}</p>
+                        {/* Invoice — paper-style */}
+                        <div className="bg-white border-2 border-gray-300 rounded-lg overflow-hidden shadow-xl" style={{minHeight: "80vh"}}>
+                            {/* Green header bar */}
+                            <div style={{background: "#255a37", color: "white", padding: "20px", textAlign: "center"}}>
+                                <h2 className="text-2xl font-bold" style={{margin: 0, letterSpacing: "1px"}}>DD Mau Vietnamese Eatery</h2>
+                                <p style={{margin: "4px 0 0", opacity: 0.85, fontSize: "14px"}}>{language === "es" ? "Factura de Catering" : "Catering Invoice"}</p>
+                            </div>
+                            <div style={{background: "#1a4028", color: "#8fbc8f", textAlign: "center", padding: "6px", fontSize: "13px", fontWeight: "bold", letterSpacing: "2px"}}>
+                                ORDER #{vo.id?.slice(-6).toUpperCase()}
                             </div>
 
-                            {/* Customer + Event Info */}
-                            <div className="grid grid-cols-2 gap-3 p-4">
-                                <div className="bg-gray-50 rounded-lg p-3">
-                                    <p className="text-xs font-bold text-mint-700 mb-1">{language === "es" ? "CLIENTE" : "CUSTOMER"}</p>
-                                    <p className="font-bold text-sm">{vc.name}</p>
-                                    <p className="text-xs text-gray-600">📞 {vc.phone}</p>
-                                    <p className="text-xs text-gray-600">✉️ {vc.email}</p>
+                            {/* Customer + Event boxes */}
+                            <div style={{display: "flex", gap: "10px", padding: "16px"}}>
+                                <div style={{flex: 1, background: "#f4faf5", border: "1px solid #c8e6c9", borderRadius: "8px", padding: "12px"}}>
+                                    <p style={{margin: "0 0 6px", fontSize: "11px", fontWeight: "bold", color: "#255a37", textTransform: "uppercase", letterSpacing: "1px", borderBottom: "1px solid #c8e6c9", paddingBottom: "4px"}}>{language === "es" ? "CLIENTE" : "CUSTOMER"}</p>
+                                    <p style={{margin: "2px 0", fontWeight: "bold", fontSize: "15px"}}>{vc.name}</p>
+                                    <p style={{margin: "2px 0", fontSize: "13px", color: "#555"}}>📞 {vc.phone}</p>
+                                    <p style={{margin: "2px 0", fontSize: "13px", color: "#555"}}>✉️ {vc.email}</p>
                                 </div>
-                                <div className="bg-gray-50 rounded-lg p-3">
-                                    <p className="text-xs font-bold text-mint-700 mb-1">{language === "es" ? "EVENTO" : "EVENT"}</p>
-                                    <p className="text-xs text-gray-700">📅 {vc.date} @ {vc.time}</p>
-                                    <p className="text-xs text-gray-700">👥 {vc.guests} {language === "es" ? "personas" : "guests"}</p>
-                                    <p className="text-xs text-gray-700">{vc.orderType === "delivery" ? "🚗 " + (vc.address || "Delivery") : "🏪 Pickup"}</p>
+                                <div style={{flex: 1, background: "#f4faf5", border: "1px solid #c8e6c9", borderRadius: "8px", padding: "12px"}}>
+                                    <p style={{margin: "0 0 6px", fontSize: "11px", fontWeight: "bold", color: "#255a37", textTransform: "uppercase", letterSpacing: "1px", borderBottom: "1px solid #c8e6c9", paddingBottom: "4px"}}>{language === "es" ? "EVENTO" : "EVENT"}</p>
+                                    <p style={{margin: "2px 0", fontSize: "13px"}}>📅 {vc.date} @ {vc.time}</p>
+                                    <p style={{margin: "2px 0", fontSize: "13px"}}>👥 {vc.guests} {language === "es" ? "personas" : "guests"}</p>
+                                    <p style={{margin: "2px 0", fontSize: "13px"}}>{vc.orderType === "delivery" ? "🚗 " + (vc.address || "Delivery") : "🏪 Pickup"}</p>
                                 </div>
                             </div>
 
                             {vo.specialNotes && (
-                                <div className="mx-4 mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
-                                    📝 <strong>{language === "es" ? "Notas" : "Notes"}:</strong> {vo.specialNotes}
+                                <div style={{margin: "0 16px 12px", background: "#fff9e6", border: "1px solid #f0d060", borderRadius: "6px", padding: "10px", fontSize: "13px"}}>
+                                    📝 <strong>{language === "es" ? "Notas Especiales" : "Special Notes"}:</strong> {vo.specialNotes}
                                 </div>
                             )}
 
                             {/* Items table */}
-                            <div className="px-4">
-                                <table className="w-full text-xs">
+                            <div style={{padding: "0 16px"}}>
+                                <table style={{width: "100%", borderCollapse: "collapse"}}>
                                     <thead>
-                                        <tr className="bg-mint-700 text-white">
-                                            <th className="py-2 px-2 text-left rounded-tl-lg">{language === "es" ? "Artículo" : "Item"}</th>
-                                            <th className="py-2 px-2 text-center">Qty</th>
-                                            <th className="py-2 px-2 text-right">{language === "es" ? "Precio" : "Price"}</th>
-                                            <th className="py-2 px-2 text-right rounded-tr-lg">Total</th>
+                                        <tr style={{background: "#2d6e42", color: "white"}}>
+                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "left", width: "30px"}}>#</th>
+                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "left"}}>{language === "es" ? "Artículo" : "Item"}</th>
+                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "center", width: "40px"}}>Qty</th>
+                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "right", width: "65px"}}>{language === "es" ? "Precio" : "Price"}</th>
+                                            <th style={{padding: "10px 6px", fontSize: "12px", textAlign: "right", width: "65px"}}>Total</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {(vo.items || []).map((item, i) => (
-                                            <tr key={i} className="border-b border-gray-100">
-                                                <td className="py-2 px-2">
-                                                    <p className="font-bold">{item.nameEn || item.name}</p>
-                                                    <p className="text-gray-500">{item.size}</p>
-                                                    {item.type && <p className="text-gray-400">Type: {item.type}</p>}
-                                                    {item.proteins?.length > 0 && <p className="text-gray-400">Proteins: {item.proteins.join(", ")}</p>}
-                                                    {item.sauces?.length > 0 && <p className="text-gray-400">Sauces: {item.sauces.join(", ")}</p>}
-                                                    {item.singleSauce && <p className="text-gray-400">Sauce: {item.singleSauce}</p>}
-                                                    {item.base && <p className="text-gray-400">Base: {item.base}</p>}
-                                                    {item.utensils && <p className="text-gray-400">{item.utensils}</p>}
+                                            <tr key={i} style={{borderBottom: "1px solid #ddd"}}>
+                                                <td style={{padding: "8px 6px", fontWeight: "bold", verticalAlign: "top", fontSize: "13px"}}>{i+1}</td>
+                                                <td style={{padding: "8px 6px", fontSize: "13px"}}>
+                                                    <strong>{item.nameEn || item.name}</strong>
+                                                    <br/><span style={{color: "#555", fontSize: "12px"}}>
+                                                        {item.size}
+                                                        {item.type ? ` | Type: ${item.type}` : ""}
+                                                        {item.proteins?.length > 0 ? ` | Proteins: ${item.proteins.join(", ")}` : ""}
+                                                        {item.sauces?.length > 0 ? ` | Sauces: ${item.sauces.join(", ")}` : ""}
+                                                        {item.singleSauce ? ` | Sauce: ${item.singleSauce}` : ""}
+                                                        {item.base ? ` | Base: ${item.base}` : ""}
+                                                        {item.utensils ? ` | ${item.utensils}` : ""}
+                                                        {item.samplerEggRoll ? ` | Egg Rolls: ${item.samplerEggRoll}` : ""}
+                                                    </span>
                                                     {item.samplerProteins && item.samplerProteins.map((sp, si) => sp?.length > 0 && (
-                                                        <p key={si} className="text-gray-400">• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</p>
+                                                        <span key={si} style={{display: "block", color: "#555", fontSize: "12px"}}>• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</span>
                                                     ))}
-                                                    {item.samplerEggRoll && <p className="text-gray-400">Egg Rolls: {item.samplerEggRoll}</p>}
-                                                    {item.itemNote && <p className="text-amber-600 italic">📝 {item.itemNote}</p>}
+                                                    {item.itemNote && <span style={{display: "block", color: "#d97706", fontSize: "12px", fontStyle: "italic"}}>📝 {item.itemNote}</span>}
                                                 </td>
-                                                <td className="py-2 px-2 text-center font-bold">{item.qty}</td>
-                                                <td className="py-2 px-2 text-right">${item.price?.toFixed(2)}</td>
-                                                <td className="py-2 px-2 text-right font-bold">${(item.price * item.qty)?.toFixed(2)}</td>
+                                                <td style={{padding: "8px 6px", textAlign: "center", fontWeight: "bold", verticalAlign: "top", fontSize: "13px"}}>{item.qty}</td>
+                                                <td style={{padding: "8px 6px", textAlign: "right", verticalAlign: "top", fontSize: "13px"}}>${item.price?.toFixed(2)}</td>
+                                                <td style={{padding: "8px 6px", textAlign: "right", fontWeight: "bold", verticalAlign: "top", fontSize: "13px"}}>${(item.price * item.qty)?.toFixed(2)}</td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -6014,26 +6035,33 @@
                             </div>
 
                             {/* Totals */}
-                            <div className="p-4 bg-mint-50 mt-3">
-                                <div className="flex justify-between text-sm mb-1">
-                                    <span>Subtotal</span><span className="font-bold">${vo.subtotal?.toFixed(2)}</span>
+                            <div style={{padding: "16px", background: "#f4faf5", marginTop: "8px"}}>
+                                <div style={{display: "flex", justifyContent: "flex-end", gap: "40px", padding: "4px 0", fontSize: "14px"}}>
+                                    <span>Subtotal:</span><span style={{fontWeight: "bold"}}>${vo.subtotal?.toFixed(2)}</span>
                                 </div>
                                 {vo.deliveryFee > 0 && (
-                                    <div className="flex justify-between text-sm mb-1">
-                                        <span>{language === "es" ? "Entrega" : "Delivery"}</span><span className="font-bold">${vo.deliveryFee?.toFixed(2)}</span>
+                                    <div style={{display: "flex", justifyContent: "flex-end", gap: "40px", padding: "4px 0", fontSize: "14px"}}>
+                                        <span>{language === "es" ? "Entrega" : "Delivery Fee"}:</span><span style={{fontWeight: "bold"}}>${vo.deliveryFee?.toFixed(2)}</span>
                                     </div>
                                 )}
-                                <div className="flex justify-between text-lg font-bold text-mint-800 border-t border-mint-300 pt-2 mt-2">
-                                    <span>Total</span><span>${vo.total?.toFixed(2)}</span>
+                                <div style={{display: "flex", justifyContent: "flex-end", gap: "40px", padding: "10px 0 0", fontSize: "22px", fontWeight: "bold", color: "#255a37", borderTop: "3px solid #255a37", marginTop: "8px"}}>
+                                    <span>TOTAL:</span><span>${vo.total?.toFixed(2)}</span>
                                 </div>
                             </div>
 
                             {/* Footer */}
-                            <div className="p-3 text-center text-xs text-gray-400 border-t">
-                                <p>{language === "es" ? "Tomado por" : "Taken by"}: {vo.takenBy} | {vo.createdAt ? new Date(vo.createdAt).toLocaleString() : ""}</p>
-                                {vo.updatedAt && vo.updatedAt !== vo.createdAt && <p>{language === "es" ? "Actualizado" : "Updated"}: {new Date(vo.updatedAt).toLocaleString()}</p>}
-                                <span className={`inline-block mt-1 text-xs px-3 py-1 rounded-full font-bold ${vo.status === "new" ? "bg-amber-100 text-amber-700" : vo.status === "confirmed" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{vo.status?.toUpperCase()}</span>
+                            <div style={{textAlign: "center", color: "#888", fontSize: "11px", padding: "12px", borderTop: "1px solid #ddd"}}>
+                                <p style={{margin: "2px 0"}}>{language === "es" ? "Tomado por" : "Taken by"}: {vo.takenBy} | {vo.createdAt ? new Date(vo.createdAt).toLocaleString() : ""}</p>
+                                {vo.updatedAt && vo.updatedAt !== vo.createdAt && <p style={{margin: "2px 0"}}>{language === "es" ? "Actualizado" : "Updated"}: {new Date(vo.updatedAt).toLocaleString()}</p>}
+                                <p style={{margin: "6px 0 0"}}>DD Mau Vietnamese Eatery — ddmaustl.com</p>
+                                <span className={`inline-block mt-2 text-xs px-3 py-1 rounded-full font-bold ${vo.status === "new" ? "bg-amber-100 text-amber-700" : vo.status === "confirmed" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{vo.status?.toUpperCase()}</span>
                             </div>
+                        </div>
+
+                        {/* Bottom action buttons — repeated for easy access */}
+                        <div className="flex gap-2 mt-3">
+                            <button onClick={() => loadOrderForEdit(vo)} className="flex-1 py-3 bg-amber-500 text-white rounded-lg font-bold text-sm">✏️ {language === "es" ? "Editar Pedido" : "Edit Order"}</button>
+                            <button onClick={() => printOrder(vo)} className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold text-sm">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
                         </div>
                     </div>
                 );
@@ -6121,7 +6149,7 @@
                             {customer.orderType === "delivery" && (
                                 <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
                                     <label className="text-xs font-bold text-amber-700">{language === "es" ? "Tarifa de Entrega: $" : "Delivery Fee: $"}</label>
-                                    <input value={deliveryFee} onChange={e => setDeliveryFee(parseFloat(e.target.value) || 0)}
+                                    <input value={deliveryFee} onChange={e => setDeliveryFee(e.target.value)}
                                         type="number" min="0" step="0.01" className="w-20 border border-amber-300 rounded px-2 py-1 text-sm font-bold text-center" />
                                 </div>
                             )}
@@ -6273,7 +6301,7 @@
                                         <span className="text-gray-600">{language === "es" ? "Entrega" : "Delivery Fee"}</span>
                                         <div className="flex items-center gap-1">
                                             <span className="text-gray-400">$</span>
-                                            <input value={deliveryFee} onChange={e => setDeliveryFee(parseFloat(e.target.value) || 0)}
+                                            <input value={deliveryFee} onChange={e => setDeliveryFee(e.target.value)}
                                                 type="number" min="0" step="0.01" className="w-16 border border-mint-300 rounded px-1 py-0.5 text-sm font-bold text-right" />
                                         </div>
                                     </div>
@@ -6334,7 +6362,6 @@
                 });
             };
 
-            const tabBtn = (selected, color) => `px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selected ? `bg-${color}-500 text-white border-${color}-500` : "bg-white text-gray-600 border-gray-200"}`;
 
             const handleAdd = () => {
                 // Validate type choice (egg rolls)
