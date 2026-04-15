@@ -150,6 +150,44 @@
         const db = firebase.firestore();
         const storage = firebase.storage();
 
+        // One-time migration: copy old non-suffixed docs/collections to _webster if they exist
+        (async () => {
+            try {
+                // Migrate single documents
+                const docMigrations = [
+                    { from: "ops/checklists2", to: "ops/checklists2_webster" },
+                    { from: "ops/inventory", to: "ops/inventory_webster" }
+                ];
+                for (const m of docMigrations) {
+                    const newDoc = await db.doc(m.to).get();
+                    if (!newDoc.exists) {
+                        const oldDoc = await db.doc(m.from).get();
+                        if (oldDoc.exists) {
+                            await db.doc(m.to).set(oldDoc.data());
+                            console.log("Migrated " + m.from + " → " + m.to);
+                        }
+                    }
+                }
+                // Migrate history collections
+                const collMigrations = [
+                    { from: "checklistHistory", to: "checklistHistory_webster" },
+                    { from: "inventoryHistory", to: "inventoryHistory_webster" }
+                ];
+                for (const m of collMigrations) {
+                    const newSnap = await db.collection(m.to).limit(1).get();
+                    if (newSnap.empty) {
+                        const oldSnap = await db.collection(m.from).get();
+                        if (!oldSnap.empty) {
+                            const batch = db.batch();
+                            oldSnap.forEach(doc => batch.set(db.collection(m.to).doc(doc.id), doc.data()));
+                            await batch.commit();
+                            console.log("Migrated collection " + m.from + " → " + m.to + " (" + oldSnap.size + " docs)");
+                        }
+                    }
+                }
+            } catch (err) { console.error("Migration error:", err); }
+        })();
+
         // PWA Install Support
         let deferredInstallPrompt = null;
         window.addEventListener('beforeinstallprompt', (e) => {
@@ -5207,6 +5245,10 @@
             // Filter maintenance requests by selected filter (all / webster / maryland)
             const filteredMaintenance = maintFilter === "all" ? maintenanceRequests : maintenanceRequests.filter(r => !r.storeBranch || r.storeBranch === maintFilter);
 
+            // Filter staff by active location
+            const [staffFilter, setStaffFilter] = useState("all");
+            const filteredStaff = staffFilter === "all" ? staffList : staffList.filter(s => s.location === staffFilter || s.location === "both");
+
             // Load maintenance requests
             useEffect(() => {
                 const unsub = db.collection("maintenanceRequests")
@@ -5418,7 +5460,7 @@
                                 <span className="text-2xl">👥</span>
                                 <div className="text-left">
                                     <h3 className="font-bold text-blue-700">{language === "es" ? "Personal" : "Staff"}</h3>
-                                    <p className="text-xs text-blue-500">{staffList.length} {language === "es" ? "empleados" : "members"}</p>
+                                    <p className="text-xs text-blue-500">{filteredStaff.length} {language === "es" ? "empleados" : "members"}</p>
                                 </div>
                             </div>
                             <span className="text-gray-400 text-xl">{staffExpanded ? "▼" : "▶"}</span>
@@ -5426,8 +5468,17 @@
 
                         {staffExpanded && (
                             <div className="mt-2">
+                                <div className="flex gap-1 justify-center mb-3">
+                                    {[{k:"all",en:"All",es:"Todos"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
+                                        <button key={f.k} onClick={() => setStaffFilter(f.k)}
+                                            className={`px-3 py-1 rounded-full text-xs font-bold border transition ${staffFilter === f.k ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-600 border-blue-300 hover:bg-blue-50"}`}>
+                                            {language === "es" ? f.es : f.en}
+                                            {f.k !== "all" && <span className="ml-1 opacity-70">({staffList.filter(s => s.location === f.k || s.location === "both").length})</span>}
+                                        </button>
+                                    ))}
+                                </div>
                                 <div className="space-y-2 mb-4">
-                                    {staffList.map(person => (
+                                    {filteredStaff.map(person => (
                                         <div key={person.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                                             {editingId === person.id ? (
                                                 <div className="p-3 bg-blue-50 space-y-2">
