@@ -1702,8 +1702,9 @@
             });
             const [skillsMatrix, setSkillsMatrix] = useState({});
             const [showMatrix, setShowMatrix] = useState(false);
-            const FOH_ROLES = ["FOH", "Manager", "Owner", "Shift Lead"];
-            const bohStaff = (staffList || []).filter(s => s.role && !FOH_ROLES.includes(s.role));
+            const FOH_ROLES = ["FOH", "Manager", "Owner", "Shift Lead", "Marketing"];
+            const bohStaff = (staffList || []).filter(s => s.role && !FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both"));
+            const fohStaff = (staffList || []).filter(s => FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both"));
             const currentIsAdmin = isAdmin(staffName);
 
             // Load skills matrix from Firestore
@@ -1813,12 +1814,12 @@
                     .sort((a, b) => (coverLoad[a] || 0) - (coverLoad[b] || 0));
             };
 
-            // Load break plan from Firestore — keyed by selected date
+            // Load break plan from Firestore — keyed by selected date + location
             useEffect(() => {
-                // Reset plan while loading new date
+                // Reset plan while loading new date/location
                 setBreakPlan({ stations: {}, waves: {} });
                 setBreakWaveTimes(DEFAULT_BREAK_WAVES.map(w => w.time));
-                const docId = "breakPlan_" + breakDate;
+                const docId = "breakPlan_" + storeLocation + "_" + breakDate;
                 const unsubBreakPlan = db.collection("ops").doc(docId).onSnapshot((doc) => {
                     if (doc.exists) {
                         setBreakPlan(doc.data().plan || { stations: {}, waves: {} });
@@ -1827,7 +1828,8 @@
                 });
                 // Also migrate old single-doc format for today if needed
                 if (breakDate === getTodayKey()) {
-                    db.collection("ops").doc("breakPlan").get().then(oldDoc => {
+                    const oldDocId = "breakPlan_" + breakDate;
+                    db.collection("ops").doc(oldDocId).get().then(oldDoc => {
                         if (oldDoc.exists && oldDoc.data().date === breakDate && oldDoc.data().plan) {
                             db.collection("ops").doc(docId).get().then(newDoc => {
                                 if (!newDoc.exists) {
@@ -1838,13 +1840,13 @@
                     });
                 }
                 return () => unsubBreakPlan();
-            }, [breakDate]);
+            }, [breakDate, storeLocation]);
 
             const saveBreakPlan = async (plan, times) => {
                 const saveTimes = times || breakWaveTimes;
-                const docId = "breakPlan_" + breakDate;
+                const docId = "breakPlan_" + storeLocation + "_" + breakDate;
                 try {
-                    await db.collection("ops").doc(docId).set({ plan, date: breakDate, waveTimes: saveTimes, updatedAt: new Date().toISOString() });
+                    await db.collection("ops").doc(docId).set({ plan, date: breakDate, waveTimes: saveTimes, updatedAt: new Date().toISOString(), storeBranch: storeLocation });
                     setBreakPlanSaved(true);
                     setTimeout(() => setBreakPlanSaved(false), 2000);
                 } catch (err) { console.error("Error saving break plan:", err); }
@@ -3153,7 +3155,7 @@
                             {/* Copy from another day */}
                             {breakDate !== getTodayKey() && Object.keys(breakPlan.stations || {}).length === 0 && (
                                 <button onClick={async () => {
-                                    const todayDoc = await db.collection("ops").doc("breakPlan_" + getTodayKey()).get();
+                                    const todayDoc = await db.collection("ops").doc("breakPlan_" + storeLocation + "_" + getTodayKey()).get();
                                     if (todayDoc.exists && todayDoc.data().plan) {
                                         const plan = todayDoc.data().plan;
                                         const times = todayDoc.data().waveTimes || DEFAULT_BREAK_WAVES.map(w => w.time);
@@ -3302,7 +3304,7 @@
                                                     onChange={e => updateStationAssignment(pos.id, e.target.value)}
                                                 >
                                                     <option value="">—</option>
-                                                    {(pos.id === "manager" ? (staffList || []).filter(s => ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role)) : bohStaff).map(s => (
+                                                    {(pos.id === "manager" ? (staffList || []).filter(s => ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role) && (s.location === storeLocation || s.location === "both")) : bohStaff).map(s => (
                                                         <option key={s.id} value={s.name}>{s.name}</option>
                                                     ))}
                                                 </select>
@@ -4390,7 +4392,7 @@
                     setLoading(false);
                 };
                 fetchHistory();
-            }, []);
+            }, [storeLocation]);
 
             useEffect(() => {
                 if (!selectedDate) return;
@@ -4405,7 +4407,7 @@
                     } catch (err) { console.error("Error loading day:", err); }
                 };
                 fetchDay();
-            }, [selectedDate]);
+            }, [selectedDate, storeLocation]);
 
             const formatDate = (dateStr) => {
                 const d = new Date(dateStr + "T12:00:00");
@@ -4590,7 +4592,7 @@
                     };
                     loadInv();
                 }
-            }, [customInventoryProp]);
+            }, [customInventoryProp, storeLocation]);
 
             useEffect(() => {
                 const fetchHistory = async () => {
@@ -4603,7 +4605,7 @@
                     setLoading(false);
                 };
                 fetchHistory();
-            }, []);
+            }, [storeLocation]);
 
             // Load selected day + previous day for comparison
             useEffect(() => {
@@ -4640,7 +4642,7 @@
                     setAddingToCategory(null);
                 };
                 fetchDay();
-            }, [selectedDate, historyDates]);
+            }, [selectedDate, historyDates, storeLocation]);
 
             // Save helper — persist changes back to Firestore (merge to handle new fields)
             const saveToFirestore = async (updates) => {
@@ -5229,7 +5231,7 @@
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
             const [newPin, setNewPin] = useState("");
-            const [newLocation, setNewLocation] = useState("webster");
+            const [newLocation, setNewLocation] = useState(storeLocation || "webster");
             const [editLocation, setEditLocation] = useState("");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
@@ -5312,7 +5314,7 @@
                 setNewName("");
                 setNewRole("FOH");
                 setNewPin("");
-                setNewLocation("webster");
+                setNewLocation(storeLocation || "webster");
                 showSaved();
             };
 
