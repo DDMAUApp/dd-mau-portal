@@ -949,18 +949,19 @@
         };
 
         // Opening Checklist
-        // Time periods for checklists (single period — no morning/afternoon split)
+        // Time periods for checklists — Morning (open) and Afternoon (close)
         const TIME_PERIODS = [
-            { id: "all", nameEn: "Tasks", nameEs: "Tareas", emoji: "📋" }
+            { id: "morning", nameEn: "Morning / Opening", nameEs: "Mañana / Apertura", emoji: "🌅" },
+            { id: "afternoon", nameEn: "Afternoon / Closing", nameEs: "Tarde / Cierre", emoji: "🌇" }
         ];
 
         // Version — bump this to push new default tasks to all users
-        const CHECKLIST_VERSION = 9;
+        const CHECKLIST_VERSION = 10;
 
         // Default tasks per period, per side (FOH/BOH)
         const DEFAULT_CHECKLIST_TASKS = {
             FOH: {
-                "all": [
+                "morning": [
                     { id: "f-0", task: "Turn on lights — dining, restrooms, signage\nEncender luces — comedor, baños, letreros" },
                     { id: "f-1", task: "Set up POS system & test all terminals\nConfigurar POS y probar todas las terminales" },
                     { id: "f-2", task: "Prep dining area — wipe tables, set chairs, menus\nPreparar comedor — limpiar mesas, acomodar sillas, menús" },
@@ -975,7 +976,9 @@
                     { id: "f-11", task: "Restock napkins, utensils, condiments as needed\nReabastecer servilletas, cubiertos, condimentos según necesidad" },
                     { id: "f-12", task: "Check restrooms mid-rush\nRevisar baños durante hora pico" },
                     { id: "f-13", task: "Restock all service stations before break\nReabastecer todas las estaciones de servicio antes del descanso" },
-                    { id: "f-14", task: "Refresh dining area — wipe tables, sweep floor\nRefrescar comedor — limpiar mesas, barrer piso" },
+                    { id: "f-14", task: "Refresh dining area — wipe tables, sweep floor\nRefrescar comedor — limpiar mesas, barrer piso" }
+                ],
+                "afternoon": [
                     { id: "f-15", task: "Assign closing duties evenly to all FOH staff\nAsignar tareas de cierre equitativamente a todo el personal FOH" },
                     { id: "f-16", task: "Last call for dine-in orders\nÚltima llamada para pedidos en comedor" },
                     { id: "f-17", task: "Close out all registers — count drawers, run reports\nCerrar todas las cajas — contar gavetas, correr reportes" },
@@ -989,7 +992,7 @@
                 ]
             },
             BOH: {
-                "all": [
+                "morning": [
                     { id: "b-0", task: "Verify fridge storage — all items labeled, covered & stored properly\nVerificar almacenamiento en refrigerador — todo etiquetado, tapado y almacenado correctamente" },
                     { id: "b-1", task: "Check product rotation — first in, first out (line & fridge)\nRevisar rotación de producto — primero en entrar, primero en salir (línea y refrigerador)" },
                     { id: "b-2", task: "Inspect every station — stocked & ready with enough backups\nInspeccionar cada estación — abastecida y lista con suficientes respaldos", subtasks: [
@@ -1006,7 +1009,9 @@
                     { id: "b-5", task: "Inspect prep sink — clean & sanitized\nInspeccionar fregadero de prep — limpio y sanitizado" },
                     { id: "b-6", task: "Verify all stations are set before breaks begin\nVerificar que todas las estaciones estén listas antes de los descansos" },
                     { id: "b-7", task: "Inspect prep area before staff leaves for break\nInspeccionar área de prep antes de que el personal salga a descanso" },
-                    { id: "b-8", task: "Confirm coverage — every station has someone covering\nConfirmar cobertura — cada estación tiene a alguien cubriendo" },
+                    { id: "b-8", task: "Confirm coverage — every station has someone covering\nConfirmar cobertura — cada estación tiene a alguien cubriendo" }
+                ],
+                "afternoon": [
                     { id: "b-9", task: "Check all stations are stocked & ready for dinner service\nRevisar que todas las estaciones estén abastecidas y listas para la cena" },
                     { id: "b-10", task: "Closing walkthrough — each person checks out with you before leaving\nRecorrido de cierre — cada persona firma salida contigo antes de irse", subtasks: [
                         { id: "b-10_s0", task: "All stations\nTodas las estaciones" }
@@ -1602,7 +1607,7 @@
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
             const staffSide = staffIsFOH ? "FOH" : "BOH";
             const [checklistSide, setChecklistSide] = useState(currentIsAdmin ? "FOH" : staffSide);
-            const [activePeriod, setActivePeriod] = useState("all");
+            const [activePeriod, setActivePeriod] = useState("morning");
             const [checks, setChecksRaw] = useState({});
             const checksRef = React.useRef(checks);
             const setChecks = (val) => { checksRef.current = val; setChecksRaw(val); };
@@ -1610,6 +1615,8 @@
             const customTasksRef = React.useRef(customTasks);
             const setCustomTasks = (val) => { customTasksRef.current = val; setCustomTasksRaw(val); };
             const [checklistDate, setChecklistDate] = useState("");
+            // Assignments: { "FOH_morning": "Emma Liliana", "BOH_afternoon": "Jose Mendoza", ... }
+            const [checklistAssignments, setChecklistAssignments] = useState({});
             const [invEditMode, setInvEditMode] = useState(false);
             const [invEditingIdx, setInvEditingIdx] = useState(null);
             const [invEditName, setInvEditName] = useState("");
@@ -1959,17 +1966,26 @@
                             setChecklistDate(data.date || todayKey);
                         }
                         if (data.customTasks) {
-                            // Migrate old morning/afternoon → single "all" period
+                            // Migrate old "all" period → morning/afternoon split
                             const migrated = {};
                             ["FOH", "BOH"].forEach(side => {
                                 const s = data.customTasks[side] || {};
-                                if (s.all) { migrated[side] = s; }
-                                else {
-                                    migrated[side] = { all: [...(s.morning || []), ...(s.afternoon || [])] };
+                                if (s.morning || s.afternoon) {
+                                    // Already has morning/afternoon — use as-is
+                                    migrated[side] = s;
+                                } else if (s.all) {
+                                    // Split "all" roughly in half into morning/afternoon
+                                    const tasks = s.all || [];
+                                    const mid = Math.ceil(tasks.length / 2);
+                                    migrated[side] = { morning: tasks.slice(0, mid), afternoon: tasks.slice(mid) };
+                                } else {
+                                    migrated[side] = { morning: [], afternoon: [] };
                                 }
                             });
                             setCustomTasks(migrated);
                         }
+                        // Load checklist assignments
+                        if (data.assignments) setChecklistAssignments(data.assignments);
                         setLastUpdated(prev => ({ ...prev, checklists: data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "" }));
                     }
                 });
@@ -2078,20 +2094,28 @@
                 return obj;
             };
 
-            const saveChecklistState = async (newChecks, newTasks) => {
+            const saveChecklistState = async (newChecks, newTasks, newAssignments) => {
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 const safeChecks = cleanForFirestore(newChecks);
                 const safeTasks = cleanForFirestore(newTasks);
+                const safeAssignments = cleanForFirestore(newAssignments || checklistAssignments);
                 try {
                     await db.collection("ops").doc("checklists2_" + storeLocation).set({
-                        checks: safeChecks, customTasks: safeTasks, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
+                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
                     });
                     // Also save to daily history
                     await db.collection("checklistHistory_" + storeLocation).doc(todayKey).set({
-                        checks: safeChecks, customTasks: safeTasks, date: now, version: CHECKLIST_VERSION
+                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, date: now, version: CHECKLIST_VERSION
                     });
                 } catch (err) { console.error("Error saving checklist:", err); }
+            };
+
+            const assignChecklist = async (side, periodId, staffMemberName) => {
+                const key = side + "_" + periodId;
+                const updated = { ...checklistAssignments, [key]: staffMemberName };
+                setChecklistAssignments(updated);
+                await saveChecklistState(checksRef.current, customTasksRef.current, updated);
             };
 
             const handlePasswordSubmit = (e) => {
@@ -2208,7 +2232,7 @@
                 const now = new Date().toISOString();
                 try {
                     await db.collection("checklistHistory_" + storeLocation).doc(todayKey + "_saved").set({
-                        checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), date: now, savedBy: staffName
+                        checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
                 setChecks({});
@@ -2429,6 +2453,50 @@
                                     className={`flex-1 py-2 rounded-lg font-bold text-sm transition ${checklistSide === "BOH" ? "bg-amber-600 text-white" : "bg-amber-50 text-amber-700 border border-amber-200"}`}>
                                     BOH
                                 </button>
+                            </div>
+                        )}
+
+                        {/* Morning / Afternoon toggle */}
+                        <div className="flex gap-2 mb-3">
+                            {TIME_PERIODS.map(p => {
+                                const pStats = getPeriodStats(checklistSide, p.id);
+                                const assignKey = checklistSide + "_" + p.id;
+                                const assignee = checklistAssignments[assignKey];
+                                const pct = pStats.total > 0 ? Math.round(pStats.done / pStats.total * 100) : 0;
+                                return (
+                                    <button key={p.id} onClick={() => { setActivePeriod(p.id); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
+                                        className={`flex-1 py-2.5 px-2 rounded-xl font-bold text-xs transition border-2 ${activePeriod === p.id
+                                            ? "bg-mint-700 text-white border-mint-700"
+                                            : "bg-white text-gray-600 border-gray-200 hover:border-mint-300"}`}>
+                                        <div>{p.emoji} {language === "es" ? p.nameEs : p.nameEn}</div>
+                                        <div className="mt-1 text-xs opacity-80">{pStats.done}/{pStats.total} ({pct}%)</div>
+                                        {assignee && <div className="mt-0.5 text-xs opacity-70">👤 {assignee.split(" ")[0]}</div>}
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        {/* Assign to staff member */}
+                        {currentIsAdmin && (
+                            <div className="flex items-center gap-2 mb-2 bg-gray-50 rounded-lg p-2">
+                                <span className="text-xs font-bold text-gray-500">👤 {language === "es" ? "Asignar a:" : "Assign to:"}</span>
+                                <select
+                                    value={checklistAssignments[checklistSide + "_" + activePeriod] || ""}
+                                    onChange={e => assignChecklist(checklistSide, activePeriod, e.target.value)}
+                                    className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold bg-white">
+                                    <option value="">{language === "es" ? "— Sin asignar —" : "— Unassigned —"}</option>
+                                    {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").map(s => (
+                                        <option key={s.id} value={s.name}>{s.name} ({s.role})</option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        {/* Show assignment for non-admins */}
+                        {!currentIsAdmin && checklistAssignments[checklistSide + "_" + activePeriod] && (
+                            <div className={`text-center text-xs font-bold py-1.5 rounded-lg mb-2 ${checklistAssignments[checklistSide + "_" + activePeriod] === staffName ? "bg-green-50 text-green-700 border border-green-200" : "bg-gray-50 text-gray-500"}`}>
+                                👤 {language === "es" ? "Asignado a:" : "Assigned to:"} {checklistAssignments[checklistSide + "_" + activePeriod]}
+                                {checklistAssignments[checklistSide + "_" + activePeriod] === staffName && (language === "es" ? " (¡Tú!)" : " (You!)")}
                             </div>
                         )}
 
