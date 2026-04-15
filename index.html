@@ -867,6 +867,18 @@
             ingredients: { en: "Ingredients", es: "Ingredientes" },
             instructions: { en: "Instructions", es: "Instrucciones" },
             yields: { en: "Yields", es: "Porciones" },
+
+            // Catering
+            cateringOrders: { en: "Catering Orders", es: "Pedidos de Catering" },
+            newOrder: { en: "New Order", es: "Nuevo Pedido" },
+            customerInfo: { en: "Customer Info", es: "Info del Cliente" },
+            menuItems: { en: "Menu Items", es: "Artículos del Menú" },
+            orderSummary: { en: "Order Summary", es: "Resumen del Pedido" },
+            submitOrder: { en: "Submit Order", es: "Enviar Pedido" },
+            pickupOrDelivery: { en: "Pickup or Delivery?", es: "¿Recoger o Entrega?" },
+            pickup: { en: "Pickup", es: "Recoger" },
+            delivery: { en: "Delivery", es: "Entrega" },
+            specialNotes: { en: "Special Notes", es: "Notas Especiales" },
         };
 
         // Opening Checklist
@@ -5481,6 +5493,741 @@
             );
         }
 
+        // Catering Menu Data
+        const CATERING_MENU = [
+            {
+                category: "Finger Food",
+                categoryEs: "Bocadillos",
+                emoji: "🥟",
+                items: [
+                    {
+                        name: "Crab Rangoons",
+                        nameEs: "Crab Rangoons",
+                        sizes: [
+                            { label: "15 PCS", price: 23.99 },
+                            { label: "30 PCS", price: 43.99 },
+                            { label: "60 PCS", price: 84.99 }
+                        ],
+                        note: "Served w/ Sweet Chili Sauce",
+                        noteEs: "Servido con Salsa de Chile Dulce",
+                        hasSauces: false,
+                        hasProteins: false
+                    },
+                    {
+                        name: "Vietnamese/Vegetarian Egg Rolls",
+                        nameEs: "Rollos de Huevo Vietnamitas/Vegetarianos",
+                        sizes: [
+                            { label: "20 Halves", price: 27.99 },
+                            { label: "40 Halves", price: 41.99 },
+                            { label: "60 Halves", price: 53.90 }
+                        ],
+                        note: "Served w/ House Vietnamese Vinaigrette or Sweet Chili Sauce",
+                        noteEs: "Servido con Vinagreta Vietnamita o Salsa de Chile Dulce",
+                        hasSauces: false,
+                        hasProteins: false
+                    },
+                    {
+                        name: "Spring Rolls",
+                        nameEs: "Rollos de Primavera",
+                        sizes: [
+                            { label: "16 PCS", price: 92.99, sauceCount: 2, proteinCount: 2 },
+                            { label: "32 PCS", price: 177.99, sauceCount: 3, proteinCount: 3 },
+                            { label: "48 PCS", price: 246.99, sauceCount: 4, proteinCount: 4 }
+                        ],
+                        hasSauces: true,
+                        hasProteins: true
+                    },
+                    {
+                        name: "Bao Sliders",
+                        nameEs: "Mini Baos",
+                        sizes: [
+                            { label: "12 PCS", price: 77.99, sauceCount: 2, proteinCount: 2 },
+                            { label: "24 PCS", price: 130.99, sauceCount: 3, proteinCount: 3 },
+                            { label: "36 PCS", price: 192.99, sauceCount: 4, proteinCount: 4 }
+                        ],
+                        hasSauces: true,
+                        hasProteins: true
+                    },
+                    {
+                        name: "Banh Mi",
+                        nameEs: "Bánh Mì",
+                        sizes: [
+                            { label: "12 PCS", price: 77.99, sauceCount: 2, proteinCount: 2 },
+                            { label: "24 PCS", price: 154.99, sauceCount: 3, proteinCount: 3 },
+                            { label: "36 PCS", price: 223.99, sauceCount: 4, proteinCount: 4 }
+                        ],
+                        hasSauces: true,
+                        hasProteins: true
+                    }
+                ]
+            },
+            {
+                category: "Fork & Knife Trays",
+                categoryEs: "Bandejas con Cubiertos",
+                emoji: "🍴",
+                items: [
+                    {
+                        name: "Tray — Chicken, Pork, or Tofu",
+                        nameEs: "Bandeja — Pollo, Puerco o Tofu",
+                        sizes: [
+                            { label: "Serves 6-8", price: 146.99 },
+                            { label: "Serves 10-12", price: 223.99 }
+                        ],
+                        proteinGroup: "standard",
+                        hasBase: true,
+                        hasSauces: true,
+                        sauceCount: 3,
+                        hasProteins: false,
+                        hasUtensils: true
+                    },
+                    {
+                        name: "Tray — Steak, Shrimp, Veggie, or Vegan Beef",
+                        nameEs: "Bandeja — Res, Camarón, Vegetal o Res Vegana",
+                        sizes: [
+                            { label: "Serves 6-8", price: 161.99 },
+                            { label: "Serves 10-12", price: 246.99 }
+                        ],
+                        proteinGroup: "premium",
+                        hasBase: true,
+                        hasSauces: true,
+                        sauceCount: 3,
+                        hasProteins: false,
+                        hasUtensils: true
+                    }
+                ]
+            },
+            {
+                category: "Mini Bowls",
+                categoryEs: "Mini Tazones",
+                emoji: "🥢",
+                items: [
+                    {
+                        name: "Mini Bowls — Chicken, Pork, or Tofu",
+                        nameEs: "Mini Tazones — Pollo, Puerco o Tofu",
+                        sizes: [
+                            { label: "10 Bowls", price: 130.99 },
+                            { label: "20 Bowls", price: 254.99 }
+                        ],
+                        proteinGroup: "standard",
+                        hasBase: true,
+                        hasSauces: true,
+                        sauceCount: 3,
+                        hasProteins: false,
+                        hasUtensils: true
+                    },
+                    {
+                        name: "Mini Bowls — Steak, Shrimp, Veggie, or Vegan Beef",
+                        nameEs: "Mini Tazones — Res, Camarón, Vegetal o Res Vegana",
+                        sizes: [
+                            { label: "10 Bowls", price: 146.99 },
+                            { label: "20 Bowls", price: 284.99 }
+                        ],
+                        proteinGroup: "premium",
+                        hasBase: true,
+                        hasSauces: true,
+                        sauceCount: 3,
+                        hasProteins: false,
+                        hasUtensils: true
+                    }
+                ]
+            },
+            {
+                category: "Fried Rice Trays",
+                categoryEs: "Bandejas de Arroz Frito",
+                emoji: "🍚",
+                items: [
+                    {
+                        name: "Fried Rice — Plain",
+                        nameEs: "Arroz Frito — Solo",
+                        sizes: [
+                            { label: "Serves 6-8", price: 61.99 },
+                            { label: "Serves 10-12", price: 107.99 }
+                        ],
+                        note: "Eggs, Scallions, and White Onions",
+                        noteEs: "Huevos, Cebollín y Cebolla Blanca",
+                        hasSauces: false,
+                        hasProteins: false,
+                        hasUtensils: true
+                    },
+                    {
+                        name: "Fried Rice — Chicken, Pork, or Tofu",
+                        nameEs: "Arroz Frito — Pollo, Puerco o Tofu",
+                        sizes: [
+                            { label: "Serves 6-8", price: 77.99 },
+                            { label: "Serves 10-12", price: 138.99 }
+                        ],
+                        note: "Eggs, Scallions, and White Onions",
+                        noteEs: "Huevos, Cebollín y Cebolla Blanca",
+                        proteinGroup: "standard",
+                        hasSauces: false,
+                        hasProteins: false,
+                        hasUtensils: true
+                    },
+                    {
+                        name: "Fried Rice — Steak, Shrimp, Veggie, or Vegan Beef",
+                        nameEs: "Arroz Frito — Res, Camarón, Vegetal o Res Vegana",
+                        sizes: [
+                            { label: "Serves 6-8", price: 92.99 },
+                            { label: "Serves 10-12", price: 169.99 }
+                        ],
+                        note: "Eggs, Scallions, and White Onions",
+                        noteEs: "Huevos, Cebollín y Cebolla Blanca",
+                        proteinGroup: "premium",
+                        hasSauces: false,
+                        hasProteins: false,
+                        hasUtensils: true
+                    }
+                ]
+            },
+            {
+                category: "DD Mau Sampler",
+                categoryEs: "Muestra DD Mau",
+                emoji: "🎉",
+                items: [
+                    {
+                        name: "DD Mau Sampler",
+                        nameEs: "Muestra DD Mau",
+                        sizes: [
+                            { label: "Serves 4-6", price: 154.99 }
+                        ],
+                        note: "6 Banh Mi Bites (choose 3 proteins), 4 Mini Vermicelli Bowls (choose 2 proteins), 8 Rice Paper Roll Halves (choose 2 proteins), 10 Vietnamese or Veggie Egg Roll Halves. Cutlery & napkins included.",
+                        noteEs: "6 Banh Mi (elige 3 proteínas), 4 Mini Tazones de Fideos (elige 2 proteínas), 8 Mitades de Rollos de Papel de Arroz (elige 2 proteínas), 10 Mitades de Rollos de Huevo. Cubiertos y servilletas incluidos.",
+                        hasSauces: true,
+                        sauceCount: 2,
+                        hasProteins: true,
+                        isSampler: true
+                    }
+                ]
+            }
+        ];
+
+        const ALL_SAUCES = ["Vietnamese Vinaigrette", "Peanut", "Hoisin", "Sweet Chili", "DD", "Spicy DD"];
+        const ALL_SAUCES_ES = ["Vinagreta Vietnamita", "Cacahuate", "Hoisin", "Chile Dulce", "DD", "DD Picante"];
+        const ALL_PROTEINS = ["Steak", "Shrimp", "Chicken", "Pork", "Tofu"];
+        const ALL_PROTEINS_ES = ["Res", "Camarón", "Pollo", "Puerco", "Tofu"];
+        const BASE_OPTIONS = ["Vermicelli", "Salad", "Rice"];
+        const BASE_OPTIONS_ES = ["Fideos", "Ensalada", "Arroz"];
+
+        // Catering Order Component
+        function CateringOrder({ language, staffName }) {
+            const [step, setStep] = useState(1); // 1=customer, 2=menu, 3=summary
+            const [customer, setCustomer] = useState({
+                name: "", phone: "", email: "", date: "", time: "", guests: "", address: "",
+                orderType: "pickup" // pickup or delivery
+            });
+            const [cart, setCart] = useState([]); // array of order line items
+            const [errors, setErrors] = useState({});
+            const [submitted, setSubmitted] = useState(false);
+            const [orderHistory, setOrderHistory] = useState([]);
+            const [showHistory, setShowHistory] = useState(false);
+            const [specialNotes, setSpecialNotes] = useState("");
+
+            // Load order history
+            useEffect(() => {
+                const unsubscribe = db.collection("cateringOrders").orderBy("createdAt", "desc").limit(20).onSnapshot(snap => {
+                    setOrderHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                });
+                return () => unsubscribe();
+            }, []);
+
+            const validateCustomer = () => {
+                const e = {};
+                if (!customer.name.trim()) e.name = true;
+                if (!customer.phone.trim()) e.phone = true;
+                if (!customer.email.trim()) e.email = true;
+                if (!customer.date) e.date = true;
+                if (!customer.time.trim()) e.time = true;
+                if (!customer.guests) e.guests = true;
+                if (customer.orderType === "delivery" && !customer.address.trim()) e.address = true;
+                setErrors(e);
+                return Object.keys(e).length === 0;
+            };
+
+            const goToMenu = () => {
+                if (validateCustomer()) setStep(2);
+            };
+
+            const addToCart = (item, sizeIdx, sauces, proteins, base, utensils, qty, samplerProteins) => {
+                const size = item.sizes[sizeIdx];
+                const lineItem = {
+                    id: Date.now() + Math.random(),
+                    name: language === "es" ? (item.nameEs || item.name) : item.name,
+                    nameEn: item.name,
+                    size: size.label,
+                    price: size.price,
+                    qty: qty || 1,
+                    sauces: sauces || [],
+                    proteins: proteins || [],
+                    base: base || "",
+                    utensils: utensils || "",
+                    samplerProteins: samplerProteins || null
+                };
+                setCart(prev => [...prev, lineItem]);
+            };
+
+            const removeFromCart = (id) => setCart(prev => prev.filter(i => i.id !== id));
+
+            const getSubtotal = () => cart.reduce((sum, i) => sum + i.price * i.qty, 0);
+            const getDeliveryFee = () => customer.orderType === "delivery" ? 25 : 0;
+            const getTotal = () => getSubtotal() + getDeliveryFee();
+
+            const submitOrder = async () => {
+                if (cart.length === 0) return;
+                const order = {
+                    customer,
+                    items: cart.map(({ id, ...rest }) => rest),
+                    subtotal: getSubtotal(),
+                    deliveryFee: getDeliveryFee(),
+                    total: getTotal(),
+                    specialNotes,
+                    takenBy: staffName,
+                    createdAt: new Date().toISOString(),
+                    status: "new"
+                };
+                try {
+                    await db.collection("cateringOrders").add(order);
+                    setSubmitted(true);
+                } catch (err) { console.error("Error submitting catering order:", err); }
+            };
+
+            const resetForm = () => {
+                setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup" });
+                setCart([]);
+                setErrors({});
+                setSubmitted(false);
+                setSpecialNotes("");
+                setStep(1);
+            };
+
+            // Success screen
+            if (submitted) {
+                return (
+                    <div className="p-4 pb-24">
+                        <div className="max-w-lg mx-auto text-center mt-8">
+                            <div className="text-6xl mb-4">✅</div>
+                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{language === "es" ? "¡Pedido Enviado!" : "Order Submitted!"}</h2>
+                            <p className="text-gray-600 mb-2">{customer.name} — {customer.phone}</p>
+                            <p className="text-gray-600 mb-2">{customer.date} @ {customer.time} — {customer.guests} {language === "es" ? "personas" : "guests"}</p>
+                            <p className="text-lg font-bold text-mint-700 mb-6">${getTotal().toFixed(2)}</p>
+                            <p className="text-xs text-gray-400 mb-6">{language === "es" ? "Tomado por" : "Taken by"}: {staffName}</p>
+                            <button onClick={resetForm} className="bg-mint-700 text-white px-6 py-3 rounded-lg font-bold text-lg">
+                                {language === "es" ? "Nuevo Pedido" : "New Order"}
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Order History View
+            if (showHistory) {
+                return (
+                    <div className="p-4 pb-24">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-xl font-bold text-mint-700">{language === "es" ? "Historial de Pedidos" : "Order History"}</h2>
+                            <button onClick={() => setShowHistory(false)} className="text-sm bg-gray-100 px-3 py-1 rounded-full font-bold text-gray-600">✕ {language === "es" ? "Cerrar" : "Close"}</button>
+                        </div>
+                        {orderHistory.length === 0 && <p className="text-gray-400 text-center mt-8">{language === "es" ? "Sin pedidos aún" : "No orders yet"}</p>}
+                        {orderHistory.map(o => (
+                            <div key={o.id} className="mb-3 bg-white border-2 border-gray-200 rounded-lg p-3">
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <p className="font-bold text-gray-800">{o.customer?.name}</p>
+                                        <p className="text-xs text-gray-500">{o.customer?.date} @ {o.customer?.time} — {o.customer?.guests} guests</p>
+                                        <p className="text-xs text-gray-400">{o.customer?.orderType === "delivery" ? "🚗 Delivery" : "🏪 Pickup"}</p>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="font-bold text-mint-700">${o.total?.toFixed(2)}</p>
+                                        <p className="text-xs text-gray-400">{o.takenBy}</p>
+                                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${o.status === "new" ? "bg-amber-100 text-amber-700" : o.status === "confirmed" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{o.status}</span>
+                                    </div>
+                                </div>
+                                <div className="mt-2 text-xs text-gray-500">
+                                    {(o.items || []).map((item, i) => (
+                                        <span key={i}>{item.qty}x {item.nameEn} ({item.size}){i < o.items.length - 1 ? ", " : ""}</span>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                );
+            }
+
+            return (
+                <div className="p-4 pb-24">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-2xl font-bold text-mint-700">🍜 {t("cateringOrders", language)}</h2>
+                        <button onClick={() => setShowHistory(true)} className="text-xs bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full font-bold border border-amber-300">
+                            📋 {language === "es" ? "Historial" : "History"}
+                        </button>
+                    </div>
+
+                    {/* Progress Steps */}
+                    <div className="flex items-center justify-center gap-2 mb-6">
+                        {[{n:1, label: language === "es" ? "Cliente" : "Customer"}, {n:2, label: language === "es" ? "Menú" : "Menu"}, {n:3, label: language === "es" ? "Resumen" : "Summary"}].map(s => (
+                            <div key={s.n} className="flex items-center gap-2">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold ${step >= s.n ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-500"}`}>{s.n}</div>
+                                <span className={`text-xs font-bold ${step >= s.n ? "text-mint-700" : "text-gray-400"}`}>{s.label}</span>
+                                {s.n < 3 && <span className="text-gray-300 mx-1">→</span>}
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* Step 1: Customer Info */}
+                    {step === 1 && (
+                        <div className="space-y-3">
+                            <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 text-xs text-cyan-700 mb-4">
+                                📞 {language === "es" ? "Completa toda la información del cliente. Todos los campos son obligatorios." : "Fill in all customer info. All fields are required."}
+                            </div>
+
+                            {/* Pickup or Delivery */}
+                            <div className="flex gap-2 mb-2">
+                                <button onClick={() => setCustomer(p => ({...p, orderType: "pickup"}))}
+                                    className={`flex-1 py-3 rounded-lg font-bold text-sm border-2 transition ${customer.orderType === "pickup" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                                    🏪 {t("pickup", language)}
+                                </button>
+                                <button onClick={() => setCustomer(p => ({...p, orderType: "delivery"}))}
+                                    className={`flex-1 py-3 rounded-lg font-bold text-sm border-2 transition ${customer.orderType === "delivery" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                                    🚗 {t("delivery", language)} (+$25)
+                                </button>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Nombre" : "Name"} *</label>
+                                <input value={customer.name} onChange={e => { setCustomer(p => ({...p, name: e.target.value})); setErrors(p => ({...p, name: false})); }}
+                                    className={`w-full border-2 ${errors.name ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder={language === "es" ? "Nombre completo" : "Full name"} />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Teléfono" : "Phone"} *</label>
+                                <input value={customer.phone} onChange={e => { setCustomer(p => ({...p, phone: e.target.value})); setErrors(p => ({...p, phone: false})); }}
+                                    type="tel" className={`w-full border-2 ${errors.phone ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder="(314) 555-1234" />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">Email *</label>
+                                <input value={customer.email} onChange={e => { setCustomer(p => ({...p, email: e.target.value})); setErrors(p => ({...p, email: false})); }}
+                                    type="email" className={`w-full border-2 ${errors.email ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder="email@example.com" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Fecha del Evento" : "Event Date"} *</label>
+                                    <input value={customer.date} onChange={e => { setCustomer(p => ({...p, date: e.target.value})); setErrors(p => ({...p, date: false})); }}
+                                        type="date" className={`w-full border-2 ${errors.date ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Hora" : "Time"} *</label>
+                                    <input value={customer.time} onChange={e => { setCustomer(p => ({...p, time: e.target.value})); setErrors(p => ({...p, time: false})); }}
+                                        type="time" className={`w-full border-2 ${errors.time ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "¿Cuántas Personas?" : "How Many Guests?"} *</label>
+                                <input value={customer.guests} onChange={e => { setCustomer(p => ({...p, guests: e.target.value})); setErrors(p => ({...p, guests: false})); }}
+                                    type="number" min="1" className={`w-full border-2 ${errors.guests ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder="25" />
+                            </div>
+                            {customer.orderType === "delivery" && (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Dirección de Entrega" : "Delivery Address"} *</label>
+                                    <input value={customer.address} onChange={e => { setCustomer(p => ({...p, address: e.target.value})); setErrors(p => ({...p, address: false})); }}
+                                        className={`w-full border-2 ${errors.address ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder={language === "es" ? "Dirección completa" : "Full address"} />
+                                </div>
+                            )}
+
+                            {Object.values(errors).some(Boolean) && (
+                                <p className="text-red-500 text-xs font-bold text-center">⚠️ {language === "es" ? "Completa todos los campos requeridos" : "Please fill in all required fields"}</p>
+                            )}
+
+                            <button onClick={goToMenu} className="w-full bg-mint-700 text-white py-3 rounded-lg font-bold text-lg mt-2">
+                                {language === "es" ? "Siguiente → Menú" : "Next → Menu"} 🍜
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Step 2: Menu Items */}
+                    {step === 2 && (
+                        <div>
+                            {/* Cart badge */}
+                            {cart.length > 0 && (
+                                <div className="sticky top-16 z-30 bg-mint-700 text-white rounded-lg p-3 mb-4 flex justify-between items-center shadow-lg">
+                                    <span className="font-bold">🛒 {cart.length} {language === "es" ? "artículos" : "items"} — ${getSubtotal().toFixed(2)}</span>
+                                    <button onClick={() => setStep(3)} className="bg-white text-mint-700 px-4 py-1.5 rounded-full font-bold text-sm">
+                                        {language === "es" ? "Ver Resumen" : "Review Order"} →
+                                    </button>
+                                </div>
+                            )}
+
+                            {CATERING_MENU.map((cat, catIdx) => (
+                                <div key={catIdx} className="mb-6">
+                                    <h3 className="text-lg font-bold text-gray-800 mb-3 border-b-2 border-mint-200 pb-1">
+                                        {cat.emoji} {language === "es" ? cat.categoryEs : cat.category}
+                                    </h3>
+                                    {cat.items.map((item, itemIdx) => (
+                                        <CateringMenuItem key={itemIdx} item={item} language={language} onAdd={addToCart} />
+                                    ))}
+                                </div>
+                            ))}
+
+                            <div className="flex gap-2 mt-4">
+                                <button onClick={() => setStep(1)} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-lg font-bold">
+                                    ← {language === "es" ? "Cliente" : "Customer"}
+                                </button>
+                                <button onClick={() => setStep(3)} className="flex-1 bg-mint-700 text-white py-3 rounded-lg font-bold" disabled={cart.length === 0}>
+                                    {language === "es" ? "Resumen" : "Summary"} → ({cart.length})
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Step 3: Order Summary */}
+                    {step === 3 && (
+                        <div>
+                            {/* Customer summary */}
+                            <div className="bg-gray-50 border-2 border-gray-200 rounded-lg p-3 mb-4">
+                                <div className="flex justify-between items-start">
+                                    <div>
+                                        <p className="font-bold text-gray-800">{customer.name}</p>
+                                        <p className="text-xs text-gray-500">{customer.phone} • {customer.email}</p>
+                                        <p className="text-xs text-gray-500">{customer.date} @ {customer.time} — {customer.guests} {language === "es" ? "personas" : "guests"}</p>
+                                        {customer.orderType === "delivery" && <p className="text-xs text-gray-500">🚗 {customer.address}</p>}
+                                    </div>
+                                    <button onClick={() => setStep(1)} className="text-xs text-mint-700 font-bold">✏️ {language === "es" ? "Editar" : "Edit"}</button>
+                                </div>
+                            </div>
+
+                            {/* Cart items */}
+                            <h3 className="font-bold text-gray-800 mb-2">{language === "es" ? "Artículos del Pedido" : "Order Items"}</h3>
+                            {cart.length === 0 && (
+                                <p className="text-gray-400 text-center py-4">{language === "es" ? "Sin artículos — agrega del menú" : "No items — add from menu"}</p>
+                            )}
+                            {cart.map((item, i) => (
+                                <div key={item.id} className="flex justify-between items-start bg-white border border-gray-200 rounded-lg p-3 mb-2">
+                                    <div className="flex-1">
+                                        <p className="font-bold text-sm text-gray-800">{item.qty}x {item.name}</p>
+                                        <p className="text-xs text-gray-500">{item.size}</p>
+                                        {item.proteins.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Proteínas" : "Proteins"}: {item.proteins.join(", ")}</p>}
+                                        {item.sauces.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Salsas" : "Sauces"}: {item.sauces.join(", ")}</p>}
+                                        {item.base && <p className="text-xs text-gray-400">{language === "es" ? "Base" : "Base"}: {item.base}</p>}
+                                        {item.utensils && <p className="text-xs text-gray-400">{item.utensils}</p>}
+                                    </div>
+                                    <div className="text-right ml-2">
+                                        <p className="font-bold text-sm text-mint-700">${(item.price * item.qty).toFixed(2)}</p>
+                                        <button onClick={() => removeFromCart(item.id)} className="text-xs text-red-500 font-bold mt-1">✕ {language === "es" ? "Quitar" : "Remove"}</button>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* Add more button */}
+                            <button onClick={() => setStep(2)} className="w-full border-2 border-dashed border-mint-300 text-mint-700 py-2 rounded-lg font-bold text-sm mb-4">
+                                + {language === "es" ? "Agregar Más Artículos" : "Add More Items"}
+                            </button>
+
+                            {/* Special notes */}
+                            <div className="mb-4">
+                                <label className="block text-xs font-bold text-gray-600 mb-1">📝 {t("specialNotes", language)}</label>
+                                <textarea value={specialNotes} onChange={e => setSpecialNotes(e.target.value)}
+                                    className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" rows="2"
+                                    placeholder={language === "es" ? "Alergias, peticiones especiales..." : "Allergies, special requests..."} />
+                            </div>
+
+                            {/* Totals */}
+                            <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-4 mb-4">
+                                <div className="flex justify-between text-sm mb-1">
+                                    <span className="text-gray-600">Subtotal</span>
+                                    <span className="font-bold">${getSubtotal().toFixed(2)}</span>
+                                </div>
+                                {customer.orderType === "delivery" && (
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span className="text-gray-600">{language === "es" ? "Entrega" : "Delivery Fee"}</span>
+                                        <span className="font-bold">$25.00</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between text-lg font-bold border-t border-mint-300 pt-2 mt-2">
+                                    <span className="text-mint-800">Total</span>
+                                    <span className="text-mint-800">${getTotal().toFixed(2)}</span>
+                                </div>
+                            </div>
+
+                            <button onClick={submitOrder} disabled={cart.length === 0}
+                                className={`w-full py-4 rounded-lg font-bold text-lg ${cart.length > 0 ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-400"}`}>
+                                ✅ {t("submitOrder", language)}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        // Individual Catering Menu Item with inline configuration
+        function CateringMenuItem({ item, language, onAdd }) {
+            const [open, setOpen] = useState(false);
+            const [sizeIdx, setSizeIdx] = useState(0);
+            const [selectedSauces, setSelectedSauces] = useState([]);
+            const [selectedProteins, setSelectedProteins] = useState([]);
+            const [selectedBase, setSelectedBase] = useState("");
+            const [utensils, setUtensils] = useState("");
+            const [qty, setQty] = useState(1);
+            const [samplerProteins, setSamplerProteins] = useState({ banhMi: [], bowls: [], rolls: [] });
+            const [addError, setAddError] = useState("");
+
+            const size = item.sizes[sizeIdx];
+            const maxSauces = size.sauceCount || item.sauceCount || 0;
+            const maxProteins = size.proteinCount || 0;
+
+            const toggleSauce = (s) => {
+                if (selectedSauces.includes(s)) setSelectedSauces(prev => prev.filter(x => x !== s));
+                else if (selectedSauces.length < maxSauces) setSelectedSauces(prev => [...prev, s]);
+            };
+
+            const toggleProtein = (p) => {
+                if (selectedProteins.includes(p)) setSelectedProteins(prev => prev.filter(x => x !== p));
+                else if (selectedProteins.length < maxProteins) setSelectedProteins(prev => [...prev, p]);
+            };
+
+            const handleAdd = () => {
+                // Validate
+                if (item.hasSauces && maxSauces > 0 && selectedSauces.length < maxSauces) {
+                    setAddError(language === "es" ? `Elige ${maxSauces} salsas` : `Choose ${maxSauces} sauces`);
+                    return;
+                }
+                if (item.hasProteins && maxProteins > 0 && selectedProteins.length < maxProteins) {
+                    setAddError(language === "es" ? `Elige ${maxProteins} proteínas` : `Choose ${maxProteins} proteins`);
+                    return;
+                }
+                if (item.hasBase && !selectedBase) {
+                    setAddError(language === "es" ? "Elige una base" : "Choose a base");
+                    return;
+                }
+                setAddError("");
+                onAdd(item, sizeIdx, selectedSauces, selectedProteins, selectedBase, utensils, qty, item.isSampler ? samplerProteins : null);
+                // Reset
+                setOpen(false);
+                setSelectedSauces([]);
+                setSelectedProteins([]);
+                setSelectedBase("");
+                setUtensils("");
+                setQty(1);
+                setSizeIdx(0);
+            };
+
+            return (
+                <div className="mb-3 bg-white border-2 border-gray-200 rounded-lg overflow-hidden">
+                    <div className="p-3 cursor-pointer flex justify-between items-center" onClick={() => setOpen(!open)}>
+                        <div>
+                            <p className="font-bold text-sm text-gray-800">{language === "es" ? (item.nameEs || item.name) : item.name}</p>
+                            <p className="text-xs text-gray-400">{item.sizes.map(s => `${s.label} — $${s.price}`).join(" | ")}</p>
+                        </div>
+                        <span className={`text-lg transition-transform ${open ? "rotate-45" : ""}`}>➕</span>
+                    </div>
+
+                    {open && (
+                        <div className="border-t border-gray-200 p-3 bg-gray-50 space-y-3">
+                            {/* Size selection */}
+                            <div>
+                                <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Tamaño" : "Size"}</p>
+                                <div className="flex flex-wrap gap-2">
+                                    {item.sizes.map((s, i) => (
+                                        <button key={i} onClick={() => { setSizeIdx(i); setSelectedSauces([]); setSelectedProteins([]); }}
+                                            className={`px-3 py-2 rounded-lg text-xs font-bold border-2 transition ${sizeIdx === i ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                                            {s.label} — ${s.price}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Protein selection for items with hasProteins */}
+                            {item.hasProteins && maxProteins > 0 && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? `Elige ${maxProteins} Proteínas` : `Choose ${maxProteins} Proteins`}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {ALL_PROTEINS.map((p, i) => {
+                                            const label = language === "es" ? ALL_PROTEINS_ES[i] : p;
+                                            const selected = selectedProteins.includes(p);
+                                            return (
+                                                <button key={p} onClick={() => toggleProtein(p)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selected ? "bg-orange-500 text-white border-orange-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {selected ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Base selection */}
+                            {item.hasBase && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Elige Base" : "Choose Base"}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {BASE_OPTIONS.map((b, i) => {
+                                            const label = language === "es" ? BASE_OPTIONS_ES[i] : b;
+                                            return (
+                                                <button key={b} onClick={() => setSelectedBase(b)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedBase === b ? "bg-blue-500 text-white border-blue-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {selectedBase === b ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Sauce selection */}
+                            {item.hasSauces && maxSauces > 0 && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? `Elige ${maxSauces} Salsas` : `Choose ${maxSauces} Sauces`}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {ALL_SAUCES.map((s, i) => {
+                                            const label = language === "es" ? ALL_SAUCES_ES[i] : s;
+                                            const selected = selectedSauces.includes(s);
+                                            return (
+                                                <button key={s} onClick={() => toggleSauce(s)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selected ? "bg-red-500 text-white border-red-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {selected ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Utensils */}
+                            {item.hasUtensils && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Cubiertos" : "Utensils"}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {[{label: language === "es" ? "Sin Cubiertos" : "No Utensils", val: ""}, {label: language === "es" ? "Tenedores (+$1)" : "Forks (+$1)", val: "Forks"}, {label: language === "es" ? "Palillos (+$2)" : "Chopsticks (+$2)", val: "Chopsticks"}].map(u => (
+                                            <button key={u.val} onClick={() => setUtensils(u.val)}
+                                                className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${utensils === u.val ? "bg-purple-500 text-white border-purple-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                {u.label} {utensils === u.val ? "✓" : ""}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Note */}
+                            {item.note && (
+                                <p className="text-xs text-gray-500 italic bg-amber-50 p-2 rounded-lg">
+                                    ℹ️ {language === "es" ? (item.noteEs || item.note) : item.note}
+                                </p>
+                            )}
+
+                            {/* Qty + Add button */}
+                            <div className="flex items-center gap-3">
+                                <div className="flex items-center border-2 border-gray-200 rounded-lg">
+                                    <button onClick={() => setQty(Math.max(1, qty - 1))} className="px-3 py-2 text-lg font-bold text-gray-600">−</button>
+                                    <span className="px-3 py-2 font-bold text-sm min-w-[2rem] text-center">{qty}</span>
+                                    <button onClick={() => setQty(qty + 1)} className="px-3 py-2 text-lg font-bold text-gray-600">+</button>
+                                </div>
+                                <button onClick={handleAdd} className="flex-1 bg-mint-700 text-white py-2.5 rounded-lg font-bold text-sm">
+                                    {language === "es" ? "Agregar" : "Add"} — ${(size.price * qty).toFixed(2)}
+                                </button>
+                            </div>
+                            {addError && <p className="text-red-500 text-xs font-bold">⚠️ {addError}</p>}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
         // Main App Component
         function App() {
             const [staffName, setStaffName] = useState(null);
@@ -5597,6 +6344,14 @@
                                         </div>
                                     )}
                                     <button
+                                        onClick={() => setActiveTab("catering")}
+                                        className="p-4 bg-gradient-to-br from-cyan-50 to-cyan-100 border-2 border-cyan-300 rounded-lg hover:shadow-lg transition text-left"
+                                    >
+                                        <div className="text-3xl mb-2">🍜</div>
+                                        <div className="font-bold text-cyan-700">{language === "es" ? "Pedidos de Catering" : "Catering Orders"}</div>
+                                        <div className="text-xs text-cyan-600">{language === "es" ? "Toma pedidos de catering por teléfono o en persona" : "Take catering orders by phone or in person"}</div>
+                                    </button>
+                                    <button
                                         onClick={() => setActiveTab("maintenance")}
                                         className="p-4 bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-lg hover:shadow-lg transition text-left"
                                     >
@@ -5624,6 +6379,7 @@
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} />}
                         {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} />}
+                        {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
                     </div>
