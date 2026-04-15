@@ -5727,7 +5727,7 @@
             const [step, setStep] = useState(1); // 1=customer, 2=menu, 3=summary
             const [customer, setCustomer] = useState({
                 name: "", phone: "", email: "", date: "", time: "", guests: "", address: "",
-                orderType: "pickup"
+                orderType: "pickup", pickupLocation: ""
             });
             const [cart, setCart] = useState([]);
             const [errors, setErrors] = useState({});
@@ -5735,7 +5735,7 @@
             const [orderHistory, setOrderHistory] = useState([]);
             const [showHistory, setShowHistory] = useState(false);
             const [specialNotes, setSpecialNotes] = useState("");
-            const [deliveryFee, setDeliveryFee] = useState("25");
+            const [deliveryFee, setDeliveryFee] = useState("15");
             const [viewingOrder, setViewingOrder] = useState(null); // full invoice view
             const [editingOrderId, setEditingOrderId] = useState(null); // editing existing order
 
@@ -5755,6 +5755,7 @@
                 if (!customer.time.trim()) e.time = true;
                 if (!customer.guests) e.guests = true;
                 if (customer.orderType === "delivery" && !customer.address.trim()) e.address = true;
+                if (customer.orderType === "pickup" && !customer.pickupLocation) e.pickupLocation = true;
                 setErrors(e);
                 return Object.keys(e).length === 0;
             };
@@ -5813,16 +5814,16 @@
             };
 
             const resetForm = () => {
-                setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup" });
+                setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
                 setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
-                setDeliveryFee("25"); setEditingOrderId(null);
+                setDeliveryFee("15"); setEditingOrderId(null);
             };
 
             const loadOrderForEdit = (o) => {
                 setCustomer(o.customer || {});
                 setCart((o.items || []).map((item, i) => ({ ...item, id: Date.now() + i })));
                 setSpecialNotes(o.specialNotes || "");
-                setDeliveryFee(String(o.deliveryFee || 25));
+                setDeliveryFee(String(o.deliveryFee || 15));
                 setEditingOrderId(o.id);
                 setShowHistory(false);
                 setViewingOrder(null);
@@ -5897,7 +5898,7 @@
                             <h3>Event Details</h3>
                             <p>Date: ${c.date} @ ${c.time}</p>
                             <p>Guests: ${c.guests}</p>
-                            <p>${c.orderType === "delivery" ? "Delivery: " + (c.address || "TBD") : "Pickup"}</p>
+                            <p>${c.orderType === "delivery" ? "Delivery: " + (c.address || "TBD") : "Pickup: " + (c.pickupLocation === "olive" ? "Olive Blvd" : "S Lindbergh")}</p>
                         </div>
                     </div>
                     ${o.specialNotes ? '<div class="notes"><strong>Special Notes:</strong> ' + o.specialNotes + '</div>' : ''}
@@ -5936,6 +5937,7 @@
                             <h2 className="text-2xl font-bold text-mint-700 mb-2">{editingOrderId ? (language === "es" ? "¡Pedido Actualizado!" : "Order Updated!") : (language === "es" ? "¡Pedido Enviado!" : "Order Submitted!")}</h2>
                             <p className="text-gray-600 mb-2">{customer.name} — {customer.phone}</p>
                             <p className="text-gray-600 mb-2">{customer.date} @ {customer.time} — {customer.guests} {language === "es" ? "personas" : "guests"}</p>
+                            <p className="text-gray-600 mb-2">{customer.orderType === "pickup" ? "🏪 Pickup: " + (customer.pickupLocation === "olive" ? "Olive Blvd" : "S Lindbergh") : "🚗 Delivery"}</p>
                             <p className="text-lg font-bold text-mint-700 mb-6">${getTotal().toFixed(2)}</p>
                             <p className="text-xs text-gray-400 mb-6">{language === "es" ? "Tomado por" : "Taken by"}: {staffName}</p>
                             <button onClick={resetForm} className="bg-mint-700 text-white px-6 py-3 rounded-lg font-bold text-lg">
@@ -5982,7 +5984,7 @@
                                     <p style={{margin: "0 0 6px", fontSize: "11px", fontWeight: "bold", color: "#255a37", textTransform: "uppercase", letterSpacing: "1px", borderBottom: "1px solid #c8e6c9", paddingBottom: "4px"}}>{language === "es" ? "EVENTO" : "EVENT"}</p>
                                     <p style={{margin: "2px 0", fontSize: "13px"}}>📅 {vc.date} @ {vc.time}</p>
                                     <p style={{margin: "2px 0", fontSize: "13px"}}>👥 {vc.guests} {language === "es" ? "personas" : "guests"}</p>
-                                    <p style={{margin: "2px 0", fontSize: "13px"}}>{vc.orderType === "delivery" ? "🚗 " + (vc.address || "Delivery") : "🏪 Pickup"}</p>
+                                    <p style={{margin: "2px 0", fontSize: "13px"}}>{vc.orderType === "delivery" ? "🚗 " + (vc.address || "Delivery") : "🏪 Pickup: " + (vc.pickupLocation === "olive" ? "Olive Blvd" : "S Lindbergh")}</p>
                                 </div>
                             </div>
 
@@ -6082,7 +6084,7 @@
                                     <div>
                                         <p className="font-bold text-gray-800">{o.customer?.name}</p>
                                         <p className="text-xs text-gray-500">{o.customer?.date} @ {o.customer?.time} — {o.customer?.guests} guests</p>
-                                        <p className="text-xs text-gray-400">{o.customer?.orderType === "delivery" ? "🚗 Delivery" : "🏪 Pickup"}</p>
+                                        <p className="text-xs text-gray-400">{o.customer?.orderType === "delivery" ? "🚗 Delivery" : "🏪 Pickup: " + (o.customer?.pickupLocation === "olive" ? "Olive Blvd" : "S Lindbergh")}</p>
                                     </div>
                                     <div className="text-right">
                                         <p className="font-bold text-mint-700">${o.total?.toFixed(2)}</p>
@@ -6145,6 +6147,23 @@
                                     🚗 {t("delivery", language)}
                                 </button>
                             </div>
+
+                            {customer.orderType === "pickup" && (
+                                <div>
+                                    <label className="block text-xs font-bold text-gray-600 mb-1">🏪 {language === "es" ? "Ubicación de Recogida" : "Pickup Location"} *</label>
+                                    <div className="flex gap-2">
+                                        {[
+                                            { id: "olive", label: "Olive Blvd", labelEs: "Olive Blvd" },
+                                            { id: "lindbergh", label: "S Lindbergh", labelEs: "S Lindbergh" }
+                                        ].map(loc => (
+                                            <button key={loc.id} onClick={() => { setCustomer(p => ({...p, pickupLocation: loc.id})); setErrors(p => ({...p, pickupLocation: false})); }}
+                                                className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${customer.pickupLocation === loc.id ? "bg-mint-700 text-white border-mint-700" : errors.pickupLocation ? "bg-red-50 text-gray-600 border-red-400" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                {language === "es" ? loc.labelEs : loc.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {customer.orderType === "delivery" && (
                                 <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
@@ -6248,6 +6267,7 @@
                                         <p className="font-bold text-gray-800">{customer.name}</p>
                                         <p className="text-xs text-gray-500">{customer.phone} • {customer.email}</p>
                                         <p className="text-xs text-gray-500">{customer.date} @ {customer.time} — {customer.guests} {language === "es" ? "personas" : "guests"}</p>
+                                        {customer.orderType === "pickup" && <p className="text-xs text-gray-500">🏪 Pickup: {customer.pickupLocation === "olive" ? "Olive Blvd" : "S Lindbergh"}</p>}
                                         {customer.orderType === "delivery" && <p className="text-xs text-gray-500">🚗 {customer.address}</p>}
                                     </div>
                                     <button onClick={() => setStep(1)} className="text-xs text-mint-700 font-bold">✏️ {language === "es" ? "Editar" : "Edit"}</button>
@@ -6697,91 +6717,69 @@
                     {/* Content */}
                     <div className="max-w-lg mx-auto">
                         {activeTab === "home" && (
-                            <div className="p-4 pb-24">
-                                <h2 className="text-2xl font-bold text-mint-700 mb-6">{t("welcome", language)}, {staffName}!</h2>
-                                <div className="grid grid-cols-1 gap-3">
-                                    <button
-                                        onClick={() => setActiveTab("training")}
-                                        className="p-4 bg-gradient-to-br from-blue-50 to-blue-100 border-2 border-blue-300 rounded-lg hover:shadow-lg transition text-left"
-                                    >
-                                        <div className="text-3xl mb-2">📚</div>
-                                        <div className="font-bold text-blue-700">{t("trainingHub", language)}</div>
-                                        <div className="text-xs text-blue-600">{language === "es" ? "Completa tus módulos de capacitación" : "Complete your training modules"}</div>
-                                    </button>
-                                    <button
-                                        onClick={() => setActiveTab("operations")}
-                                        className="p-4 bg-gradient-to-br from-purple-50 to-purple-100 border-2 border-purple-300 rounded-lg hover:shadow-lg transition text-left"
-                                    >
-                                        <div className="text-3xl mb-2">📋</div>
-                                        <div className="font-bold text-purple-700">{t("dailyOps", language)}</div>
-                                        <div className="text-xs text-purple-600">{language === "es" ? "Listas de verificación e inventario" : "Checklists and inventory"}</div>
-                                    </button>
-                                    <button
-                                        onClick={() => setActiveTab("menu")}
-                                        className="p-4 bg-gradient-to-br from-green-50 to-green-100 border-2 border-green-300 rounded-lg hover:shadow-lg transition text-left"
-                                    >
-                                        <div className="text-3xl mb-2">🍜</div>
-                                        <div className="font-bold text-green-700">{t("menuReference", language)}</div>
-                                        <div className="text-xs text-green-600">{language === "es" ? "Explora el menú" : "Browse the menu"}</div>
-                                    </button>
-                                    <button
-                                        onClick={() => setActiveTab("schedule")}
-                                        className="p-4 bg-gradient-to-br from-orange-50 to-orange-100 border-2 border-orange-300 rounded-lg hover:shadow-lg transition text-left"
-                                    >
-                                        <div className="text-3xl mb-2">📅</div>
-                                        <div className="font-bold text-orange-700">{t("weeklySchedule", language)}</div>
-                                        <div className="text-xs text-orange-600">{language === "es" ? "Revisa tus turnos" : "Check your shifts"}</div>
-                                    </button>
-                                    {(isAtDDMau || staffIsAdmin) ? (
-                                        <button
-                                            onClick={() => setActiveTab("recipes")}
-                                            className="p-4 bg-gradient-to-br from-amber-50 to-amber-100 border-2 border-amber-300 rounded-lg hover:shadow-lg transition text-left"
-                                        >
-                                            <div className="text-3xl mb-2">🧑‍🍳</div>
-                                            <div className="font-bold text-amber-700">{t("recipesTitle", language)}</div>
-                                            <div className="text-xs text-amber-600">{staffIsAdmin && !isAtDDMau
-                                                ? (language === "es" ? "Acceso de administrador — sin restricción" : "Admin access — no location restriction")
-                                                : (language === "es" ? "Solo disponible en DD Mau" : "Only available at DD Mau")}</div>
-                                        </button>
-                                    ) : (
-                                        <div className="p-4 bg-gradient-to-br from-gray-50 to-gray-100 border-2 border-gray-200 rounded-lg text-left opacity-60">
-                                            <div className="text-3xl mb-2">🔒</div>
-                                            <div className="font-bold text-gray-500">{t("recipesTitle", language)}</div>
-                                            <div className="text-xs text-gray-400">
-                                                {geoChecking ? (language === "es" ? "Verificando ubicación..." : "Checking location...") :
-                                                 geoError === "denied" ? (language === "es" ? "Permiso de ubicación denegado — actívalo en ajustes" : "Location permission denied — enable in settings") :
-                                                 geoError ? (language === "es" ? "Ubicación no disponible" : "Location unavailable") :
-                                                 (language === "es" ? "Solo disponible en DD Mau" : "Only available at DD Mau")}
+                            <div className="pb-24" style={{background: "#111827"}}>
+                                <div style={{background: "linear-gradient(135deg, #059669, #047857)", padding: "24px 16px 20px", color: "white"}}>
+                                    <p style={{fontSize: "13px", opacity: 0.8, margin: 0}}>{language === "es" ? "Buenas tardes" : new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening"}</p>
+                                    <h2 style={{fontSize: "22px", fontWeight: 700, margin: "4px 0 0"}}>{t("welcome", language)}, {staffName}!</h2>
+                                </div>
+                                <div style={{padding: "16px"}}>
+                                    <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px"}}>
+                                        {[
+                                            { tab: "training", icon: "📚", label: t("trainingHub", language), sub: language === "es" ? "Módulos" : "Modules" },
+                                            { tab: "operations", icon: "📋", label: t("dailyOps", language), sub: language === "es" ? "Listas" : "Checklists" },
+                                            { tab: "menu", icon: "🍜", label: t("menuReference", language), sub: language === "es" ? "Menú completo" : "Full menu" },
+                                            { tab: "schedule", icon: "📅", label: t("weeklySchedule", language), sub: language === "es" ? "Tus turnos" : "Your shifts" },
+                                        ].map(b => (
+                                            <button key={b.tab} onClick={() => setActiveTab(b.tab)}
+                                                style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                                                <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>{b.icon}</div>
+                                                <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{b.label}</p>
+                                                <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{b.sub}</p>
+                                            </button>
+                                        ))}
+
+                                        {(isAtDDMau || staffIsAdmin) ? (
+                                            <button onClick={() => setActiveTab("recipes")}
+                                                style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                                                <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🧑‍🍳</div>
+                                                <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("recipesTitle", language)}</p>
+                                                <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{staffIsAdmin && !isAtDDMau ? (language === "es" ? "Admin" : "Admin access") : (language === "es" ? "En tienda" : "In-store")}</p>
+                                            </button>
+                                        ) : (
+                                            <div style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", opacity: 0.4}}>
+                                                <div style={{width: "44px", height: "44px", background: "#374151", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🔒</div>
+                                                <p style={{fontSize: "13px", fontWeight: 700, color: "#6b7280", margin: 0}}>{t("recipesTitle", language)}</p>
+                                                <p style={{fontSize: "10px", color: "#4b5563", margin: "2px 0 0"}}>
+                                                    {geoChecking ? (language === "es" ? "Verificando..." : "Checking...") :
+                                                     geoError === "denied" ? (language === "es" ? "Ubicación denegada" : "Location denied") :
+                                                     geoError ? (language === "es" ? "No disponible" : "Unavailable") :
+                                                     (language === "es" ? "Solo en DD Mau" : "In-store only")}
+                                                </p>
                                             </div>
-                                        </div>
-                                    )}
-                                    <button
-                                        onClick={() => setActiveTab("catering")}
-                                        className="p-4 bg-gradient-to-br from-cyan-50 to-cyan-100 border-2 border-cyan-300 rounded-lg hover:shadow-lg transition text-left"
-                                    >
-                                        <div className="text-3xl mb-2">🍜</div>
-                                        <div className="font-bold text-cyan-700">{language === "es" ? "Pedidos de Catering" : "Catering Orders"}</div>
-                                        <div className="text-xs text-cyan-600">{language === "es" ? "Toma pedidos de catering por teléfono o en persona" : "Take catering orders by phone or in person"}</div>
-                                    </button>
-                                    <button
-                                        onClick={() => setActiveTab("maintenance")}
-                                        className="p-4 bg-gradient-to-br from-red-50 to-red-100 border-2 border-red-300 rounded-lg hover:shadow-lg transition text-left"
-                                    >
-                                        <div className="text-3xl mb-2">🔧</div>
-                                        <div className="font-bold text-red-700">{language === "es" ? "Mantenimiento" : "Maintenance"}</div>
-                                        <div className="text-xs text-red-600">{language === "es" ? "Reportar un problema" : "Report an issue"}</div>
-                                    </button>
-                                    {staffIsAdmin && (
-                                        <button
-                                            onClick={() => setActiveTab("admin")}
-                                            className="p-4 bg-gradient-to-br from-mint-50 to-mint-100 border-2 border-mint-400 rounded-lg hover:shadow-lg transition text-left"
-                                        >
-                                            <div className="text-3xl mb-2">⚙️</div>
-                                            <div className="font-bold text-mint-700">{t("adminPanel", language)}</div>
-                                            <div className="text-xs text-mint-600">{language === "es" ? "PINs, personal, configuración" : "PINs, staff, settings"}</div>
-                                        </button>
-                                    )}
-                                    <InstallAppButton language={language} />
+                                        )}
+
+                                        {[
+                                            { tab: "catering", icon: "🍽️", label: language === "es" ? "Catering" : "Catering", sub: language === "es" ? "Pedidos" : "Orders" },
+                                            { tab: "maintenance", icon: "🔧", label: language === "es" ? "Mantenimiento" : "Maintenance", sub: language === "es" ? "Reportar" : "Report issue" },
+                                        ].map(b => (
+                                            <button key={b.tab} onClick={() => setActiveTab(b.tab)}
+                                                style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                                                <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>{b.icon}</div>
+                                                <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{b.label}</p>
+                                                <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{b.sub}</p>
+                                            </button>
+                                        ))}
+
+                                        {staffIsAdmin && (
+                                            <button onClick={() => setActiveTab("admin")}
+                                                style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                                                <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>⚙️</div>
+                                                <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("adminPanel", language)}</p>
+                                                <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Configuración" : "Settings"}</p>
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div style={{marginTop: "12px"}}><InstallAppButton language={language} /></div>
                                 </div>
                             </div>
                         )}
