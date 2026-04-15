@@ -7096,7 +7096,23 @@
             useEffect(() => {
                 const unsubscribe = db.collection("config").doc("staff").onSnapshot((doc) => {
                     if (doc.exists && doc.data().list) {
-                        setStaffList(doc.data().list);
+                        const firestoreList = doc.data().list;
+                        // Build lookup from DEFAULT_STAFF for location field
+                        const defaultMap = {};
+                        DEFAULT_STAFF.forEach(s => { defaultMap[s.name] = s; });
+                        // Merge: keep Firestore data but fill in missing location from defaults
+                        const merged = firestoreList.map(s => ({
+                            ...s,
+                            location: s.location || (defaultMap[s.name] ? defaultMap[s.name].location : "webster")
+                        }));
+                        // Add any DEFAULT_STAFF members not in Firestore (new MD Heights staff)
+                        const existingNames = new Set(merged.map(s => s.name));
+                        DEFAULT_STAFF.forEach(ds => {
+                            if (!existingNames.has(ds.name)) {
+                                merged.push(ds);
+                            }
+                        });
+                        setStaffList(merged);
                     }
                 });
                 return () => unsubscribe();
