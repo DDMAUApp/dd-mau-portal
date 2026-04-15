@@ -162,48 +162,49 @@
         const ADMIN_NAMES = ["Andrew Shih", "Julie Shih"];
         const isAdmin = (name) => ADMIN_NAMES.includes(name);
 
+        const LOCATION_LABELS = { webster: "Webster", maryland: "Maryland Heights", both: "Both Locations" };
         const DEFAULT_STAFF = [
-            { id: 1, name: "Ada Rodriguez", role: "Pho", pin: "2847" },
-            { id: 2, name: "Amelia Amelia", role: "FOH", pin: "1523" },
-            { id: 3, name: "Andres Martinez", role: "Grill", pin: "3961" },
-            { id: 4, name: "Asmita Asmita", role: "FOH", pin: "4738" },
-            { id: 5, name: "Ayana-Marie Watts", role: "FOH", pin: "5214" },
-            { id: 6, name: "Blanca Salgado", role: "FOH", pin: "6392" },
-            { id: 7, name: "Brandon Green", role: "Manager", pin: "7150" },
-            { id: 8, name: "Carl W", role: "FOH", pin: "8463" },
-            { id: 9, name: "Cash Magruder", role: "FOH", pin: "9271" },
-            { id: 10, name: "Claudia Vallejos", role: "Prep", pin: "1847" },
-            { id: 11, name: "Cony Mendieta", role: "Bowls", pin: "2635" },
-            { id: 12, name: "Cristopher Maldonado", role: "Grill", pin: "3419" },
-            { id: 13, name: "Dariela Cruz", role: "BOH", pin: "4582" },
-            { id: 14, name: "Dulce Arriaga", role: "Fryer", pin: "5736" },
-            { id: 15, name: "Edgar Cruz", role: "FOH", pin: "6148" },
-            { id: 16, name: "Elizabeth Elizabeth", role: "FOH", pin: "7329" },
-            { id: 17, name: "Emma Liliana", role: "Shift Lead", pin: "8514" },
-            { id: 18, name: "Erica Dizon", role: "Shift Lead", pin: "9637" },
-            { id: 19, name: "Fernanda Angarita", role: "Bao/Tacos/Banh Mi", pin: "1462" },
-            { id: 20, name: "Fuijun Mok", role: "FOH", pin: "2958" },
-            { id: 21, name: "Isa Davis", role: "FOH", pin: "3741" },
-            { id: 22, name: "Jose Mendoza", role: "Fried Rice", pin: "4293" },
-            { id: 23, name: "Josiah Oliver", role: "FOH", pin: "5817" },
-            { id: 24, name: "Juan Tojin", role: "Fried Rice", pin: "6524" },
-            { id: 25, name: "Julio Turcio", role: "Dish", pin: "7386" },
-            { id: 26, name: "Katy Mejia", role: "Prep", pin: "8142" },
-            { id: 27, name: "Ley Njeri", role: "FOH", pin: "9475" },
-            { id: 28, name: "Lilian Melchor", role: "Spring Rolls/Prep", pin: "1693" },
-            { id: 29, name: "Lorena Espinal", role: "Kitchen Manager", pin: "2537" },
-            { id: 30, name: "Marcos Cruz", role: "Prep", pin: "3824" },
-            { id: 31, name: "Mariana Fonseca", role: "Fryer", pin: "4261" },
-            { id: 32, name: "Miguel Mejia", role: "Grill", pin: "5948" },
-            { id: 33, name: "Milli Perez", role: "FOH", pin: "6713" },
-            { id: 34, name: "Myia Dixon", role: "Shift Lead", pin: "7492" },
-            { id: 35, name: "Rafa Leon", role: "FOH", pin: "8356" },
-            { id: 36, name: "Rubi Diaz", role: "Dish", pin: "9184" },
-            { id: 37, name: "Yeiry Cruz", role: "Shift Lead", pin: "1375" },
-            { id: 38, name: "Yency Guzman", role: "Spring Rolls/Prep", pin: "2649" },
-            { id: 39, name: "Yuly Guerrero", role: "Asst Kitchen Manager", pin: "3517" },
-            { id: 40, name: "Andrew Shih", role: "Manager", pin: "0000" },
-            { id: 41, name: "Julie Shih", role: "Owner", pin: "1111" },
+            { id: 1, name: "Ada Rodriguez", role: "Pho", pin: "2847", location: "webster" },
+            { id: 2, name: "Amelia Amelia", role: "FOH", pin: "1523", location: "webster" },
+            { id: 3, name: "Andres Martinez", role: "Grill", pin: "3961", location: "webster" },
+            { id: 4, name: "Asmita Asmita", role: "FOH", pin: "4738", location: "webster" },
+            { id: 5, name: "Ayana-Marie Watts", role: "FOH", pin: "5214", location: "webster" },
+            { id: 6, name: "Blanca Salgado", role: "FOH", pin: "6392", location: "webster" },
+            { id: 7, name: "Brandon Green", role: "Manager", pin: "7150", location: "webster" },
+            { id: 8, name: "Carl W", role: "FOH", pin: "8463", location: "webster" },
+            { id: 9, name: "Cash Magruder", role: "FOH", pin: "9271", location: "webster" },
+            { id: 10, name: "Claudia Vallejos", role: "Prep", pin: "1847", location: "webster" },
+            { id: 11, name: "Cony Mendieta", role: "Bowls", pin: "2635", location: "webster" },
+            { id: 12, name: "Cristopher Maldonado", role: "Grill", pin: "3419", location: "webster" },
+            { id: 13, name: "Dariela Cruz", role: "BOH", pin: "4582", location: "webster" },
+            { id: 14, name: "Dulce Arriaga", role: "Fryer", pin: "5736", location: "webster" },
+            { id: 15, name: "Edgar Cruz", role: "FOH", pin: "6148", location: "webster" },
+            { id: 16, name: "Elizabeth Elizabeth", role: "FOH", pin: "7329", location: "webster" },
+            { id: 17, name: "Emma Liliana", role: "Shift Lead", pin: "8514", location: "webster" },
+            { id: 18, name: "Erica Dizon", role: "Shift Lead", pin: "9637", location: "webster" },
+            { id: 19, name: "Fernanda Angarita", role: "Bao/Tacos/Banh Mi", pin: "1462", location: "webster" },
+            { id: 20, name: "Fuijun Mok", role: "FOH", pin: "2958", location: "webster" },
+            { id: 21, name: "Isa Davis", role: "FOH", pin: "3741", location: "webster" },
+            { id: 22, name: "Jose Mendoza", role: "Fried Rice", pin: "4293", location: "webster" },
+            { id: 23, name: "Josiah Oliver", role: "FOH", pin: "5817", location: "webster" },
+            { id: 24, name: "Juan Tojin", role: "Fried Rice", pin: "6524", location: "webster" },
+            { id: 25, name: "Julio Turcio", role: "Dish", pin: "7386", location: "webster" },
+            { id: 26, name: "Katy Mejia", role: "Prep", pin: "8142", location: "webster" },
+            { id: 27, name: "Ley Njeri", role: "FOH", pin: "9475", location: "webster" },
+            { id: 28, name: "Lilian Melchor", role: "Spring Rolls/Prep", pin: "1693", location: "webster" },
+            { id: 29, name: "Lorena Espinal", role: "Kitchen Manager", pin: "2537", location: "webster" },
+            { id: 30, name: "Marcos Cruz", role: "Prep", pin: "3824", location: "webster" },
+            { id: 31, name: "Mariana Fonseca", role: "Fryer", pin: "4261", location: "webster" },
+            { id: 32, name: "Miguel Mejia", role: "Grill", pin: "5948", location: "webster" },
+            { id: 33, name: "Milli Perez", role: "FOH", pin: "6713", location: "webster" },
+            { id: 34, name: "Myia Dixon", role: "Shift Lead", pin: "7492", location: "webster" },
+            { id: 35, name: "Rafa Leon", role: "FOH", pin: "8356", location: "webster" },
+            { id: 36, name: "Rubi Diaz", role: "Dish", pin: "9184", location: "webster" },
+            { id: 37, name: "Yeiry Cruz", role: "Shift Lead", pin: "1375", location: "webster" },
+            { id: 38, name: "Yency Guzman", role: "Spring Rolls/Prep", pin: "2649", location: "webster" },
+            { id: 39, name: "Yuly Guerrero", role: "Asst Kitchen Manager", pin: "3517", location: "webster" },
+            { id: 40, name: "Andrew Shih", role: "Manager", pin: "0000", location: "both" },
+            { id: 41, name: "Julie Shih", role: "Owner", pin: "1111", location: "both" },
         ];
 
         // Training Modules
@@ -1502,7 +1503,7 @@
         }
 
         // Operations Component
-        function Operations({ language, staffList, staffName }) {
+        function Operations({ language, staffList, staffName, storeLocation }) {
             const [passwordEntered, setPasswordEntered] = useState(false);
             const [password, setPassword] = useState("");
             const [inventory, setInventory] = useState({});
@@ -1864,7 +1865,7 @@
 
             useEffect(() => {
                 // Load checklist data (new system)
-                const unsubChecklist = db.collection("ops").doc("checklists2").onSnapshot(async (doc) => {
+                const unsubChecklist = db.collection("ops").doc("checklists2_" + storeLocation).onSnapshot(async (doc) => {
                     if (doc.exists) {
                         const data = doc.data();
                         const todayKey = getTodayKey();
@@ -1875,7 +1876,7 @@
                             setChecks({});
                             setChecklistDate(todayKey);
                             try {
-                                await db.collection("ops").doc("checklists2").set({
+                                await db.collection("ops").doc("checklists2_" + storeLocation).set({
                                     checks: {}, customTasks: freshTasks, date: todayKey, updatedAt: new Date().toISOString(), version: CHECKLIST_VERSION
                                 });
                             } catch (err) { console.error("Error updating checklist version:", err); }
@@ -1905,7 +1906,7 @@
                     }
                 });
 
-                const inventoryRef = db.collection("ops").doc("inventory");
+                const inventoryRef = db.collection("ops").doc("inventory_" + storeLocation);
                 const unsubInventorySnapshot = inventoryRef.onSnapshot((doc) => {
                     if (doc.exists) {
                         const data = doc.data();
@@ -1917,7 +1918,7 @@
                 });
 
                 return () => { unsubChecklist(); unsubInventorySnapshot(); };
-            }, []);
+            }, [storeLocation]);
 
             // ── PUSH NOTIFICATION SYSTEM ──
             // ── NOTIFICATION SYSTEM ──
@@ -2015,11 +2016,11 @@
                 const safeChecks = cleanForFirestore(newChecks);
                 const safeTasks = cleanForFirestore(newTasks);
                 try {
-                    await db.collection("ops").doc("checklists2").set({
+                    await db.collection("ops").doc("checklists2_" + storeLocation).set({
                         checks: safeChecks, customTasks: safeTasks, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
                     });
                     // Also save to daily history
-                    await db.collection("checklistHistory").doc(todayKey).set({
+                    await db.collection("checklistHistory_" + storeLocation).doc(todayKey).set({
                         checks: safeChecks, customTasks: safeTasks, date: now, version: CHECKLIST_VERSION
                     });
                 } catch (err) { console.error("Error saving checklist:", err); }
@@ -2138,7 +2139,7 @@
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 try {
-                    await db.collection("checklistHistory").doc(todayKey + "_saved").set({
+                    await db.collection("checklistHistory_" + storeLocation).doc(todayKey + "_saved").set({
                         checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
@@ -2161,7 +2162,7 @@
                 const cleanMeta = {};
                 Object.entries(invCountMeta).forEach(([k, v]) => { if (cleanCounts[k]) cleanMeta[k] = v; });
                 try {
-                    await db.collection("inventoryHistory").doc(key).set({
+                    await db.collection("inventoryHistory_" + storeLocation).doc(key).set({
                         counts: cleanCounts,
                         items: filteredItems,
                         countMeta: cleanMeta,
@@ -2182,7 +2183,7 @@
                 if (count === 0) delete newMeta[itemId];
                 setInvCountMeta(newMeta);
                 try {
-                    await db.collection("ops").doc("inventory").set({ counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
+                    await db.collection("ops").doc("inventory_" + storeLocation).set({ counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
 
@@ -2198,7 +2199,7 @@
                     });
                     setInventory(resetCounts);
                     setInvCountMeta({});
-                    await db.collection("ops").doc("inventory").set({ counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
+                    await db.collection("ops").doc("inventory_" + storeLocation).set({ counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
                 setShowSaveConfirm(false);
@@ -2206,7 +2207,7 @@
 
             const saveInventory = async (counts, items) => {
                 try {
-                    await db.collection("ops").doc("inventory").set({
+                    await db.collection("ops").doc("inventory_" + storeLocation).set({
                         counts, customInventory: items, date: new Date().toISOString()
                     });
                     await saveInventorySnapshot(counts, items);
@@ -3019,7 +3020,7 @@
                                 <p className="text-xs text-gray-500 mb-3">{language === "es"
                                     ? "Revisa conteos anteriores, marca lo que ya se pidió."
                                     : "Review past counts, check off what's been ordered."}</p>
-                                <InventoryHistory language={language} customInventory={customInventory} />
+                                <InventoryHistory language={language} customInventory={customInventory} storeLocation={storeLocation} />
                             </div>
                         </div>
                     )}
@@ -3538,14 +3539,25 @@
         }
 
         // Schedule Component
-        function Schedule({ staffName, language }) {
+        function Schedule({ staffName, language, storeLocation, staffList }) {
+            const getStaffLocation = (name) => {
+                const s = (staffList || []).find(st => st.name === name);
+                return s?.location || "webster";
+            };
+            const filterByLocation = (entries) => entries.filter(e => {
+                const loc = getStaffLocation(e.name);
+                return loc === storeLocation || loc === "both";
+            });
+
             return (
                 <div className="p-4 pb-24">
                     <h2 className="text-2xl font-bold text-mint-700 mb-2">📅 {t("weeklySchedule", language)}</h2>
-                    <p className="text-gray-600 mb-4">{SCHEDULE_DATA.week}</p>
+                    <p className="text-gray-600 mb-4">{SCHEDULE_DATA.week} — <span className="font-bold text-mint-700">{LOCATION_LABELS[storeLocation]}</span></p>
 
                     <div className="space-y-4">
-                        {SCHEDULE_DATA.shifts.map((day, idx) => (
+                        {SCHEDULE_DATA.shifts.map((day, idx) => {
+                            const filteredSchedule = filterByLocation(day.schedule);
+                            return (
                             <div key={idx} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                                 <div className="p-4 bg-gradient-to-r from-mint-50 to-white border-b">
                                     <h3 className="font-bold text-lg text-mint-700">{day.day}</h3>
@@ -3553,7 +3565,8 @@
                                 </div>
 
                                 <div className="p-4 space-y-2">
-                                    {day.schedule.map((entry, entryIdx) => {
+                                    {filteredSchedule.length === 0 && <p className="text-gray-400 text-sm text-center py-2">{language === "es" ? "Sin turnos programados" : "No shifts scheduled"}</p>}
+                                    {filteredSchedule.map((entry, entryIdx) => {
                                         const isCurrentStaff = entry.name === staffName;
                                         return (
                                             <div
@@ -3570,7 +3583,8 @@
                                     })}
                                 </div>
                             </div>
-                        ))}
+                        );
+                        })}
                     </div>
                 </div>
             );
@@ -4287,7 +4301,7 @@
         }
 
         // Checklist History Component (Admin only)
-        function ChecklistHistory({ language }) {
+        function ChecklistHistory({ language, storeLocation }) {
             const [historyDates, setHistoryDates] = useState([]);
             const [selectedDate, setSelectedDate] = useState(null);
             const [dayData, setDayData] = useState(null);
@@ -4298,7 +4312,7 @@
             useEffect(() => {
                 const fetchHistory = async () => {
                     try {
-                        const snapshot = await db.collection("checklistHistory").get();
+                        const snapshot = await db.collection("checklistHistory_" + storeLocation).get();
                         const dates = snapshot.docs.map(doc => doc.id).filter(d => !d.includes("_")).sort().reverse().slice(0, 30);
                         setHistoryDates(dates);
                         if (dates.length > 0) setSelectedDate(dates[0]);
@@ -4313,9 +4327,9 @@
                 const fetchDay = async () => {
                     try {
                         // Prefer the _saved version (has completed checks before reset)
-                        const savedDoc = await db.collection("checklistHistory").doc(selectedDate + "_saved").get();
+                        const savedDoc = await db.collection("checklistHistory_" + storeLocation).doc(selectedDate + "_saved").get();
                         if (savedDoc.exists) { setDayData(savedDoc.data()); return; }
-                        const doc = await db.collection("checklistHistory").doc(selectedDate).get();
+                        const doc = await db.collection("checklistHistory_" + storeLocation).doc(selectedDate).get();
                         if (doc.exists) setDayData(doc.data());
                         else setDayData(null);
                     } catch (err) { console.error("Error loading day:", err); }
@@ -4472,7 +4486,7 @@
         }
 
         // Inventory History Component (Admin only)
-        function InventoryHistory({ language, customInventory: customInventoryProp }) {
+        function InventoryHistory({ language, customInventory: customInventoryProp, storeLocation }) {
             const [historyDates, setHistoryDates] = useState([]);
             const [selectedDate, setSelectedDate] = useState(null);
             const [dayData, setDayData] = useState(null);
@@ -4500,7 +4514,7 @@
                 } else {
                     const loadInv = async () => {
                         try {
-                            const doc = await db.collection("ops").doc("inventory").get();
+                            const doc = await db.collection("ops").doc("inventory_" + storeLocation).get();
                             if (doc.exists && doc.data().customInventory) setFullInventory(doc.data().customInventory);
                         } catch (err) { console.error("Error loading inventory for picker:", err); }
                     };
@@ -4511,7 +4525,7 @@
             useEffect(() => {
                 const fetchHistory = async () => {
                     try {
-                        const snapshot = await db.collection("inventoryHistory").get();
+                        const snapshot = await db.collection("inventoryHistory_" + storeLocation).get();
                         const dates = snapshot.docs.map(doc => doc.id).sort().reverse().slice(0, 30);
                         setHistoryDates(dates);
                         if (dates.length > 0) setSelectedDate(dates[0]);
@@ -4526,7 +4540,7 @@
                 if (!selectedDate) return;
                 const fetchDay = async () => {
                     try {
-                        const doc = await db.collection("inventoryHistory")
+                        const doc = await db.collection("inventoryHistory_" + storeLocation)
                             .doc(selectedDate).get();
                         if (doc.exists) {
                             const data = doc.data();
@@ -4544,7 +4558,7 @@
                         // Find previous day in history
                         const idx = historyDates.indexOf(selectedDate);
                         if (idx < historyDates.length - 1) {
-                            const prevDoc = await db.collection("inventoryHistory")
+                            const prevDoc = await db.collection("inventoryHistory_" + storeLocation)
                                 .doc(historyDates[idx + 1]).get();
                             if (prevDoc.exists) setPrevData(prevDoc.data());
                             else setPrevData(null);
@@ -4563,7 +4577,7 @@
                 if (!selectedDate) return;
                 setSaving(true);
                 try {
-                    await db.collection("inventoryHistory").doc(selectedDate).set(updates, { merge: true });
+                    await db.collection("inventoryHistory_" + storeLocation).doc(selectedDate).set(updates, { merge: true });
                 } catch (err) { console.error("Error saving inventory history:", err); }
                 setSaving(false);
             };
@@ -4926,7 +4940,7 @@
         }
 
         // Maintenance Request Component
-        function MaintenanceRequest({ language, staffName }) {
+        function MaintenanceRequest({ language, staffName, storeLocation }) {
             const [description, setDescription] = useState("");
             const [location, setLocation] = useState("");
             const [urgency, setUrgency] = useState("normal");
@@ -4995,6 +5009,7 @@
                         reason: reason.trim(),
                         photoUrl,
                         submittedBy: staffName,
+                        storeBranch: storeLocation,
                         createdAt: now.toISOString(),
                         date: now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" + String(now.getDate()).padStart(2, "0"),
                         status: "open"
@@ -5136,7 +5151,7 @@
         }
 
         // Admin Panel Component
-        function AdminPanel({ language, staffList, setStaffList }) {
+        function AdminPanel({ language, staffList, setStaffList, storeLocation }) {
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
@@ -5144,6 +5159,8 @@
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
             const [newPin, setNewPin] = useState("");
+            const [newLocation, setNewLocation] = useState("webster");
+            const [editLocation, setEditLocation] = useState("");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
             const [staffExpanded, setStaffExpanded] = useState(false);
@@ -5151,8 +5168,12 @@
             const [maintenanceExpanded, setMaintenanceExpanded] = useState(true);
             const [selectedRequest, setSelectedRequest] = useState(null);
             const [adminNote, setAdminNote] = useState("");
+            const [maintFilter, setMaintFilter] = useState("all");
 
             const showSaved = () => { setSavedMsg(true); setTimeout(() => setSavedMsg(null), 1500); };
+
+            // Filter maintenance requests by selected filter (all / webster / maryland)
+            const filteredMaintenance = maintFilter === "all" ? maintenanceRequests : maintenanceRequests.filter(r => !r.storeBranch || r.storeBranch === maintFilter);
 
             // Load maintenance requests
             useEffect(() => {
@@ -5196,19 +5217,20 @@
 
             const handleSavePin = async (id) => {
                 if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
-                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole } : s);
+                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster" } : s);
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
                 setEditingId(null);
                 setEditPin("");
                 setEditRole("");
+                setEditLocation("");
                 showSaved();
             };
 
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
                 const maxId = Math.max(...staffList.map(s => s.id), 0);
-                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin };
+                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation };
                 const updated = [...staffList, newStaff];
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
@@ -5216,6 +5238,7 @@
                 setNewName("");
                 setNewRole("FOH");
                 setNewPin("");
+                setNewLocation("webster");
                 showSaved();
             };
 
@@ -5255,9 +5278,9 @@
                                 <div className="text-left">
                                     <h3 className="font-bold text-red-700">{language === "es" ? "Solicitudes de Mantenimiento" : "Maintenance Requests"}</h3>
                                     <p className="text-xs text-red-500">
-                                        {maintenanceRequests.filter(r => r.status === "open").length} {language === "es" ? "abiertos" : "open"}
-                                        {maintenanceRequests.filter(r => r.status === "in-progress").length > 0 && (
-                                            ` • ${maintenanceRequests.filter(r => r.status === "in-progress").length} ${language === "es" ? "en progreso" : "in progress"}`
+                                        {filteredMaintenance.filter(r => r.status === "open").length} {language === "es" ? "abiertos" : "open"}
+                                        {filteredMaintenance.filter(r => r.status === "in-progress").length > 0 && (
+                                            ` • ${filteredMaintenance.filter(r => r.status === "in-progress").length} ${language === "es" ? "en progreso" : "in progress"}`
                                         )}
                                     </p>
                                 </div>
@@ -5267,9 +5290,18 @@
 
                         {maintenanceExpanded && (
                             <div className="mt-2 space-y-2">
-                                {maintenanceRequests.length === 0 ? (
+                                <div className="flex gap-1 justify-center">
+                                    {[{k:"all",en:"All Locations",es:"Todas"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
+                                        <button key={f.k} onClick={() => setMaintFilter(f.k)}
+                                            className={`px-3 py-1 rounded-full text-xs font-bold border transition ${maintFilter === f.k ? "bg-red-600 text-white border-red-600" : "bg-white text-red-600 border-red-300 hover:bg-red-50"}`}>
+                                            {language === "es" ? f.es : f.en}
+                                            {f.k !== "all" && <span className="ml-1 opacity-70">({maintenanceRequests.filter(r => r.storeBranch === f.k).length})</span>}
+                                        </button>
+                                    ))}
+                                </div>
+                                {filteredMaintenance.length === 0 ? (
                                     <p className="text-center text-gray-400 text-sm py-4">{language === "es" ? "No hay solicitudes" : "No requests yet"}</p>
-                                ) : maintenanceRequests.map(req => {
+                                ) : filteredMaintenance.map(req => {
                                     const isExpanded = selectedRequest === req.id;
                                     const statusColors = { open: "bg-yellow-100 text-yellow-700 border-yellow-300", "in-progress": "bg-blue-100 text-blue-700 border-blue-300", completed: "bg-green-100 text-green-700 border-green-300", declined: "bg-red-100 text-red-700 border-red-300" };
                                     const urgencyDot = { low: "🟢", normal: "🟡", high: "🟠", urgent: "🔴" };
@@ -5283,7 +5315,7 @@
                                                             <span className="text-sm">{urgencyDot[req.urgency] || "🟡"}</span>
                                                             <p className="text-sm font-bold text-gray-800">{req.description}</p>
                                                         </div>
-                                                        <p className="text-xs text-gray-500">📍 {req.location} • 👤 {req.submittedBy} • {new Date(req.createdAt).toLocaleDateString()}</p>
+                                                        <p className="text-xs text-gray-500">📍 {req.location} {req.storeBranch ? <span className={`inline-block ml-1 px-1.5 py-0.5 rounded text-xs font-bold ${req.storeBranch === "webster" ? "bg-emerald-100 text-emerald-700" : "bg-purple-100 text-purple-700"}`}>{LOCATION_LABELS[req.storeBranch] || req.storeBranch}</span> : null} • 👤 {req.submittedBy} • {new Date(req.createdAt).toLocaleDateString()}</p>
                                                     </div>
                                                     <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ml-2 whitespace-nowrap ${statusColors[req.status] || "bg-gray-100 text-gray-600 border-gray-300"}`}>
                                                         {req.status === "in-progress" ? (language === "es" ? "En Progreso" : "In Progress") : req.status === "open" ? (language === "es" ? "Abierto" : "Open") : req.status === "completed" ? (language === "es" ? "Completado" : "Done") : (language === "es" ? "Rechazado" : "Declined")}
@@ -5376,6 +5408,15 @@
                                                         </select>
                                                     </div>
                                                     <div>
+                                                        <label className="text-xs text-gray-600 font-semibold">{language === "es" ? "Ubicación" : "Location"}</label>
+                                                        <select value={editLocation} onChange={(e) => setEditLocation(e.target.value)}
+                                                            className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm">
+                                                            <option value="webster">Webster</option>
+                                                            <option value="maryland">Maryland Heights</option>
+                                                            <option value="both">Both Locations</option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
                                                         <label className="text-xs text-gray-600 font-semibold">{t("newPIN", language)}</label>
                                                         <input type="text" inputMode="numeric" maxLength={4} value={editPin}
                                                             onChange={(e) => setEditPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
@@ -5388,7 +5429,7 @@
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -5398,10 +5439,10 @@
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • PIN: {person.pin}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -5444,6 +5485,15 @@
                                             </select>
                                         </div>
                                         <div>
+                                            <label className="text-xs text-gray-600 font-semibold">{language === "es" ? "Ubicación" : "Location"}</label>
+                                            <select value={newLocation} onChange={(e) => setNewLocation(e.target.value)}
+                                                className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none text-sm">
+                                                <option value="webster">Webster</option>
+                                                <option value="maryland">Maryland Heights</option>
+                                                <option value="both">Both Locations</option>
+                                            </select>
+                                        </div>
+                                        <div>
                                             <label className="text-xs text-gray-600 font-semibold">{t("staffPIN", language)} (4 {language === "es" ? "dígitos" : "digits"})</label>
                                             <input type="text" inputMode="numeric" maxLength={4} value={newPin}
                                                 onChange={(e) => setNewPin(e.target.value.replace(/\D/g, "").slice(0, 4))}
@@ -5478,7 +5528,7 @@
                         <p className="text-xs text-gray-500 mb-4">{language === "es"
                             ? "Revisa las listas de apertura y cierre de días anteriores"
                             : "Review opening and closing checklists from previous days"}</p>
-                        <ChecklistHistory language={language} />
+                        <ChecklistHistory language={language} storeLocation={storeLocation} />
                     </div>
 
                     {/* Inventory History Section */}
@@ -5487,7 +5537,7 @@
                         <p className="text-xs text-gray-500 mb-4">{language === "es"
                             ? "Revisa los conteos de inventario de días anteriores. Los cambios vs el día anterior se muestran en verde/rojo."
                             : "Review inventory counts from previous days. Changes vs the prior day are shown in green/red."}</p>
-                        <InventoryHistory language={language} customInventory={null} />
+                        <InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} />
                     </div>
                 </div>
             );
@@ -6950,6 +7000,8 @@
         // Main App Component
         function App() {
             const [staffName, setStaffName] = useState(null);
+            const [staffLocation, setStaffLocation] = useState("webster");
+            const [activeLocation, setActiveLocation] = useState("webster"); // for admins who can switch
             const [language, setLanguage] = useState("en");
             const [activeTab, setActiveTab] = useState("home");
             const [staffList, setStaffList] = useState(DEFAULT_STAFF);
@@ -6966,9 +7018,19 @@
             }, []);
 
             const staffIsAdmin = isAdmin(staffName);
+            // The effective location used throughout the app
+            const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
+
+            const handleSelectStaff = (name) => {
+                setStaffName(name);
+                const staff = staffList.find(s => s.name === name);
+                const loc = staff?.location || "webster";
+                setStaffLocation(loc);
+                setActiveLocation(loc === "both" ? "webster" : loc);
+            };
 
             if (!staffName) {
-                return <HomePage onSelectStaff={setStaffName} language={language} staffList={staffList} />;
+                return <HomePage onSelectStaff={handleSelectStaff} language={language} staffList={staffList} />;
             }
 
             return (
@@ -6998,7 +7060,23 @@
                                 </button>
                             </div>
                         </div>
-                        <p className="text-xs text-mint-100 mt-2">{staffName}</p>
+                        <div className="flex justify-between items-center mt-2">
+                            <p className="text-xs text-mint-100">{staffName}</p>
+                            {(staffLocation === "both" || staffIsAdmin) ? (
+                                <div className="flex gap-1">
+                                    <button onClick={() => setActiveLocation("webster")}
+                                        className={`px-2 py-0.5 rounded text-xs font-bold transition ${activeLocation === "webster" ? "bg-white text-mint-700" : "bg-mint-500 text-white"}`}>
+                                        Webster
+                                    </button>
+                                    <button onClick={() => setActiveLocation("maryland")}
+                                        className={`px-2 py-0.5 rounded text-xs font-bold transition ${activeLocation === "maryland" ? "bg-white text-mint-700" : "bg-mint-500 text-white"}`}>
+                                        MD Heights
+                                    </button>
+                                </div>
+                            ) : (
+                                <p className="text-xs text-mint-200">{LOCATION_LABELS[staffLocation] || "Webster"}</p>
+                            )}
+                        </div>
                     </div>
 
                     {/* Content */}
@@ -7072,13 +7150,13 @@
                         )}
 
                         {activeTab === "training" && <TrainingHub staffName={staffName} language={language} />}
-                        {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} />}
+                        {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
-                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} />}
+                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} />}
                         {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} />}
                         {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
-                        {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} />}
-                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} />}
+                        {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
+                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
                     </div>
 
                     {/* Bottom Navigation */}
