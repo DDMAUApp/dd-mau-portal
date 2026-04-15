@@ -5493,7 +5493,7 @@
             );
         }
 
-        // Catering Menu Data
+        // Catering Menu Data — proteinOptions = single pick from list; hasProteins+proteinCount = multi pick
         const CATERING_MENU = [
             {
                 category: "Finger Food",
@@ -5521,8 +5521,10 @@
                             { label: "40 Halves", price: 41.99 },
                             { label: "60 Halves", price: 53.90 }
                         ],
-                        note: "Served w/ House Vietnamese Vinaigrette or Sweet Chili Sauce",
-                        noteEs: "Servido con Vinagreta Vietnamita o Salsa de Chile Dulce",
+                        typeOptions: ["Vietnamese", "Vegetarian"],
+                        typeOptionsEs: ["Vietnamitas", "Vegetarianos"],
+                        singleSauceOptions: ["Vietnamese Vinaigrette", "Sweet Chili"],
+                        singleSauceOptionsEs: ["Vinagreta Vietnamita", "Chile Dulce"],
                         hasSauces: false,
                         hasProteins: false
                     },
@@ -5573,7 +5575,8 @@
                             { label: "Serves 6-8", price: 146.99 },
                             { label: "Serves 10-12", price: 223.99 }
                         ],
-                        proteinGroup: "standard",
+                        proteinOptions: ["Chicken", "Pork", "Tofu"],
+                        proteinOptionsEs: ["Pollo", "Puerco", "Tofu"],
                         hasBase: true,
                         hasSauces: true,
                         sauceCount: 3,
@@ -5587,7 +5590,8 @@
                             { label: "Serves 6-8", price: 161.99 },
                             { label: "Serves 10-12", price: 246.99 }
                         ],
-                        proteinGroup: "premium",
+                        proteinOptions: ["Steak", "Shrimp", "Veggie", "Vegan Beef"],
+                        proteinOptionsEs: ["Res", "Camarón", "Vegetal", "Res Vegana"],
                         hasBase: true,
                         hasSauces: true,
                         sauceCount: 3,
@@ -5608,7 +5612,8 @@
                             { label: "10 Bowls", price: 130.99 },
                             { label: "20 Bowls", price: 254.99 }
                         ],
-                        proteinGroup: "standard",
+                        proteinOptions: ["Chicken", "Pork", "Tofu"],
+                        proteinOptionsEs: ["Pollo", "Puerco", "Tofu"],
                         hasBase: true,
                         hasSauces: true,
                         sauceCount: 3,
@@ -5622,7 +5627,8 @@
                             { label: "10 Bowls", price: 146.99 },
                             { label: "20 Bowls", price: 284.99 }
                         ],
-                        proteinGroup: "premium",
+                        proteinOptions: ["Steak", "Shrimp", "Veggie", "Vegan Beef"],
+                        proteinOptionsEs: ["Res", "Camarón", "Vegetal", "Res Vegana"],
                         hasBase: true,
                         hasSauces: true,
                         sauceCount: 3,
@@ -5658,7 +5664,8 @@
                         ],
                         note: "Eggs, Scallions, and White Onions",
                         noteEs: "Huevos, Cebollín y Cebolla Blanca",
-                        proteinGroup: "standard",
+                        proteinOptions: ["Chicken", "Pork", "Tofu"],
+                        proteinOptionsEs: ["Pollo", "Puerco", "Tofu"],
                         hasSauces: false,
                         hasProteins: false,
                         hasUtensils: true
@@ -5672,7 +5679,8 @@
                         ],
                         note: "Eggs, Scallions, and White Onions",
                         noteEs: "Huevos, Cebollín y Cebolla Blanca",
-                        proteinGroup: "premium",
+                        proteinOptions: ["Steak", "Shrimp", "Veggie", "Vegan Beef"],
+                        proteinOptionsEs: ["Res", "Camarón", "Vegetal", "Res Vegana"],
                         hasSauces: false,
                         hasProteins: false,
                         hasUtensils: true
@@ -5690,12 +5698,18 @@
                         sizes: [
                             { label: "Serves 4-6", price: 154.99 }
                         ],
-                        note: "6 Banh Mi Bites (choose 3 proteins), 4 Mini Vermicelli Bowls (choose 2 proteins), 8 Rice Paper Roll Halves (choose 2 proteins), 10 Vietnamese or Veggie Egg Roll Halves. Cutlery & napkins included.",
-                        noteEs: "6 Banh Mi (elige 3 proteínas), 4 Mini Tazones de Fideos (elige 2 proteínas), 8 Mitades de Rollos de Papel de Arroz (elige 2 proteínas), 10 Mitades de Rollos de Huevo. Cubiertos y servilletas incluidos.",
+                        note: "6 Banh Mi Bites, 4 Mini Vermicelli Bowls, 8 Rice Paper Roll Halves, 10 Egg Roll Halves. Cutlery & napkins included.",
+                        noteEs: "6 Banh Mi, 4 Mini Tazones de Fideos, 8 Mitades de Rollos de Arroz, 10 Mitades de Rollos de Huevo. Cubiertos y servilletas incluidos.",
                         hasSauces: true,
                         sauceCount: 2,
-                        hasProteins: true,
-                        isSampler: true
+                        hasProteins: false,
+                        isSampler: true,
+                        samplerPicks: [
+                            { name: "Banh Mi Bites (6 pcs)", nameEs: "Banh Mi (6 pzas)", count: 3 },
+                            { name: "Mini Vermicelli Bowls (4)", nameEs: "Mini Tazones de Fideos (4)", count: 2 },
+                            { name: "Rice Paper Rolls (8 halves)", nameEs: "Rollos de Arroz (8 mitades)", count: 2 }
+                        ],
+                        samplerEggRollType: true
                     }
                 ]
             }
@@ -5713,18 +5727,20 @@
             const [step, setStep] = useState(1); // 1=customer, 2=menu, 3=summary
             const [customer, setCustomer] = useState({
                 name: "", phone: "", email: "", date: "", time: "", guests: "", address: "",
-                orderType: "pickup" // pickup or delivery
+                orderType: "pickup"
             });
-            const [cart, setCart] = useState([]); // array of order line items
+            const [cart, setCart] = useState([]);
             const [errors, setErrors] = useState({});
             const [submitted, setSubmitted] = useState(false);
             const [orderHistory, setOrderHistory] = useState([]);
             const [showHistory, setShowHistory] = useState(false);
             const [specialNotes, setSpecialNotes] = useState("");
+            const [deliveryFee, setDeliveryFee] = useState(25);
+            const [viewingOrder, setViewingOrder] = useState(null); // full invoice view
+            const [editingOrderId, setEditingOrderId] = useState(null); // editing existing order
 
-            // Load order history
             useEffect(() => {
-                const unsubscribe = db.collection("cateringOrders").orderBy("createdAt", "desc").limit(20).onSnapshot(snap => {
+                const unsubscribe = db.collection("cateringOrders").orderBy("createdAt", "desc").limit(30).onSnapshot(snap => {
                     setOrderHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 });
                 return () => unsubscribe();
@@ -5743,13 +5759,11 @@
                 return Object.keys(e).length === 0;
             };
 
-            const goToMenu = () => {
-                if (validateCustomer()) setStep(2);
-            };
+            const goToMenu = () => { if (validateCustomer()) setStep(2); };
 
-            const addToCart = (item, sizeIdx, sauces, proteins, base, utensils, qty, samplerProteins) => {
+            const addToCart = (item, sizeIdx, sauces, proteins, base, utensils, qty, itemNote, extras) => {
                 const size = item.sizes[sizeIdx];
-                const lineItem = {
+                setCart(prev => [...prev, {
                     id: Date.now() + Math.random(),
                     name: language === "es" ? (item.nameEs || item.name) : item.name,
                     nameEn: item.name,
@@ -5760,16 +5774,18 @@
                     proteins: proteins || [],
                     base: base || "",
                     utensils: utensils || "",
-                    samplerProteins: samplerProteins || null
-                };
-                setCart(prev => [...prev, lineItem]);
+                    itemNote: itemNote || "",
+                    type: extras?.type || "",
+                    singleSauce: extras?.singleSauce || "",
+                    samplerProteins: extras?.samplerProteins || null,
+                    samplerEggRoll: extras?.samplerEggRoll || ""
+                }]);
             };
 
             const removeFromCart = (id) => setCart(prev => prev.filter(i => i.id !== id));
-
             const getSubtotal = () => cart.reduce((sum, i) => sum + i.price * i.qty, 0);
-            const getDeliveryFee = () => customer.orderType === "delivery" ? 25 : 0;
-            const getTotal = () => getSubtotal() + getDeliveryFee();
+            const getDelFee = () => customer.orderType === "delivery" ? deliveryFee : 0;
+            const getTotal = () => getSubtotal() + getDelFee();
 
             const submitOrder = async () => {
                 if (cart.length === 0) return;
@@ -5777,26 +5793,122 @@
                     customer,
                     items: cart.map(({ id, ...rest }) => rest),
                     subtotal: getSubtotal(),
-                    deliveryFee: getDeliveryFee(),
+                    deliveryFee: getDelFee(),
                     total: getTotal(),
                     specialNotes,
                     takenBy: staffName,
-                    createdAt: new Date().toISOString(),
+                    createdAt: editingOrderId ? undefined : new Date().toISOString(),
+                    updatedAt: new Date().toISOString(),
                     status: "new"
                 };
                 try {
-                    await db.collection("cateringOrders").add(order);
+                    if (editingOrderId) {
+                        delete order.createdAt;
+                        await db.collection("cateringOrders").doc(editingOrderId).set(order, { merge: true });
+                    } else {
+                        await db.collection("cateringOrders").add(order);
+                    }
                     setSubmitted(true);
                 } catch (err) { console.error("Error submitting catering order:", err); }
             };
 
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup" });
-                setCart([]);
-                setErrors({});
-                setSubmitted(false);
-                setSpecialNotes("");
-                setStep(1);
+                setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
+                setDeliveryFee(25); setEditingOrderId(null);
+            };
+
+            const loadOrderForEdit = (o) => {
+                setCustomer(o.customer || {});
+                setCart((o.items || []).map((item, i) => ({ ...item, id: Date.now() + i })));
+                setSpecialNotes(o.specialNotes || "");
+                setDeliveryFee(o.deliveryFee || 25);
+                setEditingOrderId(o.id);
+                setShowHistory(false);
+                setViewingOrder(null);
+                setStep(3);
+            };
+
+            // Print invoice
+            const printOrder = (o) => {
+                const w = window.open('', '_blank', 'width=800,height=1100');
+                const c = o.customer || {};
+                const itemsHTML = (o.items || []).map((item, i) => {
+                    let details = item.size;
+                    if (item.type) details += '<br>Type: ' + item.type;
+                    if (item.proteins && item.proteins.length) details += '<br>Proteins: ' + item.proteins.join(', ');
+                    if (item.sauces && item.sauces.length) details += '<br>Sauces: ' + item.sauces.join(', ');
+                    if (item.singleSauce) details += '<br>Sauce: ' + item.singleSauce;
+                    if (item.base) details += '<br>Base: ' + item.base;
+                    if (item.utensils) details += '<br>Utensils: ' + item.utensils;
+                    if (item.samplerProteins) {
+                        const names = ['Banh Mi', 'Mini Bowls', 'Rice Rolls'];
+                        item.samplerProteins.forEach((sp, si) => { if (sp && sp.length) details += '<br>• ' + names[si] + ': ' + sp.join(', '); });
+                    }
+                    if (item.samplerEggRoll) details += '<br>Egg Rolls: ' + item.samplerEggRoll;
+                    if (item.itemNote) details += '<br><em>Note: ' + item.itemNote + '</em>';
+                    return `<tr>
+                        <td style="padding:8px;border-bottom:1px solid #eee">${i+1}</td>
+                        <td style="padding:8px;border-bottom:1px solid #eee"><strong>${item.nameEn || item.name}</strong><br><span style="color:#666;font-size:12px">${details}</span></td>
+                        <td style="padding:8px;border-bottom:1px solid #eee;text-align:center">${item.qty}</td>
+                        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">$${item.price?.toFixed(2)}</td>
+                        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">$${(item.price * item.qty)?.toFixed(2)}</td>
+                    </tr>`;
+                }).join('');
+                w.document.write(`<!DOCTYPE html><html><head><title>DD Mau Catering - ${c.name}</title><style>
+                    body{font-family:-apple-system,sans-serif;max-width:750px;margin:40px auto;padding:20px;color:#333}
+                    .header{text-align:center;border-bottom:3px solid #255a37;padding-bottom:20px;margin-bottom:20px}
+                    .header h1{color:#255a37;margin:0;font-size:28px} .header p{color:#666;margin:5px 0}
+                    .info-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px}
+                    .info-box{background:#f9f9f9;padding:15px;border-radius:8px}
+                    .info-box h3{margin:0 0 8px;color:#255a37;font-size:14px;text-transform:uppercase}
+                    .info-box p{margin:3px 0;font-size:13px}
+                    table{width:100%;border-collapse:collapse;margin-bottom:20px}
+                    th{background:#255a37;color:white;padding:10px 8px;text-align:left;font-size:13px}
+                    th:nth-child(3),th:nth-child(4),th:nth-child(5){text-align:right}
+                    .totals{text-align:right;margin-top:10px}
+                    .totals .line{display:flex;justify-content:flex-end;gap:30px;padding:4px 0;font-size:14px}
+                    .totals .total{font-size:20px;font-weight:bold;color:#255a37;border-top:2px solid #255a37;padding-top:8px;margin-top:8px}
+                    .notes{background:#fff9e6;border:1px solid #f0e0a0;padding:12px;border-radius:8px;margin-bottom:20px;font-size:13px}
+                    .footer{text-align:center;color:#999;font-size:11px;margin-top:30px;border-top:1px solid #eee;padding-top:15px}
+                    @media print{body{margin:0;padding:15px}}
+                </style></head><body>
+                    <div class="header">
+                        <h1>🍜 DD Mau Vietnamese Eatery</h1>
+                        <p>Catering Order</p>
+                        <p style="font-size:12px;color:#999">Order #${o.id?.slice(-6).toUpperCase() || "------"}</p>
+                    </div>
+                    <div class="info-grid">
+                        <div class="info-box">
+                            <h3>Customer</h3>
+                            <p><strong>${c.name}</strong></p>
+                            <p>📞 ${c.phone}</p>
+                            <p>✉️ ${c.email}</p>
+                        </div>
+                        <div class="info-box">
+                            <h3>Event Details</h3>
+                            <p>📅 ${c.date} @ ${c.time}</p>
+                            <p>👥 ${c.guests} guests</p>
+                            <p>${c.orderType === "delivery" ? "🚗 Delivery: " + (c.address || "") : "🏪 Pickup"}</p>
+                        </div>
+                    </div>
+                    ${o.specialNotes ? '<div class="notes"><strong>📝 Special Notes:</strong> ' + o.specialNotes + '</div>' : ''}
+                    <table>
+                        <thead><tr><th>#</th><th>Item</th><th style="text-align:center">Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
+                        <tbody>${itemsHTML}</tbody>
+                    </table>
+                    <div class="totals">
+                        <div class="line"><span>Subtotal:</span><span>$${o.subtotal?.toFixed(2)}</span></div>
+                        ${o.deliveryFee > 0 ? '<div class="line"><span>Delivery Fee:</span><span>$' + o.deliveryFee?.toFixed(2) + '</span></div>' : ''}
+                        <div class="line total"><span>Total:</span><span>$${o.total?.toFixed(2)}</span></div>
+                    </div>
+                    <div class="footer">
+                        <p>Order taken by: ${o.takenBy || "Staff"} | ${o.createdAt ? new Date(o.createdAt).toLocaleString() : ""}</p>
+                        <p>DD Mau Vietnamese Eatery — ddmaustl.com — Thank you!</p>
+                    </div>
+                    <script>window.print();<\/script>
+                </body></html>`);
+                w.document.close();
             };
 
             // Success screen
@@ -5805,7 +5917,7 @@
                     <div className="p-4 pb-24">
                         <div className="max-w-lg mx-auto text-center mt-8">
                             <div className="text-6xl mb-4">✅</div>
-                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{language === "es" ? "¡Pedido Enviado!" : "Order Submitted!"}</h2>
+                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{editingOrderId ? (language === "es" ? "¡Pedido Actualizado!" : "Order Updated!") : (language === "es" ? "¡Pedido Enviado!" : "Order Submitted!")}</h2>
                             <p className="text-gray-600 mb-2">{customer.name} — {customer.phone}</p>
                             <p className="text-gray-600 mb-2">{customer.date} @ {customer.time} — {customer.guests} {language === "es" ? "personas" : "guests"}</p>
                             <p className="text-lg font-bold text-mint-700 mb-6">${getTotal().toFixed(2)}</p>
@@ -5813,6 +5925,115 @@
                             <button onClick={resetForm} className="bg-mint-700 text-white px-6 py-3 rounded-lg font-bold text-lg">
                                 {language === "es" ? "Nuevo Pedido" : "New Order"}
                             </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Full Invoice Detail View
+            if (viewingOrder) {
+                const vo = viewingOrder;
+                const vc = vo.customer || {};
+                return (
+                    <div className="p-4 pb-24">
+                        <div className="flex items-center justify-between mb-4">
+                            <button onClick={() => setViewingOrder(null)} className="text-sm bg-gray-100 px-3 py-1.5 rounded-full font-bold text-gray-600">← {language === "es" ? "Volver" : "Back"}</button>
+                            <div className="flex gap-2">
+                                <button onClick={() => loadOrderForEdit(vo)} className="text-sm bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full font-bold border border-amber-300">✏️ {language === "es" ? "Editar" : "Edit"}</button>
+                                <button onClick={() => printOrder(vo)} className="text-sm bg-blue-100 text-blue-700 px-3 py-1.5 rounded-full font-bold border border-blue-300">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
+                            </div>
+                        </div>
+
+                        {/* Invoice style */}
+                        <div className="bg-white border-2 border-gray-200 rounded-lg overflow-hidden shadow-lg">
+                            {/* Header */}
+                            <div className="bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 text-center">
+                                <h2 className="text-xl font-bold">🍜 DD Mau Vietnamese Eatery</h2>
+                                <p className="text-mint-100 text-sm">{language === "es" ? "Pedido de Catering" : "Catering Order"}</p>
+                                <p className="text-mint-200 text-xs mt-1">#{vo.id?.slice(-6).toUpperCase()}</p>
+                            </div>
+
+                            {/* Customer + Event Info */}
+                            <div className="grid grid-cols-2 gap-3 p-4">
+                                <div className="bg-gray-50 rounded-lg p-3">
+                                    <p className="text-xs font-bold text-mint-700 mb-1">{language === "es" ? "CLIENTE" : "CUSTOMER"}</p>
+                                    <p className="font-bold text-sm">{vc.name}</p>
+                                    <p className="text-xs text-gray-600">📞 {vc.phone}</p>
+                                    <p className="text-xs text-gray-600">✉️ {vc.email}</p>
+                                </div>
+                                <div className="bg-gray-50 rounded-lg p-3">
+                                    <p className="text-xs font-bold text-mint-700 mb-1">{language === "es" ? "EVENTO" : "EVENT"}</p>
+                                    <p className="text-xs text-gray-700">📅 {vc.date} @ {vc.time}</p>
+                                    <p className="text-xs text-gray-700">👥 {vc.guests} {language === "es" ? "personas" : "guests"}</p>
+                                    <p className="text-xs text-gray-700">{vc.orderType === "delivery" ? "🚗 " + (vc.address || "Delivery") : "🏪 Pickup"}</p>
+                                </div>
+                            </div>
+
+                            {vo.specialNotes && (
+                                <div className="mx-4 mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
+                                    📝 <strong>{language === "es" ? "Notas" : "Notes"}:</strong> {vo.specialNotes}
+                                </div>
+                            )}
+
+                            {/* Items table */}
+                            <div className="px-4">
+                                <table className="w-full text-xs">
+                                    <thead>
+                                        <tr className="bg-mint-700 text-white">
+                                            <th className="py-2 px-2 text-left rounded-tl-lg">{language === "es" ? "Artículo" : "Item"}</th>
+                                            <th className="py-2 px-2 text-center">Qty</th>
+                                            <th className="py-2 px-2 text-right">{language === "es" ? "Precio" : "Price"}</th>
+                                            <th className="py-2 px-2 text-right rounded-tr-lg">Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {(vo.items || []).map((item, i) => (
+                                            <tr key={i} className="border-b border-gray-100">
+                                                <td className="py-2 px-2">
+                                                    <p className="font-bold">{item.nameEn || item.name}</p>
+                                                    <p className="text-gray-500">{item.size}</p>
+                                                    {item.type && <p className="text-gray-400">Type: {item.type}</p>}
+                                                    {item.proteins?.length > 0 && <p className="text-gray-400">Proteins: {item.proteins.join(", ")}</p>}
+                                                    {item.sauces?.length > 0 && <p className="text-gray-400">Sauces: {item.sauces.join(", ")}</p>}
+                                                    {item.singleSauce && <p className="text-gray-400">Sauce: {item.singleSauce}</p>}
+                                                    {item.base && <p className="text-gray-400">Base: {item.base}</p>}
+                                                    {item.utensils && <p className="text-gray-400">{item.utensils}</p>}
+                                                    {item.samplerProteins && item.samplerProteins.map((sp, si) => sp?.length > 0 && (
+                                                        <p key={si} className="text-gray-400">• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</p>
+                                                    ))}
+                                                    {item.samplerEggRoll && <p className="text-gray-400">Egg Rolls: {item.samplerEggRoll}</p>}
+                                                    {item.itemNote && <p className="text-amber-600 italic">📝 {item.itemNote}</p>}
+                                                </td>
+                                                <td className="py-2 px-2 text-center font-bold">{item.qty}</td>
+                                                <td className="py-2 px-2 text-right">${item.price?.toFixed(2)}</td>
+                                                <td className="py-2 px-2 text-right font-bold">${(item.price * item.qty)?.toFixed(2)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            {/* Totals */}
+                            <div className="p-4 bg-mint-50 mt-3">
+                                <div className="flex justify-between text-sm mb-1">
+                                    <span>Subtotal</span><span className="font-bold">${vo.subtotal?.toFixed(2)}</span>
+                                </div>
+                                {vo.deliveryFee > 0 && (
+                                    <div className="flex justify-between text-sm mb-1">
+                                        <span>{language === "es" ? "Entrega" : "Delivery"}</span><span className="font-bold">${vo.deliveryFee?.toFixed(2)}</span>
+                                    </div>
+                                )}
+                                <div className="flex justify-between text-lg font-bold text-mint-800 border-t border-mint-300 pt-2 mt-2">
+                                    <span>Total</span><span>${vo.total?.toFixed(2)}</span>
+                                </div>
+                            </div>
+
+                            {/* Footer */}
+                            <div className="p-3 text-center text-xs text-gray-400 border-t">
+                                <p>{language === "es" ? "Tomado por" : "Taken by"}: {vo.takenBy} | {vo.createdAt ? new Date(vo.createdAt).toLocaleString() : ""}</p>
+                                {vo.updatedAt && vo.updatedAt !== vo.createdAt && <p>{language === "es" ? "Actualizado" : "Updated"}: {new Date(vo.updatedAt).toLocaleString()}</p>}
+                                <span className={`inline-block mt-1 text-xs px-3 py-1 rounded-full font-bold ${vo.status === "new" ? "bg-amber-100 text-amber-700" : vo.status === "confirmed" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{vo.status?.toUpperCase()}</span>
+                            </div>
                         </div>
                     </div>
                 );
@@ -5828,7 +6049,7 @@
                         </div>
                         {orderHistory.length === 0 && <p className="text-gray-400 text-center mt-8">{language === "es" ? "Sin pedidos aún" : "No orders yet"}</p>}
                         {orderHistory.map(o => (
-                            <div key={o.id} className="mb-3 bg-white border-2 border-gray-200 rounded-lg p-3">
+                            <div key={o.id} className="mb-3 bg-white border-2 border-gray-200 rounded-lg p-3 cursor-pointer hover:border-mint-300 hover:shadow-md transition" onClick={() => setViewingOrder(o)}>
                                 <div className="flex justify-between items-start">
                                     <div>
                                         <p className="font-bold text-gray-800">{o.customer?.name}</p>
@@ -5843,9 +6064,10 @@
                                 </div>
                                 <div className="mt-2 text-xs text-gray-500">
                                     {(o.items || []).map((item, i) => (
-                                        <span key={i}>{item.qty}x {item.nameEn} ({item.size}){i < o.items.length - 1 ? ", " : ""}</span>
+                                        <span key={i}>{item.qty}x {item.nameEn || item.name} ({item.size}){i < o.items.length - 1 ? ", " : ""}</span>
                                     ))}
                                 </div>
+                                <p className="text-xs text-mint-600 font-bold mt-2 text-right">{language === "es" ? "Toca para ver detalles →" : "Tap to view details →"}</p>
                             </div>
                         ))}
                     </div>
@@ -5860,6 +6082,12 @@
                             📋 {language === "es" ? "Historial" : "History"}
                         </button>
                     </div>
+
+                    {editingOrderId && (
+                        <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 mb-4 text-xs text-amber-800 font-bold text-center">
+                            ✏️ {language === "es" ? "Editando pedido existente" : "Editing existing order"} — #{editingOrderId.slice(-6).toUpperCase()}
+                        </div>
+                    )}
 
                     {/* Progress Steps */}
                     <div className="flex items-center justify-center gap-2 mb-6">
@@ -5879,7 +6107,6 @@
                                 📞 {language === "es" ? "Completa toda la información del cliente. Todos los campos son obligatorios." : "Fill in all customer info. All fields are required."}
                             </div>
 
-                            {/* Pickup or Delivery */}
                             <div className="flex gap-2 mb-2">
                                 <button onClick={() => setCustomer(p => ({...p, orderType: "pickup"}))}
                                     className={`flex-1 py-3 rounded-lg font-bold text-sm border-2 transition ${customer.orderType === "pickup" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
@@ -5887,9 +6114,17 @@
                                 </button>
                                 <button onClick={() => setCustomer(p => ({...p, orderType: "delivery"}))}
                                     className={`flex-1 py-3 rounded-lg font-bold text-sm border-2 transition ${customer.orderType === "delivery" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
-                                    🚗 {t("delivery", language)} (+$25)
+                                    🚗 {t("delivery", language)}
                                 </button>
                             </div>
+
+                            {customer.orderType === "delivery" && (
+                                <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                    <label className="text-xs font-bold text-amber-700">{language === "es" ? "Tarifa de Entrega: $" : "Delivery Fee: $"}</label>
+                                    <input value={deliveryFee} onChange={e => setDeliveryFee(parseFloat(e.target.value) || 0)}
+                                        type="number" min="0" step="0.01" className="w-20 border border-amber-300 rounded px-2 py-1 text-sm font-bold text-center" />
+                                </div>
+                            )}
 
                             <div>
                                 <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Nombre" : "Name"} *</label>
@@ -5914,8 +6149,11 @@
                                 </div>
                                 <div>
                                     <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Hora" : "Time"} *</label>
-                                    <input value={customer.time} onChange={e => { setCustomer(p => ({...p, time: e.target.value})); setErrors(p => ({...p, time: false})); }}
-                                        type="time" className={`w-full border-2 ${errors.time ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} />
+                                    <select value={customer.time} onChange={e => { setCustomer(p => ({...p, time: e.target.value})); setErrors(p => ({...p, time: false})); }}
+                                        className={`w-full border-2 ${errors.time ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium bg-white`}>
+                                        <option value="">{language === "es" ? "Seleccionar hora" : "Select time"}</option>
+                                        {(() => { const opts = []; for (let h = 8; h <= 21; h++) { for (let m = 0; m < 60; m += 30) { const hour12 = h > 12 ? h - 12 : h === 0 ? 12 : h; const ampm = h >= 12 ? "PM" : "AM"; const label = `${hour12}:${m === 0 ? "00" : m} ${ampm}`; opts.push(<option key={`${h}-${m}`} value={label}>{label}</option>); } } return opts; })()}
+                                    </select>
                                 </div>
                             </div>
                             <div>
@@ -5944,12 +6182,11 @@
                     {/* Step 2: Menu Items */}
                     {step === 2 && (
                         <div>
-                            {/* Cart badge */}
                             {cart.length > 0 && (
                                 <div className="sticky top-16 z-30 bg-mint-700 text-white rounded-lg p-3 mb-4 flex justify-between items-center shadow-lg">
                                     <span className="font-bold">🛒 {cart.length} {language === "es" ? "artículos" : "items"} — ${getSubtotal().toFixed(2)}</span>
                                     <button onClick={() => setStep(3)} className="bg-white text-mint-700 px-4 py-1.5 rounded-full font-bold text-sm">
-                                        {language === "es" ? "Ver Resumen" : "Review Order"} →
+                                        {language === "es" ? "Ver Resumen" : "Review"} →
                                     </button>
                                 </div>
                             )}
@@ -5966,9 +6203,7 @@
                             ))}
 
                             <div className="flex gap-2 mt-4">
-                                <button onClick={() => setStep(1)} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-lg font-bold">
-                                    ← {language === "es" ? "Cliente" : "Customer"}
-                                </button>
+                                <button onClick={() => setStep(1)} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-lg font-bold">← {language === "es" ? "Cliente" : "Customer"}</button>
                                 <button onClick={() => setStep(3)} className="flex-1 bg-mint-700 text-white py-3 rounded-lg font-bold" disabled={cart.length === 0}>
                                     {language === "es" ? "Resumen" : "Summary"} → ({cart.length})
                                 </button>
@@ -5979,7 +6214,6 @@
                     {/* Step 3: Order Summary */}
                     {step === 3 && (
                         <div>
-                            {/* Customer summary */}
                             <div className="bg-gray-50 border-2 border-gray-200 rounded-lg p-3 mb-4">
                                 <div className="flex justify-between items-start">
                                     <div>
@@ -5992,20 +6226,24 @@
                                 </div>
                             </div>
 
-                            {/* Cart items */}
                             <h3 className="font-bold text-gray-800 mb-2">{language === "es" ? "Artículos del Pedido" : "Order Items"}</h3>
-                            {cart.length === 0 && (
-                                <p className="text-gray-400 text-center py-4">{language === "es" ? "Sin artículos — agrega del menú" : "No items — add from menu"}</p>
-                            )}
-                            {cart.map((item, i) => (
+                            {cart.length === 0 && <p className="text-gray-400 text-center py-4">{language === "es" ? "Sin artículos" : "No items"}</p>}
+                            {cart.map((item) => (
                                 <div key={item.id} className="flex justify-between items-start bg-white border border-gray-200 rounded-lg p-3 mb-2">
                                     <div className="flex-1">
                                         <p className="font-bold text-sm text-gray-800">{item.qty}x {item.name}</p>
                                         <p className="text-xs text-gray-500">{item.size}</p>
-                                        {item.proteins.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Proteínas" : "Proteins"}: {item.proteins.join(", ")}</p>}
-                                        {item.sauces.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Salsas" : "Sauces"}: {item.sauces.join(", ")}</p>}
-                                        {item.base && <p className="text-xs text-gray-400">{language === "es" ? "Base" : "Base"}: {item.base}</p>}
+                                        {item.type && <p className="text-xs text-gray-400">{language === "es" ? "Tipo" : "Type"}: {item.type}</p>}
+                                        {item.proteins?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Proteínas" : "Proteins"}: {item.proteins.join(", ")}</p>}
+                                        {item.sauces?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Salsas" : "Sauces"}: {item.sauces.join(", ")}</p>}
+                                        {item.singleSauce && <p className="text-xs text-gray-400">{language === "es" ? "Salsa" : "Sauce"}: {item.singleSauce}</p>}
+                                        {item.base && <p className="text-xs text-gray-400">Base: {item.base}</p>}
                                         {item.utensils && <p className="text-xs text-gray-400">{item.utensils}</p>}
+                                        {item.samplerProteins && item.samplerProteins.map((sp, si) => sp.length > 0 && (
+                                            <p key={si} className="text-xs text-gray-400">• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</p>
+                                        ))}
+                                        {item.samplerEggRoll && <p className="text-xs text-gray-400">{language === "es" ? "Rollos" : "Egg Rolls"}: {item.samplerEggRoll}</p>}
+                                        {item.itemNote && <p className="text-xs text-amber-600 italic">📝 {item.itemNote}</p>}
                                     </div>
                                     <div className="text-right ml-2">
                                         <p className="font-bold text-sm text-mint-700">${(item.price * item.qty).toFixed(2)}</p>
@@ -6014,29 +6252,30 @@
                                 </div>
                             ))}
 
-                            {/* Add more button */}
                             <button onClick={() => setStep(2)} className="w-full border-2 border-dashed border-mint-300 text-mint-700 py-2 rounded-lg font-bold text-sm mb-4">
-                                + {language === "es" ? "Agregar Más Artículos" : "Add More Items"}
+                                + {language === "es" ? "Agregar Más" : "Add More Items"}
                             </button>
 
-                            {/* Special notes */}
                             <div className="mb-4">
                                 <label className="block text-xs font-bold text-gray-600 mb-1">📝 {t("specialNotes", language)}</label>
                                 <textarea value={specialNotes} onChange={e => setSpecialNotes(e.target.value)}
-                                    className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" rows="2"
-                                    placeholder={language === "es" ? "Alergias, peticiones especiales..." : "Allergies, special requests..."} />
+                                    className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" rows="3"
+                                    placeholder={language === "es" ? "Alergias, peticiones especiales, instrucciones de entrega..." : "Allergies, special requests, delivery instructions..."} />
                             </div>
 
-                            {/* Totals */}
                             <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-4 mb-4">
                                 <div className="flex justify-between text-sm mb-1">
                                     <span className="text-gray-600">Subtotal</span>
                                     <span className="font-bold">${getSubtotal().toFixed(2)}</span>
                                 </div>
                                 {customer.orderType === "delivery" && (
-                                    <div className="flex justify-between text-sm mb-1">
+                                    <div className="flex justify-between text-sm mb-1 items-center">
                                         <span className="text-gray-600">{language === "es" ? "Entrega" : "Delivery Fee"}</span>
-                                        <span className="font-bold">$25.00</span>
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-gray-400">$</span>
+                                            <input value={deliveryFee} onChange={e => setDeliveryFee(parseFloat(e.target.value) || 0)}
+                                                type="number" min="0" step="0.01" className="w-16 border border-mint-300 rounded px-1 py-0.5 text-sm font-bold text-right" />
+                                        </div>
                                     </div>
                                 )}
                                 <div className="flex justify-between text-lg font-bold border-t border-mint-300 pt-2 mt-2">
@@ -6047,7 +6286,7 @@
 
                             <button onClick={submitOrder} disabled={cart.length === 0}
                                 className={`w-full py-4 rounded-lg font-bold text-lg ${cart.length > 0 ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-400"}`}>
-                                ✅ {t("submitOrder", language)}
+                                ✅ {editingOrderId ? (language === "es" ? "Actualizar Pedido" : "Update Order") : t("submitOrder", language)}
                             </button>
                         </div>
                     )}
@@ -6061,10 +6300,15 @@
             const [sizeIdx, setSizeIdx] = useState(0);
             const [selectedSauces, setSelectedSauces] = useState([]);
             const [selectedProteins, setSelectedProteins] = useState([]);
+            const [singleProtein, setSingleProtein] = useState("");
             const [selectedBase, setSelectedBase] = useState("");
+            const [selectedType, setSelectedType] = useState("");
+            const [selectedSingleSauce, setSelectedSingleSauce] = useState("");
+            const [samplerProteins, setSamplerProteins] = useState(item.samplerPicks ? item.samplerPicks.map(() => []) : []);
+            const [samplerEggRoll, setSamplerEggRoll] = useState("");
             const [utensils, setUtensils] = useState("");
             const [qty, setQty] = useState(1);
-            const [samplerProteins, setSamplerProteins] = useState({ banhMi: [], bowls: [], rolls: [] });
+            const [itemNote, setItemNote] = useState("");
             const [addError, setAddError] = useState("");
 
             const size = item.sizes[sizeIdx];
@@ -6081,30 +6325,76 @@
                 else if (selectedProteins.length < maxProteins) setSelectedProteins(prev => [...prev, p]);
             };
 
+            const toggleSamplerProtein = (groupIdx, p, max) => {
+                setSamplerProteins(prev => {
+                    const updated = prev.map(a => [...a]);
+                    if (updated[groupIdx].includes(p)) updated[groupIdx] = updated[groupIdx].filter(x => x !== p);
+                    else if (updated[groupIdx].length < max) updated[groupIdx] = [...updated[groupIdx], p];
+                    return updated;
+                });
+            };
+
+            const tabBtn = (selected, color) => `px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selected ? `bg-${color}-500 text-white border-${color}-500` : "bg-white text-gray-600 border-gray-200"}`;
+
             const handleAdd = () => {
-                // Validate
+                // Validate type choice (egg rolls)
+                if (item.typeOptions && !selectedType) {
+                    setAddError(language === "es" ? "Elige un tipo" : "Choose a type");
+                    return;
+                }
+                // Validate single sauce choice (egg rolls)
+                if (item.singleSauceOptions && !selectedSingleSauce) {
+                    setAddError(language === "es" ? "Elige una salsa" : "Choose a sauce");
+                    return;
+                }
+                // Validate multi-sauces
                 if (item.hasSauces && maxSauces > 0 && selectedSauces.length < maxSauces) {
                     setAddError(language === "es" ? `Elige ${maxSauces} salsas` : `Choose ${maxSauces} sauces`);
                     return;
                 }
+                // Validate multi-proteins
                 if (item.hasProteins && maxProteins > 0 && selectedProteins.length < maxProteins) {
                     setAddError(language === "es" ? `Elige ${maxProteins} proteínas` : `Choose ${maxProteins} proteins`);
                     return;
                 }
+                // Validate single protein pick
+                if (item.proteinOptions && !singleProtein) {
+                    setAddError(language === "es" ? "Elige una proteína" : "Choose a protein");
+                    return;
+                }
+                // Validate base
                 if (item.hasBase && !selectedBase) {
                     setAddError(language === "es" ? "Elige una base" : "Choose a base");
                     return;
                 }
+                // Validate sampler sub-picks
+                if (item.samplerPicks) {
+                    for (let i = 0; i < item.samplerPicks.length; i++) {
+                        if (samplerProteins[i].length < item.samplerPicks[i].count) {
+                            const name = language === "es" ? item.samplerPicks[i].nameEs : item.samplerPicks[i].name;
+                            setAddError(language === "es" ? `Elige ${item.samplerPicks[i].count} proteínas para ${name}` : `Choose ${item.samplerPicks[i].count} proteins for ${name}`);
+                            return;
+                        }
+                    }
+                }
+                // Validate sampler egg roll type
+                if (item.samplerEggRollType && !samplerEggRoll) {
+                    setAddError(language === "es" ? "Elige tipo de rollo de huevo" : "Choose egg roll type");
+                    return;
+                }
                 setAddError("");
-                onAdd(item, sizeIdx, selectedSauces, selectedProteins, selectedBase, utensils, qty, item.isSampler ? samplerProteins : null);
-                // Reset
-                setOpen(false);
-                setSelectedSauces([]);
-                setSelectedProteins([]);
-                setSelectedBase("");
-                setUtensils("");
-                setQty(1);
-                setSizeIdx(0);
+                const allProteins = item.proteinOptions ? [singleProtein] : selectedProteins;
+                const extras = {};
+                if (item.typeOptions) extras.type = selectedType;
+                if (item.singleSauceOptions) extras.singleSauce = selectedSingleSauce;
+                if (item.samplerPicks) extras.samplerProteins = samplerProteins;
+                if (item.samplerEggRollType) extras.samplerEggRoll = samplerEggRoll;
+                onAdd(item, sizeIdx, selectedSauces, allProteins, selectedBase, utensils, qty, itemNote, extras);
+                setOpen(false); setSelectedSauces([]); setSelectedProteins([]); setSingleProtein("");
+                setSelectedBase(""); setSelectedType(""); setSelectedSingleSauce(""); setUtensils("");
+                setQty(1); setSizeIdx(0); setItemNote("");
+                setSamplerProteins(item.samplerPicks ? item.samplerPicks.map(() => []) : []);
+                setSamplerEggRoll("");
             };
 
             return (
@@ -6119,7 +6409,7 @@
 
                     {open && (
                         <div className="border-t border-gray-200 p-3 bg-gray-50 space-y-3">
-                            {/* Size selection */}
+                            {/* Size */}
                             <div>
                                 <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Tamaño" : "Size"}</p>
                                 <div className="flex flex-wrap gap-2">
@@ -6132,10 +6422,64 @@
                                 </div>
                             </div>
 
-                            {/* Protein selection for items with hasProteins */}
+                            {/* Type choice (egg rolls: Vietnamese/Vegetarian) */}
+                            {item.typeOptions && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🥚 {language === "es" ? "Elige Tipo" : "Choose Type"} *</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {item.typeOptions.map((t, i) => {
+                                            const label = language === "es" ? (item.typeOptionsEs?.[i] || t) : t;
+                                            return (
+                                                <button key={t} onClick={() => setSelectedType(t)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedType === t ? "bg-orange-500 text-white border-orange-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {selectedType === t ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Single sauce choice (egg rolls: Vinaigrette/Sweet Chili) */}
+                            {item.singleSauceOptions && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🥫 {language === "es" ? "Elige Salsa" : "Choose Sauce"} *</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {item.singleSauceOptions.map((s, i) => {
+                                            const label = language === "es" ? (item.singleSauceOptionsEs?.[i] || s) : s;
+                                            return (
+                                                <button key={s} onClick={() => setSelectedSingleSauce(s)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedSingleSauce === s ? "bg-red-500 text-white border-red-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {selectedSingleSauce === s ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Single protein pick (for trays, bowls, fried rice) */}
+                            {item.proteinOptions && (
+                                <div>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🍖 {language === "es" ? "Elige Proteína" : "Choose Protein"} *</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {item.proteinOptions.map((p, i) => {
+                                            const label = language === "es" ? (item.proteinOptionsEs?.[i] || p) : p;
+                                            return (
+                                                <button key={p} onClick={() => setSingleProtein(p)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${singleProtein === p ? "bg-orange-500 text-white border-orange-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {singleProtein === p ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Multi protein pick (spring rolls, bao, banh mi) */}
                             {item.hasProteins && maxProteins > 0 && (
                                 <div>
-                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? `Elige ${maxProteins} Proteínas` : `Choose ${maxProteins} Proteins`}</p>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🍖 {language === "es" ? `Elige ${maxProteins} Proteínas` : `Choose ${maxProteins} Proteins`} *</p>
                                     <div className="flex flex-wrap gap-2">
                                         {ALL_PROTEINS.map((p, i) => {
                                             const label = language === "es" ? ALL_PROTEINS_ES[i] : p;
@@ -6148,50 +6492,86 @@
                                             );
                                         })}
                                     </div>
+                                    <p className="text-xs text-gray-400 mt-1">{selectedProteins.length}/{maxProteins} {language === "es" ? "seleccionadas" : "selected"}</p>
+                                </div>
+                            )}
+
+                            {/* Sampler sub-item protein picks */}
+                            {item.samplerPicks && item.samplerPicks.map((sp, gIdx) => (
+                                <div key={gIdx} className="bg-white border border-gray-200 rounded-lg p-2">
+                                    <p className="text-xs font-bold text-gray-700 mb-1">🍖 {language === "es" ? sp.nameEs : sp.name} — {language === "es" ? `Elige ${sp.count} Proteínas` : `Choose ${sp.count} Proteins`} *</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {ALL_PROTEINS.map((p, i) => {
+                                            const label = language === "es" ? ALL_PROTEINS_ES[i] : p;
+                                            const selected = samplerProteins[gIdx]?.includes(p);
+                                            return (
+                                                <button key={p} onClick={() => toggleSamplerProtein(gIdx, p, sp.count)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selected ? "bg-orange-500 text-white border-orange-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {selected ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-xs text-gray-400 mt-1">{samplerProteins[gIdx]?.length || 0}/{sp.count} {language === "es" ? "seleccionadas" : "selected"}</p>
+                                </div>
+                            ))}
+
+                            {/* Sampler egg roll type */}
+                            {item.samplerEggRollType && (
+                                <div className="bg-white border border-gray-200 rounded-lg p-2">
+                                    <p className="text-xs font-bold text-gray-700 mb-1">🥚 {language === "es" ? "Rollos de Huevo (10 mitades) — Elige Tipo" : "Egg Rolls (10 halves) — Choose Type"} *</p>
+                                    <div className="flex flex-wrap gap-2">
+                                        {["Vietnamese", "Veggie"].map((t, i) => {
+                                            const label = language === "es" ? ["Vietnamitas", "Vegetarianos"][i] : t;
+                                            return (
+                                                <button key={t} onClick={() => setSamplerEggRoll(t)}
+                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${samplerEggRoll === t ? "bg-orange-500 text-white border-orange-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                    {label} {samplerEggRoll === t ? "✓" : ""}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             )}
 
                             {/* Base selection */}
                             {item.hasBase && (
                                 <div>
-                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Elige Base" : "Choose Base"}</p>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🍜 {language === "es" ? "Elige Base" : "Choose Base"} *</p>
                                     <div className="flex flex-wrap gap-2">
-                                        {BASE_OPTIONS.map((b, i) => {
-                                            const label = language === "es" ? BASE_OPTIONS_ES[i] : b;
-                                            return (
-                                                <button key={b} onClick={() => setSelectedBase(b)}
-                                                    className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedBase === b ? "bg-blue-500 text-white border-blue-500" : "bg-white text-gray-600 border-gray-200"}`}>
-                                                    {label} {selectedBase === b ? "✓" : ""}
-                                                </button>
-                                            );
-                                        })}
+                                        {BASE_OPTIONS.map((b, i) => (
+                                            <button key={b} onClick={() => setSelectedBase(b)}
+                                                className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selectedBase === b ? "bg-blue-500 text-white border-blue-500" : "bg-white text-gray-600 border-gray-200"}`}>
+                                                {language === "es" ? BASE_OPTIONS_ES[i] : b} {selectedBase === b ? "✓" : ""}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
                             )}
 
-                            {/* Sauce selection */}
+                            {/* Sauces */}
                             {item.hasSauces && maxSauces > 0 && (
                                 <div>
-                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? `Elige ${maxSauces} Salsas` : `Choose ${maxSauces} Sauces`}</p>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🥫 {language === "es" ? `Elige ${maxSauces} Salsas` : `Choose ${maxSauces} Sauces`} *</p>
                                     <div className="flex flex-wrap gap-2">
                                         {ALL_SAUCES.map((s, i) => {
-                                            const label = language === "es" ? ALL_SAUCES_ES[i] : s;
                                             const selected = selectedSauces.includes(s);
                                             return (
                                                 <button key={s} onClick={() => toggleSauce(s)}
                                                     className={`px-3 py-1.5 rounded-full text-xs font-bold border-2 transition ${selected ? "bg-red-500 text-white border-red-500" : "bg-white text-gray-600 border-gray-200"}`}>
-                                                    {label} {selected ? "✓" : ""}
+                                                    {language === "es" ? ALL_SAUCES_ES[i] : s} {selected ? "✓" : ""}
                                                 </button>
                                             );
                                         })}
                                     </div>
+                                    <p className="text-xs text-gray-400 mt-1">{selectedSauces.length}/{maxSauces} {language === "es" ? "seleccionadas" : "selected"}</p>
                                 </div>
                             )}
 
                             {/* Utensils */}
                             {item.hasUtensils && (
                                 <div>
-                                    <p className="text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Cubiertos" : "Utensils"}</p>
+                                    <p className="text-xs font-bold text-gray-600 mb-1">🍴 {language === "es" ? "Cubiertos" : "Utensils"}</p>
                                     <div className="flex flex-wrap gap-2">
                                         {[{label: language === "es" ? "Sin Cubiertos" : "No Utensils", val: ""}, {label: language === "es" ? "Tenedores (+$1)" : "Forks (+$1)", val: "Forks"}, {label: language === "es" ? "Palillos (+$2)" : "Chopsticks (+$2)", val: "Chopsticks"}].map(u => (
                                             <button key={u.val} onClick={() => setUtensils(u.val)}
@@ -6203,14 +6583,19 @@
                                 </div>
                             )}
 
-                            {/* Note */}
+                            {/* Item note */}
                             {item.note && (
-                                <p className="text-xs text-gray-500 italic bg-amber-50 p-2 rounded-lg">
-                                    ℹ️ {language === "es" ? (item.noteEs || item.note) : item.note}
-                                </p>
+                                <p className="text-xs text-gray-500 italic bg-amber-50 p-2 rounded-lg">ℹ️ {language === "es" ? (item.noteEs || item.note) : item.note}</p>
                             )}
 
-                            {/* Qty + Add button */}
+                            {/* Special request per item */}
+                            <div>
+                                <p className="text-xs font-bold text-gray-600 mb-1">📝 {language === "es" ? "Petición Especial para este Artículo" : "Special Request for this Item"}</p>
+                                <input value={itemNote} onChange={e => setItemNote(e.target.value)}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs" placeholder={language === "es" ? "Ej: sin cebolla, extra salsa..." : "e.g. no onions, extra sauce..."} />
+                            </div>
+
+                            {/* Qty + Add */}
                             <div className="flex items-center gap-3">
                                 <div className="flex items-center border-2 border-gray-200 rounded-lg">
                                     <button onClick={() => setQty(Math.max(1, qty - 1))} className="px-3 py-2 text-lg font-bold text-gray-600">−</button>
