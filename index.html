@@ -7093,36 +7093,33 @@
                 const unsubscribe = db.collection("config").doc("staff").onSnapshot((doc) => {
                     if (doc.exists && doc.data().list) {
                         const firestoreList = doc.data().list;
-                        // Build lookup from DEFAULT_STAFF by name (lowercased for safety)
-                        const defaultByName = {};
-                        DEFAULT_STAFF.forEach(s => { defaultByName[s.name.toLowerCase().trim()] = s; });
-                        // Build lookup from Firestore by name
-                        const firestoreByName = {};
-                        firestoreList.forEach(s => { firestoreByName[s.name.toLowerCase().trim()] = s; });
+                        // Check if migration needed: any staff missing location field
+                        const needsMigration = firestoreList.some(s => !s.location);
 
-                        // Check if Firestore needs updating (missing locations or missing staff)
-                        const needsUpdate = firestoreList.some(s => !s.location) || firestoreList.length < DEFAULT_STAFF.length;
-
-                        if (needsUpdate) {
-                            // Start with DEFAULT_STAFF as base (has all locations correct)
+                        if (needsMigration) {
+                            // One-time migration: merge DEFAULT_STAFF locations into Firestore data
+                            const defaultByName = {};
+                            DEFAULT_STAFF.forEach(s => { defaultByName[s.name.toLowerCase().trim()] = s; });
+                            const firestoreByName = {};
+                            firestoreList.forEach(s => { firestoreByName[s.name.toLowerCase().trim()] = s; });
+                            // Start with DEFAULT_STAFF as base
                             const merged = DEFAULT_STAFF.map(ds => {
                                 const fsMatch = firestoreByName[ds.name.toLowerCase().trim()];
                                 if (fsMatch) {
-                                    // Keep Firestore pin/role if changed, but use DEFAULT_STAFF location
                                     return { ...ds, pin: fsMatch.pin || ds.pin, role: fsMatch.role || ds.role, location: ds.location };
                                 }
                                 return ds;
                             });
-                            // Also keep any Firestore-only staff (added via admin) that aren't in DEFAULT_STAFF
+                            // Keep any Firestore-only staff not in DEFAULT_STAFF
                             firestoreList.forEach(fs => {
                                 if (!defaultByName[fs.name.toLowerCase().trim()]) {
                                     merged.push({ ...fs, location: fs.location || "webster" });
                                 }
                             });
                             setStaffList(merged);
-                            // Save the corrected list back to Firestore
                             db.collection("config").doc("staff").set({ list: merged }).catch(err => console.error("Staff sync error:", err));
                         } else {
+                            // Normal load — Firestore is the source of truth
                             setStaffList(firestoreList);
                         }
                     }
