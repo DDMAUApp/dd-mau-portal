@@ -457,5 +457,3 @@ export default function InventoryHistory({ language, customInventory: customInve
             );
         }
 
-        // Labor Dashboard Component
-}

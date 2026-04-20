@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, collection, query, orderBy, limit, addDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
+import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
 
 // CateringMenuItem sub-component
 function CateringMenuItem({ item, language, onAdd }) {
@@ -434,9 +435,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                 </div>
             );
         }
-
-        // 86 Items Dashboard
-}
 
 export default function CateringOrder({ language, staffName }) {
             const [step, setStep] = useState(1); // 1=customer, 2=menu, 3=summary
@@ -1237,6 +1235,3 @@ export default function CateringOrder({ language, staffName }) {
                 </div>
             );
         }
-
-        // Individual Catering Menu Item with inline configuration
-}

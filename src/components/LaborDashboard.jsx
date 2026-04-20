@@ -229,5 +229,3 @@ export default function LaborDashboard({ language, storeLocation }) {
             );
         }
 
-        // Maintenance Request Component
-}

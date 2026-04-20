@@ -630,12 +630,3 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             }
         ];
 
-        const ALL_SAUCES = ["Vietnamese Vinaigrette", "Peanut", "Hoisin", "Sweet Chili", "DD", "Spicy DD"];
-        const ALL_SAUCES_ES = ["Vinagreta Vietnamita", "Cacahuate", "Hoisin", "Chile Dulce", "DD", "DD Picante"];
-        const ALL_PROTEINS = ["Steak", "Shrimp", "Chicken", "Pork", "Tofu"];
-        const ALL_PROTEINS_ES = ["Res", "Camarón", "Pollo", "Puerco", "Tofu"];
-        const BASE_OPTIONS = ["Vermicelli", "Salad", "Rice"];
-        const BASE_OPTIONS_ES = ["Fideos", "Ensalada", "Arroz"];
-
-        // Catering Order Component
-}

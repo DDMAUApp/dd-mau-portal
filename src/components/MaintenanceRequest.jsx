@@ -217,5 +217,3 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
             );
         }
 
-        // Admin Panel Component
-}
