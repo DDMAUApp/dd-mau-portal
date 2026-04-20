@@ -3,8 +3,10 @@ import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
 import { t } from '../data/translations';
-import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF } from '../data/staff';
+import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { MENU_DATA } from '../data/menu';
+import { SCHEDULE_DATA } from '../data/schedule';
 import InventoryHistory from './InventoryHistory';
 
 // Constants

@@ -11,7 +11,7 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
 
     useEffect(() => {
         const docKey = `86_${storeLocation}`;
-        const unsubscribe = onSnapshot(doc(collection(db, "ops"), docKey), (docSnapshot) => {
+        const unsubscribe = onSnapshot(doc(db, "ops", docKey), (docSnapshot) => {
             if (docSnapshot.exists()) {
                 const data = docSnapshot.data();
                 setItems(data.items || []);
