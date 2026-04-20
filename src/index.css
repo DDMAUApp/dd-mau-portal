@@ -1,0 +1,57 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+        'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans',
+        'Helvetica Neue', sans-serif;
+}
+
+.navbar-shadow {
+    box-shadow: 0 -2px 4px rgba(0,0,0,0.05);
+}
+
+@keyframes flash-yellow {
+    0%, 100% { background-color: #fef9c3; border-color: #facc15; }
+    50% { background-color: #fef08a; border-color: #eab308; }
+}
+
+@keyframes flash-red {
+    0%, 100% { background-color: #fee2e2; border-color: #f87171; }
+    50% { background-color: #fecaca; border-color: #ef4444; }
+}
+
+.task-flash-yellow { animation: flash-yellow 1.5s ease-in-out infinite; }
+.task-flash-red { animation: flash-red 1s ease-in-out infinite; }
+
+/* Screenshot protection for recipes */
+.recipe-protected {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+}
+
+.recipe-watermark {
+    position: relative;
+}
+
+.recipe-watermark::after {
+    content: attr(data-watermark);
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) rotate(-30deg);
+    font-size: 3rem;
+    font-weight: 900;
+    color: rgba(0,0,0,0.04);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.screen-blur {
+    filter: blur(20px) !important;
+    transition: filter 0.15s ease;
+}
