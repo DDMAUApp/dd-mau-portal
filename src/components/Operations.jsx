@@ -2638,6 +2638,3 @@ export default function Operations({ language, staffList, staffName, storeLocati
             );
         }
 
-        // Recipes Component
-
-}
