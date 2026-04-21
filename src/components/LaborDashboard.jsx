@@ -147,22 +147,6 @@ export default function LaborDashboard({ language, storeLocation }) {
                                         </div>
                                     )}
                                 </div>
-
-                                {/* Dollar amounts if available */}
-                                {(laborData.laborCost || laborData.netSales) && (
-                                    <div className="mt-4 grid grid-cols-2 gap-3">
-                                        {laborData.laborCost !== undefined && (
-                                            <div className="bg-white/60 rounded-xl p-3 text-center">
-                                                <p className="text-xs text-gray-500 font-semibold">{t("laborCost", language)}</p>
-                                                <p className="text-lg font-black text-gray-800">${laborData.laborCost.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}</p>
-                                            </div>
-                                        )}
-                                        {laborData.netSales !== undefined && (
-                                            <div className="bg-white/60 rounded-xl p-3 text-center">
-                                                <p className="text-xs text-gray-500 font-semibold">{t("netSales", language)}</p>
-                                                <p className="text-lg font-black text-gray-800">${laborData.netSales.toLocaleString(undefined, {minimumFractionDigits: 0, maximumFractionDigits: 0})}</p>
-                                            </div>
-                                        )}
                                     </div>
                                 )}
 
