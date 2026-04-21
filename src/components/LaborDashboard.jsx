@@ -14,10 +14,10 @@ export default function LaborDashboard({ language, storeLocation }) {
 
             // Load labor target from Firestore
             useEffect(() => {
-                const unsubTarget = onSnapshot(doc(db, "config", "laborTarget"), (doc) => {
-                    if (doc.exists && doc.data().target) {
-                        setLaborTarget(doc.data().target);
-                        setTempTarget(doc.data().target);
+                const unsubTarget = onSnapshot(doc(db, "config", "laborTarget"), (docSnap) => {
+                    if (docSnap.exists() && docSnap.data()?.target) {
+                        setLaborTarget(docSnap.data().target);
+                        setTempTarget(docSnap.data().target);
                     }
                 });
                 return () => unsubTarget();
@@ -72,10 +72,10 @@ export default function LaborDashboard({ language, storeLocation }) {
             };
 
             const getStatusEmoji = (pct) => {
-                if (pct === null || pct === undefined) return "⏳";
-                if (pct <= laborTarget - 3) return "✅";
-                if (pct <= laborTarget + 2) return "⚠️";
-                return "🔴";
+                if (pct === null || pct === undefined) return "â³";
+                if (pct <= laborTarget - 3) return "â";
+                if (pct <= laborTarget + 2) return "â ï¸";
+                return "ð´";
             };
 
             const pct = laborData?.laborPercent;
@@ -93,7 +93,7 @@ export default function LaborDashboard({ language, storeLocation }) {
                                 <h2 className="text-xl font-bold">{t("laborDashboard", language)}</h2>
                                 <p className="text-sm text-indigo-200">{t("dataFromToast", language)}</p>
                             </div>
-                            <div className="text-3xl">📊</div>
+                            <div className="text-3xl">ð</div>
                         </div>
                     </div>
 
@@ -119,8 +119,8 @@ export default function LaborDashboard({ language, storeLocation }) {
                                                 <input type="number" value={tempTarget} onChange={(e) => setTempTarget(e.target.value)}
                                                     className="w-16 px-2 py-0.5 text-sm border rounded text-center" min="1" max="100" step="0.5" />
                                                 <span className="text-xs text-gray-500">%</span>
-                                                <button onClick={saveTarget} className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded font-bold">✓</button>
-                                                <button onClick={() => { setEditingTarget(false); setTempTarget(laborTarget); }} className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded font-bold">✕</button>
+                                                <button onClick={saveTarget} className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded font-bold">â</button>
+                                                <button onClick={() => { setEditingTarget(false); setTempTarget(laborTarget); }} className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded font-bold">â</button>
                                             </div>
                                         ) : (
                                             <button onClick={() => setEditingTarget(true)} className="text-sm font-bold text-indigo-600 hover:underline">
@@ -169,7 +169,7 @@ export default function LaborDashboard({ language, storeLocation }) {
                                 {/* Last updated */}
                                 <div className="mt-3 text-center">
                                     <p className={`text-xs ${isStale ? "text-red-500 font-bold" : "text-gray-400"}`}>
-                                        {isStale ? "⚠️ " : ""}
+                                        {isStale ? "â ï¸ " : ""}
                                         {t("lastUpdated", language)}: {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
                                         {minutesAgo !== null && minutesAgo > 0 ? ` (${minutesAgo} min ago)` : minutesAgo === 0 ? " (just now)" : ""}
                                     </p>
@@ -177,7 +177,7 @@ export default function LaborDashboard({ language, storeLocation }) {
                             </div>
                         ) : (
                             <div className="bg-gray-50 rounded-2xl p-8 text-center ring-2 ring-gray-200">
-                                <div className="text-5xl mb-3">📊</div>
+                                <div className="text-5xl mb-3">ð</div>
                                 <p className="text-gray-500 text-sm">{t("noLaborData", language)}</p>
                                 <div className="mt-4 flex justify-center">
                                     <div className="animate-pulse flex gap-1">
@@ -218,10 +218,10 @@ export default function LaborDashboard({ language, storeLocation }) {
                         {/* Info card */}
                         <div className="bg-indigo-50 rounded-xl p-3 ring-1 ring-indigo-200">
                             <p className="text-xs text-indigo-700">
-                                <span className="font-bold">💡</span>{" "}
+                                <span className="font-bold">ð¡</span>{" "}
                                 {language === "es"
-                                    ? "Los datos se actualizan automáticamente cada 1-2 minutos desde Toast POS. El % de mano de obra = costo total de mano de obra ÷ ventas netas."
-                                    : "Data updates automatically every 1-2 minutes from Toast POS. Labor % = total labor cost ÷ net sales."}
+                                    ? "Los datos se actualizan automÃ¡ticamente cada 1-2 minutos desde Toast POS. El % de mano de obra = costo total de mano de obra Ã· ventas netas."
+                                    : "Data updates automatically every 1-2 minutes from Toast POS. Labor % = total labor cost Ã· net sales."}
                             </p>
                         </div>
                     </div>
