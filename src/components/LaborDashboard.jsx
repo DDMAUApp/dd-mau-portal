@@ -5,6 +5,14 @@ import { t } from '../data/translations';
 
 // Note: Requires Chart.js or similar for charting
 
+// Emoji constants to avoid encoding issues
+const CHART_EMOJI = String.fromCodePoint(0x1F4CA);  // bar chart
+const BULB_EMOJI = String.fromCodePoint(0x1F4A1);   // light bulb
+const WARN_EMOJI = String.fromCodePoint(0x26A0, 0xFE0F); // warning
+const CHECK_EMOJI = String.fromCodePoint(0x2705);    // check mark
+const RED_CIRCLE = String.fromCodePoint(0x1F534);    // red circle
+const HOURGLASS = String.fromCodePoint(0x231B);      // hourglass
+
 export default function LaborDashboard({ language, storeLocation }) {
     const [laborData, setLaborData] = useState(null);
     const [laborHistory, setLaborHistory] = useState([]);
@@ -38,16 +46,12 @@ export default function LaborDashboard({ language, storeLocation }) {
     // Listen to today's labor history (hourly snapshots)
     useEffect(() => {
         const today = new Date();
-        const todayKey = today.getFullYear() + "-" +
-            String(today.getMonth() + 1).padStart(2, "0") + "-" +
-            String(today.getDate()).padStart(2, "0");
-
+        const todayKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
         const unsubHistory = onSnapshot(query(collection(db, "laborHistory_" + storeLocation), where("date", "==", todayKey), orderBy("timestamp", "asc")), (snap) => {
             const entries = [];
             snap.forEach(doc => entries.push(doc.data()));
             setLaborHistory(entries);
         });
-
         return () => unsubHistory();
     }, [storeLocation]);
 
@@ -58,9 +62,7 @@ export default function LaborDashboard({ language, storeLocation }) {
         setEditingTarget(false);
         try {
             await setDoc(doc(db, "config", "laborTarget"), { target: val, updatedAt: new Date().toISOString() });
-        } catch (err) {
-            console.error("Error saving labor target:", err);
-        }
+        } catch (err) { console.error("Error saving labor target:", err); }
     };
 
     const getStatusColor = (pct) => {
@@ -78,10 +80,10 @@ export default function LaborDashboard({ language, storeLocation }) {
     };
 
     const getStatusEmoji = (pct) => {
-        if (pct === null || pct === undefined) return "\u23F3";
-        if (pct <= laborTarget - 3) return "\u2705";
-        if (pct <= laborTarget + 2) return "\u26A0\uFE0F";
-        return "\uD83D\uDD34";
+        if (pct === null || pct === undefined) return HOURGLASS;
+        if (pct <= laborTarget - 3) return CHECK_EMOJI;
+        if (pct <= laborTarget + 2) return WARN_EMOJI;
+        return RED_CIRCLE;
     };
 
     const pct = laborData?.laborPercent;
@@ -99,7 +101,7 @@ export default function LaborDashboard({ language, storeLocation }) {
                         <h2 className="text-xl font-bold">{t("laborDashboard", language)}</h2>
                         <p className="text-sm text-indigo-200">{t("dataFromToast", language)}</p>
                     </div>
-                    <div className="text-3xl">\uD83D\uDCCA</div>
+                    <div className="text-3xl">{CHART_EMOJI}</div>
                 </div>
             </div>
 
@@ -122,10 +124,11 @@ export default function LaborDashboard({ language, storeLocation }) {
                                 <span className="text-xs text-gray-500">{t("target", language)}:</span>
                                 {editingTarget ? (
                                     <div className="flex items-center gap-1">
-                                        <input type="number" value={tempTarget} onChange={(e) => setTempTarget(e.target.value)} className="w-16 px-2 py-0.5 text-sm border rounded text-center" min="1" max="100" step="0.5" />
+                                        <input type="number" value={tempTarget} onChange={(e) => setTempTarget(e.target.value)}
+                                            className="w-16 px-2 py-0.5 text-sm border rounded text-center" min="1" max="100" step="0.5" />
                                         <span className="text-xs text-gray-500">%</span>
-                                        <button onClick={saveTarget} className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded font-bold">\u2713</button>
-                                        <button onClick={() => { setEditingTarget(false); setTempTarget(laborTarget); }} className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded font-bold">\u2715</button>
+                                        <button onClick={saveTarget} className="text-xs bg-indigo-600 text-white px-2 py-0.5 rounded font-bold">{"\u2713"}</button>
+                                        <button onClick={() => { setEditingTarget(false); setTempTarget(laborTarget); }} className="text-xs bg-gray-300 text-gray-700 px-2 py-0.5 rounded font-bold">{"\u2715"}</button>
                                     </div>
                                 ) : (
                                     <button onClick={() => setEditingTarget(true)} className="text-sm font-bold text-indigo-600 hover:underline">
@@ -138,22 +141,33 @@ export default function LaborDashboard({ language, storeLocation }) {
                             {pct !== null && pct !== undefined && (
                                 <div className="mt-3 relative">
                                     <div className="w-full h-4 bg-gray-200 rounded-full overflow-hidden">
-                                        <div className="h-full rounded-full transition-all duration-500" style={{
-                                            width: Math.min(pct / (laborTarget * 1.5) * 100, 100) + "%",
-                                            backgroundColor: pct <= laborTarget - 3 ? "#10b981" : pct <= laborTarget + 2 ? "#f59e0b" : "#ef4444"
-                                        }} />
+                                        <div className="h-full rounded-full transition-all duration-500"
+                                            style={{
+                                                width: Math.min(pct / (laborTarget * 1.5) * 100, 100) + "%",
+                                                backgroundColor: pct <= laborTarget - 3 ? "#10b981" : pct <= laborTarget + 2 ? "#f59e0b" : "#ef4444"
+                                            }} />
                                     </div>
                                     {/* Target marker */}
-                                    <div className="absolute top-0 h-4 border-r-2 border-gray-600" style={{ left: (laborTarget / (laborTarget * 1.5) * 100) + "%" }}>
+                                    <div className="absolute top-0 h-4 border-r-2 border-gray-600"
+                                        style={{ left: (laborTarget / (laborTarget * 1.5) * 100) + "%" }}>
                                         <div className="absolute -top-5 -translate-x-1/2 text-[10px] font-bold text-gray-600">{laborTarget}%</div>
                                     </div>
                                 </div>
                             )}
                         </div>
+
+                        {/* Last updated */}
+                        <div className="mt-3 text-center">
+                            <p className={`text-xs ${isStale ? "text-red-500 font-bold" : "text-gray-400"}`}>
+                                {isStale ? WARN_EMOJI + " " : ""}
+                                {t("lastUpdated", language)}: {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
+                                {minutesAgo !== null && minutesAgo > 0 ? ` (${minutesAgo} min ago)` : minutesAgo === 0 ? " (just now)" : ""}
+                            </p>
+                        </div>
                     </div>
                 ) : (
                     <div className="bg-gray-50 rounded-2xl p-8 text-center ring-2 ring-gray-200">
-                        <div className="text-5xl mb-3">\uD83D\uDCC0</div>
+                        <div className="text-5xl mb-3">{CHART_EMOJI}</div>
                         <p className="text-gray-500 text-sm">{t("noLaborData", language)}</p>
                         <div className="mt-4 flex justify-center">
                             <div className="animate-pulse flex gap-1">
@@ -164,15 +178,6 @@ export default function LaborDashboard({ language, storeLocation }) {
                         </div>
                     </div>
                 )}
-
-                {/* Last updated */}
-                <div className="mt-3 text-center">
-                    <p className={`text-xs ${isStale ? "text-red-500 font-bold" : "text-gray-400"}`}>
-                        {isStale ? "\u26A0\uFE0F " : ""}
-                        {t("lastUpdated", language)}: {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
-                        {minutesAgo !== null && minutesAgo > 0 ? ` (${minutesAgo} min ago)` : minutesAgo === 0 ? " (just now)" : ""}
-                    </p>
-                </div>
 
                 {/* Today's Trend (if history exists) */}
                 {laborHistory.length > 1 && (
@@ -203,7 +208,7 @@ export default function LaborDashboard({ language, storeLocation }) {
                 {/* Info card */}
                 <div className="bg-indigo-50 rounded-xl p-3 ring-1 ring-indigo-200">
                     <p className="text-xs text-indigo-700">
-                        <span className="font-bold">\uD83D\uDCA1</span>{" "}
+                        <span className="font-bold">{BULB_EMOJI}</span>{" "}
                         {language === "es"
                             ? "Los datos se actualizan autom\u00E1ticamente cada 1-2 minutos desde Toast POS. El % de mano de obra = costo total de mano de obra \u00F7 ventas netas."
                             : "Data updates automatically every 1-2 minutes from Toast POS. Labor % = total labor cost \u00F7 net sales."}
