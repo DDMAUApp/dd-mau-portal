@@ -1020,7 +1020,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return true;
             };
 
-            if (!passwordEntered) {
+            // Check if current staff member has opsAccess permission
+            const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
+            const hasOpsAccess = currentIsAdmin || (currentStaffRecord && currentStaffRecord.opsAccess === true);
+
+            if (!passwordEntered && !hasOpsAccess) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-mint-50 to-white p-4">
                         <div className="bg-white rounded-lg border-2 border-mint-700 p-8 w-full max-w-sm">
