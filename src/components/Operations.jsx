@@ -471,32 +471,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return () => { unsubChecklist(); unsubInventorySnapshot(); };
             }, [storeLocation]);
 
-            // Midnight auto-reset: check every 60s if the date has changed
-            useEffect(() => {
-                let lastKnownDate = getTodayKey();
-                const midnightInterval = setInterval(async () => {
-                    const now = getTodayKey();
-                    if (now !== lastKnownDate) {
-                        lastKnownDate = now;
-                        const prevChecks = checksRef.current || {};
-                        const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
-                        const prevDate = checklistDate || new Date(Date.now() - 86400000).toISOString().split("T")[0];
-                        if (hasAnyChecks) {
-                            try {
-                                await setDoc(doc(db, "checklistHistory_" + storeLocation, prevDate + "_saved"), {
-                                    checks: cleanForFirestore(prevChecks), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: new Date().toISOString(), savedBy: "auto-midnight"
-                                });
-                            } catch (err) { console.error("Midnight save error:", err); }
-                        }
-                        setChecks({});
-                        setChecklistDate(now);
-                        try {
-                            await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() });
-                        } catch (err) { console.error("Midnight reset error:", err); }
-                    }
-                }, 60000);
-                return () => clearInterval(midnightInterval);
-            }, [storeLocation, checklistDate, checklistAssignments]);
+    // Midnight auto-reset: check every 60s if the date has changed
+    useEffect(() => {
+        let lastKnownDate = getTodayKey();
+        const midnightInterval = setInterval(() => {
+            const now = getTodayKey();
+            if (now !== lastKnownDate) {
+                lastKnownDate = now;
+                const prevChecks = checksRef.current || {};
+                const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
+                const prevDate = checklistDate || new Date(Date.now() - 86400000).toISOString().split("T")[0];
+                if (hasAnyChecks) {
+                    setDoc(doc(db, "checklistHistory_" + storeLocation, prevDate + "_saved"), {
+                        checks: cleanForFirestore(prevChecks), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: new Date().toISOString(), savedBy: "auto-midnight"
+                    }).catch(err => console.error("Midnight save error:", err));
+                }
+                setChecks({});
+                setChecklistDate(now);
+                updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() }).catch(err => console.error("Midnight reset error:", err));
+            }
+        }, 60000);
+        return () => clearInterval(midnightInterval);
+    }, [storeLocation, checklistDate, checklistAssignments]);
 
             // ââ PUSH NOTIFICATION SYSTEM ââ
             // ââ NOTIFICATION SYSTEM ââ
