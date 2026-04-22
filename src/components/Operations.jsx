@@ -158,6 +158,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             });
             const [skillsMatrix, setSkillsMatrix] = useState({});
             const [showMatrix, setShowMatrix] = useState(false);
+
+            // Labor percentage state (admin-only, from Toast scraper)
+            const [laborData, setLaborData] = useState(null);
             const FOH_ROLES = ["FOH", "Manager", "Owner", "Shift Lead", "Marketing"];
             const bohStaff = (staffList || []).filter(s => s.role && !FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both"));
             const fohStaff = (staffList || []).filter(s => FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both"));
@@ -181,6 +184,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
                 return () => unsubStations();
             }, []);
+
+            // Listen to live labor data for current location
+            useEffect(() => {
+                const unsubLabor = onSnapshot(doc(db, "ops", "labor_" + storeLocation), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setLaborData(docSnap.data());
+                    } else {
+                        setLaborData(null);
+                    }
+                });
+                return () => unsubLabor();
+            }, [storeLocation]);
 
             const saveStations = async (stations) => {
                 try {
@@ -1519,6 +1534,53 @@ export default function Operations({ language, staffList, staffName, storeLocati
             return (
                 <div className="p-4 pb-24">
                     <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F4CB}"} {t("dailyOps", language)}</h2>
+
+                    {/* Labor % Card — visible to all staff, percentage only (no dollar amounts) */}
+                    {laborData && laborData.laborPercent !== undefined && (() => {
+                        const pct = laborData.laborPercent;
+                        const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
+                        const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
+                        const isStale = minutesAgo !== null && minutesAgo > 10;
+                        const color = pct <= 22 ? { bg: "bg-emerald-50", border: "border-emerald-400", text: "text-emerald-700", emoji: "\u{2705}" }
+                                    : pct <= 27 ? { bg: "bg-amber-50", border: "border-amber-400", text: "text-amber-700", emoji: "\u{26A0}\u{FE0F}" }
+                                    : { bg: "bg-red-50", border: "border-red-400", text: "text-red-700", emoji: "\u{1F534}" };
+                        return (
+                            <div className={`${color.bg} border-2 ${color.border} rounded-2xl p-4 mb-4 shadow-sm`}>
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-2xl">{color.emoji}</span>
+                                        <div>
+                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{t("laborPercent", language)}</p>
+                                            <p className={`text-3xl font-black tabular-nums ${color.text}`}>{pct.toFixed(1)}%</p>
+                                        </div>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className={`text-xs ${isStale ? "text-red-500 font-bold" : "text-gray-400"}`}>
+                                            {isStale ? "\u{26A0}\u{FE0F} " : ""}
+                                            {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
+                                        </p>
+                                        {minutesAgo !== null && (
+                                            <p className="text-[10px] text-gray-400">{minutesAgo === 0 ? (language === "es" ? "ahora" : "just now") : `${minutesAgo} min`}</p>
+                                        )}
+                                    </div>
+                                </div>
+                                {/* Progress bar */}
+                                <div className="mt-3 relative">
+                                    <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                                        <div className="h-full rounded-full transition-all duration-500"
+                                            style={{
+                                                width: Math.min(pct / 37.5 * 100, 100) + "%",
+                                                backgroundColor: pct <= 22 ? "#10b981" : pct <= 27 ? "#f59e0b" : "#ef4444"
+                                            }} />
+                                    </div>
+                                    {/* Target marker at 25% */}
+                                    <div className="absolute top-0 h-3 border-r-2 border-gray-600" style={{ left: (25 / 37.5 * 100) + "%" }}>
+                                        <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-bold text-gray-500">25%</div>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     <div className="flex gap-2 mb-6">
                         <button onClick={() => { setActiveTab("checklist"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
