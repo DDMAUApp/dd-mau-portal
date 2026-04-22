@@ -950,6 +950,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 return tagged;
             };
+            // Get all tasks without filtering (for stats)
+            const getAllTasks = () => {
+                return (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+            };
 
             // Count all checkable items (tasks + subtasks) for completion stats
             const countTaskItems = (task, prefix) => {
