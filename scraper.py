@@ -661,155 +661,289 @@ Dockerfile committed — tab title shows dd-mau-labor-scraper/Dockerfile at main
 Read a file
 Read a file
 Good, I have the full 949-line scraper.py. Now let me navigate to edit it on GitHub and inject the content via JavaScript. Since this file is large, I'll prepare it as a base64-encoded string to avoid escaping issues.
+# ── Sling schedule fetcher ───────────────────────────────────────────────────
+# Supports two separate Sling accounts (one per location).
+# Auth: logs in with email/password each run to get fresh tokens (tokens expire after 4 weeks).
+# Env vars:
+#   SLING_EMAIL_WEBSTER / SLING_PASSWORD_WEBSTER
+#   SLING_EMAIL_MARYLAND / SLING_PASSWORD_MARYLAND
+#   (Legacy) SLING_TOKEN / SLING_ORG_ID — still works for backward compat
+
+SLING_BASE = "https://api.getsling.com"
+
+SLING_ACCOUNTS = {
+    "webster": {
+        "email": os.environ.get("SLING_EMAIL_WEBSTER", ""),
+        "password": os.environ.get("SLING_PASSWORD_WEBSTER", ""),
+        "token": os.environ.get("SLING_TOKEN", ""),  # legacy fallback
+    },
+    "maryland": {
+        "email": os.environ.get("SLING_EMAIL_MARYLAND", ""),
+        "password": os.environ.get("SLING_PASSWORD_MARYLAND", ""),
+        "token": "",
+    },
+}
 
 
-Ran 2 commands, used Claude in Chrome, read a file
-Ran 2 commands, used Claude in Chrome, read a file
-The file is too large for single injection. Let me use a chunked approach — I'll split the base64 into pieces and assemble them in the browser.
+def sling_login(email, password):
+    """Login to Sling API and return auth token, or empty string on failure."""
+    try:
+        resp = requests.post(f"{SLING_BASE}/v1/account/login", json={
+            "email": email,
+            "password": password,
+        }, timeout=30)
+        if resp.status_code != 200:
+            log(f"[SLING] Login failed for {email}: HTTP {resp.status_code}")
+            return ""
+        token = resp.headers.get("Authorization", "")
+        if token:
+            log(f"[SLING] Login OK for {email}")
+        else:
+            log(f"[SLING] Login response missing Authorization header for {email}")
+        return token
+    except Exception as e:
+        log(f"[SLING] Login error for {email}: {e}")
+        return ""
 
 
-Ran 2 commands, used Claude in Chrome, read a file
-Ran 2 commands, used Claude in Chrome, read a file
-Good. Now let me inject each chunk into the browser, then combine and replace the editor content:
+def fetch_sling_schedule_for_location(location_key, token):
+    """
+    Pull this week's schedule from one Sling account and write to Firestore.
+    """
+    from zoneinfo import ZoneInfo
+    now_ct  = datetime.now(ZoneInfo("America/Chicago"))
+    monday  = now_ct - timedelta(days=now_ct.weekday())
+    sunday  = monday + timedelta(days=6)
+    start_date = monday.strftime("%Y-%m-%d")
+    end_date   = sunday.strftime("%Y-%m-%d")
+
+    headers = {"Authorization": token}
+
+    try:
+        # 1. Fetch users for name lookup
+        resp = requests.get(f"{SLING_BASE}/v1/users", headers=headers, timeout=30)
+        if resp.status_code != 200:
+            log(f"[SLING-{location_key}] Users endpoint failed: HTTP {resp.status_code}")
+            return False
+        users_data = resp.json()
+        user_map = {}
+        for u in users_data:
+            uid   = u.get("id")
+            name  = u.get("name", "").strip()
+            lname = u.get("lastname", "").strip()
+            if uid and name:
+                full_name = f"{name} {lname}".strip() if lname else name
+                user_map[uid] = full_name
+        log(f"[SLING-{location_key}] Loaded {len(user_map)} users")
+
+        # 1b. Fetch locations
+        location_map = {}
+        try:
+            resp_loc = requests.get(f"{SLING_BASE}/v1/locations", headers=headers, timeout=30)
+            if resp_loc.status_code == 200:
+                locations_data = resp_loc.json()
+                if isinstance(locations_data, list):
+                    for loc in locations_data:
+                        loc_id   = loc.get("id")
+                        loc_name = loc.get("name", "").strip()
+                        if loc_id and loc_name:
+                            location_map[loc_id] = loc_name
+                log(f"[SLING-{location_key}] Loaded {len(location_map)} locations: {location_map}")
+            else:
+                log(f"[SLING-{location_key}] Locations endpoint: HTTP {resp_loc.status_code} (non-fatal)")
+        except Exception as loc_err:
+            log(f"[SLING-{location_key}] Locations fetch error (non-fatal): {loc_err}")
+
+        # 1c. Fetch positions for role lookup
+        position_map = {}
+        try:
+            resp_pos = requests.get(f"{SLING_BASE}/v1/groups", headers=headers, timeout=30)
+            if resp_pos.status_code == 200:
+                groups_data = resp_pos.json()
+                if isinstance(groups_data, list):
+                    for g in groups_data:
+                        gid   = g.get("id")
+                        gname = g.get("name", "").strip()
+                        gtype = g.get("type", "")
+                        if gid and gname and gtype == "position":
+                            position_map[gid] = gname
+                log(f"[SLING-{location_key}] Loaded {len(position_map)} positions")
+        except Exception as pos_err:
+            log(f"[SLING-{location_key}] Positions fetch error (non-fatal): {pos_err}")
+
+        # 2. Fetch shifts for this week
+        resp = requests.get(
+            f"{SLING_BASE}/v1/reports/timesheets",
+            headers=headers,
+            params={"dates": f"{start_date}/{end_date}"},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            log(f"[SLING-{location_key}] Timesheets endpoint failed: HTTP {resp.status_code}")
+            return False
+
+        shifts = resp.json()
+        if not isinstance(shifts, list):
+            log(f"[SLING-{location_key}] Unexpected timesheets response type: {type(shifts)}")
+            return False
+        log(f"[SLING-{location_key}] Fetched {len(shifts)} shifts for {start_date} to {end_date}")
+
+        # 3. Transform into calendar-friendly structure
+        schedule_by_date = {}
+        for shift in shifts:
+            if shift.get("type") != "shift":
+                continue
+            if shift.get("status") not in ("published", "confirmed"):
+                continue
+
+            dtstart = shift.get("dtstart", "")
+            dtend   = shift.get("dtend", "")
+            if not dtstart:
+                continue
+
+            date_key = dtstart[:10]
+
+            user_info = shift.get("user") or {}
+            user_id   = user_info.get("id") if isinstance(user_info, dict) else None
+            user_name = user_map.get(user_id, "Unassigned") if user_id else "Open Shift"
+
+            loc_info = shift.get("location") or {}
+            loc_id   = loc_info.get("id") if isinstance(loc_info, dict) else None
+
+            # Get position/role from shift
+            pos_info = shift.get("position") or {}
+            pos_id   = pos_info.get("id") if isinstance(pos_info, dict) else None
+            role     = position_map.get(pos_id, "") if pos_id else ""
+
+            start_time = dtstart[11:16] if len(dtstart) > 15 else ""
+            end_time   = dtend[11:16] if len(dtend) > 15 else ""
+            loc_name   = location_map.get(loc_id, "Unknown")
+
+            # Format times as "10am" style for portal display
+            shift_str = ""
+            if start_time and end_time:
+                shift_str = f"{_format_time_24to12(start_time)}-{_format_time_24to12(end_time)}"
+
+            entry = {
+                "name": user_name,
+                "shift": shift_str,
+                "role": role,
+                "start": start_time,
+                "end": end_time,
+                "dtstart": dtstart,
+                "dtend": dtend,
+                "locationId": loc_id,
+                "locationName": loc_name,
+            }
+            if date_key not in schedule_by_date:
+                schedule_by_date[date_key] = []
+            schedule_by_date[date_key].append(entry)
+
+        for date_key in schedule_by_date:
+            schedule_by_date[date_key].sort(key=lambda s: s["start"])
+
+        total_shifts = sum(len(v) for v in schedule_by_date.values())
+        log(f"[SLING-{location_key}] Processed {total_shifts} published shifts across {len(schedule_by_date)} days")
+
+        # 4. Build portal-friendly format and write to Firestore
+        write_schedule_to_firestore(schedule_by_date, start_date, end_date, location_key, location_map)
+        return True
+
+    except Exception as e:
+        log(f"[SLING-{location_key}] Schedule fetch error: {e}")
+        traceback.print_exc()
+        return False
 
 
-Read a file
-Read a file
-Let me inject the scraper content in 4 chunks. First, initialize the storage:
+def _format_time_24to12(time_24):
+    """Convert '14:30' to '2:30pm', '09:00' to '9am'."""
+    try:
+        h, m = int(time_24[:2]), int(time_24[3:5])
+        ampm = "am" if h < 12 else "pm"
+        if h == 0:
+            h = 12
+        elif h > 12:
+            h -= 12
+        if m == 0:
+            return f"{h}{ampm}"
+        return f"{h}:{m:02d}{ampm}"
+    except (ValueError, IndexError):
+        return time_24
 
 
-Ran 3 commands, used Claude in Chrome, read a file
-Ran 3 commands, used Claude in Chrome, read a file
-This chunk-by-chunk approach is too slow. Let me try a more direct method — I'll inject the whole base64 string at once via JavaScript:
+def write_schedule_to_firestore(schedule_by_date, week_start, week_end, location_key, location_map=None):
+    """Write weekly schedule to Firestore for the portal calendar."""
+    from zoneinfo import ZoneInfo
+    now = datetime.now(timezone.utc).isoformat()
+    loc_map_str = {}
+    if location_map:
+        loc_map_str = {str(k): v for k, v in location_map.items()}
+
+    # Build the shifts array in portal format: [{day, schedule: [{name, shift, role}]}]
+    start_dt = datetime.strptime(week_start, "%Y-%m-%d")
+    end_dt = datetime.strptime(week_end, "%Y-%m-%d")
+    shifts_array = []
+    current = start_dt
+    while current <= end_dt:
+        date_key = current.strftime("%Y-%m-%d")
+        day_label = current.strftime("%A, %b ") + str(current.day)
+        day_entries = schedule_by_date.get(date_key, [])
+        # Strip internal fields for portal, keep name/shift/role
+        portal_entries = [{"name": e["name"], "shift": e["shift"], "role": e["role"]} for e in day_entries]
+        shifts_array.append({"day": day_label, "schedule": portal_entries})
+        current += timedelta(days=1)
+
+    week_label = start_dt.strftime("%b ") + str(start_dt.day) + " - " + end_dt.strftime("%b ") + str(end_dt.day) + ", " + str(end_dt.year)
+
+    portal_data = json.dumps({"week": week_label, "shifts": shifts_array})
+
+    doc_data = {
+        "weekStart": week_start,
+        "weekEnd": week_end,
+        "data": portal_data,
+        "schedule": schedule_by_date,
+        "locations": loc_map_str,
+        "updatedAt": now,
+        "source": "sling-api",
+        "location": location_key,
+    }
+
+    # Write to location-specific doc
+    db.collection("ops").document(f"schedule_{location_key}").set(doc_data, merge=True)
+    log(f"  \u2192 Firestore: ops/schedule_{location_key} (week {week_start} to {week_end})")
+
+    # Also write to legacy ops/schedule for backward compat (webster only)
+    if location_key == "webster":
+        db.collection("ops").document("schedule").set(doc_data, merge=True)
+        log(f"  \u2192 Firestore: ops/schedule (legacy)")
 
 
-Read full base64 content
-Read full base64 content
-Let me try injecting the base64 chunks one by one via JavaScript calls. Each chunk is ~13K which should fit:
+def fetch_sling_schedule():
+    """
+    Pull this week's schedule from Sling API for all configured locations.
+    """
+    any_success = False
 
+    for location_key, acct in SLING_ACCOUNTS.items():
+        log(f"[SLING] --- {location_key.upper()} ---")
 
-Ran 2 commands
-Ran 2 commands
-Let me try a completely different approach — use the GitHub API directly from the browser since the user is already authenticated:
+        # Try login-based auth first, fall back to static token
+        token = ""
+        if acct["email"] and acct["password"]:
+            token = sling_login(acct["email"], acct["password"])
+        if not token and acct.get("token"):
+            token = acct["token"]
+            log(f"[SLING-{location_key}] Using static SLING_TOKEN")
 
+        if not token:
+            log(f"[SLING-{location_key}] No credentials configured \u2014 skipping")
+            continue
 
-Used Claude in Chrome (3 actions)
-Used Claude in Chrome (3 actions)
-can i upload it?
+        if fetch_sling_schedule_for_location(location_key, token):
+            any_success = True
 
+    return any_success
 
-Thought process
-Thought process
-Let me try a more direct approach. I'll build up the file content by injecting chunks as JavaScript string assignments. Let me try with chunk 0:
-
-
-Generate JS injection for chunk 0
-Generate JS injection for chunk 0
-Yes! That would be much faster. The scraper.py file is 949 lines and too large for me to inject through the browser editor.
-
-Here's what to do:
-
-Go to the repo page: github.com/DDMAUApp/dd-mau-labor-scraper
-Click "Add file" → "Upload files"
-Drag the scraper.py file from your DD Mau Training/scraper-updates/ folder into the upload area
-Add a commit message like "Switch to Playwright dashboard scraping for labor data"
-Click "Commit changes"
-This will overwrite the existing scraper.py with the new version that has the Playwright dashboard scraper.
-
-The other two files (requirements.txt and Dockerfile) are already committed and pushed.
-
-After you commit scraper.py, Railway should auto-deploy from GitHub. Then you'll just need to add two env vars in Railway:
-
-TOAST_EMAIL
-TOAST_PASSWORD
-done that worked but the dockerfile failed
-
-
-Loaded tools
-Loaded tools
-Let me check the Railway build logs to see what went wrong with the Dockerfile.
-
-
-Tabs Context
-Tabs Context
-Good, Railway tab is already open. Let me check the build logs there.
-
-
-Computer
-Computer
-I can see the latest deployment shows "CRASHED" — not a build failure but a runtime crash. Let me click on it to see the error logs.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Found it — the error is ModuleNotFoundError: No module named 'firebase_admin'. The requirements.txt I committed earlier has google-cloud-firestore but the scraper.py actually imports firebase_admin. I need to fix requirements.txt to include firebase-admin instead.
-
-Let me navigate to the requirements.txt file on GitHub to fix it.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-I can see the current requirements.txt has google-cloud-firestore>=2.16.0 on line 2, but the scraper imports firebase_admin. I need to replace that with firebase-admin>=6.2.0. Let me click on line 2 to edit it.
-
-
-Computer
-Computer
-Now I'll select all the text and replace it with the correct content. Let me use Cmd+A to select all, then type the corrected requirements.
-
-
-Used Claude in Chrome (3 actions)
-Used Claude in Chrome (3 actions)
-ok let me know when you want me to redepoly
-
-The requirements.txt now correctly shows firebase-admin>=6.2.0 instead of google-cloud-firestore>=2.16.0. Now let me commit this change.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Good, the commit dialog is up. Let me update the commit message and commit it.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Now click "Commit changes" to save.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Committed successfully. The requirements.txt now correctly shows firebase-admin>=6.2.0. Since Railway auto-deploys from GitHub, it should already be picking up this new commit and redeploying automatically.
-
-You shouldn't need to manually redeploy — Railway will auto-deploy from this new commit. Let me check Railway to confirm it's building.
-
-
-Computer
-Computer
-I see it's still showing the old crashed deployment (53d60c23). It says "Initializing (00:06)" on the left which means a new deployment might be starting. Let me close this deploy view and go back to the main deployments list to see if the new commit triggered a build.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Railway already picked up the new commit automatically — it's now BUILDING with the commit "Fix: use firebase-admin instead of google-cloud-firestore". No need to manually redeploy, it's building the new image right now.
-
-The fix was straightforward: the requirements.txt had google-cloud-firestore but your scraper.py imports firebase_admin, so it was crashing with ModuleNotFoundError. Now it has the correct firebase-admin>=6.2.0 package.
-
-Let's wait a minute or two for the build to finish and then check if it deploys successfully. I'll check back in a moment.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Still building (40 seconds in). Docker builds with Playwright/Chromium take a few minutes because of the large system dependencies. Let me wait a bit more and check again.
-
-
-Used Claude in Chrome (2 actions)
-Used Claude in Chrome (2 actions)
-Still building (1 minute in). The Docker image build takes a while with all the Chromium dependencies. It's progressing — no need to do anything manual.
-
-While we wait, one important thing: once this build succeeds and the container starts, the scraper will also need TOAST_EMAIL and TOAST_PASSWORD environment variables set in Railway for the Playwright dashboard login to work. Do you already have those set in Railway's Variables tab, or do we need to add them?
-
-its done
-
-
-Computer
 Computer
 It's ACTIVE and Online — deployment successful! The scraper is now running with the correct firebase-admin package.
 
