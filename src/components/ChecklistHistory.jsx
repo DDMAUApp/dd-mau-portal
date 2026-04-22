@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, getDocs, getDoc, doc } from 'firebase/firestore';
 
-// Note: Requires TIME_PERIODS to be imported or passed as prop
+const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
 
-export default function ChecklistHistory({ language, storeLocation, timePeriods = [] }) {
+export default function ChecklistHistory({ language, storeLocation, timePeriods }) {
+    // Use passed timePeriods or fall back to default
+    const periods = timePeriods && timePeriods.length > 0 ? timePeriods : TIME_PERIODS;
     const [historyDates, setHistoryDates] = useState([]);
     const [selectedDate, setSelectedDate] = useState(null);
     const [dayData, setDayData] = useState(null);
@@ -95,24 +97,12 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                                         )) : task.task}
                                     </span>
                                 </div>
-                                {!hasSubtasks && checks[task.id] && checks[task.id + "_by"] && (
-                                    <p className="ml-7 mt-0.5 text-xs text-green-600">
-                                        ✓ {checks[task.id + "_by"]} — {checks[task.id + "_at"]}
-                                    </p>
-                                )}
                                 {hasSubtasks && (
                                     <div className="ml-7 mt-1 space-y-0.5">
                                         {task.subtasks.map((sub, si) => (
-                                            <div key={si}>
-                                                <div className="flex items-center gap-1.5 text-xs">
-                                                    <span>{checks[sub.id] ? "✅" : "⬜"}</span>
-                                                    <span className={checks[sub.id] ? "text-gray-600" : "text-red-600"}>{sub.task}</span>
-                                                </div>
-                                                {checks[sub.id] && checks[sub.id + "_by"] && (
-                                                    <p className="ml-5 text-xs text-green-600">
-                                                        ✓ {checks[sub.id + "_by"]} — {checks[sub.id + "_at"]}
-                                                    </p>
-                                                )}
+                                            <div key={si} className="flex items-center gap-1.5 text-xs">
+                                                <span>{checks[sub.id] ? "✅" : "⬜"}</span>
+                                                <span className={checks[sub.id] ? "text-gray-600" : "text-red-600"}>{sub.task}</span>
                                             </div>
                                         ))}
                                     </div>
@@ -185,8 +175,8 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                     <p className="text-xs text-gray-500 mb-3">
                         {language === "es" ? "Última actualización" : "Last updated"}: {new Date(dayData.date).toLocaleString()}
                     </p>
-                    {timePeriods.map(p => renderHistoryPeriod(p))}
-                    {timePeriods.every(p => {
+                    {periods.map(p => renderHistoryPeriod(p))}
+                    {periods.every(p => {
                         const tasks = dayData.customTasks?.[historySide]?.[p.id] || [];
                         return tasks.length === 0;
                     }) && (

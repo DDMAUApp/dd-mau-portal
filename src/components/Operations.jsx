@@ -3,10 +3,8 @@ import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
 import { t } from '../data/translations';
-import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
+import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
-import { MENU_DATA } from '../data/menu';
-import { SCHEDULE_DATA } from '../data/schedule';
 import InventoryHistory from './InventoryHistory';
 
 // Constants
@@ -470,6 +468,35 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                 return () => { unsubChecklist(); unsubInventorySnapshot(); };
             }, [storeLocation]);
+
+            // Midnight auto-reset: check every 60s if the date has changed
+            useEffect(() => {
+                let lastKnownDate = getTodayKey();
+                const midnightInterval = setInterval(async () => {
+                    const now = getTodayKey();
+                    if (now !== lastKnownDate) {
+                        lastKnownDate = now;
+                        // Save current day's checklist to history before resetting
+                        const prevChecks = checksRef.current || {};
+                        const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
+                        const prevDate = checklistDate || new Date(Date.now() - 86400000).toISOString().split("T")[0];
+                        if (hasAnyChecks) {
+                            try {
+                                await setDoc(doc(db, "checklistHistory_" + storeLocation, prevDate + "_saved"), {
+                                    checks: cleanForFirestore(prevChecks), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: new Date().toISOString(), savedBy: "auto-midnight"
+                                });
+                            } catch (err) { console.error("Midnight save error:", err); }
+                        }
+                        // Reset for new day
+                        setChecks({});
+                        setChecklistDate(now);
+                        try {
+                            await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() });
+                        } catch (err) { console.error("Midnight reset error:", err); }
+                    }
+                }, 60000); // Check every minute
+                return () => clearInterval(midnightInterval);
+            }, [storeLocation, checklistDate, checklistAssignments]);
 
             // ── PUSH NOTIFICATION SYSTEM ──
             // ── NOTIFICATION SYSTEM ──
@@ -2640,3 +2667,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             );
         }
 
+        // Recipes Component
+
+}
