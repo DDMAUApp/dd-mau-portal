@@ -39,6 +39,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [newFollowUp, setNewFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
             // Follow-up answers state (keyed by task id)
             const [followUpAnswers, setFollowUpAnswers] = useState({});
+            const [laborData, setLaborData] = useState(null);
+            const [laborTarget, setLaborTarget] = useState(25);
             const [showFollowUpFor, setShowFollowUpFor] = useState(null); // task id to show follow-up prompt
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
             const photoInputRef = useRef(null);
@@ -497,6 +499,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }, 60000);
                 return () => clearInterval(midnightInterval);
             }, [storeLocation, checklistDate, checklistAssignments]);
+
+    // Live labor % from Toast
+    useEffect(() => {
+        const unsubLabor = onSnapshot(doc(db, "ops", "labor_" + storeLocation), (snap) => {
+            if (snap.exists()) setLaborData(snap.data());
+            else setLaborData(null);
+        });
+        const unsubTarget = onSnapshot(doc(db, "config", "laborTarget"), (snap) => {
+            if (snap.exists() && snap.data().target) setLaborTarget(snap.data().target);
+        });
+        return () => { unsubLabor(); unsubTarget(); };
+    }, [storeLocation]);
 
             // ââ PUSH NOTIFICATION SYSTEM ââ
             // ââ NOTIFICATION SYSTEM ââ
@@ -1458,6 +1472,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
             return (
                 <div className="p-4 pb-24">
                     <h2 className="text-2xl font-bold text-mint-700 mb-4">ð {t("dailyOps", language)}</h2>
+
+                    {/* Labor % Widget */}
+                    {laborData && laborData.laborPercent !== undefined && (() => {
+                        const pct = laborData.laborPercent;
+                        const isGood = pct <= laborTarget - 3;
+                        const isOk = pct <= laborTarget + 2;
+                        const bgColor = isGood ? "bg-emerald-50 ring-emerald-300" : isOk ? "bg-amber-50 ring-amber-300" : "bg-red-50 ring-red-300";
+                        const textColor = isGood ? "text-emerald-700" : isOk ? "text-amber-700" : "text-red-700";
+                        const emoji = isGood ? String.fromCodePoint(0x2705) : isOk ? String.fromCodePoint(0x26A0, 0xFE0F) : String.fromCodePoint(0x1F534);
+                        const label = isGood ? (language === "es" ? "Bajo objetivo" : "Under target") : isOk ? (language === "es" ? "En objetivo" : "On target") : (language === "es" ? "Sobre objetivo" : "Over target");
+                        const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
+                        const minsAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
+                        return (
+                            <div className={"mb-4 p-3 rounded-xl ring-1 flex items-center justify-between " + bgColor}>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-2xl">{emoji}</span>
+                                    <div>
+                                        <span className={"text-xl font-black " + textColor}>{pct.toFixed(1)}%</span>
+                                        <span className={"text-xs font-bold ml-1.5 " + textColor}>{label}</span>
+                                    </div>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-[10px] text-gray-400">{language === "es" ? "Mano de obra" : "Labor"} (obj: {laborTarget}%)</p>
+                                    {minsAgo !== null && <p className="text-[10px] text-gray-400">{minsAgo === 0 ? (language === "es" ? "ahora" : "just now") : minsAgo + " min"}</p>}
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     <div className="flex gap-2 mb-6">
                         <button onClick={() => { setActiveTab("checklist"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
