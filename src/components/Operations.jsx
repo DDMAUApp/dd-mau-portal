@@ -3,10 +3,8 @@ import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
 import { t } from '../data/translations';
-import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
+import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
-import { MENU_DATA } from '../data/menu';
-import { SCHEDULE_DATA } from '../data/schedule';
 import InventoryHistory from './InventoryHistory';
 
 // Constants
@@ -39,8 +37,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [newFollowUp, setNewFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
             // Follow-up answers state (keyed by task id)
             const [followUpAnswers, setFollowUpAnswers] = useState({});
-            const [laborData, setLaborData] = useState(null);
-            const [laborTarget, setLaborTarget] = useState(25);
             const [showFollowUpFor, setShowFollowUpFor] = useState(null); // task id to show follow-up prompt
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
             const photoInputRef = useRef(null);
@@ -48,7 +44,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Determine current user's role early
             const currentIsAdmin = isAdmin(staffName);
 
-            // New checklist system â FOH/BOH with multiple lists per side
+            // New checklist system — FOH/BOH with multiple lists per side
             const staffRole = (staffList || []).find(s => s.name === staffName);
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
             const staffSide = staffIsFOH ? "FOH" : "BOH";
@@ -69,6 +65,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const checklistListsRef = useRef(checklistLists);
             const setChecklistLists = (val) => { checklistListsRef.current = val; setChecklistListsRaw(val); };
             const [activeListIdx, setActiveListIdx] = useState(0);
+            // Staff filter for master task list view (admin picks a name, or "" for all)
+            const [taskFilter, setTaskFilter] = useState("");
             // Helper: get prefix for check keys based on list index (list 0 has no prefix for backward compat)
             const getCheckPrefix = (side, listIdx) => listIdx === 0 ? "" : side + "_L" + listIdx + "_";
             const currentPrefix = getCheckPrefix(checklistSide, activeListIdx);
@@ -91,21 +89,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Break Planner state
             const DEFAULT_STATIONS = [
-                { id: "fry", nameEn: "Fry", nameEs: "Freidora", emoji: "ð" },
-                { id: "pho", nameEn: "Pho", nameEs: "Pho", emoji: "ð²" },
-                { id: "grill", nameEn: "Grill", nameEs: "Parrilla", emoji: "ð¥" },
-                { id: "bao", nameEn: "Bao", nameEs: "Bao", emoji: "ð¥" },
-                { id: "springroll", nameEn: "Spring Roll", nameEs: "Rollito", emoji: "ð¯" },
-                { id: "wok", nameEn: "Wok", nameEs: "Wok", emoji: "ð¥" },
-                { id: "bowls", nameEn: "Bowls", nameEs: "Bowls", emoji: "ð¥" },
-                { id: "friedrice1", nameEn: "Fried Rice 1", nameEs: "Arroz Frito 1", emoji: "ð³" },
-                { id: "friedrice2", nameEn: "Fried Rice 2", nameEs: "Arroz Frito 2", emoji: "ð³" },
-                { id: "dish", nameEn: "Dish", nameEs: "Platos", emoji: "ð§½" },
-                { id: "manager", nameEn: "Manager", nameEs: "Gerente", emoji: "ð" },
-                { id: "prep1", nameEn: "Prep 1", nameEs: "Prep 1", emoji: "ðª" },
-                { id: "prep2", nameEn: "Prep 2", nameEs: "Prep 2", emoji: "ðª" },
-                { id: "prep3", nameEn: "Prep 3", nameEs: "Prep 3", emoji: "ðª" },
-                { id: "prep4", nameEn: "Prep 4", nameEs: "Prep 4", emoji: "ðª" }
+                { id: "fry", nameEn: "Fry", nameEs: "Freidora", emoji: "🍟" },
+                { id: "pho", nameEn: "Pho", nameEs: "Pho", emoji: "🍲" },
+                { id: "grill", nameEn: "Grill", nameEs: "Parrilla", emoji: "🔥" },
+                { id: "bao", nameEn: "Bao", nameEs: "Bao", emoji: "🥟" },
+                { id: "springroll", nameEn: "Spring Roll", nameEs: "Rollito", emoji: "🌯" },
+                { id: "wok", nameEn: "Wok", nameEs: "Wok", emoji: "🥘" },
+                { id: "bowls", nameEn: "Bowls", nameEs: "Bowls", emoji: "🥗" },
+                { id: "friedrice1", nameEn: "Fried Rice 1", nameEs: "Arroz Frito 1", emoji: "🍳" },
+                { id: "friedrice2", nameEn: "Fried Rice 2", nameEs: "Arroz Frito 2", emoji: "🍳" },
+                { id: "dish", nameEn: "Dish", nameEs: "Platos", emoji: "🧽" },
+                { id: "manager", nameEn: "Manager", nameEs: "Gerente", emoji: "👔" },
+                { id: "prep1", nameEn: "Prep 1", nameEs: "Prep 1", emoji: "🔪" },
+                { id: "prep2", nameEn: "Prep 2", nameEs: "Prep 2", emoji: "🔪" },
+                { id: "prep3", nameEn: "Prep 3", nameEs: "Prep 3", emoji: "🔪" },
+                { id: "prep4", nameEn: "Prep 4", nameEs: "Prep 4", emoji: "🔪" }
             ];
             const DEFAULT_BREAK_WAVES = [
                 { id: "wave1", time: "13:30" },
@@ -113,16 +111,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             ];
             // Skill stations for the matrix (unique skills, not position slots)
             const SKILL_STATIONS = [
-                { id: "fry", nameEn: "Fry", emoji: "ð" },
-                { id: "pho", nameEn: "Pho", emoji: "ð²" },
-                { id: "grill", nameEn: "Grill", emoji: "ð¥" },
-                { id: "bao", nameEn: "Bao", emoji: "ð¥" },
-                { id: "springroll", nameEn: "Spring Roll", emoji: "ð¯" },
-                { id: "wok", nameEn: "Wok", emoji: "ð¥" },
-                { id: "bowls", nameEn: "Bowls", emoji: "ð¥" },
-                { id: "friedrice", nameEn: "Fried Rice", emoji: "ð³" },
-                { id: "dish", nameEn: "Dish", emoji: "ð§½" },
-                { id: "prep", nameEn: "Prep", emoji: "ðª" }
+                { id: "fry", nameEn: "Fry", emoji: "🍟" },
+                { id: "pho", nameEn: "Pho", emoji: "🍲" },
+                { id: "grill", nameEn: "Grill", emoji: "🔥" },
+                { id: "bao", nameEn: "Bao", emoji: "🥟" },
+                { id: "springroll", nameEn: "Spring Roll", emoji: "🌯" },
+                { id: "wok", nameEn: "Wok", emoji: "🥘" },
+                { id: "bowls", nameEn: "Bowls", emoji: "🥗" },
+                { id: "friedrice", nameEn: "Fried Rice", emoji: "🍳" },
+                { id: "dish", nameEn: "Dish", emoji: "🧽" },
+                { id: "prep", nameEn: "Prep", emoji: "🔪" }
             ];
             // Map position IDs to skill IDs (fried rice 1&2 -> friedrice, prep1-4 -> prep)
             const positionToSkill = (posId) => {
@@ -134,7 +132,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [customStations, setCustomStations] = useState(JSON.parse(JSON.stringify(DEFAULT_STATIONS)));
             const [editingStations, setEditingStations] = useState(false);
             const [newStationName, setNewStationName] = useState("");
-            const [newStationEmoji, setNewStationEmoji] = useState("ð");
+            const [newStationEmoji, setNewStationEmoji] = useState("📍");
             const ALL_POSITIONS = customStations;
 
             const [breakPlan, setBreakPlan] = useState({ stations: {}, waves: {} });
@@ -156,7 +154,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const BREAK_WAVES = DEFAULT_BREAK_WAVES.map((w, i) => {
                 const t = breakWaveTimes[i] || w.time;
                 const display = formatTime12(t);
-                return { id: w.id, time: t, displayTime: display, nameEn: `Wave ${i+1} â ${display}`, nameEs: `Grupo ${i+1} â ${display}` };
+                return { id: w.id, time: t, displayTime: display, nameEn: `Wave ${i+1} — ${display}`, nameEs: `Grupo ${i+1} — ${display}` };
             });
             const [skillsMatrix, setSkillsMatrix] = useState({});
             const [showMatrix, setShowMatrix] = useState(false);
@@ -194,16 +192,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const name = newStationName.trim();
                 if (!name) return;
                 const id = name.toLowerCase().replace(/[^a-z0-9]/g, "") + "_" + Date.now();
-                const station = { id, nameEn: name, nameEs: name, emoji: newStationEmoji || "ð" };
+                const station = { id, nameEn: name, nameEs: name, emoji: newStationEmoji || "📍" };
                 const updated = [...customStations, station];
                 setCustomStations(updated);
                 saveStations(updated);
                 setNewStationName("");
-                setNewStationEmoji("ð");
+                setNewStationEmoji("📍");
             };
 
             const removeStation = (stationId) => {
-                if (!confirm(language === "es" ? "Â¿Eliminar esta estaciÃ³n?" : "Remove this station?")) return;
+                if (!confirm(language === "es" ? "¿Eliminar esta estación?" : "Remove this station?")) return;
                 const updated = customStations.filter(s => s.id !== stationId);
                 setCustomStations(updated);
                 saveStations(updated);
@@ -233,7 +231,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const resetStationsToDefault = () => {
-                if (!confirm(language === "es" ? "Â¿Restaurar estaciones predeterminadas?" : "Reset stations to defaults?")) return;
+                if (!confirm(language === "es" ? "¿Restaurar estaciones predeterminadas?" : "Reset stations to defaults?")) return;
                 const fresh = JSON.parse(JSON.stringify(DEFAULT_STATIONS));
                 setCustomStations(fresh);
                 saveStations(fresh);
@@ -271,7 +269,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     .sort((a, b) => (coverLoad[a] || 0) - (coverLoad[b] || 0));
             };
 
-            // Load break plan from Firestore â keyed by selected date + location
+            // Load break plan from Firestore — keyed by selected date + location
             useEffect(() => {
                 // Reset plan while loading new date/location
                 setBreakPlan({ stations: {}, waves: {} });
@@ -323,7 +321,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const clearBreakPlan = () => {
-                if (!confirm(language === "es" ? "Â¿Borrar todo el plan de breaks?" : "Clear entire break plan?")) return;
+                if (!confirm(language === "es" ? "¿Borrar todo el plan de breaks?" : "Clear entire break plan?")) return;
                 setBreakPlan({ stations: {}, waves: {} });
                 saveBreakPlan({ stations: {}, waves: {} });
             };
@@ -434,7 +432,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             setChecklistDate(data.date || todayKey);
                         }
                         if (data.customTasks) {
-                            // Migrate morning/afternoon â single "all" period
+                            // Migrate morning/afternoon → single "all" period
                             const migrated = {};
                             ["FOH", "BOH"].forEach(side => {
                                 const s = data.customTasks[side] || {};
@@ -480,6 +478,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const now = getTodayKey();
                     if (now !== lastKnownDate) {
                         lastKnownDate = now;
+                        // Save current day's checklist to history before resetting
                         const prevChecks = checksRef.current || {};
                         const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
                         const prevDate = checklistDate || new Date(Date.now() - 86400000).toISOString().split("T")[0];
@@ -490,30 +489,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 });
                             } catch (err) { console.error("Midnight save error:", err); }
                         }
+                        // Reset for new day
                         setChecks({});
                         setChecklistDate(now);
                         try {
                             await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() });
                         } catch (err) { console.error("Midnight reset error:", err); }
                     }
-                }, 60000);
+                }, 60000); // Check every minute
                 return () => clearInterval(midnightInterval);
             }, [storeLocation, checklistDate, checklistAssignments]);
 
-    // Live labor % from Toast
-    useEffect(() => {
-        const unsubLabor = onSnapshot(doc(db, "ops", "labor_" + storeLocation), (snap) => {
-            if (snap.exists()) setLaborData(snap.data());
-            else setLaborData(null);
-        });
-        const unsubTarget = onSnapshot(doc(db, "config", "laborTarget"), (snap) => {
-            if (snap.exists() && snap.data().target) setLaborTarget(snap.data().target);
-        });
-        return () => { unsubLabor(); unsubTarget(); };
-    }, [storeLocation]);
-
-            // ââ PUSH NOTIFICATION SYSTEM ââ
-            // ââ NOTIFICATION SYSTEM ââ
+            // ── PUSH NOTIFICATION SYSTEM ──
+            // ── NOTIFICATION SYSTEM ──
             const [activeAlerts, setActiveAlerts] = useState([]);
             const [clockTick, setClockTick] = useState(0);
             const dismissedAlertsRef = useRef(new Set());
@@ -530,7 +518,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         const periodTasks = (tasks[side] && tasks[side][p.id]) || [];
                         periodTasks.forEach(item => {
                             if (!item.completeBy || !item.assignTo) return;
-                            if (item.assignTo !== staffName) return;
+                            const itemAssignees = Array.isArray(item.assignTo) ? item.assignTo : [item.assignTo];
+                            if (!itemAssignees.includes(staffName)) return;
                             const done = item.subtasks && item.subtasks.length > 0
                                 ? item.subtasks.every(s => ch[s.id])
                                 : !!ch[item.id];
@@ -562,7 +551,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (!dismissedAlertsRef.current.has(nKey)) {
                             dismissedAlertsRef.current.add(nKey);
                             new Notification(a.type === "overdue" ? "DD Mau - Task Due!" : "DD Mau - Reminder", {
-                                body: `"${a.taskName}" â ${a.message}`,
+                                body: `"${a.taskName}" — ${a.message}`,
                                 tag: nKey
                             });
                         }
@@ -634,6 +623,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await saveChecklistState(checksRef.current, customTasksRef.current, updated, updatedLists);
             };
 
+            // Per-task assignment: toggle a staff member on/off a task's assignTo array
+            const toggleTaskAssignee = async (taskIdx, staffMemberName) => {
+                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                const item = updated[checklistSide][activePeriod][taskIdx];
+                let current = [];
+                if (item.assignTo) {
+                    current = Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo];
+                }
+                const idx = current.indexOf(staffMemberName);
+                if (idx >= 0) { current.splice(idx, 1); } else { current.push(staffMemberName); }
+                if (current.length > 0) { item.assignTo = current; } else { delete item.assignTo; }
+                setCustomTasks(updated);
+                await saveChecklistState(checksRef.current, updated);
+            };
+
             const addChecklistList = async (side) => {
                 const updatedLists = JSON.parse(JSON.stringify(checklistListsRef.current));
                 const newIdx = updatedLists[side].length;
@@ -667,7 +671,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const handlePasswordSubmit = (e) => {
                 e.preventDefault();
                 if (password === "12345") { setPasswordEntered(true); setPassword(""); }
-                else { alert(language === "es" ? "ContraseÃ±a incorrecta" : "Incorrect password"); }
+                else { alert(language === "es" ? "Contraseña incorrecta" : "Incorrect password"); }
             };
 
             const toggleCheckItem = async (taskId, parentTask) => {
@@ -711,7 +715,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const item = { id: Date.now().toString(), task: newTask.trim() };
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
-                if (newAssignTo) item.assignTo = newAssignTo;
+                const newAssignArr = Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : [];
+                if (newAssignArr.length > 0) item.assignTo = newAssignArr;
                 if (newFollowUp && newFollowUp.question.trim()) {
                     item.followUp = { type: newFollowUp.type, question: newFollowUp.question.trim() };
                     if (newFollowUp.type === "dropdown" && newFollowUp.options.length > 0) {
@@ -726,7 +731,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); setNewFollowUp(null); setShowAddForm(false);
+                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -736,7 +741,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
-                if (editAssignTo) { item.assignTo = editAssignTo; } else { delete item.assignTo; }
+                const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
+                if (assignArr.length > 0) { item.assignTo = assignArr; } else { delete item.assignTo; }
                 if (editFollowUp && editFollowUp.question.trim()) {
                     item.followUp = { type: editFollowUp.type, question: editFollowUp.question.trim() };
                     if (editFollowUp.type === "dropdown" && editFollowUp.options.length > 0) {
@@ -747,7 +753,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo(""); setEditFollowUp(null);
+                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
             };
 
             // Photo capture and upload
@@ -776,7 +782,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const resetAllChecklists = async () => {
-                if (!confirm(language === "es" ? "Â¿Guardar y reiniciar todas las tareas?" : "Save & reset all checklists?")) return;
+                if (!confirm(language === "es" ? "¿Guardar y reiniciar todas las tareas?" : "Save & reset all checklists?")) return;
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
                 try {
@@ -916,8 +922,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             // Get tasks for current side + period
+            // Helper: check if a staff name is in a task's assignTo (supports string or array)
+            const isAssignedTo = (task, name) => {
+                if (!task.assignTo) return false;
+                if (Array.isArray(task.assignTo)) return task.assignTo.includes(name);
+                return task.assignTo === name;
+            };
+            // Helper: get assignees as array
+            const getAssignees = (task) => {
+                if (!task.assignTo) return [];
+                if (Array.isArray(task.assignTo)) return task.assignTo;
+                return [task.assignTo];
+            };
+
             const getCurrentTasks = () => {
-                return (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                const all = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                const hasNoAssign = (t) => !t.assignTo || (Array.isArray(t.assignTo) && t.assignTo.length === 0);
+                // Tag each task with its original index so edit/delete still works after filtering
+                const tagged = all.map((t, i) => ({...t, _origIdx: i}));
+                // Non-admin staff: only see tasks assigned to them or unassigned
+                if (!currentIsAdmin) {
+                    return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, staffName));
+                }
+                // Admin with filter active: show only tasks for that person (+ unassigned)
+                if (taskFilter) {
+                    return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, taskFilter));
+                }
+                return tagged;
             };
 
             // Count all checkable items (tasks + subtasks) for completion stats
@@ -974,7 +1005,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-mint-50 to-white p-4">
                         <div className="bg-white rounded-lg border-2 border-mint-700 p-8 w-full max-w-sm">
-                            <h2 className="text-2xl font-bold text-mint-700 mb-2">ð {t("dailyOps", language)}</h2>
+                            <h2 className="text-2xl font-bold text-mint-700 mb-2">🔐 {t("dailyOps", language)}</h2>
                             <p className="text-gray-600 mb-6">{t("passwordProtected", language)}</p>
                             <form onSubmit={handlePasswordSubmit}>
                                 <input type="password" placeholder={t("enterPassword", language)} value={password}
@@ -991,11 +1022,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const renderChecklist = () => {
                 const tasks = getCurrentTasks();
+                const allTasks = getAllTasks();
                 const periodStats = getPeriodStats(checklistSide, activePeriod);
                 const overallStats = getCompletionStats(checklistSide);
-                const sideLists = (checklistLists[checklistSide] || [{ id: checklistSide + "_0", assignee: "" }]);
-                const currentAssignKey = activeListIdx === 0 ? checklistSide + "_all" : checklistSide + "_L" + activeListIdx + "_all";
-                const currentAssignee = checklistAssignments[currentAssignKey] || (sideLists[activeListIdx] || {}).assignee || "";
 
                 return (
                     <div className="space-y-3">
@@ -1005,7 +1034,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const isActive = checklistSide === side;
                                 const color = side === "FOH" ? "blue" : "amber";
                                 return (
-                                    <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
+                                    <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); setTaskFilter(""); }}
                                         className={`flex-1 py-2 px-2 rounded-xl font-bold text-sm transition border-2 ${isActive ? "bg-" + color + "-600 text-white border-" + color + "-600" : "bg-" + color + "-50 text-" + color + "-700 border-" + color + "-200"}`}>
                                         {side}
                                     </button>
@@ -1013,61 +1042,36 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             })}
                         </div>
 
-                        {/* Multi-list tabs for current side */}
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                            {sideLists.map((listItem, li) => {
-                                const liStats = getCompletionStats(checklistSide, li);
-                                const listAssignKey = li === 0 ? checklistSide + "_all" : checklistSide + "_L" + li + "_all";
-                                const assignee = checklistAssignments[listAssignKey] || listItem.assignee || "";
-                                const isActive = activeListIdx === li;
-                                const color = checklistSide === "FOH" ? "blue" : "amber";
-                                return (
-                                    <button key={li} onClick={() => { setActiveListIdx(li); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
-                                        className={`py-1.5 px-3 rounded-lg font-bold text-xs transition border-2 relative ${isActive ? "bg-" + color + "-100 text-" + color + "-800 border-" + color + "-400" : "bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100"}`}>
-                                        <div>{assignee || (language === "es" ? "Lista" : "List") + " " + (li + 1)}</div>
-                                        <div className="text-[10px] opacity-60">{liStats.done}/{liStats.total}</div>
-                                        {currentIsAdmin && isActive && li > 0 && (
-                                            <span onClick={(e) => { e.stopPropagation(); if (confirm(language === "es" ? "Â¿Eliminar esta lista?" : "Remove this list?")) removeChecklistList(checklistSide, li); }}
-                                                className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] font-bold cursor-pointer hover:bg-red-600">Ã</span>
-                                        )}
-                                    </button>
-                                );
-                            })}
-                            {currentIsAdmin && (
-                                <button onClick={() => addChecklistList(checklistSide)}
-                                    className="py-1.5 px-3 rounded-lg text-xs font-bold border-2 border-dashed border-gray-300 text-gray-400 hover:border-gray-400 hover:text-gray-600 transition">
-                                    + {language === "es" ? "Lista" : "List"}
-                                </button>
-                            )}
-                        </div>
-
-                        {/* Admin assign dropdown */}
+                        {/* Admin: filter by staff member */}
                         {currentIsAdmin && (
                             <div className="flex items-center gap-2 mb-2 bg-gray-50 rounded-lg p-2">
-                                <span className="text-xs font-bold text-gray-500">ð¤ {language === "es" ? "Asignar" : "Assign"}:</span>
+                                <span className="text-xs font-bold text-gray-500">{String.fromCodePoint(0x1F441)} {language === "es" ? "Ver" : "View"}:</span>
                                 <select
-                                    value={currentAssignee}
-                                    onChange={e => assignChecklist(checklistSide, "all", e.target.value, activeListIdx)}
+                                    value={taskFilter}
+                                    onChange={e => setTaskFilter(e.target.value)}
                                     className="flex-1 border border-gray-200 rounded-lg px-2 py-1.5 text-xs font-bold bg-white">
-                                    <option value="">{language === "es" ? "â Sin asignar â" : "â Unassigned â"}</option>
+                                    <option value="">{language === "es" ? "— Todos —" : "— All Staff —"}</option>
                                     {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").map(s => (
                                         <option key={s.id} value={s.name}>{s.name}</option>
                                     ))}
                                 </select>
+                                {taskFilter && (
+                                    <button onClick={() => setTaskFilter("")} className="text-xs text-red-500 font-bold px-1">{String.fromCodePoint(0x2715)}</button>
+                                )}
                             </div>
                         )}
 
-                        {/* Non-admin sees assignment badge */}
-                        {!currentIsAdmin && currentAssignee && currentAssignee === staffName && (
+                        {/* Non-admin sees their assignment badge */}
+                        {!currentIsAdmin && (
                             <div className="text-center text-xs font-bold py-1.5 rounded-lg mb-2 bg-green-50 text-green-700 border border-green-200">
-                                {language === "es" ? "â Asignado a ti" : "â Assigned to you"}
+                                {language === "es" ? "Mostrando tus tareas asignadas" : "Showing your assigned tasks"}
                             </div>
                         )}
 
                         {/* Overall progress bar */}
                         <div className="bg-gray-100 rounded-lg p-3 mb-2">
                             <div className="flex justify-between text-xs font-bold text-gray-600 mb-1">
-                                <span>{checklistSide} â {language === "es" ? "Progreso del dÃ­a" : "Day progress"}</span>
+                                <span>{checklistSide} — {language === "es" ? "Progreso del día" : "Day progress"}</span>
                                 <span>{overallStats.done}/{overallStats.total}</span>
                             </div>
                             <div className="w-full bg-gray-200 rounded-full h-2">
@@ -1081,7 +1085,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             {currentIsAdmin && (
                                 <button onClick={() => { setEditMode(!editMode); setEditingIdx(null); setShowAddForm(false); }}
                                     className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (editMode ? "bg-mint-100 text-mint-700 border border-mint-200" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
-                                    {editMode ? (language === "es" ? "Listo" : "Done") : "âï¸ " + (language === "es" ? "Editar" : "Edit")}
+                                    {editMode ? (language === "es" ? "Listo" : "Done") : "✏️ " + (language === "es" ? "Editar" : "Edit")}
                                 </button>
                             )}
                         </div>
@@ -1089,15 +1093,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         {/* Task list */}
                         {tasks.length === 0 && !editMode && (
                             <div className="text-center py-6 text-gray-400 text-sm">
-                                {language === "es" ? "No hay tareas para este perÃ­odo" : "No tasks for this period"}
+                                {language === "es" ? "No hay tareas para este período" : "No tasks for this period"}
                             </div>
                         )}
 
                         {tasks.map((item, idx) => {
+                            const origIdx = item._origIdx !== undefined ? item._origIdx : idx;
                             const hasSubtasks = item.subtasks && item.subtasks.length > 0;
                             const taskComplete = isTaskComplete(item);
                             const photoUrl = checks[currentPrefix + item.id + "_photo"];
                             const photoNeeded = item.requirePhoto && !photoUrl;
+                            const assignees = getAssignees(item);
 
                             // Compute urgency for flashing: "warning" (30 min before), "overdue" (past time)
                             let taskUrgency = null;
@@ -1110,36 +1116,44 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 else if (curMin >= deadMin - 30) taskUrgency = "warning";
                             }
 
-                            if (editingIdx === idx) {
+                            if (editingIdx === origIdx) {
                                 return (
                                     <div key={item.id} className="p-3 rounded-lg border-2 border-blue-300 bg-blue-50">
                                         <input type="text" value={editTask} onChange={e => setEditTask(e.target.value)}
                                             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:border-blue-400" autoFocus />
                                         {/* Complete by time */}
                                         <div className="flex items-center gap-2 mb-2">
-                                            <label className="text-xs font-bold text-gray-600">â° {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
+                                            <label className="text-xs font-bold text-gray-600">⏰ {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
                                             <input type="time" value={editCompleteBy} onChange={e => setEditCompleteBy(e.target.value)}
                                                 className="border border-gray-200 rounded px-2 py-1 text-xs" />
-                                            {editCompleteBy && <button onClick={() => setEditCompleteBy("")} className="text-red-400 text-xs">â</button>}
+                                            {editCompleteBy && <button onClick={() => setEditCompleteBy("")} className="text-red-400 text-xs">✕</button>}
                                         </div>
-                                        {/* Notify / assign to */}
-                                        {editCompleteBy && (
-                                            <div className="flex items-center gap-2 mb-2">
-                                                <label className="text-xs font-bold text-gray-600">ð {language === "es" ? "Notificar a:" : "Notify:"}</label>
-                                                <select value={editAssignTo} onChange={e => setEditAssignTo(e.target.value)}
-                                                    className="border border-gray-200 rounded px-2 py-1 text-xs flex-1">
-                                                    <option value="">{language === "es" ? "â Nadie â" : "â Nobody â"}</option>
-                                                    {(staffList || []).map(s => (
-                                                        <option key={s.id} value={s.name}>{s.name}</option>
-                                                    ))}
-                                                </select>
-                                                {editAssignTo && <button onClick={() => setEditAssignTo("")} className="text-red-400 text-xs">â</button>}
+                                        {/* Assign to (always visible) */}
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <label className="text-xs font-bold text-gray-600">{String.fromCodePoint(0x1F464)} {language === "es" ? "Asignar a:" : "Assign to:"}</label>
+                                            <select value="" onChange={e => { if (e.target.value) { const cur = editAssignTo ? (Array.isArray(editAssignTo) ? editAssignTo : [editAssignTo]) : []; if (!cur.includes(e.target.value)) setEditAssignTo([...cur, e.target.value]); } }}
+                                                className="border border-gray-200 rounded px-2 py-1 text-xs flex-1">
+                                                <option value="">{language === "es" ? "— Agregar persona —" : "— Add person —"}</option>
+                                                {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").filter(s => !(Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : []).includes(s.name)).map(s => (
+                                                    <option key={s.id} value={s.name}>{s.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        {(Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : []).length > 0 && (
+                                            <div className="flex flex-wrap gap-1 mb-2">
+                                                {(Array.isArray(editAssignTo) ? editAssignTo : [editAssignTo]).map(name => (
+                                                    <span key={name} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+                                                        {name.split(" ")[0]}
+                                                        <button onClick={() => { const cur = Array.isArray(editAssignTo) ? editAssignTo : [editAssignTo]; setEditAssignTo(cur.filter(n => n !== name)); }}
+                                                            className="text-blue-400 hover:text-red-500">{String.fromCodePoint(0x2715)}</button>
+                                                    </span>
+                                                ))}
                                             </div>
                                         )}
                                         {/* Photo toggle */}
                                         <label className="flex items-center gap-2 mb-2 text-xs cursor-pointer">
                                             <input type="checkbox" checked={editRequirePhoto} onChange={e => setEditRequirePhoto(e.target.checked)} className="w-4 h-4" />
-                                            <span className="font-bold text-gray-600">ð¸ {language === "es" ? "Requiere foto" : "Require photo"}</span>
+                                            <span className="font-bold text-gray-600">📸 {language === "es" ? "Requiere foto" : "Require photo"}</span>
                                         </label>
                                         {/* Subtasks editor */}
                                         <div className="mb-2">
@@ -1149,7 +1163,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     <input className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" value={sub.task}
                                                         onChange={e => { const u = [...editSubtasks]; u[si] = {...u[si], task: e.target.value}; setEditSubtasks(u); }}
                                                         placeholder={(language === "es" ? "Subtarea " : "Subtask ") + (si+1)} />
-                                                    <button onClick={() => setEditSubtasks(editSubtasks.filter((_,i) => i !== si))} className="text-red-400 text-xs px-1">â</button>
+                                                    <button onClick={() => setEditSubtasks(editSubtasks.filter((_,i) => i !== si))} className="text-red-400 text-xs px-1">✕</button>
                                                 </div>
                                             ))}
                                             <button onClick={() => setEditSubtasks([...editSubtasks, {id: "", task: ""}])}
@@ -1158,12 +1172,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         {/* Follow-up question editor */}
                                         <div className="mb-2 border-t border-gray-200 pt-2">
                                             <div className="flex items-center justify-between mb-1">
-                                                <p className="text-xs font-bold text-gray-500">â {language === "es" ? "Pregunta al completar" : "Follow-up question"}</p>
+                                                <p className="text-xs font-bold text-gray-500">❓ {language === "es" ? "Pregunta al completar" : "Follow-up question"}</p>
                                                 {!editFollowUp ? (
                                                     <button onClick={() => setEditFollowUp({ type: "dropdown", question: "", options: [""] })}
                                                         className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar" : "Add"}</button>
                                                 ) : (
-                                                    <button onClick={() => setEditFollowUp(null)} className="text-red-400 text-xs">â {language === "es" ? "Quitar" : "Remove"}</button>
+                                                    <button onClick={() => setEditFollowUp(null)} className="text-red-400 text-xs">✕ {language === "es" ? "Quitar" : "Remove"}</button>
                                                 )}
                                             </div>
                                             {editFollowUp && (
@@ -1187,22 +1201,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                 <div key={oi} className="flex gap-1">
                                                                     <input className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" value={opt}
                                                                         onChange={e => { const u = [...editFollowUp.options]; u[oi] = e.target.value; setEditFollowUp({...editFollowUp, options: u}); }}
-                                                                        placeholder={(language === "es" ? "OpciÃ³n " : "Option ") + (oi+1)} />
+                                                                        placeholder={(language === "es" ? "Opción " : "Option ") + (oi+1)} />
                                                                     <button onClick={() => { const u = editFollowUp.options.filter((_,i) => i !== oi); setEditFollowUp({...editFollowUp, options: u}); }}
-                                                                        className="text-red-400 text-xs px-1">â</button>
+                                                                        className="text-red-400 text-xs px-1">✕</button>
                                                                 </div>
                                                             ))}
                                                             <button onClick={() => setEditFollowUp({...editFollowUp, options: [...(editFollowUp.options || []), ""]})}
-                                                                className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar opciÃ³n" : "Add option"}</button>
+                                                                className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar opción" : "Add option"}</button>
                                                         </div>
                                                     )}
                                                 </div>
                                             )}
                                         </div>
                                         <div className="flex items-center gap-2">
-                                            <button onClick={() => saveChecklistEdit(idx)}
+                                            <button onClick={() => saveChecklistEdit(origIdx)}
                                                 className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Guardar" : "Save"}</button>
-                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo(""); setEditFollowUp(null); }}
+                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null); }}
                                                 className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                         </div>
                                     </div>
@@ -1229,7 +1243,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             <span key={li}>{li === 0 ? line : <><br/><span className="font-normal text-xs text-gray-500">{line}</span></>}</span>
                                                         )) : item.task}
                                                     </p>
-                                                    {item.requirePhoto && <span className="text-xs">ð¸</span>}
+                                                    {item.requirePhoto && <span className="text-xs">📸</span>}
                                                     {item.completeBy && (
                                                         <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
                                                             taskComplete ? "bg-green-100 text-green-600"
@@ -1237,29 +1251,50 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             : taskUrgency === "warning" ? "bg-yellow-400 text-yellow-900"
                                                             : "bg-orange-100 text-orange-600"
                                                         }`}>
-                                                            {taskUrgency === "overdue" ? "ð¨" : "â°"} {item.completeBy.replace(/^0/, "")}
-                                                        </span>
-                                                    )}
-                                                    {item.assignTo && (
-                                                        <span className="text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap bg-blue-100 text-blue-600">
-                                                            ð {item.assignTo.split(" ")[0]}
+                                                            {taskUrgency === "overdue" ? "🚨" : "⏰"} {item.completeBy.replace(/^0/, "")}
                                                         </span>
                                                     )}
                                                 </div>
-                                                {/* Completed by info â for tasks without subtasks */}
+                                                {/* Assignee chips */}
+                                                {assignees.length > 0 && (
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {assignees.map(name => (
+                                                            <span key={name} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold">
+                                                                {String.fromCodePoint(0x1F464)} {name.split(" ")[0]}
+                                                                {currentIsAdmin && editMode && (
+                                                                    <button onClick={(e) => { e.stopPropagation(); toggleTaskAssignee(origIdx, name); }}
+                                                                        className="text-blue-400 hover:text-red-500 ml-0.5">{String.fromCodePoint(0x2715)}</button>
+                                                                )}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {/* Quick assign button for admin (in edit mode) */}
+                                                {currentIsAdmin && editMode && (
+                                                    <div className="mt-1">
+                                                        <select value="" onChange={e => { if (e.target.value) toggleTaskAssignee(origIdx, e.target.value); }}
+                                                            className="border border-gray-200 rounded px-1 py-0.5 text-[10px] bg-white">
+                                                            <option value="">+ {language === "es" ? "Asignar" : "Assign"}</option>
+                                                            {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").filter(s => !assignees.includes(s.name)).map(s => (
+                                                                <option key={s.id} value={s.name}>{s.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                )}
+                                                {/* Completed by info — for tasks without subtasks */}
                                                 {!hasSubtasks && checks[currentPrefix + item.id] && checks[currentPrefix + item.id + "_by"] && (
                                                     <p className="text-xs text-green-600 mt-0.5">
-                                                        â {checks[currentPrefix + item.id + "_by"]} â {checks[currentPrefix + item.id + "_at"]}
+                                                        {String.fromCodePoint(0x2713)} {checks[currentPrefix + item.id + "_by"]} {String.fromCodePoint(0x2014)} {checks[currentPrefix + item.id + "_at"]}
                                                     </p>
                                                 )}
                                             </div>
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(idx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo || ""); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
-                                                    className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">âï¸</button>
-                                                <button onClick={() => deleteChecklistTask(idx)}
-                                                    className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">ðï¸</button>
+                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                    className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">{String.fromCodePoint(0x270F, 0xFE0F)}</button>
+                                                <button onClick={() => deleteChecklistTask(origIdx)}
+                                                    className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">🗑️</button>
                                             </div>
                                         )}
                                     </div>
@@ -1277,7 +1312,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     </label>
                                                     {checks[currentPrefix + sub.id] && checks[currentPrefix + sub.id + "_by"] && (
                                                         <p className="text-xs text-green-600 ml-6">
-                                                            â {checks[currentPrefix + sub.id + "_by"]} â {checks[currentPrefix + sub.id + "_at"]}
+                                                            ✓ {checks[currentPrefix + sub.id + "_by"]} — {checks[currentPrefix + sub.id + "_at"]}
                                                         </p>
                                                     )}
                                                 </div>
@@ -1291,7 +1326,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             {photoUrl ? (
                                                 <div>
                                                     <div className="flex items-center gap-2 mb-1">
-                                                        <span className="text-xs text-green-600 font-bold">â {language === "es" ? "Foto tomada" : "Photo taken"}</span>
+                                                        <span className="text-xs text-green-600 font-bold">✓ {language === "es" ? "Foto tomada" : "Photo taken"}</span>
                                                         <span className="text-xs text-gray-400">{checks[currentPrefix + item.id + "_photoTime"] ? new Date(checks[currentPrefix + item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
                                                     </div>
                                                     <img src={photoUrl} alt="Task photo" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
@@ -1307,17 +1342,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         disabled={capturingPhoto === item.id}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-xs font-bold text-blue-700 hover:bg-blue-100 transition">
                                                         {capturingPhoto === item.id
-                                                            ? (language === "es" ? "â³ Subiendo..." : "â³ Uploading...")
-                                                            : (language === "es" ? "ð¸ Tomar foto" : "ð¸ Take photo")}
+                                                            ? (language === "es" ? "⏳ Subiendo..." : "⏳ Uploading...")
+                                                            : (language === "es" ? "📸 Tomar foto" : "📸 Take photo")}
                                                     </button>
                                                 </div>
                                             )}
                                         </div>
                                     )}
-                                    {/* Follow-up question prompt â shows when task is completed */}
+                                    {/* Follow-up question prompt — shows when task is completed */}
                                     {item.followUp && item.followUp.question && (showFollowUpFor === item.id || (taskComplete && !checks[currentPrefix + item.id + "_followUp"])) && (
                                         <div className="mx-3 mb-3 p-3 bg-blue-50 border-2 border-blue-300 rounded-xl">
-                                            <p className="text-sm font-bold text-blue-800 mb-2">â {item.followUp.question}</p>
+                                            <p className="text-sm font-bold text-blue-800 mb-2">❓ {item.followUp.question}</p>
                                             {item.followUp.type === "dropdown" && item.followUp.options ? (
                                                 <div className="space-y-1.5">
                                                     {item.followUp.options.map((opt, oi) => (
@@ -1336,7 +1371,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         onKeyDown={e => { if (e.key === "Enter" && followUpAnswers[item.id]?.trim()) saveFollowUpAnswer(item.id, followUpAnswers[item.id].trim()); }} />
                                                     <button onClick={() => { if (followUpAnswers[item.id]?.trim()) saveFollowUpAnswer(item.id, followUpAnswers[item.id].trim()); }}
                                                         className="px-3 py-2 bg-blue-600 text-white rounded-lg text-xs font-bold hover:bg-blue-700">
-                                                        â
+                                                        ✓
                                                     </button>
                                                 </div>
                                             )}
@@ -1345,8 +1380,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     {/* Show saved answer */}
                                     {item.followUp && checks[currentPrefix + item.id + "_followUp"] && showFollowUpFor !== item.id && (
                                         <div className="mx-3 mb-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
-                                            <p className="text-xs text-gray-500">â {item.followUp.question}</p>
-                                            <p className="text-sm font-bold text-gray-700">ð¬ {checks[currentPrefix + item.id + "_followUp"]}</p>
+                                            <p className="text-xs text-gray-500">❓ {item.followUp.question}</p>
+                                            <p className="text-sm font-bold text-gray-700">💬 {checks[currentPrefix + item.id + "_followUp"]}</p>
                                         </div>
                                     )}
                                 </div>
@@ -1367,29 +1402,37 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:border-green-400" autoFocus />
                                 {/* Complete by time */}
                                 <div className="flex items-center gap-2 mb-2">
-                                    <label className="text-xs font-bold text-gray-600">â° {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
+                                    <label className="text-xs font-bold text-gray-600">⏰ {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
                                     <input type="time" value={newCompleteBy} onChange={e => setNewCompleteBy(e.target.value)}
                                         className="border border-gray-200 rounded px-2 py-1 text-xs" />
-                                    {newCompleteBy && <button onClick={() => setNewCompleteBy("")} className="text-red-400 text-xs">â</button>}
+                                    {newCompleteBy && <button onClick={() => setNewCompleteBy("")} className="text-red-400 text-xs">✕</button>}
                                 </div>
-                                {/* Notify / assign to */}
-                                {newCompleteBy && (
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <label className="text-xs font-bold text-gray-600">ð {language === "es" ? "Notificar a:" : "Notify:"}</label>
-                                        <select value={newAssignTo} onChange={e => setNewAssignTo(e.target.value)}
-                                            className="border border-gray-200 rounded px-2 py-1 text-xs flex-1">
-                                            <option value="">{language === "es" ? "â Nadie â" : "â Nobody â"}</option>
-                                            {(staffList || []).map(s => (
-                                                <option key={s.id} value={s.name}>{s.name}</option>
-                                            ))}
-                                        </select>
-                                        {newAssignTo && <button onClick={() => setNewAssignTo("")} className="text-red-400 text-xs">â</button>}
+                                {/* Assign to (always visible, multi-select) */}
+                                <div className="flex items-center gap-2 mb-2">
+                                    <label className="text-xs font-bold text-gray-600">{String.fromCodePoint(0x1F464)} {language === "es" ? "Asignar a:" : "Assign to:"}</label>
+                                    <select value="" onChange={e => { if (e.target.value) { const cur = newAssignTo ? (Array.isArray(newAssignTo) ? newAssignTo : [newAssignTo]) : []; if (!cur.includes(e.target.value)) setNewAssignTo([...cur, e.target.value]); } }}
+                                        className="border border-gray-200 rounded px-2 py-1 text-xs flex-1">
+                                        <option value="">{language === "es" ? "— Agregar persona —" : "— Add person —"}</option>
+                                        {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").filter(s => !(Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : []).includes(s.name)).map(s => (
+                                            <option key={s.id} value={s.name}>{s.name}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                {(Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : []).length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mb-2">
+                                        {(Array.isArray(newAssignTo) ? newAssignTo : [newAssignTo]).map(name => (
+                                            <span key={name} className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+                                                {name.split(" ")[0]}
+                                                <button onClick={() => { const cur = Array.isArray(newAssignTo) ? newAssignTo : [newAssignTo]; setNewAssignTo(cur.filter(n => n !== name)); }}
+                                                    className="text-blue-400 hover:text-red-500">{String.fromCodePoint(0x2715)}</button>
+                                            </span>
+                                        ))}
                                     </div>
                                 )}
                                 {/* Photo toggle */}
                                 <label className="flex items-center gap-2 mb-2 text-xs cursor-pointer">
                                     <input type="checkbox" checked={newRequirePhoto} onChange={e => setNewRequirePhoto(e.target.checked)} className="w-4 h-4" />
-                                    <span className="font-bold text-gray-600">ð¸ {language === "es" ? "Requiere foto" : "Require photo"}</span>
+                                    <span className="font-bold text-gray-600">📸 {language === "es" ? "Requiere foto" : "Require photo"}</span>
                                 </label>
                                 {/* Subtasks editor */}
                                 <div className="mb-2">
@@ -1399,7 +1442,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             <input className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" value={sub.task}
                                                 onChange={e => { const u = [...newSubtasks]; u[si] = {...u[si], task: e.target.value}; setNewSubtasks(u); }}
                                                 placeholder={(language === "es" ? "Subtarea " : "Subtask ") + (si+1)} />
-                                            <button onClick={() => setNewSubtasks(newSubtasks.filter((_,i) => i !== si))} className="text-red-400 text-xs px-1">â</button>
+                                            <button onClick={() => setNewSubtasks(newSubtasks.filter((_,i) => i !== si))} className="text-red-400 text-xs px-1">✕</button>
                                         </div>
                                     ))}
                                     <button onClick={() => setNewSubtasks([...newSubtasks, {id: "", task: ""}])}
@@ -1408,12 +1451,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 {/* Follow-up question editor */}
                                 <div className="mb-2 border-t border-gray-200 pt-2">
                                     <div className="flex items-center justify-between mb-1">
-                                        <p className="text-xs font-bold text-gray-500">â {language === "es" ? "Pregunta al completar" : "Follow-up question"}</p>
+                                        <p className="text-xs font-bold text-gray-500">❓ {language === "es" ? "Pregunta al completar" : "Follow-up question"}</p>
                                         {!newFollowUp ? (
                                             <button onClick={() => setNewFollowUp({ type: "dropdown", question: "", options: [""] })}
                                                 className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar" : "Add"}</button>
                                         ) : (
-                                            <button onClick={() => setNewFollowUp(null)} className="text-red-400 text-xs">â {language === "es" ? "Quitar" : "Remove"}</button>
+                                            <button onClick={() => setNewFollowUp(null)} className="text-red-400 text-xs">✕ {language === "es" ? "Quitar" : "Remove"}</button>
                                         )}
                                     </div>
                                     {newFollowUp && (
@@ -1437,13 +1480,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         <div key={oi} className="flex gap-1">
                                                             <input className="flex-1 border border-gray-200 rounded px-2 py-1 text-xs" value={opt}
                                                                 onChange={e => { const u = [...newFollowUp.options]; u[oi] = e.target.value; setNewFollowUp({...newFollowUp, options: u}); }}
-                                                                placeholder={(language === "es" ? "OpciÃ³n " : "Option ") + (oi+1)} />
+                                                                placeholder={(language === "es" ? "Opción " : "Option ") + (oi+1)} />
                                                             <button onClick={() => { const u = newFollowUp.options.filter((_,i) => i !== oi); setNewFollowUp({...newFollowUp, options: u}); }}
-                                                                className="text-red-400 text-xs px-1">â</button>
+                                                                className="text-red-400 text-xs px-1">✕</button>
                                                         </div>
                                                     ))}
                                                     <button onClick={() => setNewFollowUp({...newFollowUp, options: [...(newFollowUp.options || []), ""]})}
-                                                        className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar opciÃ³n" : "Add option"}</button>
+                                                        className="text-xs text-blue-600 font-bold">+ {language === "es" ? "Agregar opción" : "Add option"}</button>
                                                 </div>
                                             )}
                                         </div>
@@ -1458,11 +1501,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             </div>
                         )}
 
-                        {/* Reset button â admin only */}
+                        {/* Reset button — admin only */}
                         {currentIsAdmin && (
                             <button onClick={resetAllChecklists}
                                 className="w-full mt-4 py-3 rounded-xl font-bold text-sm bg-red-50 text-red-600 border-2 border-red-200 hover:bg-red-100 transition">
-                                {language === "es" ? "ð¾ Guardar y Reiniciar Checklists" : "ð¾ Save & Reset Checklists"}
+                                {language === "es" ? "💾 Guardar y Reiniciar Checklists" : "💾 Save & Reset Checklists"}
                             </button>
                         )}
                     </div>
@@ -1471,35 +1514,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             return (
                 <div className="p-4 pb-24">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-4">ð {t("dailyOps", language)}</h2>
-
-                    {/* Labor % Widget */}
-                    {laborData && laborData.laborPercent !== undefined && (() => {
-                        const pct = laborData.laborPercent;
-                        const isGood = pct <= laborTarget - 3;
-                        const isOk = pct <= laborTarget + 2;
-                        const bgColor = isGood ? "bg-emerald-50 ring-emerald-300" : isOk ? "bg-amber-50 ring-amber-300" : "bg-red-50 ring-red-300";
-                        const textColor = isGood ? "text-emerald-700" : isOk ? "text-amber-700" : "text-red-700";
-                        const emoji = isGood ? String.fromCodePoint(0x2705) : isOk ? String.fromCodePoint(0x26A0, 0xFE0F) : String.fromCodePoint(0x1F534);
-                        const label = isGood ? (language === "es" ? "Bajo objetivo" : "Under target") : isOk ? (language === "es" ? "En objetivo" : "On target") : (language === "es" ? "Sobre objetivo" : "Over target");
-                        const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
-                        const minsAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
-                        return (
-                            <div className={"mb-4 p-3 rounded-xl ring-1 flex items-center justify-between " + bgColor}>
-                                <div className="flex items-center gap-2">
-                                    <span className="text-2xl">{emoji}</span>
-                                    <div>
-                                        <span className={"text-xl font-black " + textColor}>{pct.toFixed(1)}%</span>
-                                        <span className={"text-xs font-bold ml-1.5 " + textColor}>{label}</span>
-                                    </div>
-                                </div>
-                                <div className="text-right">
-                                    <p className="text-[10px] text-gray-400">{language === "es" ? "Mano de obra" : "Labor"} (obj: {laborTarget}%)</p>
-                                    {minsAgo !== null && <p className="text-[10px] text-gray-400">{minsAgo === 0 ? (language === "es" ? "ahora" : "just now") : minsAgo + " min"}</p>}
-                                </div>
-                            </div>
-                        );
-                    })()}
+                    <h2 className="text-2xl font-bold text-mint-700 mb-4">📋 {t("dailyOps", language)}</h2>
 
                     <div className="flex gap-2 mb-6">
                         <button onClick={() => { setActiveTab("checklist"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
@@ -1516,28 +1531,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         </button>
                     </div>
 
-                    {/* ââ TASK DEADLINE ALERTS ââ */}
+                    {/* ── TASK DEADLINE ALERTS ── */}
                     {activeAlerts.length > 0 && (
                         <div className="space-y-2 mb-3">
                             {activeAlerts.map(a => (
                                 <div key={a.key} className={`flex items-center gap-2 px-3 py-2.5 rounded-xl border-2 shadow-sm animate-pulse ${
                                     a.type === "overdue" ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"
                                 }`}>
-                                    <span className="text-xl">{a.type === "overdue" ? "ð¨" : "â°"}</span>
+                                    <span className="text-xl">{a.type === "overdue" ? "🚨" : "⏰"}</span>
                                     <div className="flex-1 min-w-0">
                                         <p className={`text-sm font-bold ${a.type === "overdue" ? "text-red-700" : "text-yellow-800"}`}>
                                             {a.taskName}
                                         </p>
                                         <p className={`text-xs ${a.type === "overdue" ? "text-red-500" : "text-yellow-600"}`}>
                                             {a.type === "overdue"
-                                                ? (language === "es" ? `VenciÃ³ a las ${a.timeStr} â ${a.message}` : `Due at ${a.timeStr} â ${a.message}`)
-                                                : (language === "es" ? `Vence a las ${a.timeStr} â ${a.message}` : `Due at ${a.timeStr} â ${a.message}`)
+                                                ? (language === "es" ? `Venció a las ${a.timeStr} — ${a.message}` : `Due at ${a.timeStr} — ${a.message}`)
+                                                : (language === "es" ? `Vence a las ${a.timeStr} — ${a.message}` : `Due at ${a.timeStr} — ${a.message}`)
                                             }
                                         </p>
                                     </div>
                                     <button onClick={() => dismissAlert(a.key)}
                                         className={`text-xs font-bold px-2 py-1 rounded-lg ${a.type === "overdue" ? "bg-red-200 text-red-700" : "bg-yellow-200 text-yellow-700"}`}>
-                                        â
+                                        ✕
                                     </button>
                                 </div>
                             ))}
@@ -1560,16 +1575,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             {!invEditMode && (
                                 <div className="relative">
                                     <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
-                                        placeholder={language === "es" ? "ð Buscar artÃ­culo..." : "ð Search items..."}
+                                        placeholder={language === "es" ? "🔍 Buscar artículo..." : "🔍 Search items..."}
                                         className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white" />
                                     {invSearch && (
                                         <button onClick={() => setInvSearch("")}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg">â</button>
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg">✕</button>
                                     )}
                                 </div>
                             )}
 
-                            {/* Cart summary â items with counts */}
+                            {/* Cart summary — items with counts */}
                             {!invEditMode && (() => {
                                 const itemCount = Object.values(inventory).filter(v => v > 0).length;
                                 const totalQty = Object.values(inventory).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
@@ -1577,10 +1592,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 return (
                                     <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
                                         <span className="text-sm font-bold text-mint-700">
-                                            ð {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artÃ­culos" : "items"})
+                                            🛒 {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
                                         </span>
                                         <span className="text-xs text-mint-600">
-                                            {language === "es" ? "Solo estos se guardarÃ¡n" : "Only these will be saved"}
+                                            {language === "es" ? "Solo estos se guardarán" : "Only these will be saved"}
                                         </span>
                                     </div>
                                 );
@@ -1602,7 +1617,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <div key={category.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                                     <div className="p-3 bg-mint-50 border-b font-bold text-mint-700 flex justify-between items-center">
                                         <span>{language === "es" ? category.nameEs : category.name}</span>
-                                        {!invEditMode && <span className="text-xs font-normal text-gray-500">{filteredItems.length} {language === "es" ? "artÃ­culos" : "items"}</span>}
+                                        {!invEditMode && <span className="text-xs font-normal text-gray-500">{filteredItems.length} {language === "es" ? "artículos" : "items"}</span>}
                                     </div>
                                     <div className="p-3 space-y-2">
                                         {filteredItems.map((item) => {
@@ -1613,13 +1628,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     {isEditing ? (
                                                         <div className="space-y-2">
                                                             <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
-                                                                placeholder={language === "es" ? "Nombre del artÃ­culo" : "Item name"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
+                                                                placeholder={language === "es" ? "Nombre del artículo" : "Item name"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                             <input type="text" value={invEditNameEs} onChange={(e) => setInvEditNameEs(e.target.value)}
-                                                                placeholder={language === "es" ? "Nombre en espaÃ±ol" : "Name in Spanish"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
+                                                                placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                             <input type="text" value={invEditSupplier} onChange={(e) => setInvEditSupplier(e.target.value)}
                                                                 placeholder={language === "es" ? "Proveedor" : "Supplier"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                             <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
-                                                                placeholder={language === "es" ? "DÃ­a de pedido" : "Order day"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
+                                                                placeholder={language === "es" ? "Día de pedido" : "Order day"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                             <div className="flex gap-2">
                                                                 <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-700 text-white py-1 rounded hover:bg-green-800">{language === "es" ? "Guardar" : "Save"}</button>
                                                                 <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-500 text-white py-1 rounded hover:bg-gray-600">{language === "es" ? "Cancelar" : "Cancel"}</button>
@@ -1633,7 +1648,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                 {language !== "es" && item.nameEs && <p className="text-xs text-gray-400 italic">{item.nameEs}</p>}
                                                                 <p className="text-xs text-gray-500">{t("supplier", language)}: {item.supplier}</p>
                                                                 {invCountMeta[item.id] && (inventory[item.id] || 0) > 0 && (
-                                                                    <p className="text-xs text-mint-600">â {invCountMeta[item.id].by} â {invCountMeta[item.id].at}</p>
+                                                                    <p className="text-xs text-mint-600">✓ {invCountMeta[item.id].by} — {invCountMeta[item.id].at}</p>
                                                                 )}
                                                             </div>
                                                             <div className="flex items-center gap-2">
@@ -1645,13 +1660,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                             setInvEditNameEs(item.nameEs || "");
                                                                             setInvEditSupplier(item.supplier);
                                                                             setInvEditOrderDay(item.orderDay);
-                                                                        }} className="text-xl hover:text-blue-700">âï¸</button>
-                                                                        <button onClick={() => deleteInvItem(catIdx, itemIdx)} className="text-xl hover:text-red-700">ðï¸</button>
+                                                                        }} className="text-xl hover:text-blue-700">✏️</button>
+                                                                        <button onClick={() => deleteInvItem(catIdx, itemIdx)} className="text-xl hover:text-red-700">🗑️</button>
                                                                     </>
                                                                 ) : (
                                                                     <div className="flex items-center gap-1">
                                                                         <button onClick={() => updateInventoryCount(item.id, Math.max(0, (inventory[item.id] || 0) - 1))}
-                                                                            className="w-9 h-9 rounded-lg bg-gray-200 text-gray-700 font-bold text-xl flex items-center justify-center hover:bg-red-100 active:bg-red-200 transition">â</button>
+                                                                            className="w-9 h-9 rounded-lg bg-gray-200 text-gray-700 font-bold text-xl flex items-center justify-center hover:bg-red-100 active:bg-red-200 transition">−</button>
                                                                         <span className="w-10 text-center font-bold text-lg">{inventory[item.id] || 0}</span>
                                                                         <button onClick={() => updateInventoryCount(item.id, (inventory[item.id] || 0) + 1)}
                                                                             className="w-9 h-9 rounded-lg bg-gray-200 text-gray-700 font-bold text-xl flex items-center justify-center hover:bg-green-100 active:bg-green-200 transition">+</button>
@@ -1663,7 +1678,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 </div>
                                             );
                                         })}
-                                        {/* Write-in line â always visible when not in edit mode */}
+                                        {/* Write-in line — always visible when not in edit mode */}
                                         {!invEditMode && (
                                             <div className="p-2 border-t border-dashed border-gray-200">
                                                 <div className="flex items-center gap-2">
@@ -1671,7 +1686,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         value={writeInValues[catIdx] || ""}
                                                         onChange={e => setWriteInValues(prev => ({ ...prev, [catIdx]: e.target.value }))}
                                                         onKeyDown={e => { if (e.key === "Enter") quickAddItem(catIdx); }}
-                                                        placeholder={language === "es" ? "âï¸ Escribir artÃ­culo..." : "âï¸ Write in item..."}
+                                                        placeholder={language === "es" ? "✍️ Escribir artículo..." : "✍️ Write in item..."}
                                                         className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:border-mint-500 focus:bg-white" />
                                                     {(writeInValues[catIdx] || "").trim() && (
                                                         <button onClick={() => quickAddItem(catIdx)}
@@ -1685,20 +1700,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         {invEditMode && invShowAddForm === catIdx ? (
                                             <div className="p-2 border-2 border-green-500 rounded bg-green-50 space-y-2">
                                                 <input type="text" value={invNewName} onChange={(e) => setInvNewName(e.target.value)}
-                                                    placeholder={language === "es" ? "Nombre del artÃ­culo" : "New item name"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
+                                                    placeholder={language === "es" ? "Nombre del artículo" : "New item name"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                 <input type="text" value={invNewNameEs} onChange={(e) => setInvNewNameEs(e.target.value)}
-                                                    placeholder={language === "es" ? "Nombre en espaÃ±ol" : "Name in Spanish"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
+                                                    placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                 <input type="text" value={invNewSupplier} onChange={(e) => setInvNewSupplier(e.target.value)}
                                                     placeholder={language === "es" ? "Proveedor" : "Supplier"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                 <input type="text" value={invNewOrderDay} onChange={(e) => setInvNewOrderDay(e.target.value)}
-                                                    placeholder={language === "es" ? "DÃ­a de pedido" : "Order day"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
+                                                    placeholder={language === "es" ? "Día de pedido" : "Order day"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
                                                 <div className="flex gap-2">
                                                     <button onClick={() => addInvItem(catIdx)} className="flex-1 bg-green-700 text-white py-1 rounded hover:bg-green-800">{language === "es" ? "Agregar" : "Add"}</button>
                                                     <button onClick={() => setInvShowAddForm(null)} className="flex-1 bg-gray-500 text-white py-1 rounded hover:bg-gray-600">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                 </div>
                                             </div>
                                         ) : invEditMode && (
-                                            <button onClick={() => setInvShowAddForm(catIdx)} className="w-full py-2 text-green-700 font-bold border-2 border-green-700 rounded hover:bg-green-50">{language === "es" ? "+ Agregar ArtÃ­culo" : "+ Add Item"}</button>
+                                            <button onClick={() => setInvShowAddForm(catIdx)} className="w-full py-2 text-green-700 font-bold border-2 border-green-700 rounded hover:bg-green-50">{language === "es" ? "+ Agregar Artículo" : "+ Add Item"}</button>
                                         )}
                                     </div>
                                 </div>
@@ -1710,7 +1725,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     {showSaveConfirm ? (
                                         <div className="bg-white border-2 border-mint-700 rounded-xl p-4 shadow-xl">
                                             <p className="text-center text-lg font-bold text-gray-800 mb-4">
-                                                {language === "es" ? "Â¿Ya REVISASTE?" : "Did you LOOK?"}
+                                                {language === "es" ? "¿Ya REVISASTE?" : "Did you LOOK?"}
                                             </p>
                                             <div className="flex gap-3">
                                                 <button
@@ -1720,7 +1735,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 >
                                                     {inventorySaving
                                                         ? (language === "es" ? "Guardando..." : "Saving...")
-                                                        : (language === "es" ? "â SÃ­" : "â Yes")}
+                                                        : (language === "es" ? "✅ Sí" : "✅ Yes")}
                                                 </button>
                                                 <button
                                                     onClick={() => setShowSaveConfirm(false)}
@@ -1736,17 +1751,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             onClick={() => setShowSaveConfirm(true)}
                                             className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition"
                                         >
-                                            {language === "es" ? "ð¾ Guardar y Reiniciar Conteos" : "ð¾ Save & Reset Counts"}
+                                            {language === "es" ? "💾 Guardar y Reiniciar Conteos" : "💾 Save & Reset Counts"}
                                         </button>
                                     )}
                                 </div>
                             )}
 
-                            {/* ââ SAVED INVENTORY LISTS ââ */}
+                            {/* ── SAVED INVENTORY LISTS ── */}
                             <div className="mt-6 pt-4 border-t-2 border-gray-200">
-                                <h3 className="text-lg font-bold text-mint-700 mb-1">ð¦ {language === "es" ? "Listas Guardadas" : "Saved Lists"}</h3>
+                                <h3 className="text-lg font-bold text-mint-700 mb-1">📦 {language === "es" ? "Listas Guardadas" : "Saved Lists"}</h3>
                                 <p className="text-xs text-gray-500 mb-3">{language === "es"
-                                    ? "Revisa conteos anteriores, marca lo que ya se pidiÃ³."
+                                    ? "Revisa conteos anteriores, marca lo que ya se pidió."
                                     : "Review past counts, check off what's been ordered."}</p>
                                 <InventoryHistory language={language} customInventory={customInventory} storeLocation={storeLocation} />
                             </div>
@@ -1761,7 +1776,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     const d = new Date(breakDate + "T12:00:00");
                                     d.setDate(d.getDate() - 1);
                                     setBreakDate(d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"));
-                                }} className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">â</button>
+                                }} className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">←</button>
                                 <div className="flex-1 text-center">
                                     <input type="date" value={breakDate} onChange={e => setBreakDate(e.target.value)}
                                         className="bg-transparent text-center font-bold text-gray-800 border-none text-sm focus:outline-none" />
@@ -1770,8 +1785,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             const d = new Date(breakDate + "T12:00:00");
                                             const today = getTodayKey();
                                             const tomorrow = (() => { const t = new Date(); t.setDate(t.getDate()+1); return t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0"); })();
-                                            if (breakDate === today) return language === "es" ? "ð Hoy" : "ð Today";
-                                            if (breakDate === tomorrow) return language === "es" ? "ð MaÃ±ana" : "ð Tomorrow";
+                                            if (breakDate === today) return language === "es" ? "📅 Hoy" : "📅 Today";
+                                            if (breakDate === tomorrow) return language === "es" ? "📅 Mañana" : "📅 Tomorrow";
                                             return d.toLocaleDateString(language === "es" ? "es-US" : "en-US", { weekday: "long" });
                                         })()}
                                     </div>
@@ -1780,7 +1795,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     const d = new Date(breakDate + "T12:00:00");
                                     d.setDate(d.getDate() + 1);
                                     setBreakDate(d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"));
-                                }} className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">â</button>
+                                }} className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">→</button>
                                 {breakDate !== getTodayKey() && (
                                     <button onClick={() => setBreakDate(getTodayKey())}
                                         className="text-xs font-bold text-mint-700 bg-mint-50 border border-mint-200 px-2 py-1 rounded-lg">
@@ -1804,7 +1819,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             </div>
                             {breakPlanSaved && (
                                 <div className="bg-green-100 border border-green-300 text-green-700 text-sm rounded-lg px-3 py-2 text-center font-bold">
-                                    {language === "es" ? "â Guardado" : "â Saved"}
+                                    {language === "es" ? "✓ Guardado" : "✓ Saved"}
                                 </div>
                             )}
 
@@ -1823,16 +1838,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     }
                                 }}
                                     className="w-full py-2.5 rounded-xl font-bold text-sm bg-blue-50 text-blue-600 border-2 border-blue-200 hover:bg-blue-100 transition">
-                                    ð {language === "es" ? "Copiar plan de hoy" : "Copy today's plan"}
+                                    📋 {language === "es" ? "Copiar plan de hoy" : "Copy today's plan"}
                                 </button>
                             )}
 
-                            {/* ââ SKILLS MATRIX ââ */}
+                            {/* ── SKILLS MATRIX ── */}
                             {showMatrix && (
                                 <div className="bg-white border-2 border-purple-200 rounded-xl overflow-hidden">
                                     <div className="bg-purple-600 text-white px-4 py-2.5">
-                                        <h3 className="font-bold text-sm">{language === "es" ? "ð§  Matriz de Habilidades" : "ð§  Skills Matrix"}</h3>
-                                        <p className="text-xs text-purple-200">{language === "es" ? "Marca quÃ© estaciones puede trabajar cada persona" : "Check which stations each person can work"}</p>
+                                        <h3 className="font-bold text-sm">{language === "es" ? "🧠 Matriz de Habilidades" : "🧠 Skills Matrix"}</h3>
+                                        <p className="text-xs text-purple-200">{language === "es" ? "Marca qué estaciones puede trabajar cada persona" : "Check which stations each person can work"}</p>
                                     </div>
                                     <div className="overflow-x-auto">
                                         <table className="w-full text-xs">
@@ -1867,7 +1882,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                 : "bg-gray-100 text-gray-300 hover:bg-gray-200"
                                                                         }`}
                                                                     >
-                                                                        {checked ? "â" : ""}
+                                                                        {checked ? "✓" : ""}
                                                                     </button>
                                                                 </td>
                                                             );
@@ -1891,47 +1906,47 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 </div>
                             )}
 
-                            {/* ââ STATION BOARD ââ */}
+                            {/* ── STATION BOARD ── */}
                             <div className="bg-charcoal rounded-xl p-4">
                                 <div className="flex items-center justify-between mb-3">
                                     <h3 className="text-white font-bold text-sm uppercase tracking-wider">
-                                        {language === "es" ? "ð Estaciones de Hoy" : "ð Today's Stations"}
+                                        {language === "es" ? "📋 Estaciones de Hoy" : "📋 Today's Stations"}
                                     </h3>
                                     {currentIsAdmin && (
                                         <button onClick={() => setEditingStations(!editingStations)}
                                             className={`text-xs px-2.5 py-1 rounded-full font-bold ${editingStations ? "bg-red-500 text-white" : "bg-white bg-opacity-20 text-white"}`}>
-                                            {editingStations ? (language === "es" ? "â Cerrar" : "â Done") : (language === "es" ? "âï¸ Editar" : "âï¸ Edit")}
+                                            {editingStations ? (language === "es" ? "✕ Cerrar" : "✕ Done") : (language === "es" ? "✏️ Editar" : "✏️ Edit")}
                                         </button>
                                     )}
                                 </div>
 
-                                {/* ââ EDIT MODE ââ */}
+                                {/* ── EDIT MODE ── */}
                                 {editingStations && currentIsAdmin && (
                                     <div className="mb-3 space-y-2">
                                         {customStations.map((pos, idx) => (
                                             <div key={pos.id} className="bg-white bg-opacity-10 rounded-lg p-2 flex items-center gap-2">
                                                 <div className="flex flex-col gap-0.5">
                                                     <button onClick={() => moveStation(pos.id, -1)} disabled={idx === 0}
-                                                        className={`text-xs leading-none ${idx === 0 ? "text-gray-600" : "text-gray-300 hover:text-white"}`}>â²</button>
+                                                        className={`text-xs leading-none ${idx === 0 ? "text-gray-600" : "text-gray-300 hover:text-white"}`}>▲</button>
                                                     <button onClick={() => moveStation(pos.id, 1)} disabled={idx === customStations.length - 1}
-                                                        className={`text-xs leading-none ${idx === customStations.length - 1 ? "text-gray-600" : "text-gray-300 hover:text-white"}`}>â¼</button>
+                                                        className={`text-xs leading-none ${idx === customStations.length - 1 ? "text-gray-600" : "text-gray-300 hover:text-white"}`}>▼</button>
                                                 </div>
                                                 <input type="text" value={pos.emoji} onChange={e => updateStationEmoji(pos.id, e.target.value)}
                                                     className="w-10 text-center text-lg bg-white bg-opacity-10 rounded border border-gray-600 text-white" style={{padding: "2px"}} />
                                                 <input type="text" value={pos.nameEn} onChange={e => renameStation(pos.id, e.target.value)}
                                                     className="flex-1 bg-white bg-opacity-10 rounded border border-gray-600 text-white text-xs px-2 py-1.5 font-bold" />
                                                 <button onClick={() => removeStation(pos.id)}
-                                                    className="text-red-400 hover:text-red-300 text-sm font-bold px-1">â</button>
+                                                    className="text-red-400 hover:text-red-300 text-sm font-bold px-1">✕</button>
                                             </div>
                                         ))}
                                         {/* Add new station */}
                                         <div className="bg-white bg-opacity-5 rounded-lg p-2 flex items-center gap-2 border border-dashed border-gray-600">
                                             <input type="text" value={newStationEmoji} onChange={e => setNewStationEmoji(e.target.value)}
                                                 className="w-10 text-center text-lg bg-white bg-opacity-10 rounded border border-gray-600 text-white" style={{padding: "2px"}}
-                                                placeholder="ð" />
+                                                placeholder="📍" />
                                             <input type="text" value={newStationName} onChange={e => setNewStationName(e.target.value)}
                                                 className="flex-1 bg-white bg-opacity-10 rounded border border-gray-600 text-white text-xs px-2 py-1.5"
-                                                placeholder={language === "es" ? "Nueva estaciÃ³n..." : "New station name..."}
+                                                placeholder={language === "es" ? "Nueva estación..." : "New station name..."}
                                                 onKeyDown={e => { if (e.key === "Enter") addStation(); }} />
                                             <button onClick={addStation}
                                                 className="bg-mint text-white text-xs font-bold px-3 py-1.5 rounded hover:opacity-90">+</button>
@@ -1944,7 +1959,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     </div>
                                 )}
 
-                                {/* ââ ASSIGNMENT GRID ââ */}
+                                {/* ── ASSIGNMENT GRID ── */}
                                 <div className="grid grid-cols-2 gap-2">
                                     {ALL_POSITIONS.map(pos => {
                                         const person = breakPlan.stations?.[pos.id] || "";
@@ -1959,7 +1974,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     value={person}
                                                     onChange={e => updateStationAssignment(pos.id, e.target.value)}
                                                 >
-                                                    <option value="">â</option>
+                                                    <option value="">—</option>
                                                     {(pos.id === "manager" ? (staffList || []).filter(s => ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role) && (s.location === storeLocation || s.location === "both")) : bohStaff).map(s => (
                                                         <option key={s.id} value={s.name}>{s.name}</option>
                                                     ))}
@@ -1982,7 +1997,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 })()}
                             </div>
 
-                            {/* ââ BREAK WAVES ââ */}
+                            {/* ── BREAK WAVES ── */}
                             {BREAK_WAVES.map((wave, waveIdx) => {
                                 const assignedStaff = getAssignedStaff();
                                 const breakers = getWaveBreakers(wave.id);
@@ -2012,7 +2027,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     <div key={wave.id} className="bg-white border-2 border-blue-200 rounded-xl overflow-hidden">
                                         <div className="bg-blue-600 text-white px-4 py-2.5 flex items-center justify-between">
                                             <div className="flex items-center gap-2">
-                                                <h3 className="font-bold text-sm">{language === "es" ? `Grupo ${waveIdx+1}` : `Wave ${waveIdx+1}`} â</h3>
+                                                <h3 className="font-bold text-sm">{language === "es" ? `Grupo ${waveIdx+1}` : `Wave ${waveIdx+1}`} —</h3>
                                                 <input type="time" value={breakWaveTimes[waveIdx] || wave.time}
                                                     onChange={e => updateWaveTime(waveIdx, e.target.value)}
                                                     className="bg-blue-500 text-white border border-blue-400 rounded px-1.5 py-0.5 text-sm font-bold" style={{colorScheme:"dark"}} />
@@ -2029,9 +2044,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 </p>
                                             ) : (
                                                 <div>
-                                                    {/* â Who's going on break? â */}
+                                                    {/* ─ Who's going on break? ─ */}
                                                     <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">
-                                                        {language === "es" ? "Â¿QuiÃ©n sale a break?" : "Who's going on break?"}
+                                                        {language === "es" ? "¿Quién sale a break?" : "Who's going on break?"}
                                                     </p>
                                                     <div className="flex flex-wrap gap-1.5 mb-3">
                                                         {assignedStaff.map(name => {
@@ -2039,11 +2054,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             const alreadyWent = alreadyBroke.has(name);
                                                             const positions = (staffMap[name] || []).map(p => p.emoji).join("");
                                                             if (alreadyWent && !onBreak) {
-                                                                // Already took break in earlier wave â show grayed out
+                                                                // Already took break in earlier wave — show grayed out
                                                                 return (
                                                                     <span key={name}
                                                                         className="px-2.5 py-1.5 rounded-full text-xs font-bold border-2 bg-gray-100 text-gray-300 border-gray-100 line-through"
-                                                                        title={language === "es" ? "Ya tomÃ³ break" : "Already took break"}
+                                                                        title={language === "es" ? "Ya tomó break" : "Already took break"}
                                                                     >
                                                                         {positions} {name.split(" ")[0]}
                                                                     </span>
@@ -2064,7 +2079,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         })}
                                                     </div>
 
-                                                    {/* â Coverage map â */}
+                                                    {/* ─ Coverage map ─ */}
                                                     {needCover.length > 0 && (
                                                         <div>
                                                             <p className="text-xs font-bold text-mint-700 uppercase tracking-wide mb-2">
@@ -2084,15 +2099,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                 value={nc.cover}
                                                                                 onChange={e => setWaveCover(wave.id, nc.pos.id, e.target.value)}
                                                                             >
-                                                                                <option value="">{language === "es" ? "â ï¸ Seleccionar cobertura..." : "â ï¸ Select cover..."}</option>
+                                                                                <option value="">{language === "es" ? "⚠️ Seleccionar cobertura..." : "⚠️ Select cover..."}</option>
                                                                                 {(() => {
                                                                                     const qualified = getQualifiedCovers(nc.pos.id, available, wave.id);
                                                                                     const unqualified = available.filter(n => !qualified.includes(n));
                                                                                     return [
                                                                                         ...qualified.map(n => (
-                                                                                            <option key={n} value={n}>â {n} {(staffMap[n] || []).map(p => p.emoji).join("")}</option>
+                                                                                            <option key={n} value={n}>✓ {n} {(staffMap[n] || []).map(p => p.emoji).join("")}</option>
                                                                                         )),
-                                                                                        unqualified.length > 0 && qualified.length > 0 ? <option key="_sep" disabled>âââââââ</option> : null,
+                                                                                        unqualified.length > 0 && qualified.length > 0 ? <option key="_sep" disabled>───────</option> : null,
                                                                                         ...unqualified.map(n => (
                                                                                             <option key={n} value={n} style={{color:"#999"}}>{n}</option>
                                                                                         ))
@@ -2106,7 +2121,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         </div>
                                                     )}
 
-                                                    {/* â Still working (not on break) â */}
+                                                    {/* ─ Still working (not on break) ─ */}
                                                     {breakers.length > 0 && available.length > 0 && (
                                                         <div className="mt-3 pt-2 border-t border-gray-200">
                                                             <p className="text-xs font-bold text-gray-400 mb-1">
@@ -2118,17 +2133,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         </div>
                                                     )}
 
-                                                    {/* â Warnings â */}
+                                                    {/* ─ Warnings ─ */}
                                                     {(uncovered.length > 0 || doubles.length > 0) && (
                                                         <div className="mt-2 space-y-1">
                                                             {uncovered.length > 0 && (
                                                                 <div className="text-xs text-red-600 font-bold bg-red-50 rounded px-2 py-1">
-                                                                    â ï¸ {language === "es" ? "Sin cubrir" : "Uncovered"}: {uncovered.map(nc => (language === "es" ? nc.pos.nameEs : nc.pos.nameEn)).join(", ")}
+                                                                    ⚠️ {language === "es" ? "Sin cubrir" : "Uncovered"}: {uncovered.map(nc => (language === "es" ? nc.pos.nameEs : nc.pos.nameEn)).join(", ")}
                                                                 </div>
                                                             )}
                                                             {doubles.map(([name, stations]) => (
                                                                 <div key={name} className="text-xs text-orange-700 bg-orange-50 rounded px-2 py-1">
-                                                                    â ï¸ <span className="font-bold">{name.split(" ")[0]}</span> {language === "es" ? "cubre" : "covers"} {stations.join(" + ")}
+                                                                    ⚠️ <span className="font-bold">{name.split(" ")[0]}</span> {language === "es" ? "cubre" : "covers"} {stations.join(" + ")}
                                                                 </div>
                                                             ))}
                                                         </div>
@@ -2139,7 +2154,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     </div>
                                 );
                             })}
-                            {/* ââ PRINT BUTTON ââ */}
+                            {/* ── PRINT BUTTON ── */}
                             {(() => {
                                 const assigned = getAssignedStaff();
                                 if (assigned.length === 0) return null;
@@ -2170,12 +2185,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             .working { color: #666; font-size: 12px; margin-top: 6px; }
                                             @media print { body { padding: 10px; } }
                                         </style></head><body>`;
-                                        html += `<h1>ð DD Mau Break Plan</h1><div class="date">${today}</div>`;
+                                        html += `<h1>🍜 DD Mau Break Plan</h1><div class="date">${today}</div>`;
 
                                         // Stations
-                                        html += `<div class="section"><div class="section-header">ð Today's Stations</div><div class="station-grid">`;
+                                        html += `<div class="section"><div class="section-header">📋 Today's Stations</div><div class="station-grid">`;
                                         ALL_POSITIONS.forEach(pos => {
-                                            const person = breakPlan.stations?.[pos.id] || "â";
+                                            const person = breakPlan.stations?.[pos.id] || "—";
                                             html += `<div class="station"><div class="station-name">${pos.emoji} ${pos.nameEn}</div><div class="station-person">${person}</div></div>`;
                                         });
                                         html += `</div></div>`;
@@ -2189,8 +2204,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             if (breakers.length > 0) {
                                                 html += `<div style="margin-bottom:6px"><span class="breakers">On break: ${breakers.map(n => n.split(" ")[0]).join(", ")}</span></div>`;
                                                 needCover.forEach(nc => {
-                                                    const coverName = nc.cover ? nc.cover.split(" ")[0] : "â ï¸ UNCOVERED";
-                                                    html += `<div class="wave-row"><span>${nc.pos.emoji} ${nc.pos.nameEn} <span class="cover-label">(${nc.person.split(" ")[0]} on break)</span></span><span class="cover-name">â ${coverName}</span></div>`;
+                                                    const coverName = nc.cover ? nc.cover.split(" ")[0] : "⚠️ UNCOVERED";
+                                                    html += `<div class="wave-row"><span>${nc.pos.emoji} ${nc.pos.nameEn} <span class="cover-label">(${nc.person.split(" ")[0]} on break)</span></span><span class="cover-name">→ ${coverName}</span></div>`;
                                                 });
                                                 if (available.length > 0) {
                                                     html += `<div class="working">Still working: ${available.map(n => { const positions = (staffMap[n] || []).map(p => p.emoji).join(""); return positions + " " + n.split(" ")[0]; }).join(", ")}</div>`;
@@ -2209,7 +2224,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         setTimeout(() => printWindow.print(), 300);
                                     }}
                                         className="w-full mt-4 py-3 rounded-xl font-bold text-sm bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition flex items-center justify-center gap-2">
-                                        ð¨ï¸ {language === "es" ? "Imprimir Plan de Breaks" : "Print Break Plan"}
+                                        🖨️ {language === "es" ? "Imprimir Plan de Breaks" : "Print Break Plan"}
                                     </button>
                                 );
                             })()}
@@ -2225,7 +2240,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             return (
                 <div className="p-4 pb-24">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-4">ð {t("menuReference", language)}</h2>
+                    <h2 className="text-2xl font-bold text-mint-700 mb-4">🍜 {t("menuReference", language)}</h2>
 
                     <div className="space-y-3">
                         {MENU_DATA.map((category, idx) => (
@@ -2235,7 +2250,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     className="w-full p-4 text-left bg-gradient-to-r from-mint-50 to-white hover:bg-mint-50 border-b flex justify-between items-center"
                                 >
                                     <h3 className="font-bold text-lg text-mint-700">{language === "es" ? category.categoryEs : category.category}</h3>
-                                    <span className="text-xl">{expandedCategory === idx ? "â¼" : "â¶"}</span>
+                                    <span className="text-xl">{expandedCategory === idx ? "▼" : "▶"}</span>
                                 </button>
 
                                 {expandedCategory === idx && (
@@ -2251,9 +2266,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 </div>
                                                 <p className="text-sm text-gray-700 mb-2">{language === "es" ? item.descEs : item.descEn}</p>
                                                 <div className="flex gap-2 flex-wrap text-xs">
-                                                    {item.popular && <span className="bg-mint-100 text-mint-700 px-2 py-1 rounded">â­ {t("popular", language)}</span>}
-                                                    {item.spicy && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded">ð¶ {t("spicy", language)}</span>}
-                                                    {item.allergens && <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded">â  {item.allergens}</span>}
+                                                    {item.popular && <span className="bg-mint-100 text-mint-700 px-2 py-1 rounded">⭐ {t("popular", language)}</span>}
+                                                    {item.spicy && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded">🌶 {t("spicy", language)}</span>}
+                                                    {item.allergens && <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded">⚠ {item.allergens}</span>}
                                                 </div>
                                             </div>
                                         ))}
@@ -2279,8 +2294,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             return (
                 <div className="p-4 pb-24">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-2">ð {t("weeklySchedule", language)}</h2>
-                    <p className="text-gray-600 mb-4">{SCHEDULE_DATA.week} â <span className="font-bold text-mint-700">{LOCATION_LABELS[storeLocation]}</span></p>
+                    <h2 className="text-2xl font-bold text-mint-700 mb-2">📅 {t("weeklySchedule", language)}</h2>
+                    <p className="text-gray-600 mb-4">{SCHEDULE_DATA.week} — <span className="font-bold text-mint-700">{LOCATION_LABELS[storeLocation]}</span></p>
 
                     <div className="space-y-4">
                         {SCHEDULE_DATA.shifts.map((day, idx) => {
@@ -2289,7 +2304,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             <div key={idx} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                                 <div className="p-4 bg-gradient-to-r from-mint-50 to-white border-b">
                                     <h3 className="font-bold text-lg text-mint-700">{day.day}</h3>
-                                    {day.note && <p className="text-xs text-orange-600 mt-1">ð {day.note}</p>}
+                                    {day.note && <p className="text-xs text-orange-600 mt-1">📌 {day.note}</p>}
                                 </div>
 
                                 <div className="p-4 space-y-2">
@@ -2302,7 +2317,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 className={`p-3 rounded-lg ${isCurrentStaff ? "bg-green-50 border-2 border-green-700" : "bg-gray-50 border-2 border-gray-200"}`}
                                             >
                                                 <p className={`font-bold ${isCurrentStaff ? "text-green-700" : "text-gray-800"}`}>
-                                                    {isCurrentStaff ? "â " : ""}{entry.name}
+                                                    {isCurrentStaff ? "✓ " : ""}{entry.name}
                                                 </p>
                                                 <p className="text-sm text-gray-600">{entry.shift}</p>
                                                 <p className="text-xs text-gray-500">{entry.role}</p>
@@ -2381,7 +2396,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 id: 1,
                 titleEn: "Pho Broth (Beef)",
                 titleEs: "Caldo de Pho (Res)",
-                emoji: "ð²",
+                emoji: "🍲",
                 category: "Soups",
                 prepTimeEn: "30 min", cookTimeEn: "12 hours",
                 yieldsEn: "5 gallons", yieldsEs: "19 litros",
@@ -2399,16 +2414,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     "Salt to taste"
                 ],
                 ingredientsEs: [
-                    "10 lbs huesos de res (nudillo y tuÃ©tano)",
+                    "10 lbs huesos de res (nudillo y tuétano)",
                     "2 lbs chuck de res",
                     "3 cebollas grandes, cortadas y asadas",
                     "6 pulgadas de jengibre, cortado y asado",
-                    "5 vainas de anÃ­s estrella",
+                    "5 vainas de anís estrella",
                     "6 clavos enteros",
                     "2 rajas de canela",
                     "1 cucharada de semillas de cilantro",
                     "1/4 taza de salsa de pescado",
-                    "2 cucharadas de azÃºcar",
+                    "2 cucharadas de azúcar",
                     "Sal al gusto"
                 ],
                 instructionsEn: [
@@ -2421,26 +2436,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     "Simmer 12 hours minimum, skimming occasionally.",
                     "Remove chuck after 1.5 hours (reserve for slicing).",
                     "Strain broth through fine mesh. Season with fish sauce, sugar, salt.",
-                    "Cool properly: ice bath to 70Â°F within 2 hours, then refrigerate."
+                    "Cool properly: ice bath to 70°F within 2 hours, then refrigerate."
                 ],
                 instructionsEs: [
                     "Blanquea los huesos en agua hirviendo 10 min, escurre y enjuaga.",
-                    "Asa las cebollas y el jengibre bajo el asador hasta que estÃ©n ennegrecidos.",
-                    "Tuesta anÃ­s estrella, clavos, canela, cilantro en sartÃ©n seco hasta que estÃ©n fragantes.",
-                    "Agrega huesos y chuck a una olla grande, cubre con 7 galones de agua frÃ­a.",
+                    "Asa las cebollas y el jengibre bajo el asador hasta que estén ennegrecidos.",
+                    "Tuesta anís estrella, clavos, canela, cilantro en sartén seco hasta que estén fragantes.",
+                    "Agrega huesos y chuck a una olla grande, cubre con 7 galones de agua fría.",
                     "Lleva a hervor, luego reduce a fuego lento. Retira la espuma frecuentemente la primera hora.",
                     "Agrega cebollas asadas, jengibre y especias tostadas en bolsa de manta.",
-                    "Cocina a fuego lento 12 horas mÃ­nimo, retirando espuma ocasionalmente.",
-                    "Retira el chuck despuÃ©s de 1.5 horas (reserva para rebanar).",
-                    "Cuela el caldo por malla fina. Sazona con salsa de pescado, azÃºcar, sal.",
-                    "EnfrÃ­a correctamente: baÃ±o de hielo a 21Â°C en 2 horas, luego refrigera."
+                    "Cocina a fuego lento 12 horas mínimo, retirando espuma ocasionalmente.",
+                    "Retira el chuck después de 1.5 horas (reserva para rebanar).",
+                    "Cuela el caldo por malla fina. Sazona con salsa de pescado, azúcar, sal.",
+                    "Enfría correctamente: baño de hielo a 21°C en 2 horas, luego refrigera."
                 ]
             },
             {
                 id: 2,
-                titleEn: "Egg Rolls (Cháº£ GiÃ²)",
-                titleEs: "Rollitos Fritos (Cháº£ GiÃ²)",
-                emoji: "ð¥",
+                titleEn: "Egg Rolls (Chả Giò)",
+                titleEs: "Rollitos Fritos (Chả Giò)",
+                emoji: "🥟",
                 category: "Appetizers",
                 prepTimeEn: "45 min", cookTimeEn: "8 min per batch",
                 yieldsEn: "50 rolls", yieldsEs: "50 rollitos",
@@ -2459,7 +2474,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 ],
                 ingredientsEs: [
                     "2 lbs carne molida de cerdo",
-                    "1 lb camarÃ³n, picado",
+                    "1 lb camarón, picado",
                     "1 paquete de fideos de frijol, remojados y picados",
                     "1 taza de hongos oreja de madera, remojados y picados",
                     "2 tazas de zanahoria rallada",
@@ -2474,26 +2489,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     "Mix pork, shrimp, noodles, mushrooms, carrots, taro, onion in large bowl.",
                     "Add eggs, fish sauce, and pepper. Mix thoroughly by hand.",
                     "Place 2 tbsp filling on each wrapper. Roll tightly, sealing edge with egg wash.",
-                    "Heat oil to 325Â°F for first fry (5 min until light golden). Drain on rack.",
-                    "Increase oil to 350Â°F. Second fry 2-3 min until deep golden and crispy.",
-                    "Internal temp must reach 165Â°F. Check 3 rolls per batch.",
-                    "Serve with nÆ°á»c cháº¥m dipping sauce and lettuce wraps."
+                    "Heat oil to 325°F for first fry (5 min until light golden). Drain on rack.",
+                    "Increase oil to 350°F. Second fry 2-3 min until deep golden and crispy.",
+                    "Internal temp must reach 165°F. Check 3 rolls per batch.",
+                    "Serve with nước chấm dipping sauce and lettuce wraps."
                 ],
                 instructionsEs: [
-                    "Mezcla cerdo, camarÃ³n, fideos, hongos, zanahoria, taro, cebolla en un tazÃ³n grande.",
+                    "Mezcla cerdo, camarón, fideos, hongos, zanahoria, taro, cebolla en un tazón grande.",
                     "Agrega huevos, salsa de pescado y pimienta. Mezcla bien a mano.",
                     "Coloca 2 cucharadas de relleno en cada masa. Enrolla firmemente, sella con huevo batido.",
-                    "Calienta aceite a 163Â°C para primera fritura (5 min hasta dorado claro). Escurre en rejilla.",
-                    "Sube aceite a 177Â°C. Segunda fritura 2-3 min hasta dorado profundo y crujiente.",
-                    "La temperatura interna debe alcanzar 74Â°C. Revisa 3 rollitos por lote.",
-                    "Sirve con salsa nÆ°á»c cháº¥m y hojas de lechuga."
+                    "Calienta aceite a 163°C para primera fritura (5 min hasta dorado claro). Escurre en rejilla.",
+                    "Sube aceite a 177°C. Segunda fritura 2-3 min hasta dorado profundo y crujiente.",
+                    "La temperatura interna debe alcanzar 74°C. Revisa 3 rollitos por lote.",
+                    "Sirve con salsa nước chấm y hojas de lechuga."
                 ]
             },
             {
                 id: 3,
-                titleEn: "NÆ°á»c Cháº¥m (Dipping Sauce)",
-                titleEs: "NÆ°á»c Cháº¥m (Salsa para Mojar)",
-                emoji: "ð«",
+                titleEn: "Nước Chấm (Dipping Sauce)",
+                titleEs: "Nước Chấm (Salsa para Mojar)",
+                emoji: "🫙",
                 category: "Sauces",
                 prepTimeEn: "10 min", cookTimeEn: "None",
                 yieldsEn: "1 quart", yieldsEs: "1 litro",
@@ -2508,12 +2523,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 ],
                 ingredientsEs: [
                     "1 taza de salsa de pescado",
-                    "1 taza de azÃºcar",
+                    "1 taza de azúcar",
                     "2 tazas de agua tibia",
-                    "1/2 taza de jugo de limÃ³n (fresco)",
+                    "1/2 taza de jugo de limón (fresco)",
                     "4 dientes de ajo, picados",
                     "2 chiles Thai, picados",
-                    "2 cucharadas de zanahoria rallada (guarniciÃ³n)"
+                    "2 cucharadas de zanahoria rallada (guarnición)"
                 ],
                 instructionsEn: [
                     "Dissolve sugar in warm water completely.",
@@ -2524,31 +2539,31 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     "Keeps 5 days refrigerated. Label with prep date."
                 ],
                 instructionsEs: [
-                    "Disuelve el azÃºcar en agua tibia completamente.",
-                    "Agrega salsa de pescado y jugo de limÃ³n. Mezcla para combinar.",
+                    "Disuelve el azúcar en agua tibia completamente.",
+                    "Agrega salsa de pescado y jugo de limón. Mezcla para combinar.",
                     "Agrega ajo picado y chiles Thai.",
-                    "Prueba y ajusta: mÃ¡s azÃºcar si estÃ¡ muy salado, mÃ¡s limÃ³n si estÃ¡ muy dulce.",
+                    "Prueba y ajusta: más azúcar si está muy salado, más limón si está muy dulce.",
                     "Decora con zanahoria rallada. Refrigera.",
-                    "Se conserva 5 dÃ­as refrigerado. Etiqueta con fecha de preparaciÃ³n."
+                    "Se conserva 5 días refrigerado. Etiqueta con fecha de preparación."
                 ]
             },
             {
                 id: 4,
-                titleEn: "Vietnamese Iced Coffee (CÃ  PhÃª Sá»¯a ÄÃ¡)",
-                titleEs: "CafÃ© Vietnamita Helado (CÃ  PhÃª Sá»¯a ÄÃ¡)",
-                emoji: "â",
+                titleEn: "Vietnamese Iced Coffee (Cà Phê Sữa Đá)",
+                titleEs: "Café Vietnamita Helado (Cà Phê Sữa Đá)",
+                emoji: "☕",
                 category: "Drinks",
                 prepTimeEn: "5 min", cookTimeEn: "4 min drip",
-                yieldsEn: "1 serving", yieldsEs: "1 porciÃ³n",
+                yieldsEn: "1 serving", yieldsEs: "1 porción",
                 ingredientsEn: [
-                    "2 tbsp Vietnamese ground coffee (Trung Nguyen or CafÃ© Du Monde)",
+                    "2 tbsp Vietnamese ground coffee (Trung Nguyen or Café Du Monde)",
                     "2-3 tbsp sweetened condensed milk",
                     "6 oz boiling water",
                     "Ice to fill glass",
                     "Phin filter (Vietnamese drip filter)"
                 ],
                 ingredientsEs: [
-                    "2 cucharadas de cafÃ© molido vietnamita (Trung Nguyen o CafÃ© Du Monde)",
+                    "2 cucharadas de café molido vietnamita (Trung Nguyen o Café Du Monde)",
                     "2-3 cucharadas de leche condensada azucarada",
                     "6 oz de agua hirviendo",
                     "Hielo para llenar el vaso",
@@ -2564,10 +2579,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 ],
                 instructionsEs: [
                     "Agrega leche condensada al fondo de un vaso.",
-                    "Coloca el filtro phin encima del vaso. Agrega cafÃ© molido, presiona ligeramente.",
-                    "Vierte una pequeÃ±a cantidad de agua caliente para florecer (30 segundos).",
+                    "Coloca el filtro phin encima del vaso. Agrega café molido, presiona ligeramente.",
+                    "Vierte una pequeña cantidad de agua caliente para florecer (30 segundos).",
                     "Llena el phin con el agua caliente restante. Tapa y deja gotear (4-5 min).",
-                    "Una vez goteado, mezcla el cafÃ© y la leche condensada.",
+                    "Una vez goteado, mezcla el café y la leche condensada.",
                     "Vierte sobre un vaso lleno de hielo. Sirve inmediatamente."
                 ]
             }
@@ -2580,7 +2595,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
         function RecipeForm({ language, recipe, onSave, onCancel }) {
             const isEdit = !!recipe;
             const [form, setForm] = useState(recipe || {
-                titleEn: "", titleEs: "", emoji: "ð½ï¸", category: "",
+                titleEn: "", titleEs: "", emoji: "🍽️", category: "",
                 prepTimeEn: "", cookTimeEn: "",
                 yieldsEn: "", yieldsEs: "",
                 ingredientsEn: [""], ingredientsEs: [""],
@@ -2600,7 +2615,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const handleSave = () => {
-                if (!form.titleEn.trim()) { alert(language === "es" ? "Se requiere tÃ­tulo en inglÃ©s" : "English title is required"); return; }
+                if (!form.titleEn.trim()) { alert(language === "es" ? "Se requiere título en inglés" : "English title is required"); return; }
                 const cleaned = {
                     ...form,
                     ingredientsEn: form.ingredientsEn.filter(s => s.trim()),
@@ -2627,7 +2642,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 onChange={e => updateListItem(field, i, e.target.value)}
                                 placeholder={`${label} ${i + 1}`}
                             />
-                            <button onClick={() => removeListItem(field, i)} className="text-red-400 text-sm px-1">â</button>
+                            <button onClick={() => removeListItem(field, i)} className="text-red-400 text-sm px-1">✕</button>
                         </div>
                     ))}
                     <button onClick={() => addListItem(field)} className="text-xs text-mint-700 font-bold mt-1">{language === "es" ? "+ Agregar" : "+ Add"}</button>
@@ -2646,22 +2661,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     <div className="space-y-3">
                         <div className="flex gap-2">
                             <div className="w-16">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Ãcono" : "Emoji"}</label>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Ícono" : "Emoji"}</label>
                                 <input className="w-full border border-gray-300 rounded px-2 py-1 text-center text-xl" value={form.emoji} onChange={e => updateField("emoji", e.target.value)} />
                             </div>
                             <div className="flex-1">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "CategorÃ­a" : "Category"}</label>
+                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Categoría" : "Category"}</label>
                                 <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.category} onChange={e => updateField("category", e.target.value)} placeholder={language === "es" ? "ej. Sopas, Aperitivos, Salsas" : "e.g. Soups, Appetizers, Sauces"} />
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "TÃ­tulo (InglÃ©s) *" : "Title (English) *"}</label>
-                            <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.titleEn} onChange={e => updateField("titleEn", e.target.value)} placeholder={language === "es" ? "Nombre de la receta en inglÃ©s" : "Recipe name in English"} />
+                            <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Título (Inglés) *" : "Title (English) *"}</label>
+                            <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.titleEn} onChange={e => updateField("titleEn", e.target.value)} placeholder={language === "es" ? "Nombre de la receta en inglés" : "Recipe name in English"} />
                         </div>
                         <div>
-                            <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "TÃ­tulo (EspaÃ±ol)" : "Title (Spanish)"}</label>
-                            <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.titleEs} onChange={e => updateField("titleEs", e.target.value)} placeholder={language === "es" ? "Nombre en espaÃ±ol" : "Recipe name in Spanish"} />
+                            <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Título (Español)" : "Title (Spanish)"}</label>
+                            <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.titleEs} onChange={e => updateField("titleEs", e.target.value)} placeholder={language === "es" ? "Nombre en español" : "Recipe name in Spanish"} />
                         </div>
 
                         <div className="flex gap-2">
@@ -2687,15 +2702,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         </div>
 
                         <div className="border-t pt-3 mt-3">
-                            <h3 className="font-bold text-sm text-amber-800 mb-2">ð {t("ingredients", language)}</h3>
-                            {renderListEditor("ingredientsEn", language === "es" ? "InglÃ©s" : "English")}
-                            {renderListEditor("ingredientsEs", language === "es" ? "EspaÃ±ol" : "Spanish")}
+                            <h3 className="font-bold text-sm text-amber-800 mb-2">📝 {t("ingredients", language)}</h3>
+                            {renderListEditor("ingredientsEn", language === "es" ? "Inglés" : "English")}
+                            {renderListEditor("ingredientsEs", language === "es" ? "Español" : "Spanish")}
                         </div>
 
                         <div className="border-t pt-3 mt-3">
-                            <h3 className="font-bold text-sm text-amber-800 mb-2">ð¨âð³ {t("instructions", language)}</h3>
-                            {renderListEditor("instructionsEn", language === "es" ? "InglÃ©s" : "English")}
-                            {renderListEditor("instructionsEs", language === "es" ? "EspaÃ±ol" : "Spanish")}
+                            <h3 className="font-bold text-sm text-amber-800 mb-2">👨‍🍳 {t("instructions", language)}</h3>
+                            {renderListEditor("instructionsEn", language === "es" ? "Inglés" : "English")}
+                            {renderListEditor("instructionsEs", language === "es" ? "Español" : "Spanish")}
                         </div>
 
                         <button
@@ -2709,3 +2724,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             );
         }
 
+        // Recipes Component
+
+}
