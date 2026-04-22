@@ -13,7 +13,6 @@ import Operations from './components/Operations';
 import MenuReference from './components/MenuReference';
 import Schedule from './components/Schedule';
 import Recipes from './components/Recipes';
-import LaborDashboard from './components/LaborDashboard';
 import Eighty6Dashboard from './components/Eighty6Dashboard';
 import CateringOrder from './components/CateringOrder';
 import MaintenanceRequest from './components/MaintenanceRequest';
@@ -206,15 +205,6 @@ export default function App() {
                                     </div>
                                 )}
 
-                                {staffIsAdmin && (
-                                    <button onClick={() => setActiveTab("labor")}
-                                        style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
-                                        <div style={{width: "44px", height: "44px", background: "#4338ca", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>📊</div>
-                                        <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("laborPercent", language)}</p>
-                                        <p style={{fontSize: "10px", color: "#818cf8", margin: "2px 0 0"}}>{language === "es" ? "En vivo" : "Live"}</p>
-                                    </button>
-                                )}
-
                                 <button onClick={() => setActiveTab("eighty6")}
                                     style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
                                     <div style={{width: "44px", height: "44px", background: "#991b1b", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🚫</div>
@@ -253,7 +243,6 @@ export default function App() {
                 {activeTab === "menu" && <MenuReference language={language} />}
                 {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} />}
                 {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} />}
-                {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
                 {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
                 {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
                 {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
