@@ -37,21 +37,52 @@ body {
     position: relative;
 }
 
-.recipe-watermark::after {
-    content: attr(data-watermark);
+.recipe-watermark::before {
+    content: attr(data-watermark) " \00B7  " attr(data-watermark) " \00B7  " attr(data-watermark);
     position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) rotate(-30deg);
-    font-size: 3rem;
-    font-weight: 900;
-    color: rgba(0,0,0,0.04);
+    top: 20%;
+    left: -10%;
+    transform: rotate(-25deg);
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: rgba(0,0,0,0.06);
     white-space: nowrap;
     pointer-events: none;
     z-index: 1;
+    letter-spacing: 0.1em;
+}
+
+.recipe-watermark::after {
+    content: attr(data-watermark) " \00B7  " attr(data-watermark) " \00B7  " attr(data-watermark);
+    position: absolute;
+    top: 60%;
+    left: -5%;
+    transform: rotate(-25deg);
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: rgba(0,0,0,0.06);
+    white-space: nowrap;
+    pointer-events: none;
+    z-index: 1;
+    letter-spacing: 0.1em;
 }
 
 .screen-blur {
     filter: blur(20px) !important;
     transition: filter 0.15s ease;
+}
+
+/* Block printing recipes */
+@media print {
+    .recipe-protected {
+        display: none !important;
+    }
+    body::after {
+        content: "Printing recipes is not allowed.";
+        display: block;
+        font-size: 2rem;
+        text-align: center;
+        padding: 4rem;
+        color: #666;
+    }
 }
