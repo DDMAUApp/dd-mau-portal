@@ -18,6 +18,7 @@ import Eighty6Dashboard from './components/Eighty6Dashboard';
 import CateringOrder from './components/CateringOrder';
 import MaintenanceRequest from './components/MaintenanceRequest';
 import AdminPanel from './components/AdminPanel';
+import InsuranceEnrollment from './components/InsuranceEnrollment';
 import useGeofence from './components/hooks/useGeofence'; 
 
 // One-time migration: copy old non-suffixed docs/collections to _webster if they exist
@@ -226,7 +227,11 @@ export default function App() {
                                         <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{b.sub}</p>
                                     </button>
                                 ))}
-
+<button onClick={() => setActiveTab("insurance")} style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🏥</div>
+                <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{language === "es" ? "Seguro" : "Insurance"}</p>
+                <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Beneficios" : "Benefits"}</p>
+              </button>                                
                                 {staffIsAdmin && (
                                     <button onClick={() => setActiveTab("admin")}
                                         style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
@@ -250,6 +255,7 @@ export default function App() {
                 {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
                 {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
                 {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
+                {activeTab === "insurance" && <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />}
                 {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
             </div>
 
