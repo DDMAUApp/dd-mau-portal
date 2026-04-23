@@ -18,7 +18,7 @@ import Eighty6Dashboard from './components/Eighty6Dashboard';
 import CateringOrder from './components/CateringOrder';
 import MaintenanceRequest from './components/MaintenanceRequest';
 import AdminPanel from './components/AdminPanel';
-import useGeofence from './components/hooks/useGeofence';
+import useGeofence from './components/hooks/useGeofence'; 
 
 // One-time migration: copy old non-suffixed docs/collections to _webster if they exist
 async function runMigrations() {
