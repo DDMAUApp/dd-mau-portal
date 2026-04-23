@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin, LOCATION_LABELS } from '../data/staff';
+import { isAdmin } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
 
@@ -10,11 +10,13 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
+            const [editOpsAccess, setEditOpsAccess] = useState(false);
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
             const [newPin, setNewPin] = useState("");
             const [newLocation, setNewLocation] = useState(storeLocation || "webster");
+            const [newOpsAccess, setNewOpsAccess] = useState(false);
             const [editLocation, setEditLocation] = useState("");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
@@ -73,20 +75,21 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleSavePin = async (id) => {
                 if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
-                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster" } : s);
+                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess } : s);
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
                 setEditingId(null);
                 setEditPin("");
                 setEditRole("");
                 setEditLocation("");
+                setEditOpsAccess(false);
                 showSaved();
             };
 
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
                 const maxId = Math.max(...staffList.map(s => s.id), 0);
-                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation };
+                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess };
                 const updated = [...staffList, newStaff];
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
@@ -95,6 +98,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setNewRole("FOH");
                 setNewPin("");
                 setNewLocation(storeLocation || "webster");
+                setNewOpsAccess(false);
                 showSaved();
             };
 
@@ -288,13 +292,23 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                             placeholder="0000"
                                                             className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-mint-700 focus:outline-none" />
                                                     </div>
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Acceso a Operaciones" : "Daily Ops Access"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Desbloquear sin contrase\u00F1a" : "Unlock without password"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditOpsAccess(!editOpsAccess)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editOpsAccess ? "bg-green-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editOpsAccess ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     <div className="flex gap-2">
                                                         <button onClick={() => handleSavePin(person.id)}
                                                             disabled={editPin.length !== 4}
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -304,10 +318,10 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -365,13 +379,23 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 placeholder="0000"
                                                 className="w-full px-3 py-2 border-2 border-gray-300 rounded-lg text-center text-2xl tracking-widest font-mono focus:border-green-700 focus:outline-none" />
                                         </div>
+                                        <div className="flex items-center justify-between bg-white rounded-lg p-3 border border-gray-200">
+                                            <div>
+                                                <p className="text-sm font-bold text-gray-700">{language === "es" ? "Acceso a Operaciones" : "Daily Ops Access"}</p>
+                                                <p className="text-xs text-gray-500">{language === "es" ? "Desbloquear sin contrase\u00F1a" : "Unlock without password"}</p>
+                                            </div>
+                                            <button onClick={() => setNewOpsAccess(!newOpsAccess)}
+                                                className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${newOpsAccess ? "bg-green-600" : "bg-gray-300"}`}>
+                                                <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${newOpsAccess ? "translate-x-7" : "translate-x-1"}`} />
+                                            </button>
+                                        </div>
                                         <div className="flex gap-2">
                                             <button onClick={handleAddStaff}
                                                 disabled={!newName.trim() || newPin.length !== 4}
                                                 className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                 {t("addStaff", language)}
                                             </button>
-                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); }}
+                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); }}
                                                 className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                 {t("cancel", language)}
                                             </button>
@@ -630,3 +654,12 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             }
         ];
 
+        const ALL_SAUCES = ["Vietnamese Vinaigrette", "Peanut", "Hoisin", "Sweet Chili", "DD", "Spicy DD"];
+        const ALL_SAUCES_ES = ["Vinagreta Vietnamita", "Cacahuate", "Hoisin", "Chile Dulce", "DD", "DD Picante"];
+        const ALL_PROTEINS = ["Steak", "Shrimp", "Chicken", "Pork", "Tofu"];
+        const ALL_PROTEINS_ES = ["Res", "Camarón", "Pollo", "Puerco", "Tofu"];
+        const BASE_OPTIONS = ["Vermicelli", "Salad", "Rice"];
+        const BASE_OPTIONS_ES = ["Fideos", "Ensalada", "Arroz"];
+
+        // Catering Order Component
+}
