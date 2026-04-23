@@ -206,14 +206,14 @@ export default function App() {
                                     </div>
                                 )}
 
-                                {staffIsAdmin && (
-                                    <button onClick={() => setActiveTab("labor")}
-                                        style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
-                                        <div style={{width: "44px", height: "44px", background: "#4338ca", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>📊</div>
-                                        <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("laborPercent", language)}</p>
-                                        <p style={{fontSize: "10px", color: "#818cf8", margin: "2px 0 0"}}>{language === "es" ? "En vivo" : "Live"}</p>
-                                    </button>
-                                )}
+                               Line 209: {staffIsAdmin && (
+Line 210:     <button onClick={() => setActive...
+Line 211:         style={{background: "#1f2937...
+Line 212:         <div style={{width: "44px",...
+Line 213:         <p style={{fontSize: "13px",...
+Line 214:         <p style={{fontSize: "10px",...
+Line 215:     </button>
+Line 216: )}
 
                                 <button onClick={() => setActiveTab("eighty6")}
                                     style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
