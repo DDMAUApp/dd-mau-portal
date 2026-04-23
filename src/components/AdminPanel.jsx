@@ -4,7 +4,7 @@ import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query,
 import { t } from '../data/translations';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
-import InventoryHistory from './InventoryHistory';
+import InventoryHistory from './InventoryHistory'; 
 
 export default function AdminPanel({ language, staffList, setStaffList, storeLocation }) {
             const [editingId, setEditingId] = useState(null);
