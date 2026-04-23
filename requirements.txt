@@ -1,4 +1,0 @@
-requests>=2.31.0
-google-cloud-firestore>=2.16.0
-playwright>=1.40.0
-
