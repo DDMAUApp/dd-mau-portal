@@ -1,7 +1,6 @@
-// Insurance Enrollment with Excel export
-import { useState, useEffect } from 'react';  
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore'; 
+import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 
 export default function InsuranceEnrollment({ language, staffName, staffList }) {
   const [loading, setLoading] = useState(true);
@@ -30,15 +29,17 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     city: "",
     state: "MO",
     zip: "",
-    emergencyName: "",
-    emergencyPhone: "",
-    emergencyRelation: "",
+    hoursPerWeek: "",
+    hasCurrentInsurance: "",
+    desiredEffectiveDate: "",
     enrollMedical: false,
     enrollDental: false,
     enrollVision: false,
+    enrollLife: false,
     medicalPlan: "",
     dentalPlan: "",
     visionPlan: "",
+    lifePlan: "",
     coverageTier: "employee",
     dependents: [],
     signature: "",
@@ -147,21 +148,21 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     return [
       e.staffName, e.status, e.submittedAt ? new Date(e.submittedAt).toLocaleDateString() : "",
       f.legalFirstName || "", f.legalLastName || "", f.dateOfBirth || "", f.ssn4 || "",
-      f.gender || "", f.maritalStatus || "", f.phone || "", f.email || "",
+      f.gender || "", f.maritalStatus || "", f.hoursPerWeek || "", f.hasCurrentInsurance || "",
+      f.desiredEffectiveDate || "", f.phone || "", f.email || "",
       f.address || "", f.city || "", f.state || "", f.zip || "",
-      f.emergencyName || "", f.emergencyPhone || "", f.emergencyRelation || "",
       f.enrollMedical ? "Yes" : "No", f.medicalPlan || "",
       f.enrollDental ? "Yes" : "No", f.dentalPlan || "",
       f.enrollVision ? "Yes" : "No", f.visionPlan || "",
+      f.enrollLife ? "Yes" : "No", f.lifePlan || "",
       f.coverageTier || "", deps, f.signature || "", f.signatureDate || ""
     ];
   };
 
   const EXCEL_HEADERS = [
     "Employee","Status","Submitted","Legal First","Legal Last","DOB","SSN (last 4)","Gender",
-    "Marital Status","Phone","Email","Address","City","State","ZIP",
-    "Emergency Contact","Emergency Phone","Emergency Relation",
-    "Medical","Medical Plan","Dental","Dental Plan","Vision","Vision Plan",
+    "Marital Status","Hours/Week","Current Insurance","Effective Date","Phone","Email","Address","City","State","ZIP",
+    "Medical","Medical Plan","Dental","Dental Plan","Vision","Vision Plan","Life","Life Plan",
     "Coverage Tier","Dependents","Signature","Signature Date"
   ];
 
@@ -216,6 +217,9 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
         ["SSN (last 4)", f.ssn4 || ""],
         ["Gender", f.gender || ""],
         ["Marital Status", f.maritalStatus || ""],
+        ["Hours Per Week", f.hoursPerWeek || ""],
+        ["Current Insurance", f.hasCurrentInsurance || ""],
+        ["Desired Effective Date", f.desiredEffectiveDate || ""],
         [],
         ["— Contact Information —"],
         ["Phone", f.phone || ""],
@@ -225,11 +229,6 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
         ["State", f.state || ""],
         ["ZIP", f.zip || ""],
         [],
-        ["— Emergency Contact —"],
-        ["Name", f.emergencyName || ""],
-        ["Phone", f.emergencyPhone || ""],
-        ["Relationship", f.emergencyRelation || ""],
-        [],
         ["— Coverage Selection —"],
         ["Medical", f.enrollMedical ? "Yes" : "No"],
         ["Medical Plan", f.medicalPlan || "—"],
@@ -237,6 +236,8 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
         ["Dental Plan", f.dentalPlan || "—"],
         ["Vision", f.enrollVision ? "Yes" : "No"],
         ["Vision Plan", f.visionPlan || "—"],
+        ["Life Insurance", f.enrollLife ? "Yes" : "No"],
+        ["Life Plan", f.lifePlan || "—"],
         ["Coverage Tier", f.coverageTier || ""],
         [],
         ["— Dependents —"],
@@ -294,18 +295,18 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     <div class="row"><span class="label">SSN (last 4)</span><span class="val">***${f.ssn4 || "—"}</span></div>
     <div class="row"><span class="label">Gender</span><span class="val">${f.gender || "—"}</span></div>
     <div class="row"><span class="label">Marital Status</span><span class="val">${f.maritalStatus || "—"}</span></div>
+    <div class="row"><span class="label">Hours Per Week</span><span class="val">${f.hoursPerWeek || "—"}</span></div>
+    <div class="row"><span class="label">Current Insurance</span><span class="val">${f.hasCurrentInsurance || "—"}</span></div>
+    <div class="row"><span class="label">Desired Effective Date</span><span class="val">${f.desiredEffectiveDate || "—"}</span></div>
     <h2>Contact Information</h2>
     <div class="row"><span class="label">Phone</span><span class="val">${f.phone || "—"}</span></div>
     <div class="row"><span class="label">Email</span><span class="val">${f.email || "—"}</span></div>
     <div class="row"><span class="label">Address</span><span class="val">${f.address || ""}, ${f.city || ""}, ${f.state || ""} ${f.zip || ""}</span></div>
-    <h2>Emergency Contact</h2>
-    <div class="row"><span class="label">Name</span><span class="val">${f.emergencyName || "—"}</span></div>
-    <div class="row"><span class="label">Phone</span><span class="val">${f.emergencyPhone || "—"}</span></div>
-    <div class="row"><span class="label">Relationship</span><span class="val">${f.emergencyRelation || "—"}</span></div>
     <h2>Coverage Selection</h2>
     <div class="row"><span class="label">Medical</span><span class="val">${f.enrollMedical ? "Yes — " + (f.medicalPlan || "") : "No"}</span></div>
     <div class="row"><span class="label">Dental</span><span class="val">${f.enrollDental ? "Yes — " + (f.dentalPlan || "") : "No"}</span></div>
     <div class="row"><span class="label">Vision</span><span class="val">${f.enrollVision ? "Yes — " + (f.visionPlan || "") : "No"}</span></div>
+    <div class="row"><span class="label">Life Insurance</span><span class="val">${f.enrollLife ? "Yes — " + (f.lifePlan || "") : "No"}</span></div>
     <div class="row"><span class="label">Coverage Tier</span><span class="val">${f.coverageTier || "—"}</span></div>
     ${(f.dependents || []).length > 0 ? `<h2>Dependents</h2><table><tr><th>Name</th><th>Relationship</th><th>DOB</th><th>SSN4</th></tr>${deps}</table>` : ""}
     <div class="sig">
@@ -330,6 +331,11 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
       setAllEnrollments(prev => prev.map(e =>
         e.id === enrollmentId ? { ...e, status: newStatus, adminNote: note || "" } : e
       ));
+      setSelectedEnrollment(prev =>
+        prev && prev.id === enrollmentId
+          ? { ...prev, status: newStatus, adminNote: note || "", updatedAt: new Date().toISOString() }
+          : prev
+      );
     } catch (err) {
       console.error("Error updating status:", err);
     }
@@ -434,6 +440,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
                     selectedEnrollment.formData?.enrollMedical && "Medical",
                     selectedEnrollment.formData?.enrollDental && "Dental",
                     selectedEnrollment.formData?.enrollVision && "Vision",
+                    selectedEnrollment.formData?.enrollLife && "Life",
                   ].filter(Boolean).join(", ") || "None"}
                 </span>
               </div>
@@ -576,6 +583,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
                   form.enrollMedical && (L("Medical", "Médico")),
                   form.enrollDental && (L("Dental", "Dental")),
                   form.enrollVision && (L("Visión", "Visión")),
+                  form.enrollLife && (L("Life", "Vida")),
                 ].filter(Boolean).join(", ") || L("None selected", "Ninguna")}
               </span>
             </div>
@@ -767,6 +775,66 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
                 <option value="widowed">{L("Widowed", "Viudo/a")}</option>
               </select>
             </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-600 block mb-1">
+                {L("Hours Worked Per Week", "Horas Trabajadas Por Semana")} *
+              </label>
+              <select
+                value={form.hoursPerWeek}
+                onChange={e => updateField("hoursPerWeek", e.target.value)}
+                className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none"
+              >
+                <option value="">{L("Select...", "Seleccionar...")}</option>
+                <option value="under_20">{L("Under 20 hours", "Menos de 20 horas")}</option>
+                <option value="20_29">{L("20–29 hours", "20–29 horas")}</option>
+                <option value="30_39">{L("30–39 hours", "30–39 horas")}</option>
+                <option value="40_plus">{L("40+ hours", "40+ horas")}</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-600 block mb-1">
+                {L("Do you currently have health insurance?", "¿Tienes seguro médico actualmente?")} *
+              </label>
+              <div className="flex gap-2">
+                {[
+                  { val: "yes", en: "Yes", es: "Sí" },
+                  { val: "no", en: "No", es: "No" },
+                ].map(opt => (
+                  <button
+                    key={opt.val}
+                    onClick={() => updateField("hasCurrentInsurance", opt.val)}
+                    className={`flex-1 py-2 rounded-lg text-xs font-bold border-2 transition ${
+                      form.hasCurrentInsurance === opt.val
+                        ? "bg-mint-700 text-white border-mint-700"
+                        : "bg-gray-50 text-gray-600 border-gray-200"
+                    }`}
+                  >
+                    {L(opt.en, opt.es)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-gray-600 block mb-1">
+                {L("Desired Effective Date", "Fecha de Inicio Deseada")} *
+              </label>
+              <select
+                value={form.desiredEffectiveDate}
+                onChange={e => updateField("desiredEffectiveDate", e.target.value)}
+                className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none"
+              >
+                <option value="">{L("Select month...", "Seleccionar mes...")}</option>
+                <option value="2026-08">{L("August 2026", "Agosto 2026")}</option>
+                <option value="2026-09">{L("September 2026", "Septiembre 2026")}</option>
+                <option value="2026-10">{L("October 2026", "Octubre 2026")}</option>
+                <option value="2026-11">{L("November 2026", "Noviembre 2026")}</option>
+                <option value="2026-12">{L("December 2026", "Diciembre 2026")}</option>
+                <option value="2027-01">{L("January 2027", "Enero 2027")}</option>
+              </select>
+            </div>
           </>
         )}
 
@@ -855,55 +923,6 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
               </div>
             </div>
 
-            <div className="border-t-2 border-gray-100 pt-4">
-              <h4 className="text-xs font-bold text-gray-600 uppercase tracking-wide mb-3">
-                {L("Emergency Contact", "Contacto de Emergencia")}
-              </h4>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-bold text-gray-500 block mb-1">
-                    {L("Name", "Nombre")} *
-                  </label>
-                  <input
-                    type="text"
-                    value={form.emergencyName}
-                    onChange={e => updateField("emergencyName", e.target.value)}
-                    className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-1">
-                      {L("Phone", "Teléfono")} *
-                    </label>
-                    <input
-                      type="tel"
-                      value={form.emergencyPhone}
-                      onChange={e => updateField("emergencyPhone", e.target.value)}
-                      className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-xs font-bold text-gray-500 block mb-1">
-                      {L("Relationship", "Relación")}
-                    </label>
-                    <select
-                      value={form.emergencyRelation}
-                      onChange={e => updateField("emergencyRelation", e.target.value)}
-                      className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none"
-                    >
-                      <option value="">{L("Select...", "Seleccionar...")}</option>
-                      <option value="spouse">{L("Spouse", "Cónyuge")}</option>
-                      <option value="parent">{L("Parent", "Padre/Madre")}</option>
-                      <option value="sibling">{L("Sibling", "Hermano/a")}</option>
-                      <option value="child">{L("Child", "Hijo/a")}</option>
-                      <option value="friend">{L("Friend", "Amigo/a")}</option>
-                      <option value="other">{L("Other", "Otro")}</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
           </>
         )}
 
@@ -937,6 +956,13 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
                 plans: [
                   { val: "basic", en: "Basic Vision", es: "Visión Básica", desc: L("Annual exam + frames", "Examen anual + marcos") },
                   { val: "premium", en: "Premium Vision", es: "Visión Premium", desc: L("Exam + frames + contacts", "Examen + marcos + contactos") },
+                ]
+              },
+              { key: "enrollLife", icon: "🛡️", en: "Life Insurance", es: "Seguro de Vida", planKey: "lifePlan",
+                plans: [
+                  { val: "basic", en: "Basic ($25k)", es: "Básico ($25k)", desc: L("$25,000 coverage", "Cobertura de $25,000") },
+                  { val: "standard", en: "Standard ($50k)", es: "Estándar ($50k)", desc: L("$50,000 coverage", "Cobertura de $50,000") },
+                  { val: "premium", en: "Premium ($100k)", es: "Premium ($100k)", desc: L("$100,000 coverage", "Cobertura de $100,000") },
                 ]
               },
             ].map(benefit => (
@@ -1100,6 +1126,20 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
                 <span className="font-bold">{form.dateOfBirth || "—"}</span>
               </div>
               <div className="flex justify-between">
+                <span className="text-gray-600">{L("Hours/Week", "Horas/Semana")}</span>
+                <span className="font-bold">
+                  {{ under_20: L("Under 20", "Menos de 20"), "20_29": "20–29", "30_39": "30–39", "40_plus": "40+" }[form.hoursPerWeek] || "—"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">{L("Current Insurance", "Seguro Actual")}</span>
+                <span className="font-bold">{form.hasCurrentInsurance === "yes" ? L("Yes", "Sí") : form.hasCurrentInsurance === "no" ? "No" : "—"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">{L("Effective Date", "Fecha de Inicio")}</span>
+                <span className="font-bold">{form.desiredEffectiveDate || "—"}</span>
+              </div>
+              <div className="flex justify-between">
                 <span className="text-gray-600">{L("Phone", "Teléfono")}</span>
                 <span className="font-bold">{form.phone || "—"}</span>
               </div>
@@ -1119,6 +1159,10 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
               <div className="flex justify-between">
                 <span className="text-gray-600">{L("Vision", "Visión")}</span>
                 <span className="font-bold">{form.enrollVision ? (form.visionPlan || "✓") : "—"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">{L("Life", "Vida")}</span>
+                <span className="font-bold">{form.enrollLife ? (form.lifePlan || "✓") : "—"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-600">{L("Tier", "Nivel")}</span>
