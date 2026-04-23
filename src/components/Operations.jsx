@@ -2770,7 +2770,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.yieldsEs} onChange={e => updateField("yieldsEs", e.target.value)} placeholder="e.g. 19 litros" />
                             </div>
                         </div>
-
+ 
                         <div className="border-t pt-3 mt-3">
                             <h3 className="font-bold text-sm text-amber-800 mb-2">{"\u{1F4DD}"} {t("ingredients", language)}</h3>
                             {renderListEditor("ingredientsEn", language === "es" ? "Inglés" : "English")}
