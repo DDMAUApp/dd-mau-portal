@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin } from '../data/staff';
-import ChecklistHistory from './ChecklistHistory';
+import { isAdmin, LOCATION_LABELS } from '../data/staff';
+import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
 import InventoryHistory from './InventoryHistory';
 
 export default function AdminPanel({ language, staffList, setStaffList, storeLocation }) {
