@@ -9,11 +9,24 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   const [existingData, setExistingData] = useState(null);
   const [step, setStep] = useState(1);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [allEnrollments, setAllEnrollments] = useState([]);
   const [loadingAll, setLoadingAll] = useState(false);
   const [selectedEnrollment, setSelectedEnrollment] = useState(null);
 
+  const ADMIN_PIN = "ZhongGuo87";
   const isAdmin = staffName && ["andrew shih", "julie truong"].includes(staffName.toLowerCase());
+
+  const handleAdminAccess = () => {
+    const entered = prompt("Enter admin password:");
+    if (entered === ADMIN_PIN) {
+      setAdminUnlocked(true);
+      setShowAdmin(true);
+      loadAllEnrollments();
+    } else if (entered !== null) {
+      alert("Incorrect password.");
+    }
+  };
 
   // Form state
   const [form, setForm] = useState({
@@ -372,7 +385,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   }
 
   // Admin panel (must be checked before existingData so the button works)
-  if (isAdmin && showAdmin) {
+  if (isAdmin && showAdmin && adminUnlocked) {
     return (
       <div className="p-4 pb-24">
         <div className="flex items-center justify-between mb-4">
@@ -380,7 +393,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
             📋 {L("Insurance Admin", "Admin de Seguro")}
           </h2>
           <button
-            onClick={() => setShowAdmin(false)}
+            onClick={() => { setShowAdmin(false); setAdminUnlocked(false); }}
             className="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-lg"
           >
             ← {L("Back", "Atrás")}
@@ -546,7 +559,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
           </h2>
           {isAdmin && (
             <button
-              onClick={() => { setShowAdmin(true); loadAllEnrollments(); }}
+              onClick={handleAdminAccess}
               className="text-xs font-bold text-mint-700 bg-mint-50 px-3 py-1 rounded-lg border border-mint-200"
             >
               📋 Admin
@@ -631,7 +644,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
         </h2>
         {isAdmin && (
           <button
-            onClick={() => { setShowAdmin(true); loadAllEnrollments(); }}
+            onClick={handleAdminAccess}
             className="text-xs font-bold text-mint-700 bg-mint-50 px-3 py-1 rounded-lg border border-mint-200"
           >
             📋 Admin
