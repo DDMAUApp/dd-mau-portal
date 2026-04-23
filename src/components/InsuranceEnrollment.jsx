@@ -127,38 +127,142 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     setLoadingAll(false);
   };
 
-  // CSV export
-  const exportCSV = () => {
-    const headers = [
-      "Employee","Status","Submitted","Legal First","Legal Last","DOB","SSN4","Gender",
-      "Marital Status","Phone","Email","Address","City","State","ZIP",
-      "Emergency Contact","Emergency Phone","Emergency Relation",
-      "Medical","Medical Plan","Dental","Dental Plan","Vision","Vision Plan",
-      "Coverage Tier","Dependents","Signature","Signature Date"
-    ];
-    const rows = allEnrollments.map(e => {
-      const f = e.formData || {};
-      const deps = (f.dependents || []).map(d => `${d.name} (${d.relationship})`).join("; ");
-      return [
-        e.staffName, e.status, e.submittedAt || "",
-        f.legalFirstName || "", f.legalLastName || "", f.dateOfBirth || "", f.ssn4 || "",
-        f.gender || "", f.maritalStatus || "", f.phone || "", f.email || "",
-        f.address || "", f.city || "", f.state || "", f.zip || "",
-        f.emergencyName || "", f.emergencyPhone || "", f.emergencyRelation || "",
-        f.enrollMedical ? "Yes" : "No", f.medicalPlan || "",
-        f.enrollDental ? "Yes" : "No", f.dentalPlan || "",
-        f.enrollVision ? "Yes" : "No", f.visionPlan || "",
-        f.coverageTier || "", deps, f.signature || "", f.signatureDate || ""
-      ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(",");
+  // Load SheetJS from CDN
+  const loadSheetJS = () => {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    return new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js";
+      script.onload = () => resolve(window.XLSX);
+      script.onerror = () => reject(new Error("Failed to load SheetJS"));
+      document.head.appendChild(script);
     });
-    const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+  };
+
+  // Helper: build row array from one enrollment
+  const enrollmentToRow = (e) => {
+    const f = e.formData || {};
+    const deps = (f.dependents || []).map(d => `${d.name} (${d.relationship})`).join("; ");
+    return [
+      e.staffName, e.status, e.submittedAt ? new Date(e.submittedAt).toLocaleDateString() : "",
+      f.legalFirstName || "", f.legalLastName || "", f.dateOfBirth || "", f.ssn4 || "",
+      f.gender || "", f.maritalStatus || "", f.phone || "", f.email || "",
+      f.address || "", f.city || "", f.state || "", f.zip || "",
+      f.emergencyName || "", f.emergencyPhone || "", f.emergencyRelation || "",
+      f.enrollMedical ? "Yes" : "No", f.medicalPlan || "",
+      f.enrollDental ? "Yes" : "No", f.dentalPlan || "",
+      f.enrollVision ? "Yes" : "No", f.visionPlan || "",
+      f.coverageTier || "", deps, f.signature || "", f.signatureDate || ""
+    ];
+  };
+
+  const EXCEL_HEADERS = [
+    "Employee","Status","Submitted","Legal First","Legal Last","DOB","SSN (last 4)","Gender",
+    "Marital Status","Phone","Email","Address","City","State","ZIP",
+    "Emergency Contact","Emergency Phone","Emergency Relation",
+    "Medical","Medical Plan","Dental","Dental Plan","Vision","Vision Plan",
+    "Coverage Tier","Dependents","Signature","Signature Date"
+  ];
+
+  // Style and download a workbook
+  const downloadWorkbook = (XLSX, wb, filename) => {
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `DD_Mau_Insurance_Enrollments_${new Date().toISOString().split("T")[0]}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Export all enrollments to Excel
+  const exportAllExcel = async () => {
+    try {
+      const XLSX = await loadSheetJS();
+      const data = [EXCEL_HEADERS, ...allEnrollments.map(enrollmentToRow)];
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      // Auto-fit column widths
+      ws["!cols"] = EXCEL_HEADERS.map((h, i) => ({
+        wch: Math.max(h.length, ...allEnrollments.map(e => String(enrollmentToRow(e)[i] || "").length).concat([10]))
+      }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "All Enrollments");
+      downloadWorkbook(XLSX, wb, `DD_Mau_Insurance_All_${new Date().toISOString().split("T")[0]}.xlsx`);
+    } catch (err) {
+      console.error("Excel export error:", err);
+      alert("Error exporting Excel. Please try again.");
+    }
+  };
+
+  // Export single employee enrollment to Excel
+  const exportSingleExcel = async (enrollment) => {
+    try {
+      const XLSX = await loadSheetJS();
+      const f = enrollment.formData || {};
+      // Build label-value pairs for a clean single-employee sheet
+      const rows = [
+        ["DD Mau — Insurance Enrollment"],
+        [],
+        ["Employee", enrollment.staffName],
+        ["Status", enrollment.status],
+        ["Submitted", enrollment.submittedAt ? new Date(enrollment.submittedAt).toLocaleDateString() : "—"],
+        [],
+        ["— Personal Information —"],
+        ["Legal First Name", f.legalFirstName || ""],
+        ["Legal Last Name", f.legalLastName || ""],
+        ["Date of Birth", f.dateOfBirth || ""],
+        ["SSN (last 4)", f.ssn4 || ""],
+        ["Gender", f.gender || ""],
+        ["Marital Status", f.maritalStatus || ""],
+        [],
+        ["— Contact Information —"],
+        ["Phone", f.phone || ""],
+        ["Email", f.email || ""],
+        ["Address", f.address || ""],
+        ["City", f.city || ""],
+        ["State", f.state || ""],
+        ["ZIP", f.zip || ""],
+        [],
+        ["— Emergency Contact —"],
+        ["Name", f.emergencyName || ""],
+        ["Phone", f.emergencyPhone || ""],
+        ["Relationship", f.emergencyRelation || ""],
+        [],
+        ["— Coverage Selection —"],
+        ["Medical", f.enrollMedical ? "Yes" : "No"],
+        ["Medical Plan", f.medicalPlan || "—"],
+        ["Dental", f.enrollDental ? "Yes" : "No"],
+        ["Dental Plan", f.dentalPlan || "—"],
+        ["Vision", f.enrollVision ? "Yes" : "No"],
+        ["Vision Plan", f.visionPlan || "—"],
+        ["Coverage Tier", f.coverageTier || ""],
+        [],
+        ["— Dependents —"],
+      ];
+      if ((f.dependents || []).length > 0) {
+        rows.push(["Name", "Relationship", "DOB", "SSN (last 4)"]);
+        (f.dependents || []).forEach(d => {
+          rows.push([d.name || "", d.relationship || "", d.dob || "", d.ssn4 || ""]);
+        });
+      } else {
+        rows.push(["None"]);
+      }
+      rows.push([]);
+      rows.push(["— Signature —"]);
+      rows.push(["Signature", f.signature || ""]);
+      rows.push(["Date", f.signatureDate || ""]);
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      ws["!cols"] = [{ wch: 22 }, { wch: 30 }, { wch: 16 }, { wch: 14 }];
+      const wb = XLSX.utils.book_new();
+      const safeName = (enrollment.staffName || "employee").replace(/[^a-zA-Z0-9 ]/g, "").slice(0, 25);
+      XLSX.utils.book_append_sheet(wb, ws, safeName);
+      downloadWorkbook(XLSX, wb, `DD_Mau_Insurance_${safeName.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`);
+    } catch (err) {
+      console.error("Excel export error:", err);
+      alert("Error exporting Excel. Please try again.");
+    }
   };
 
   // Print individual enrollment
@@ -260,6 +364,162 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     );
   }
 
+  // Admin panel (must be checked before existingData so the button works)
+  if (isAdmin && showAdmin) {
+    return (
+      <div className="p-4 pb-24">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-bold text-mint-700">
+            📋 {L("Insurance Admin", "Admin de Seguro")}
+          </h2>
+          <button
+            onClick={() => setShowAdmin(false)}
+            className="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-lg"
+          >
+            ← {L("Back", "Atrás")}
+          </button>
+        </div>
+
+        {/* Export buttons */}
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={exportAllExcel}
+            disabled={allEnrollments.length === 0}
+            className="flex-1 py-2 rounded-lg font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 transition disabled:bg-gray-300"
+          >
+            📥 {L("Export All (Excel)", "Exportar Todo (Excel)")}
+          </button>
+          <button
+            onClick={loadAllEnrollments}
+            className="py-2 px-4 rounded-lg font-bold text-sm text-mint-700 bg-mint-50 border-2 border-mint-200 hover:bg-mint-100 transition"
+          >
+            🔄 {L("Refresh", "Actualizar")}
+          </button>
+        </div>
+
+        {loadingAll && (
+          <p className="text-sm text-gray-500 text-center py-4">{L("Loading enrollments...", "Cargando inscripciones...")}</p>
+        )}
+
+        {!loadingAll && allEnrollments.length === 0 && (
+          <div className="text-center py-8">
+            <p className="text-gray-400 text-sm">{L("No enrollments submitted yet.", "No hay inscripciones aún.")}</p>
+            <button
+              onClick={loadAllEnrollments}
+              className="mt-3 text-sm font-bold text-mint-700 underline"
+            >
+              {L("Load enrollments", "Cargar inscripciones")}
+            </button>
+          </div>
+        )}
+
+        {/* Selected enrollment detail */}
+        {selectedEnrollment && (
+          <div className="bg-white border-2 border-mint-300 rounded-xl p-4 mb-4">
+            <div className="flex justify-between items-start mb-3">
+              <h3 className="font-bold text-lg text-gray-800">{selectedEnrollment.staffName}</h3>
+              <button onClick={() => setSelectedEnrollment(null)} className="text-gray-400 text-lg font-bold">✕</button>
+            </div>
+
+            <div className="space-y-1 text-sm mb-3">
+              <div className="flex justify-between">
+                <span className="text-gray-500">{L("Name", "Nombre")}</span>
+                <span className="font-bold">{selectedEnrollment.formData?.legalFirstName} {selectedEnrollment.formData?.legalLastName}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">{L("Coverage", "Cobertura")}</span>
+                <span className="font-bold">
+                  {[
+                    selectedEnrollment.formData?.enrollMedical && "Medical",
+                    selectedEnrollment.formData?.enrollDental && "Dental",
+                    selectedEnrollment.formData?.enrollVision && "Vision",
+                  ].filter(Boolean).join(", ") || "None"}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">{L("Tier", "Nivel")}</span>
+                <span className="font-bold">{selectedEnrollment.formData?.coverageTier || "—"}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-500">{L("Dependents", "Dependientes")}</span>
+                <span className="font-bold">{(selectedEnrollment.formData?.dependents || []).length}</span>
+              </div>
+            </div>
+
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => exportSingleExcel(selectedEnrollment)}
+                className="flex-1 py-2 rounded-lg text-xs font-bold text-green-700 bg-green-50 border border-green-200"
+              >
+                📥 {L("Excel", "Excel")}
+              </button>
+              <button
+                onClick={() => printEnrollment(selectedEnrollment)}
+                className="flex-1 py-2 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200"
+              >
+                🖨️ {L("Print / PDF", "Imprimir / PDF")}
+              </button>
+            </div>
+
+            {/* Status actions */}
+            <div className="border-t border-gray-200 pt-3">
+              <p className="text-xs font-bold text-gray-500 mb-2">{L("Update Status", "Actualizar Estado")}</p>
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { val: "approved", label: "✅ Approve", es: "✅ Aprobar", color: "bg-green-100 text-green-700" },
+                  { val: "needs_update", label: "📝 Needs Update", es: "📝 Necesita Cambios", color: "bg-orange-100 text-orange-700" },
+                  { val: "declined", label: "❌ Decline", es: "❌ Rechazar", color: "bg-red-100 text-red-700" },
+                ].map(s => (
+                  <button
+                    key={s.val}
+                    onClick={() => updateEnrollmentStatus(selectedEnrollment.id, s.val, "")}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold ${s.color} ${selectedEnrollment.status === s.val ? "ring-2 ring-offset-1 ring-gray-400" : ""}`}
+                  >
+                    {L(s.label, s.es)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Enrollment list */}
+        {allEnrollments.length > 0 && (
+          <div className="space-y-2">
+            {allEnrollments.map(e => {
+              const statusColors = {
+                pending_review: "bg-yellow-100 text-yellow-700",
+                approved: "bg-green-100 text-green-700",
+                needs_update: "bg-orange-100 text-orange-700",
+                declined: "bg-red-100 text-red-700",
+              };
+              const statusIcons = { pending_review: "⏳", approved: "✅", needs_update: "📝", declined: "❌" };
+              return (
+                <button
+                  key={e.id}
+                  onClick={() => setSelectedEnrollment(e)}
+                  className={`w-full text-left bg-white border-2 rounded-xl p-3 flex items-center justify-between transition hover:border-mint-400 ${
+                    selectedEnrollment?.id === e.id ? "border-mint-500" : "border-gray-200"
+                  }`}
+                >
+                  <div>
+                    <p className="font-bold text-sm text-gray-800">{e.staffName}</p>
+                    <p className="text-xs text-gray-400">
+                      {e.submittedAt ? new Date(e.submittedAt).toLocaleDateString() : "—"}
+                    </p>
+                  </div>
+                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${statusColors[e.status] || "bg-gray-100 text-gray-500"}`}>
+                    {statusIcons[e.status] || "?"} {e.status?.replace("_", " ")}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // Show existing enrollment status
   if (existingData && !submitted) {
     const statusConfig = {
@@ -345,156 +605,6 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
           >
             📝 {L("Update Enrollment", "Actualizar Inscripción")}
           </button>
-        )}
-      </div>
-    );
-  }
-
-  // Admin panel
-  if (isAdmin && showAdmin) {
-    return (
-      <div className="p-4 pb-24">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold text-mint-700">
-            📋 {L("Insurance Admin", "Admin de Seguro")}
-          </h2>
-          <button
-            onClick={() => setShowAdmin(false)}
-            className="text-xs font-bold text-gray-500 bg-gray-100 px-3 py-1 rounded-lg"
-          >
-            ← {L("Back", "Atrás")}
-          </button>
-        </div>
-
-        {/* Export buttons */}
-        <div className="flex gap-2 mb-4">
-          <button
-            onClick={exportCSV}
-            disabled={allEnrollments.length === 0}
-            className="flex-1 py-2 rounded-lg font-bold text-sm text-white bg-blue-600 hover:bg-blue-700 transition disabled:bg-gray-300"
-          >
-            📥 {L("Export All (CSV)", "Exportar Todo (CSV)")}
-          </button>
-          <button
-            onClick={loadAllEnrollments}
-            className="py-2 px-4 rounded-lg font-bold text-sm text-mint-700 bg-mint-50 border-2 border-mint-200 hover:bg-mint-100 transition"
-          >
-            🔄 {L("Refresh", "Actualizar")}
-          </button>
-        </div>
-
-        {loadingAll && (
-          <p className="text-sm text-gray-500 text-center py-4">{L("Loading enrollments...", "Cargando inscripciones...")}</p>
-        )}
-
-        {!loadingAll && allEnrollments.length === 0 && (
-          <div className="text-center py-8">
-            <p className="text-gray-400 text-sm">{L("No enrollments submitted yet.", "No hay inscripciones aún.")}</p>
-            <button
-              onClick={loadAllEnrollments}
-              className="mt-3 text-sm font-bold text-mint-700 underline"
-            >
-              {L("Load enrollments", "Cargar inscripciones")}
-            </button>
-          </div>
-        )}
-
-        {/* Selected enrollment detail */}
-        {selectedEnrollment && (
-          <div className="bg-white border-2 border-mint-300 rounded-xl p-4 mb-4">
-            <div className="flex justify-between items-start mb-3">
-              <h3 className="font-bold text-lg text-gray-800">{selectedEnrollment.staffName}</h3>
-              <button onClick={() => setSelectedEnrollment(null)} className="text-gray-400 text-lg font-bold">✕</button>
-            </div>
-
-            <div className="space-y-1 text-sm mb-3">
-              <div className="flex justify-between">
-                <span className="text-gray-500">{L("Name", "Nombre")}</span>
-                <span className="font-bold">{selectedEnrollment.formData?.legalFirstName} {selectedEnrollment.formData?.legalLastName}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">{L("Coverage", "Cobertura")}</span>
-                <span className="font-bold">
-                  {[
-                    selectedEnrollment.formData?.enrollMedical && "Medical",
-                    selectedEnrollment.formData?.enrollDental && "Dental",
-                    selectedEnrollment.formData?.enrollVision && "Vision",
-                  ].filter(Boolean).join(", ") || "None"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">{L("Tier", "Nivel")}</span>
-                <span className="font-bold">{selectedEnrollment.formData?.coverageTier || "—"}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-500">{L("Dependents", "Dependientes")}</span>
-                <span className="font-bold">{(selectedEnrollment.formData?.dependents || []).length}</span>
-              </div>
-            </div>
-
-            <div className="flex gap-2 mb-3">
-              <button
-                onClick={() => printEnrollment(selectedEnrollment)}
-                className="flex-1 py-2 rounded-lg text-xs font-bold text-blue-700 bg-blue-50 border border-blue-200"
-              >
-                🖨️ {L("Print / PDF", "Imprimir / PDF")}
-              </button>
-            </div>
-
-            {/* Status actions */}
-            <div className="border-t border-gray-200 pt-3">
-              <p className="text-xs font-bold text-gray-500 mb-2">{L("Update Status", "Actualizar Estado")}</p>
-              <div className="flex gap-2 flex-wrap">
-                {[
-                  { val: "approved", label: "✅ Approve", es: "✅ Aprobar", color: "bg-green-100 text-green-700" },
-                  { val: "needs_update", label: "📝 Needs Update", es: "📝 Necesita Cambios", color: "bg-orange-100 text-orange-700" },
-                  { val: "declined", label: "❌ Decline", es: "❌ Rechazar", color: "bg-red-100 text-red-700" },
-                ].map(s => (
-                  <button
-                    key={s.val}
-                    onClick={() => updateEnrollmentStatus(selectedEnrollment.id, s.val, "")}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold ${s.color} ${selectedEnrollment.status === s.val ? "ring-2 ring-offset-1 ring-gray-400" : ""}`}
-                  >
-                    {L(s.label, s.es)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Enrollment list */}
-        {allEnrollments.length > 0 && (
-          <div className="space-y-2">
-            {allEnrollments.map(e => {
-              const statusColors = {
-                pending_review: "bg-yellow-100 text-yellow-700",
-                approved: "bg-green-100 text-green-700",
-                needs_update: "bg-orange-100 text-orange-700",
-                declined: "bg-red-100 text-red-700",
-              };
-              const statusIcons = { pending_review: "⏳", approved: "✅", needs_update: "📝", declined: "❌" };
-              return (
-                <button
-                  key={e.id}
-                  onClick={() => setSelectedEnrollment(e)}
-                  className={`w-full text-left bg-white border-2 rounded-xl p-3 flex items-center justify-between transition hover:border-mint-400 ${
-                    selectedEnrollment?.id === e.id ? "border-mint-500" : "border-gray-200"
-                  }`}
-                >
-                  <div>
-                    <p className="font-bold text-sm text-gray-800">{e.staffName}</p>
-                    <p className="text-xs text-gray-400">
-                      {e.submittedAt ? new Date(e.submittedAt).toLocaleDateString() : "—"}
-                    </p>
-                  </div>
-                  <span className={`text-xs font-bold px-2 py-1 rounded-full ${statusColors[e.status] || "bg-gray-100 text-gray-500"}`}>
-                    {statusIcons[e.status] || "?"} {e.status?.replace("_", " ")}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
         )}
       </div>
     );
