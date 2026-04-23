@@ -138,7 +138,7 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
     );
 }
 
-export default function Recipes({ language, staffName }) {
+export default function Recipes({ language, staffName, staffList }) {
     const [expandedRecipe, setExpandedRecipe] = useState(null);
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
@@ -182,6 +182,8 @@ export default function Recipes({ language, staffName }) {
     const [passwordInput, setPasswordInput] = useState("");
     const [passwordError, setPasswordError] = useState(false);
     const adminUser = isAdmin(staffName);
+    const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
+    const hasRecipesAccess = adminUser || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
 
     // Load recipes from Firestore
     useEffect(() => {
@@ -244,6 +246,25 @@ export default function Recipes({ language, staffName }) {
         } catch (err) { console.error("Error deleting recipe:", err); }
     };
 
+    // Access gate — block staff without recipesAccess
+    if (!hasRecipesAccess) {
+        return (
+            <div className="p-4 pb-24">
+                <div className="max-w-sm mx-auto mt-16 text-center">
+                    <div className="text-6xl mb-4">{"\u{1F512}"}</div>
+                    <h2 className="text-xl font-bold text-gray-800 mb-2">
+                        {language === "es" ? "Acceso Restringido" : "Access Restricted"}
+                    </h2>
+                    <p className="text-gray-500 text-sm">
+                        {language === "es"
+                            ? "No tienes acceso a las recetas. Contacta a un administrador para obtener permiso."
+                            : "You don't have access to recipes. Contact an admin to get permission."}
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     // Password prompt modal
     if (showPasswordPrompt) {
         return (
@@ -303,7 +324,7 @@ export default function Recipes({ language, staffName }) {
     }
 
     return (
-        <div className={`p-4 pb-24 recipe-protected ${screenBlurred ? "screen-blur" : ""}`}>
+        <div className={`p-4 pb-24 recipe-protected ${screenBlurred ? "screen-blur" : ""}`} onContextMenu={e => e.preventDefault()}>
             <div className="flex items-center justify-between mb-2">
                 <h2 className="text-2xl font-bold text-mint-700">🧑‍🍳 {t("recipesTitle", language)}</h2>
                 {adminUser && (
@@ -315,10 +336,10 @@ export default function Recipes({ language, staffName }) {
                     </button>
                 )}
             </div>
-            <p className="text-xs text-gray-500 mb-4 bg-amber-50 border border-amber-200 rounded-lg p-2">
+            <p className="text-xs text-gray-500 mb-4 bg-red-50 border border-red-200 rounded-lg p-2">
                 🔒 {language === "es"
-                    ? "Estas recetas solo son visibles cuando estás en DD Mau. No compartas fuera del restaurante."
-                    : "These recipes are only visible when you're at DD Mau. Do not share outside the restaurant."}
+                    ? "CONFIDENCIAL — Estas recetas son propiedad de DD Mau. No tomes capturas de pantalla, fotos ni compartas fuera del restaurante. Tu nombre está registrado en cada vista."
+                    : "CONFIDENTIAL — These recipes are DD Mau property. Do not screenshot, photograph, or share outside the restaurant. Your name is logged on every view."}
             </p>
 
             {recipes.map(recipe => {
