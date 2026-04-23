@@ -662,4 +662,3 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
         const BASE_OPTIONS_ES = ["Fideos", "Ensalada", "Arroz"];
 
         // Catering Order Component
-}
