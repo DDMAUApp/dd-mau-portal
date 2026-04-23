@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin, LOCATION_LABELS } from '../data/staff'; 
-
+import { isAdmin, LOCATION_LABELS } from '../data/staff';
+import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
 
 export default function AdminPanel({ language, staffList, setStaffList, storeLocation }) {
@@ -641,7 +641,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                         noteEs: "6 Banh Mi, 4 Mini Tazones de Fideos, 8 Mitades de Rollos de Arroz, 10 Mitades de Rollos de Huevo. Cubiertos y servilletas incluidos.",
                         hasSauces: true,
                         sauceCount: 2,
-                        hasProteins: false, 
+                        hasProteins: false,
                         isSampler: true,
                         samplerPicks: [
                             { name: "Banh Mi Bites (6 pcs)", nameEs: "Banh Mi (6 pzas)", count: 3 },
