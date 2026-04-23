@@ -487,7 +487,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
               <p className="text-xs font-bold text-gray-500 mb-2">{L("Update Status", "Actualizar Estado")}</p>
               <div className="flex gap-2 flex-wrap">
                 {[
-                  { val: "approved", label: "✅ Approve", es: "✅ Aprobar", color: "bg-green-100 text-green-700" },
+                  { val: "approved", label: "✅ Complete", es: "✅ Completo", color: "bg-green-100 text-green-700" },
                   { val: "needs_update", label: "📝 Needs Update", es: "📝 Necesita Cambios", color: "bg-orange-100 text-orange-700" },
                   { val: "declined", label: "❌ Decline", es: "❌ Rechazar", color: "bg-red-100 text-red-700" },
                 ].map(s => (
@@ -545,7 +545,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   if (existingData && !submitted) {
     const statusConfig = {
       pending_review: { color: "bg-yellow-100 text-yellow-700 border-yellow-300", icon: "⏳", label: L("Pending Review", "En Revisión") },
-      approved: { color: "bg-green-100 text-green-700 border-green-300", icon: "✅", label: L("Approved", "Aprobado") },
+      approved: { color: "bg-green-100 text-green-700 border-green-300", icon: "✅", label: L("Complete", "Completo") },
       needs_update: { color: "bg-orange-100 text-orange-700 border-orange-300", icon: "📝", label: L("Needs Update", "Necesita Actualización") },
       declined: { color: "bg-red-100 text-red-700 border-red-300", icon: "❌", label: L("Declined", "Rechazado") },
     };
