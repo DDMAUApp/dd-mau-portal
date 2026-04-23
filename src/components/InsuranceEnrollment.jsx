@@ -1094,7 +1094,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
           >
             {L("Next", "Siguiente")} →
           </button>
-        ) : ( 
+        ) : (
           <button
             onClick={handleSubmit}
             disabled={submitting || !form.agreedToTerms || !form.signature}
