@@ -11,6 +11,105 @@ export default function ToastInvoices({ language }) {
 
     const isEn = language !== "es";
 
+    const handlePrint = (inv) => {
+        const locName = location === "webster" ? "Big Bend Blvd" : "Dorsett Rd";
+        const locAddr = location === "webster"
+            ? "8148 Big Bend Blvd<br>Webster Groves, MO 63119<br>(314) 968-3275"
+            : "11982 Dorsett Rd<br>Maryland Heights, MO 63034<br>(314) 942-2300";
+
+        const invoiceDate = inv.createdDate
+            ? new Date(inv.createdDate).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
+            : "";
+        const orderDate = inv.promisedDate
+            ? new Date(inv.promisedDate).toLocaleDateString("en-US", { month: "numeric", day: "numeric", year: "2-digit" })
+            : invoiceDate;
+        const pickupStr = inv.promisedDate
+            ? new Date(inv.promisedDate).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+              + "<br>" + new Date(inv.promisedDate).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
+            : "";
+
+        const itemRows = (inv.items || []).map(item => {
+            const modsHtml = item.modifiers && item.modifiers.length > 0
+                ? item.modifiers.map(m => `<div style="padding-left:20px;color:#555;font-size:12px;">${m}</div>`).join("")
+                : "";
+            return `<tr style="border-bottom:1px solid #e5e5e5;">
+                <td style="padding:8px 4px;font-weight:600;vertical-align:top;">${item.name}</td>
+                <td style="padding:8px 4px;vertical-align:top;font-size:13px;">${modsHtml}</td>
+                <td style="padding:8px 4px;text-align:center;vertical-align:top;">${item.qty}</td>
+            </tr>`;
+        }).join("");
+
+        const html = `<!DOCTYPE html><html><head><title>Invoice #${inv.invoiceNumber || ""}</title>
+        <style>
+            body { font-family: Arial, Helvetica, sans-serif; max-width:700px; margin:0 auto; padding:30px 40px; color:#222; font-size:14px; }
+            @media print { body { padding:20px; } }
+        </style></head>
+        <body>
+        <!-- Header -->
+        <table style="width:100%;margin-bottom:20px;"><tr>
+            <td style="vertical-align:top;width:50%;">
+                <div style="font-size:20px;font-weight:bold;color:#333;margin-bottom:2px;">DD Mau</div>
+                <div style="font-size:11px;color:#888;margin-bottom:12px;">Vietnamese Eatery</div>
+                <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${locName}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${locAddr}</div>
+            </td>
+            <td style="vertical-align:top;text-align:right;">
+                <div style="font-size:22px;font-weight:bold;margin-bottom:10px;">Invoice</div>
+                <table style="margin-left:auto;font-size:13px;">
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Invoice Number</td><td>#${inv.invoiceNumber || ""}</td></tr>
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Invoice Date</td><td>${invoiceDate}</td></tr>
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Order Date</td><td>${orderDate}</td></tr>
+                    ${inv.status ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Status</td><td>${inv.status}</td></tr>` : ""}
+                </table>
+            </td>
+        </tr></table>
+
+        <!-- Bill To / Pickup -->
+        <table style="width:100%;margin-bottom:20px;"><tr>
+            <td style="vertical-align:top;width:50%;">
+                <div style="font-weight:bold;margin-bottom:4px;">Bill To</div>
+                ${inv.customerName ? `<div style="font-weight:bold;">${inv.customerName}</div>` : ""}
+                ${inv.email ? `<div style="font-size:13px;color:#444;">${inv.email}</div>` : ""}
+                ${inv.phone ? `<div style="font-size:13px;color:#444;">${inv.phone}</div>` : ""}
+                ${inv.companyName ? `<div style="font-size:13px;color:#444;">${inv.companyName}</div>` : ""}
+            </td>
+            <td style="vertical-align:top;">
+                ${pickupStr ? `<div style="font-weight:bold;margin-bottom:4px;">${inv.address ? "Delivery Time" : "Pickup Time"}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${pickupStr}</div>` : ""}
+            </td>
+        </tr></table>
+
+        <!-- Delivery address -->
+        ${inv.address ? `<div style="margin-bottom:20px;">
+            <div style="font-weight:bold;margin-bottom:4px;">Delivery Address</div>
+            <div style="font-size:13px;color:#444;">${inv.address}</div>
+        </div>` : ""}
+
+        <!-- Order table -->
+        <div style="font-size:18px;font-weight:bold;margin-bottom:8px;">Order</div>
+        <table style="width:100%;border-collapse:collapse;">
+            <thead>
+                <tr style="border-bottom:2px solid #222;">
+                    <th style="text-align:left;padding:6px 4px;font-size:13px;">Item</th>
+                    <th style="text-align:left;padding:6px 4px;font-size:13px;"></th>
+                    <th style="text-align:center;padding:6px 4px;font-size:13px;">Qty</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${itemRows}
+            </tbody>
+        </table>
+
+        <div style="margin-top:30px;font-size:11px;color:#bbb;border-top:1px solid #ddd;padding-top:10px;">Printed from DD Mau Staff Portal</div>
+        </body></html>`;
+
+        const printWindow = window.open("", "_blank", "width=700,height=900");
+        printWindow.document.write(html);
+        printWindow.document.close();
+        printWindow.focus();
+        printWindow.print();
+    };
+
     const triggerRefresh = async () => {
         setRefreshing(true);
         try {
@@ -227,6 +326,13 @@ export default function ToastInvoices({ language }) {
                                                             </div>
                                                         </div>
                                                     )}
+
+                                                    {/* Print button */}
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handlePrint(inv); }}
+                                                        className="mt-3 w-full py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
+                                                        🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>
