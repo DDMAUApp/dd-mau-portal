@@ -813,7 +813,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
   /* ─── ADMIN / TRACKER ─── */
   const unlockAdmin = async () => {
     // Check PIN against staff list
-    const staff = (staffList || []).find(s => s.pin === adminPin);
+    const staff = (staffList || []).find(s => String(s.pin) === String(adminPin));
     if (staff && staff.role === "admin") {
       setAdminUnlocked(true);
       await loadTrackerData();
