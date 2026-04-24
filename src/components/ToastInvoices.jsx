@@ -30,12 +30,12 @@ export default function ToastInvoices({ language }) {
 
         const itemRows = (inv.items || []).map(item => {
             const modsHtml = item.modifiers && item.modifiers.length > 0
-                ? item.modifiers.map(m => `<div style="padding-left:20px;color:#555;font-size:12px;">${m}</div>`).join("")
+                ? item.modifiers.map(m => `<div style="padding-left:4px;color:#555;font-size:12px;">${m}</div>`).join("")
                 : "";
             return `<tr style="border-bottom:1px solid #e5e5e5;">
+                <td style="padding:8px 4px;text-align:center;vertical-align:top;width:40px;font-weight:600;">${item.qty}</td>
                 <td style="padding:8px 4px;font-weight:600;vertical-align:top;">${item.name}</td>
                 <td style="padding:8px 4px;vertical-align:top;font-size:13px;">${modsHtml}</td>
-                <td style="padding:8px 4px;text-align:center;vertical-align:top;">${item.qty}</td>
             </tr>`;
         }).join("");
 
@@ -90,9 +90,9 @@ export default function ToastInvoices({ language }) {
         <table style="width:100%;border-collapse:collapse;">
             <thead>
                 <tr style="border-bottom:2px solid #222;">
+                    <th style="text-align:center;padding:6px 4px;font-size:13px;width:40px;">Qty</th>
                     <th style="text-align:left;padding:6px 4px;font-size:13px;">Item</th>
                     <th style="text-align:left;padding:6px 4px;font-size:13px;"></th>
-                    <th style="text-align:center;padding:6px 4px;font-size:13px;">Qty</th>
                 </tr>
             </thead>
             <tbody>
