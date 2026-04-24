@@ -4,22 +4,62 @@ import { doc, onSnapshot, setDoc, collection, query, orderBy, limit, addDoc } fr
 import { t } from '../data/translations';
 import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
 import ToastInvoices from './ToastInvoices';
+import ToastOrders from './ToastOrders';
 // CateringMenuItem sub-component
-function CateringMenuItem({ item, language, onAdd }) {
-            const [open, setOpen] = useState(false);
-            const [sizeIdx, setSizeIdx] = useState(0);
-            const [selectedSauces, setSelectedSauces] = useState([]);
-            const [sauceCounts, setSauceCounts] = useState({});
-            const [selectedProteins, setSelectedProteins] = useState([]);
-            const [proteinCounts, setProteinCounts] = useState({});
-            const [singleProtein, setSingleProtein] = useState("");
-            const [selectedBase, setSelectedBase] = useState("");
-            const [selectedType, setSelectedType] = useState("");
-            const [selectedSingleSauce, setSelectedSingleSauce] = useState("");
-            const [samplerProteins, setSamplerProteins] = useState(item.samplerPicks ? item.samplerPicks.map(() => []) : []);
-            const [samplerEggRoll, setSamplerEggRoll] = useState("");
-            const [qty, setQty] = useState(1);
-            const [itemNote, setItemNote] = useState("");
+function CateringMenuItem({ item, language, onAdd, editData, onSaveEdit, onCancelEdit }) {
+            // editData = { cartItem } when editing an existing cart item
+            const isEditing = !!editData;
+            // Parse existing cart item data for pre-population
+            const initFromEdit = () => {
+                if (!editData) return {};
+                const ci = editData.cartItem;
+                // Find size index
+                const sIdx = item.sizes.findIndex(s => s.label === ci.size) || 0;
+                // Parse proteins: "Chicken x6" → { selected: ["Chicken"], counts: { Chicken: 6 } }
+                let initProteins = []; let initProteinCounts = {};
+                let initSingleProtein = "";
+                if (ci.proteins?.length > 0) {
+                    if (item.hasProteins) {
+                        ci.proteins.forEach(pStr => {
+                            const m = pStr.match(/^(.+?)\s*x(\d+)$/);
+                            if (m) { initProteins.push(m[1].trim()); initProteinCounts[m[1].trim()] = parseInt(m[2]); }
+                            else { initProteins.push(pStr); }
+                        });
+                    } else if (item.proteinOptions) {
+                        initSingleProtein = ci.proteins[0] || "";
+                    }
+                }
+                // Parse sauces: "Peanut x2" → { selected: ["Peanut"], counts: { Peanut: 2 } }
+                let initSauces = []; let initSauceCounts = {};
+                if (ci.sauces?.length > 0) {
+                    ci.sauces.forEach(sStr => {
+                        const m = sStr.match(/^(.+?)\s*x(\d+)$/);
+                        if (m) { initSauces.push(m[1].trim()); initSauceCounts[m[1].trim()] = parseInt(m[2]); }
+                        else { initSauces.push(sStr); initSauceCounts[sStr] = 1; }
+                    });
+                }
+                return { sIdx, initProteins, initProteinCounts, initSingleProtein, initSauces, initSauceCounts,
+                    initBase: ci.base || "", initType: ci.type || "", initSingleSauce: ci.singleSauce || "",
+                    initQty: ci.qty || 1, initNote: ci.itemNote || "",
+                    initSamplerProteins: ci.samplerProteins || (item.samplerPicks ? item.samplerPicks.map(() => []) : []),
+                    initSamplerEggRoll: ci.samplerEggRoll || ""
+                };
+            };
+            const editInit = initFromEdit();
+            const [open, setOpen] = useState(isEditing);
+            const [sizeIdx, setSizeIdx] = useState(editInit.sIdx || 0);
+            const [selectedSauces, setSelectedSauces] = useState(editInit.initSauces || []);
+            const [sauceCounts, setSauceCounts] = useState(editInit.initSauceCounts || {});
+            const [selectedProteins, setSelectedProteins] = useState(editInit.initProteins || []);
+            const [proteinCounts, setProteinCounts] = useState(editInit.initProteinCounts || {});
+            const [singleProtein, setSingleProtein] = useState(editInit.initSingleProtein || "");
+            const [selectedBase, setSelectedBase] = useState(editInit.initBase || "");
+            const [selectedType, setSelectedType] = useState(editInit.initType || "");
+            const [selectedSingleSauce, setSelectedSingleSauce] = useState(editInit.initSingleSauce || "");
+            const [samplerProteins, setSamplerProteins] = useState(editInit.initSamplerProteins || (item.samplerPicks ? item.samplerPicks.map(() => []) : []));
+            const [samplerEggRoll, setSamplerEggRoll] = useState(editInit.initSamplerEggRoll || "");
+            const [qty, setQty] = useState(editInit.initQty || 1);
+            const [itemNote, setItemNote] = useState(editInit.initNote || "");
             const [addError, setAddError] = useState("");
             const size = item.sizes[sizeIdx];
             const maxSauces = size.sauceCount || item.sauceCount || 0;
@@ -166,7 +206,11 @@ function CateringMenuItem({ item, language, onAdd }) {
                 if (item.singleSauceOptions) extras.singleSauce = selectedSingleSauce;
                 if (item.samplerPicks) extras.samplerProteins = samplerProteins;
                 if (item.samplerEggRollType) extras.samplerEggRoll = samplerEggRoll;
-                onAdd(item, sizeIdx, allSauces, allProteins, selectedBase, "", qty, itemNote, extras);
+                if (isEditing && onSaveEdit) {
+                    onSaveEdit(editData.cartItem.id, item, sizeIdx, allSauces, allProteins, selectedBase, "", qty, itemNote, extras);
+                } else {
+                    onAdd(item, sizeIdx, allSauces, allProteins, selectedBase, "", qty, itemNote, extras);
+                }
                 setOpen(false); setSelectedSauces([]); setSauceCounts({}); setSelectedProteins([]); setProteinCounts({}); setSingleProtein("");
                 setSelectedBase(""); setSelectedType(""); setSelectedSingleSauce("");
                 setQty(1); setSizeIdx(0); setItemNote("");
@@ -174,13 +218,14 @@ function CateringMenuItem({ item, language, onAdd }) {
                 setSamplerEggRoll("");
             };
             return (
-                <div className="mb-3 bg-white border-2 border-gray-200 rounded-lg overflow-hidden">
-                    <div className="p-3 cursor-pointer flex justify-between items-center" onClick={() => setOpen(!open)}>
+                <div className={`mb-3 bg-white border-2 ${isEditing ? "border-blue-400 ring-2 ring-blue-200" : "border-gray-200"} rounded-lg overflow-hidden`}>
+                    <div className="p-3 cursor-pointer flex justify-between items-center" onClick={() => { if (!isEditing) setOpen(!open); }}>
                         <div>
-                            <p className="font-bold text-sm text-gray-800">{language === "es" ? (item.nameEs || item.name) : item.name}</p>
+                            <p className="font-bold text-sm text-gray-800">{isEditing && "✏️ "}{language === "es" ? (item.nameEs || item.name) : item.name}</p>
                             <p className="text-xs text-gray-400">{item.sizes.map(s => `${s.label} — $${s.price}`).join(" | ")}</p>
                         </div>
-                        <span className={`text-lg transition-transform ${open ? "rotate-45" : ""}`}>➕</span>
+                        {!isEditing && <span className={`text-lg transition-transform ${open ? "rotate-45" : ""}`}>➕</span>}
+                        {isEditing && <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-bold">{language === "es" ? "Editando" : "Editing"}</span>}
                     </div>
                     {open && (
                         <div className="border-t border-gray-200 p-3 bg-gray-50 space-y-3">
@@ -381,8 +426,13 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     <span className="px-3 py-2 font-bold text-sm min-w-[2rem] text-center">{qty}</span>
                                     <button onClick={() => setQty(qty + 1)} className="px-3 py-2 text-lg font-bold text-gray-600">+</button>
                                 </div>
-                                <button onClick={handleAdd} className="flex-1 bg-mint-700 text-white py-2.5 rounded-lg font-bold text-sm">
-                                    {language === "es" ? "Agregar" : "Add"} — ${(size.price * qty).toFixed(2)}
+                                {isEditing && (
+                                    <button onClick={() => onCancelEdit && onCancelEdit()} className="bg-gray-200 text-gray-600 py-2.5 px-4 rounded-lg font-bold text-sm">
+                                        {language === "es" ? "Cancelar" : "Cancel"}
+                                    </button>
+                                )}
+                                <button onClick={handleAdd} className={`flex-1 ${isEditing ? "bg-blue-600" : "bg-mint-700"} text-white py-2.5 rounded-lg font-bold text-sm`}>
+                                    {isEditing ? (language === "es" ? "Guardar Cambios" : "Save Changes") : (language === "es" ? "Agregar" : "Add")} — ${(size.price * qty).toFixed(2)}
                                 </button>
                             </div>
                             {addError && <p className="text-red-500 text-xs font-bold">⚠️ {addError}</p>}
@@ -416,7 +466,8 @@ export default function CateringOrder({ language, staffName }) {
             const [customItemQty, setCustomItemQty] = useState(1);
             const [customItemNote, setCustomItemNote] = useState("");
             const [customItemOpen, setCustomItemOpen] = useState(false);
-            const [pageTab, setPageTab] = useState("catering");
+            const [editingCartItem, setEditingCartItem] = useState(null); // cart item being edited
+            const [pageTab, setPageTab] = useState("orders");
             useEffect(() => {
                 const unsubscribe = onSnapshot(query(collection(db, "cateringOrders"), orderBy("createdAt", "desc"), limit(30)), snap => {
                     setOrderHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -474,6 +525,33 @@ export default function CateringOrder({ language, staffName }) {
                 setCustomItemName(""); setCustomItemPrice(""); setCustomItemQty(1); setCustomItemNote(""); setCustomItemOpen(false);
             };
             const removeFromCart = (id) => setCart(prev => prev.filter(i => i.id !== id));
+            const replaceCartItem = (oldId, item, sizeIdx, sauces, proteins, base, utensils, qty, itemNote, extras) => {
+                const size = item.sizes[sizeIdx];
+                setCart(prev => prev.map(ci => ci.id === oldId ? {
+                    id: oldId,
+                    name: language === "es" ? (item.nameEs || item.name) : item.name,
+                    nameEn: item.name,
+                    size: size.label,
+                    price: size.price,
+                    qty: qty || 1,
+                    sauces: sauces || [],
+                    proteins: proteins || [],
+                    base: base || "",
+                    utensils: utensils || "",
+                    itemNote: itemNote || "",
+                    type: extras?.type || "",
+                    singleSauce: extras?.singleSauce || "",
+                    samplerProteins: extras?.samplerProteins || null,
+                    samplerEggRoll: extras?.samplerEggRoll || ""
+                } : ci));
+                setEditingCartItem(null);
+            };
+            const startEditCartItem = (cartItem) => {
+                // Find the matching CATERING_MENU item
+                const menuItem = CATERING_MENU.flatMap(c => c.items).find(mi => mi.name === cartItem.nameEn || mi.name === cartItem.name);
+                if (!menuItem || cartItem.isCustom) return; // can't edit custom items this way
+                setEditingCartItem({ cartItem, menuItem });
+            };
             const getSubtotal = () => cart.reduce((sum, i) => sum + i.price * i.qty, 0);
             const getUtensilCost = () => (wantPlates ? plateCount * 1 : 0) + (wantChopsticks ? chopstickCount * 0.5 : 0);
             const getDelFee = () => customer.orderType === "delivery" ? (parseFloat(deliveryFee) || 0) : 0;
@@ -518,7 +596,7 @@ export default function CateringOrder({ language, staffName }) {
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
                 setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
-                setDeliveryFee("15"); setEditingOrderId(null);
+                setDeliveryFee("15"); setEditingOrderId(null); setEditingCartItem(null);
                 setWantPlates(false); setPlateCount(0); setWantChopsticks(false); setChopstickCount(0);
             };
             const loadOrderForEdit = (o) => {
@@ -803,17 +881,24 @@ export default function CateringOrder({ language, staffName }) {
                 <div className="p-4 pb-24">
                     {/* ── Page Tab Bar ── */}
                     <div className="flex gap-2 mb-4">
+                        <button onClick={() => setPageTab("orders")}
+                            className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "orders" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                            🛒 {language === "es" ? "Pedidos" : "Orders"}
+                        </button>
+                        <button onClick={() => setPageTab("invoices")}
+                            className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "invoices" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                            🧾 {language === "es" ? "Facturas" : "Invoices"}
+                        </button>
                         <button onClick={() => setPageTab("catering")}
                             className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "catering" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
                             📝 {language === "es" ? "Catering" : "Catering"}
                         </button>
-                        <button onClick={() => setPageTab("invoices")}
-                            className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "invoices" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
-                            🧾 {language === "es" ? "Facturas de Catering" : "Catering Invoices"}
-                        </button>
                     </div>
 
-                    {/* ── Toast Orders Tab ── */}
+                    {/* ── Orders Tab (daily takeout/delivery) ── */}
+                    {pageTab === "orders" && <ToastOrders language={language} />}
+
+                    {/* ── Catering Invoices Tab ── */}
                     {pageTab === "invoices" && <ToastInvoices language={language} />}
 
                     {/* ── Catering Tab ── */}
@@ -1071,26 +1156,43 @@ export default function CateringOrder({ language, staffName }) {
                             <h3 className="font-bold text-gray-800 mb-2">{language === "es" ? "Artículos del Pedido" : "Order Items"}</h3>
                             {cart.length === 0 && <p className="text-gray-400 text-center py-4">{language === "es" ? "Sin artículos" : "No items"}</p>}
                             {cart.map((item) => (
-                                <div key={item.id} className="flex justify-between items-start bg-white border border-gray-200 rounded-lg p-3 mb-2">
-                                    <div className="flex-1">
-                                        <p className="font-bold text-sm text-gray-800">{item.isCustom && "✏️ "}{item.qty}x {item.name}</p>
-                                        {item.size !== "Custom" && <p className="text-xs text-gray-500">{item.size}</p>}
-                                        {item.type && <p className="text-xs text-gray-400">{language === "es" ? "Tipo" : "Type"}: {item.type}</p>}
-                                        {item.proteins?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Proteínas" : "Proteins"}: {item.proteins.join(", ")}</p>}
-                                        {item.sauces?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Salsas" : "Sauces"}: {item.sauces.join(", ")}</p>}
-                                        {item.singleSauce && <p className="text-xs text-gray-400">{language === "es" ? "Salsa" : "Sauce"}: {item.singleSauce}</p>}
-                                        {item.base && <p className="text-xs text-gray-400">Base: {item.base}</p>}
-                                        {item.utensils && <p className="text-xs text-gray-400">{item.utensils}</p>}
-                                        {item.samplerProteins && item.samplerProteins.map((sp, si) => sp.length > 0 && (
-                                            <p key={si} className="text-xs text-gray-400">• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</p>
-                                        ))}
-                                        {item.samplerEggRoll && <p className="text-xs text-gray-400">{language === "es" ? "Rollos" : "Egg Rolls"}: {item.samplerEggRoll}</p>}
-                                        {item.itemNote && <p className="text-xs text-amber-600 italic">📝 {item.itemNote}</p>}
-                                    </div>
-                                    <div className="text-right ml-2">
-                                        <p className="font-bold text-sm text-mint-700">${(item.price * item.qty).toFixed(2)}</p>
-                                        <button onClick={() => removeFromCart(item.id)} className="text-xs text-red-500 font-bold mt-1">✕ {language === "es" ? "Quitar" : "Remove"}</button>
-                                    </div>
+                                <div key={item.id}>
+                                    {/* If this item is being edited, show the CateringMenuItem editor */}
+                                    {editingCartItem?.cartItem.id === item.id ? (
+                                        <CateringMenuItem
+                                            item={editingCartItem.menuItem}
+                                            language={language}
+                                            onAdd={addToCart}
+                                            editData={editingCartItem}
+                                            onSaveEdit={replaceCartItem}
+                                            onCancelEdit={() => setEditingCartItem(null)}
+                                        />
+                                    ) : (
+                                        <div className="flex justify-between items-start bg-white border border-gray-200 rounded-lg p-3 mb-2">
+                                            <div className="flex-1">
+                                                <p className="font-bold text-sm text-gray-800">{item.isCustom && "✏️ "}{item.qty}x {item.name}</p>
+                                                {item.size !== "Custom" && <p className="text-xs text-gray-500">{item.size}</p>}
+                                                {item.type && <p className="text-xs text-gray-400">{language === "es" ? "Tipo" : "Type"}: {item.type}</p>}
+                                                {item.proteins?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Proteínas" : "Proteins"}: {item.proteins.join(", ")}</p>}
+                                                {item.sauces?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Salsas" : "Sauces"}: {item.sauces.join(", ")}</p>}
+                                                {item.singleSauce && <p className="text-xs text-gray-400">{language === "es" ? "Salsa" : "Sauce"}: {item.singleSauce}</p>}
+                                                {item.base && <p className="text-xs text-gray-400">Base: {item.base}</p>}
+                                                {item.utensils && <p className="text-xs text-gray-400">{item.utensils}</p>}
+                                                {item.samplerProteins && item.samplerProteins.map((sp, si) => sp?.length > 0 && (
+                                                    <p key={si} className="text-xs text-gray-400">• {["Banh Mi", "Mini Bowls", "Rice Rolls"][si]}: {sp.join(", ")}</p>
+                                                ))}
+                                                {item.samplerEggRoll && <p className="text-xs text-gray-400">{language === "es" ? "Rollos" : "Egg Rolls"}: {item.samplerEggRoll}</p>}
+                                                {item.itemNote && <p className="text-xs text-amber-600 italic">📝 {item.itemNote}</p>}
+                                            </div>
+                                            <div className="text-right ml-2">
+                                                <p className="font-bold text-sm text-mint-700">${(item.price * item.qty).toFixed(2)}</p>
+                                                <div className="flex gap-2 mt-1 justify-end">
+                                                    {!item.isCustom && <button onClick={() => startEditCartItem(item)} className="text-xs text-blue-600 font-bold">✏️ {language === "es" ? "Editar" : "Edit"}</button>}
+                                                    <button onClick={() => removeFromCart(item.id)} className="text-xs text-red-500 font-bold">✕ {language === "es" ? "Quitar" : "Remove"}</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                             <button onClick={() => setStep(2)} className="w-full border-2 border-dashed border-mint-300 text-mint-700 py-2 rounded-lg font-bold text-sm mb-4">
