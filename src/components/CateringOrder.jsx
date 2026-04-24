@@ -809,7 +809,7 @@ export default function CateringOrder({ language, staffName }) {
                         </button>
                         <button onClick={() => setPageTab("invoices")}
                             className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "invoices" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
-                            🧾 {language === "es" ? "Pedidos Toast" : "Toast Orders"}
+                            🧾 {language === "es" ? "Facturas de Catering" : "Catering Invoices"}
                         </button>
                     </div>
 
