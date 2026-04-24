@@ -3,30 +3,27 @@ import { db } from '../firebase';
 import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
 export default function ToastInvoices({ language }) {
-    const [orders, setOrders] = useState([]);
+    const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [location, setLocation] = useState("webster");
-    const [expandedOrder, setExpandedOrder] = useState(null);
+    const [expandedInvoice, setExpandedInvoice] = useState(null);
 
     const isEn = language !== "es";
 
     useEffect(() => {
         setLoading(true);
-        setExpandedOrder(null);
-        // Composite index needed: location (ASC) + createdDate (DESC)
-        // On first load, Firestore console will show a link to create it
+        setExpandedInvoice(null);
         const q = query(
             collection(db, "toast_invoices"),
             where("location", "==", location),
             orderBy("createdDate", "desc"),
-            limit(300)
+            limit(200)
         );
         const unsub = onSnapshot(q, (snap) => {
-            setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
             setLoading(false);
         }, (err) => {
             console.error("Toast invoices query error:", err);
-            // If composite index missing, show helpful message
             if (err.message && err.message.includes("index")) {
                 console.error("Create the composite index using the link above ^^^");
             }
@@ -35,23 +32,36 @@ export default function ToastInvoices({ language }) {
         return () => unsub();
     }, [location]);
 
-    // Group orders by business date
+    // Group invoices by promised date (delivery/pickup date)
     const grouped = {};
-    orders.forEach(o => {
-        const d = o.businessDate || "Unknown";
+    invoices.forEach(inv => {
+        let d = "No Date";
+        if (inv.promisedDate) {
+            d = inv.promisedDate.split("T")[0];
+        } else if (inv.createdDate) {
+            d = inv.createdDate.split("T")[0];
+        }
         if (!grouped[d]) grouped[d] = [];
-        grouped[d].push(o);
+        grouped[d].push(inv);
     });
     const dates = Object.keys(grouped).sort().reverse();
 
-    // Calculate totals
-    const grandTotal = orders.reduce((sum, o) => sum + (o.total || 0), 0);
-    const orderCount = orders.length;
+    const grandTotal = invoices.reduce((sum, inv) => sum + (inv.total || 0), 0);
+
+    const statusColor = (status) => {
+        if (!status) return "bg-gray-100 text-gray-600";
+        const s = status.toUpperCase();
+        if (s === "PAID" || s === "CLOSED") return "bg-green-100 text-green-700";
+        if (s === "SENT" || s === "OPEN") return "bg-blue-100 text-blue-700";
+        if (s === "OVERDUE" || s === "PAST_DUE") return "bg-red-100 text-red-700";
+        if (s === "DRAFT") return "bg-gray-100 text-gray-500";
+        return "bg-amber-100 text-amber-700";
+    };
 
     return (
         <div>
             <h2 className="text-xl font-bold text-mint-700 mb-3">
-                🧾 {isEn ? "Toast Orders" : "Pedidos de Toast"}
+                🧾 {isEn ? "Catering Invoices" : "Facturas de Catering"}
             </h2>
 
             {/* Location toggle */}
@@ -67,15 +77,15 @@ export default function ToastInvoices({ language }) {
             </div>
 
             {/* Summary bar */}
-            {!loading && orders.length > 0 && (
+            {!loading && invoices.length > 0 && (
                 <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-3 mb-4 flex justify-between items-center">
                     <div>
-                        <p className="text-sm font-bold text-mint-800">{orderCount} {isEn ? "orders" : "pedidos"}</p>
-                        <p className="text-xs text-mint-600">{dates.length} {isEn ? "days" : "días"}</p>
+                        <p className="text-sm font-bold text-mint-800">{invoices.length} {isEn ? "invoices" : "facturas"}</p>
+                        <p className="text-xs text-mint-600">{dates.length} {isEn ? "dates" : "fechas"}</p>
                     </div>
                     <div className="text-right">
                         <p className="text-lg font-bold text-mint-800">${grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
-                        <p className="text-xs text-mint-600">{isEn ? "total sales" : "ventas totales"}</p>
+                        <p className="text-xs text-mint-600">{isEn ? "total" : "total"}</p>
                     </div>
                 </div>
             )}
@@ -83,84 +93,137 @@ export default function ToastInvoices({ language }) {
             {loading ? (
                 <div className="text-center py-12">
                     <p className="text-3xl mb-2">⏳</p>
-                    <p className="text-gray-400">{isEn ? "Loading orders..." : "Cargando pedidos..."}</p>
+                    <p className="text-gray-400">{isEn ? "Loading invoices..." : "Cargando facturas..."}</p>
                 </div>
-            ) : orders.length === 0 ? (
+            ) : invoices.length === 0 ? (
                 <div className="text-center py-12">
                     <p className="text-3xl mb-2">📭</p>
-                    <p className="text-gray-500 font-bold">{isEn ? "No orders found" : "No se encontraron pedidos"}</p>
-                    <p className="text-xs text-gray-400 mt-2">{isEn ? "Orders sync from Toast every 30 minutes." : "Los pedidos se sincronizan desde Toast cada 30 minutos."}</p>
-                    <p className="text-xs text-gray-400 mt-1">{isEn ? "Make sure the scraper is running on Railway." : "Asegúrate de que el scraper esté corriendo en Railway."}</p>
+                    <p className="text-gray-500 font-bold">{isEn ? "No invoices found" : "No se encontraron facturas"}</p>
+                    <p className="text-xs text-gray-400 mt-2">{isEn ? "Invoices sync from Toast every 30 minutes." : "Las facturas se sincronizan desde Toast cada 30 minutos."}</p>
                 </div>
             ) : (
                 <div>
                     {dates.map(date => {
-                        const dayOrders = grouped[date];
-                        const dayTotal = dayOrders.reduce((s, o) => s + (o.total || 0), 0);
+                        const dayInvoices = grouped[date];
+                        const dayTotal = dayInvoices.reduce((s, inv) => s + (inv.total || 0), 0);
 
                         return (
                             <div key={date} className="mb-5">
                                 {/* Date header */}
                                 <div className="flex justify-between items-center mb-2 sticky top-16 bg-gray-50 py-1.5 z-10 border-b-2 border-mint-200">
                                     <h3 className="text-sm font-bold text-gray-700">
-                                        📅 {new Date(date + "T12:00:00").toLocaleDateString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric" })}
+                                        📅 {date !== "No Date" ? new Date(date + "T12:00:00").toLocaleDateString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric" }) : (isEn ? "No Date" : "Sin Fecha")}
                                     </h3>
                                     <div className="text-right">
-                                        <span className="text-xs text-gray-400 mr-2">{dayOrders.length} {isEn ? "orders" : "pedidos"}</span>
+                                        <span className="text-xs text-gray-400 mr-2">{dayInvoices.length} {isEn ? "invoices" : "facturas"}</span>
                                         <span className="text-sm font-bold text-mint-700">${dayTotal.toFixed(2)}</span>
                                     </div>
                                 </div>
 
-                                {/* Order cards */}
-                                {dayOrders.map((order, i) => {
-                                    const expanded = expandedOrder === order.guid;
-                                    let timeStr = "—";
-                                    try {
-                                        if (order.createdDate) {
-                                            const dt = new Date(order.createdDate.replace("+0000", "Z"));
-                                            timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                        }
-                                    } catch(e) {}
+                                {/* Invoice cards */}
+                                {dayInvoices.map((inv, i) => {
+                                    const expanded = expandedInvoice === inv.invoiceGuid;
 
                                     return (
-                                        <div key={order.guid || i}
+                                        <div key={inv.invoiceGuid || i}
                                             className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300"}`}
-                                            onClick={() => setExpandedOrder(expanded ? null : order.guid)}>
+                                            onClick={() => setExpandedInvoice(expanded ? null : inv.invoiceGuid)}>
+
+                                            {/* Top row: invoice number + total */}
                                             <div className="flex justify-between items-start">
                                                 <div className="flex-1">
                                                     <div className="flex items-center gap-2">
-                                                        <p className="text-sm font-bold text-gray-800">{timeStr}</p>
-                                                        <span className="text-xs text-gray-300">#{order.guid?.slice(-6).toUpperCase()}</span>
+                                                        <p className="text-sm font-bold text-gray-800">
+                                                            #{inv.invoiceNumber || inv.invoiceGuid?.slice(-6).toUpperCase()}
+                                                        </p>
+                                                        <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${statusColor(inv.status)}`}>
+                                                            {inv.status || "—"}
+                                                        </span>
                                                     </div>
-                                                    <p className="text-xs text-gray-500 mt-1">
-                                                        {order.diningOption || "—"} • {order.itemCount || 0} {isEn ? "items" : "artículos"} • {order.checkCount || 1} {isEn ? "check(s)" : "cuenta(s)"}
+                                                    {/* Customer / Company */}
+                                                    <p className="text-sm text-gray-700 mt-1 font-medium">
+                                                        {inv.companyName || inv.customerName || (isEn ? "No customer" : "Sin cliente")}
                                                     </p>
-                                                    {!expanded && order.itemNames && order.itemNames.length > 0 && (
-                                                        <p className="text-xs text-gray-400 mt-1 truncate">
-                                                            {order.itemNames.slice(0, 3).join(", ")}
-                                                            {order.itemCount > 3 ? ` +${order.itemCount - 3}` : ""}
+                                                    {inv.companyName && inv.customerName && (
+                                                        <p className="text-xs text-gray-400">{inv.customerName}</p>
+                                                    )}
+                                                    {/* Item count preview */}
+                                                    {!expanded && (
+                                                        <p className="text-xs text-gray-400 mt-1">
+                                                            {inv.itemCount || 0} {isEn ? "items" : "artículos"}
+                                                            {inv.address ? ` • 📍 ${isEn ? "Delivery" : "Entrega"}` : ""}
                                                         </p>
                                                     )}
                                                 </div>
                                                 <div className="text-right ml-2">
-                                                    <p className="font-bold text-mint-700 text-base">${order.total?.toFixed(2)}</p>
-                                                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold inline-block mt-1 ${order.paymentStatus === "CLOSED" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
-                                                        {order.paymentStatus || "OPEN"}
-                                                    </span>
+                                                    <p className="font-bold text-mint-700 text-base">${(inv.total || 0).toFixed(2)}</p>
                                                 </div>
                                             </div>
 
-                                            {/* Expanded item list */}
-                                            {expanded && order.itemNames && order.itemNames.length > 0 && (
+                                            {/* Expanded details */}
+                                            {expanded && (
                                                 <div className="mt-3 pt-3 border-t border-gray-100">
-                                                    <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
-                                                    <div className="grid grid-cols-1 gap-1">
-                                                        {order.itemNames.map((name, ni) => (
-                                                            <p key={ni} className="text-xs text-gray-600 bg-gray-50 rounded px-2 py-1">• {name}</p>
-                                                        ))}
+                                                    {/* Contact info */}
+                                                    {(inv.phone || inv.email) && (
+                                                        <div className="mb-3">
+                                                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Contact:" : "Contacto:"}</p>
+                                                            {inv.phone && <p className="text-xs text-gray-600">📞 {inv.phone}</p>}
+                                                            {inv.email && <p className="text-xs text-gray-600">✉️ {inv.email}</p>}
+                                                        </div>
+                                                    )}
+
+                                                    {/* Delivery address */}
+                                                    {inv.address && (
+                                                        <div className="mb-3">
+                                                            <p className="text-xs font-bold text-gray-500 mb-1">{isEn ? "Delivery Address:" : "Dirección de Entrega:"}</p>
+                                                            <p className="text-xs text-gray-600 bg-blue-50 rounded px-2 py-1.5">📍 {inv.address}</p>
+                                                        </div>
+                                                    )}
+
+                                                    {/* Dates */}
+                                                    <div className="mb-3 flex gap-4">
+                                                        {inv.promisedDate && (
+                                                            <div>
+                                                                <p className="text-xs font-bold text-gray-500">{isEn ? "Due:" : "Fecha:"}</p>
+                                                                <p className="text-xs text-gray-600">
+                                                                    {new Date(inv.promisedDate).toLocaleDateString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                                                                </p>
+                                                            </div>
+                                                        )}
+                                                        {inv.paymentDueDate && (
+                                                            <div>
+                                                                <p className="text-xs font-bold text-gray-500">{isEn ? "Payment Due:" : "Pago:"}</p>
+                                                                <p className="text-xs text-gray-600">
+                                                                    {new Date(inv.paymentDueDate).toLocaleDateString(isEn ? "en-US" : "es-US", { month: "short", day: "numeric" })}
+                                                                </p>
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                    {order.itemCount > order.itemNames.length && (
-                                                        <p className="text-xs text-gray-400 italic mt-1">+{order.itemCount - order.itemNames.length} {isEn ? "more items" : "más artículos"}</p>
+
+                                                    {/* Line items */}
+                                                    {inv.items && inv.items.length > 0 && (
+                                                        <div>
+                                                            <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
+                                                            <div className="grid grid-cols-1 gap-1">
+                                                                {inv.items.map((item, ni) => (
+                                                                    <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
+                                                                        <div className="flex justify-between items-start">
+                                                                            <span className="text-gray-700 font-medium">
+                                                                                {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
+                                                                            </span>
+                                                                            <span className="text-gray-500 ml-2 whitespace-nowrap">
+                                                                                ${(item.price || 0).toFixed(2)}
+                                                                            </span>
+                                                                        </div>
+                                                                        {item.modifiers && item.modifiers.length > 0 && (
+                                                                            <p className="text-gray-400 text-xs mt-0.5 pl-2">
+                                                                                ↳ {item.modifiers.join(", ")}
+                                                                            </p>
+                                                                        )}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
                                                     )}
                                                 </div>
                                             )}
