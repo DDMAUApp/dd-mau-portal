@@ -46,8 +46,6 @@ export default function ToastInvoices({ language }) {
     });
     const dates = Object.keys(grouped).sort().reverse();
 
-    const grandTotal = invoices.reduce((sum, inv) => sum + (inv.total || 0), 0);
-
     const statusColor = (status) => {
         if (!status) return "bg-gray-100 text-gray-600";
         const s = status.toUpperCase();
@@ -78,14 +76,10 @@ export default function ToastInvoices({ language }) {
 
             {/* Summary bar */}
             {!loading && invoices.length > 0 && (
-                <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-3 mb-4 flex justify-between items-center">
+                <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-3 mb-4">
                     <div>
                         <p className="text-sm font-bold text-mint-800">{invoices.length} {isEn ? "invoices" : "facturas"}</p>
                         <p className="text-xs text-mint-600">{dates.length} {isEn ? "dates" : "fechas"}</p>
-                    </div>
-                    <div className="text-right">
-                        <p className="text-lg font-bold text-mint-800">${grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
-                        <p className="text-xs text-mint-600">{isEn ? "total" : "total"}</p>
                     </div>
                 </div>
             )}
@@ -105,8 +99,6 @@ export default function ToastInvoices({ language }) {
                 <div>
                     {dates.map(date => {
                         const dayInvoices = grouped[date];
-                        const dayTotal = dayInvoices.reduce((s, inv) => s + (inv.total || 0), 0);
-
                         return (
                             <div key={date} className="mb-5">
                                 {/* Date header */}
@@ -114,10 +106,7 @@ export default function ToastInvoices({ language }) {
                                     <h3 className="text-sm font-bold text-gray-700">
                                         📅 {date !== "No Date" ? new Date(date + "T12:00:00").toLocaleDateString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric" }) : (isEn ? "No Date" : "Sin Fecha")}
                                     </h3>
-                                    <div className="text-right">
-                                        <span className="text-xs text-gray-400 mr-2">{dayInvoices.length} {isEn ? "invoices" : "facturas"}</span>
-                                        <span className="text-sm font-bold text-mint-700">${dayTotal.toFixed(2)}</span>
-                                    </div>
+                                    <span className="text-xs text-gray-400">{dayInvoices.length} {isEn ? "invoices" : "facturas"}</span>
                                 </div>
 
                                 {/* Invoice cards */}
@@ -154,9 +143,6 @@ export default function ToastInvoices({ language }) {
                                                             {inv.address ? ` • 📍 ${isEn ? "Delivery" : "Entrega"}` : ""}
                                                         </p>
                                                     )}
-                                                </div>
-                                                <div className="text-right ml-2">
-                                                    <p className="font-bold text-mint-700 text-base">${(inv.total || 0).toFixed(2)}</p>
                                                 </div>
                                             </div>
 
@@ -207,14 +193,9 @@ export default function ToastInvoices({ language }) {
                                                             <div className="grid grid-cols-1 gap-1">
                                                                 {inv.items.map((item, ni) => (
                                                                     <div key={ni} className="text-xs bg-gray-50 rounded px-2 py-1.5">
-                                                                        <div className="flex justify-between items-start">
-                                                                            <span className="text-gray-700 font-medium">
-                                                                                {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
-                                                                            </span>
-                                                                            <span className="text-gray-500 ml-2 whitespace-nowrap">
-                                                                                ${(item.price || 0).toFixed(2)}
-                                                                            </span>
-                                                                        </div>
+                                                                        <span className="text-gray-700 font-medium">
+                                                                            {item.qty > 1 ? `${item.qty}x ` : ""}{item.name}
+                                                                        </span>
                                                                         {item.modifiers && item.modifiers.length > 0 && (
                                                                             <p className="text-gray-400 text-xs mt-0.5 pl-2">
                                                                                 ↳ {item.modifiers.join(", ")}
