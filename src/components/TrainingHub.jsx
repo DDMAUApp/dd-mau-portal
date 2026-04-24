@@ -699,12 +699,13 @@ const BOH_TEST = [
   },
 ];
 
+
 const PASS_THRESHOLD = 0.8; // 16 out of 20
 
 /* ─── MAIN COMPONENT ─── */
 export default function TrainingHub({ staffName, language, staffList }) {
   const [mainTab, setMainTab] = useState("boh"); // "foh" | "boh"
-  const [bohView, setBohView] = useState("lessons"); // "lessons" | "test" | "results"
+  const [bohView, setBohView] = useState("lessons"); // "lessons" | "test" | "results" | "tracker"
   const [expandedLesson, setExpandedLesson] = useState(null);
   const [testAnswers, setTestAnswers] = useState({});
   const [testResult, setTestResult] = useState(null);
@@ -712,25 +713,53 @@ export default function TrainingHub({ staffName, language, staffList }) {
   const [previousResult, setPreviousResult] = useState(null);
   const [loadingPrev, setLoadingPrev] = useState(true);
 
-  // Admin state
-  const [isAdmin, setIsAdmin] = useState(false);
+  // Lesson completion tracking
+  const [completedLessons, setCompletedLessons] = useState([]);
+
+  // Admin / tracker state
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [adminPin, setAdminPin] = useState("");
-  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [allResults, setAllResults] = useState([]);
-  const [loadingAdmin, setLoadingAdmin] = useState(false);
+  const [allProgress, setAllProgress] = useState({});
+  const [loadingTracker, setLoadingTracker] = useState(false);
 
   const isEn = language !== "es";
 
-  // Load previous test result for this staff member
+  // Load previous test result + lesson progress for this staff member
   useEffect(() => {
     if (!staffName) return;
     const docId = staffName.toLowerCase().replace(/\s+/g, "_");
+    // Load test result
     getDoc(doc(db, "training_results", docId))
       .then((snap) => {
         if (snap.exists()) setPreviousResult(snap.data());
       })
       .finally(() => setLoadingPrev(false));
+    // Load lesson progress
+    getDoc(doc(db, "training_progress", docId))
+      .then((snap) => {
+        if (snap.exists() && snap.data().completedLessons) {
+          setCompletedLessons(snap.data().completedLessons);
+        }
+      });
   }, [staffName]);
+
+  /* ─── LESSON COMPLETION ─── */
+  const markLessonComplete = async (lessonId) => {
+    if (completedLessons.includes(lessonId)) return;
+    const updated = [...completedLessons, lessonId];
+    setCompletedLessons(updated);
+    try {
+      const docId = staffName.toLowerCase().replace(/\s+/g, "_");
+      await setDoc(doc(db, "training_progress", docId), {
+        staffName,
+        completedLessons: updated,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+    } catch (err) {
+      console.error("Failed to save lesson progress:", err);
+    }
+  };
 
   /* ─── TEST LOGIC ─── */
   const handleAnswer = (qId, value) => {
@@ -742,19 +771,11 @@ export default function TrainingHub({ staffName, language, staffList }) {
     let correct = 0;
     const details = BOH_TEST.map((q) => {
       const userAnswer = testAnswers[q.id];
-      let isCorrect = false;
-      if (q.type === "mc") {
-        isCorrect = userAnswer === q.answer;
-      } else {
-        isCorrect = userAnswer === q.answer;
-      }
+      const isCorrect = q.type === "mc"
+        ? userAnswer === q.answer
+        : userAnswer === q.answer;
       if (isCorrect) correct++;
-      return {
-        questionId: q.id,
-        userAnswer,
-        correctAnswer: q.answer,
-        isCorrect,
-      };
+      return { questionId: q.id, userAnswer, correctAnswer: q.answer, isCorrect };
     });
 
     const score = correct / BOH_TEST.length;
@@ -770,7 +791,6 @@ export default function TrainingHub({ staffName, language, staffList }) {
       submittedAt: new Date().toISOString(),
     };
 
-    // Save to Firestore
     try {
       const docId = staffName.toLowerCase().replace(/\s+/g, "_");
       await setDoc(doc(db, "training_results", docId), result);
@@ -779,6 +799,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     }
 
     setTestResult(result);
+    setPreviousResult(result);
     setBohView("results");
     setSubmitting(false);
   };
@@ -789,42 +810,51 @@ export default function TrainingHub({ staffName, language, staffList }) {
     setBohView("test");
   };
 
-  /* ─── ADMIN PANEL ─── */
-  const unlockAdmin = () => {
-    if (adminPin === "1234") {
-      setIsAdmin(true);
-      setShowAdminPanel(true);
-      loadAdminResults();
+  /* ─── ADMIN / TRACKER ─── */
+  const unlockAdmin = async () => {
+    // Check PIN against staff list
+    const staff = (staffList || []).find(s => s.pin === adminPin);
+    if (staff && staff.role === "admin") {
+      setAdminUnlocked(true);
+      await loadTrackerData();
     }
   };
 
-  const loadAdminResults = async () => {
-    setLoadingAdmin(true);
+  const loadTrackerData = async () => {
+    setLoadingTracker(true);
     try {
-      const snap = await getDocs(collection(db, "training_results"));
+      // Load all test results
+      const resultsSnap = await getDocs(collection(db, "training_results"));
       const results = [];
-      snap.forEach((d) => results.push({ id: d.id, ...d.data() }));
+      resultsSnap.forEach((d) => results.push({ id: d.id, ...d.data() }));
       results.sort((a, b) => (b.submittedAt || "").localeCompare(a.submittedAt || ""));
       setAllResults(results);
+
+      // Load all lesson progress
+      const progressSnap = await getDocs(collection(db, "training_progress"));
+      const progress = {};
+      progressSnap.forEach((d) => { progress[d.id] = d.data(); });
+      setAllProgress(progress);
     } catch (err) {
-      console.error("Failed to load admin results:", err);
+      console.error("Failed to load tracker data:", err);
     }
-    setLoadingAdmin(false);
+    setLoadingTracker(false);
   };
 
   const allAnswered = Object.keys(testAnswers).length === BOH_TEST.length;
+  const allLessonsDone = completedLessons.length === BOH_LESSONS.length;
 
   /* ─── RENDER ─── */
   return (
     <div className="p-4 pb-24">
       {/* Header */}
       <h2 className="text-2xl font-bold text-mint-700 mb-1">
-        {"\u{1F4DA}"} {isEn ? "Training Hub" : "Centro de Capacitación"}
+        {"\u{1F4DA}"} {isEn ? "Training Hub" : "Centro de Capacitaci\u00F3n"}
       </h2>
       <p className="text-gray-500 text-sm mb-4">
         {isEn
           ? "Complete your training modules and pass the quiz."
-          : "Completa tus módulos de capacitación y aprueba el examen."}
+          : "Completa tus m\u00F3dulos de capacitaci\u00F3n y aprueba el examen."}
       </p>
 
       {/* Main Tabs: FOH / BOH */}
@@ -856,12 +886,12 @@ export default function TrainingHub({ staffName, language, staffList }) {
         <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-8 text-center">
           <p className="text-5xl mb-4">{"\u{1F6A7}"}</p>
           <p className="text-yellow-700 font-bold text-xl mb-2">
-            {isEn ? "Coming Soon" : "Próximamente"}
+            {isEn ? "Coming Soon" : "Pr\u00F3ximamente"}
           </p>
           <p className="text-yellow-600">
             {isEn
               ? "Front of House training is being built. Check back soon!"
-              : "La capacitación de Frente de Casa está en construcción. ¡Vuelve pronto!"}
+              : "La capacitaci\u00F3n de Frente de Casa est\u00E1 en construcci\u00F3n. \u00A1Vuelve pronto!"}
           </p>
         </div>
       )}
@@ -870,137 +900,153 @@ export default function TrainingHub({ staffName, language, staffList }) {
       {mainTab === "boh" && (
         <>
           {/* BOH Sub-tabs */}
-          <div className="flex gap-2 mb-4">
-            <button
-              onClick={() => setBohView("lessons")}
-              className={`flex-1 py-2 rounded-lg font-bold text-sm border-2 transition-all ${
-                bohView === "lessons"
-                  ? "bg-green-600 text-white border-green-600"
-                  : "bg-white text-gray-500 border-gray-200"
-              }`}
-            >
-              {"\u{1F4D6}"} {isEn ? "Lessons" : "Lecciones"}
-            </button>
-            <button
-              onClick={() => setBohView("test")}
-              className={`flex-1 py-2 rounded-lg font-bold text-sm border-2 transition-all ${
-                bohView === "test"
-                  ? "bg-green-600 text-white border-green-600"
-                  : "bg-white text-gray-500 border-gray-200"
-              }`}
-            >
-              {"\u{1F4DD}"} {isEn ? "Take Test" : "Tomar Examen"}
-            </button>
-            <button
-              onClick={() => setBohView("results")}
-              className={`flex-1 py-2 rounded-lg font-bold text-sm border-2 transition-all ${
-                bohView === "results"
-                  ? "bg-green-600 text-white border-green-600"
-                  : "bg-white text-gray-500 border-gray-200"
-              }`}
-            >
-              {"\u{1F4CA}"} {isEn ? "Results" : "Resultados"}
-            </button>
+          <div className="flex gap-1 mb-4">
+            {[
+              { key: "lessons", icon: "\u{1F4D6}", en: "Lessons", es: "Lecciones" },
+              { key: "test", icon: "\u{1F4DD}", en: "Test", es: "Examen" },
+              { key: "results", icon: "\u{1F4CA}", en: "Results", es: "Resultados" },
+              { key: "tracker", icon: "\u{1F4CB}", en: "Tracker", es: "Progreso" },
+            ].map(tab => (
+              <button
+                key={tab.key}
+                onClick={() => {
+                  setBohView(tab.key);
+                  if (tab.key === "tracker" && !adminUnlocked) { /* will show PIN */ }
+                }}
+                className={`flex-1 py-2 rounded-lg font-bold text-xs border-2 transition-all ${
+                  bohView === tab.key
+                    ? "bg-green-600 text-white border-green-600"
+                    : "bg-white text-gray-500 border-gray-200"
+                }`}
+              >
+                {tab.icon} {isEn ? tab.en : tab.es}
+              </button>
+            ))}
           </div>
 
           {/* ─── LESSONS VIEW ─── */}
           {bohView === "lessons" && (
             <div className="space-y-3">
+              {/* Progress bar */}
+              <div className="bg-white rounded-xl border-2 border-gray-200 p-3 mb-2">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-bold text-gray-700">
+                    {isEn ? "Your Progress" : "Tu Progreso"}
+                  </span>
+                  <span className="text-sm font-bold text-mint-600">
+                    {completedLessons.length}/{BOH_LESSONS.length}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-3">
+                  <div
+                    className="bg-mint-500 h-3 rounded-full transition-all"
+                    style={{ width: `${(completedLessons.length / BOH_LESSONS.length) * 100}%` }}
+                  />
+                </div>
+                {allLessonsDone && (
+                  <p className="text-green-600 text-xs font-bold mt-1">
+                    {"\u2705"} {isEn ? "All lessons complete! Ready for the test." : "\u00A1Todas las lecciones completas! Listo para el examen."}
+                  </p>
+                )}
+              </div>
+
               <p className="text-gray-600 text-sm mb-2">
                 {isEn
-                  ? "Review all lessons before taking the test. Tap a lesson to expand it."
-                  : "Revisa todas las lecciones antes de tomar el examen. Toca una lección para expandirla."}
+                  ? "Review all lessons before taking the test. Tap a lesson to expand, then mark it complete."
+                  : "Revisa todas las lecciones antes de tomar el examen. Toca una lecci\u00F3n para expandirla, luego m\u00E1rcala como completada."}
               </p>
-              {BOH_LESSONS.map((lesson) => (
-                <div
-                  key={lesson.id}
-                  className="bg-white rounded-xl border-2 border-gray-200 overflow-hidden"
-                >
-                  <button
-                    onClick={() =>
-                      setExpandedLesson(
-                        expandedLesson === lesson.id ? null : lesson.id
-                      )
-                    }
-                    className="w-full p-4 flex items-center justify-between text-left"
+
+              {BOH_LESSONS.map((lesson) => {
+                const isDone = completedLessons.includes(lesson.id);
+                return (
+                  <div
+                    key={lesson.id}
+                    className={`bg-white rounded-xl border-2 overflow-hidden ${isDone ? "border-green-400" : "border-gray-200"}`}
                   >
-                    <div className="flex items-center gap-3">
-                      <span className="text-2xl">{lesson.icon}</span>
-                      <span className="font-bold text-gray-800">
-                        {isEn ? lesson.title : lesson.titleEs}
+                    <button
+                      onClick={() => setExpandedLesson(expandedLesson === lesson.id ? null : lesson.id)}
+                      className="w-full p-4 flex items-center justify-between text-left"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">{isDone ? "\u2705" : lesson.icon}</span>
+                        <span className={`font-bold ${isDone ? "text-green-700" : "text-gray-800"}`}>
+                          {isEn ? lesson.title : lesson.titleEs}
+                        </span>
+                      </div>
+                      <span className="text-gray-400 text-xl">
+                        {expandedLesson === lesson.id ? "\u25B2" : "\u25BC"}
                       </span>
-                    </div>
-                    <span className="text-gray-400 text-xl">
-                      {expandedLesson === lesson.id ? "\u25B2" : "\u25BC"}
-                    </span>
-                  </button>
-                  {expandedLesson === lesson.id && (
-                    <div className="px-4 pb-4 border-t border-gray-100">
-                      <div className="mt-3 space-y-2">
-                        {(isEn ? lesson.content : lesson.contentEs).map(
-                          (line, i) => (
+                    </button>
+                    {expandedLesson === lesson.id && (
+                      <div className="px-4 pb-4 border-t border-gray-100">
+                        <div className="mt-3 space-y-2">
+                          {(isEn ? lesson.content : lesson.contentEs).map((line, i) => (
                             <p
                               key={i}
                               className={`text-sm ${
-                                line === ""
-                                  ? "h-2"
-                                  : line.startsWith("\u{1F53D}") ||
-                                    line.startsWith("\u2022")
-                                  ? "text-gray-700 pl-2"
-                                  : line.match(/^\d\./)
-                                  ? "text-gray-700 pl-4"
+                                line === "" ? "h-2"
+                                  : line.startsWith("\u{1F53D}") || line.startsWith("\u2022") ? "text-gray-700 pl-2"
+                                  : line.match(/^\d\./) ? "text-gray-700 pl-4"
                                   : "text-gray-700"
                               } ${
-                                line.includes("WHY") ||
-                                line.includes("POR QUÉ") ||
-                                line.includes("Additional") ||
-                                line.includes("Reglas adicionales") ||
-                                line.includes("When to sanitize") ||
-                                line.includes("Cuándo desinfectar") ||
-                                line.includes("BEFORE") ||
-                                line.includes("ANTES") ||
-                                line.includes("Clean-as-you-go") ||
-                                line.includes("Hábitos") ||
-                                line.includes("You must also") ||
-                                line.includes("También debes") ||
-                                line.includes("Proper handwashing") ||
-                                line.includes("Pasos correctos") ||
-                                line.includes("The 5-step") ||
-                                line.includes("El proceso") ||
-                                line.includes("Why it matters") ||
-                                line.includes("Por qué es")
-                                  ? "font-bold text-gray-900 mt-2"
-                                  : ""
+                                line.includes("WHY") || line.includes("POR QU\u00C9") ||
+                                line.includes("Additional") || line.includes("Reglas adicionales") ||
+                                line.includes("When to sanitize") || line.includes("Cu\u00E1ndo desinfectar") ||
+                                line.includes("BEFORE") || line.includes("ANTES") ||
+                                line.includes("Clean-as-you-go") || line.includes("H\u00E1bitos") ||
+                                line.includes("You must also") || line.includes("Tambi\u00E9n debes") ||
+                                line.includes("Proper handwashing") || line.includes("Pasos correctos") ||
+                                line.includes("The 5-step") || line.includes("El proceso") ||
+                                line.includes("Why it matters") || line.includes("Por qu\u00E9 es") ||
+                                line.includes("Personal hygiene") || line.includes("Reglas de higiene") ||
+                                line.includes("Key food safety") || line.includes("Temperaturas clave") ||
+                                line.includes("Cross-contamination") || line.includes("Prevenci\u00F3n de contaminaci\u00F3n") ||
+                                line.includes("Basic knife") || line.includes("Reglas b\u00E1sicas de seguridad") ||
+                                line.includes("Cutting board") || line.includes("Seguridad con tabla") ||
+                                line.includes("Storage and washing") || line.includes("Almacenamiento y lavado") ||
+                                line.includes("How to practice") || line.includes("C\u00F3mo practicar") ||
+                                line.includes("Date labeling") || line.includes("Reglas de etiquetado") ||
+                                line.includes("Common FIFO") || line.includes("Errores comunes")
+                                  ? "font-bold text-gray-900 mt-2" : ""
                               }`}
                             >
                               {line || "\u00A0"}
                             </p>
-                          )
+                          ))}
+                        </div>
+                        <div className="mt-4 bg-green-50 border-2 border-green-300 rounded-lg p-3">
+                          <p className="text-green-800 font-bold text-sm">
+                            {"\u{2B50}"} {isEn ? "Key Takeaway:" : "Punto Clave:"}
+                          </p>
+                          <p className="text-green-700 text-sm mt-1">
+                            {isEn ? lesson.keyPoint : lesson.keyPointEs}
+                          </p>
+                        </div>
+                        {!isDone && (
+                          <button
+                            onClick={() => markLessonComplete(lesson.id)}
+                            className="mt-3 w-full bg-green-600 text-white py-2 rounded-lg font-bold text-sm hover:bg-green-700 transition-all"
+                          >
+                            {"\u2705"} {isEn ? "Mark as Complete" : "Marcar como Completada"}
+                          </button>
+                        )}
+                        {isDone && (
+                          <p className="mt-3 text-center text-green-600 font-bold text-sm">
+                            {"\u2705"} {isEn ? "Completed" : "Completada"}
+                          </p>
                         )}
                       </div>
-                      <div className="mt-4 bg-green-50 border-2 border-green-300 rounded-lg p-3">
-                        <p className="text-green-800 font-bold text-sm">
-                          {"\u{2B50}"}{" "}
-                          {isEn ? "Key Takeaway:" : "Punto Clave:"}
-                        </p>
-                        <p className="text-green-700 text-sm mt-1">
-                          {isEn ? lesson.keyPoint : lesson.keyPointEs}
-                        </p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
 
               <div className="mt-6 text-center">
                 <button
                   onClick={() => setBohView("test")}
                   className="bg-green-600 text-white py-3 px-8 rounded-xl font-bold text-lg shadow-lg hover:bg-green-700 transition-all"
                 >
-                  {"\u{1F4DD}"}{" "}
-                  {isEn
-                    ? "Ready? Take the Test!"
-                    : "\u00BFListo? \u00A1Toma el Examen!"}
+                  {"\u{1F4DD}"} {isEn ? "Ready? Take the Test!" : "\u00BFListo? \u00A1Toma el Examen!"}
                 </button>
               </div>
             </div>
@@ -1011,27 +1057,18 @@ export default function TrainingHub({ staffName, language, staffList }) {
             <div className="space-y-4">
               <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-4 mb-2">
                 <p className="text-blue-800 font-bold">
-                  {"\u{1F4CB}"}{" "}
-                  {isEn
-                    ? "BOH Food Safety Test — 20 Questions"
-                    : "Examen de Seguridad Alimentaria BOH — 20 Preguntas"}
+                  {"\u{1F4CB}"} {isEn ? "BOH Food Safety Test \u2014 20 Questions" : "Examen de Seguridad Alimentaria BOH \u2014 20 Preguntas"}
                 </p>
                 <p className="text-blue-600 text-sm mt-1">
-                  {isEn
-                    ? "You need 80% (16/20) to pass. Take your time!"
-                    : "Necesitas 80% (16/20) para aprobar. \u00A1Tómate tu tiempo!"}
+                  {isEn ? "You need 80% (16/20) to pass. Take your time!" : "Necesitas 80% (16/20) para aprobar. \u00A1T\u00F3mate tu tiempo!"}
                 </p>
               </div>
 
               {BOH_TEST.map((q, idx) => (
-                <div
-                  key={q.id}
-                  className="bg-white rounded-xl border-2 border-gray-200 p-4"
-                >
+                <div key={q.id} className="bg-white rounded-xl border-2 border-gray-200 p-4">
                   <p className="font-bold text-gray-800 mb-3">
                     {idx + 1}. {isEn ? q.q : q.qEs}
                   </p>
-
                   {q.type === "mc" ? (
                     <div className="space-y-2">
                       {(isEn ? q.options : q.optionsEs).map((opt, optIdx) => (
@@ -1044,9 +1081,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                               : "bg-gray-50 border-gray-200 text-gray-700 hover:border-gray-300"
                           }`}
                         >
-                          <span className="font-bold mr-2">
-                            {String.fromCharCode(65 + optIdx)}.
-                          </span>
+                          <span className="font-bold mr-2">{String.fromCharCode(65 + optIdx)}.</span>
                           {opt}
                         </button>
                       ))}
@@ -1082,8 +1117,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
               <div className="sticky bottom-20 bg-white border-2 border-gray-200 rounded-xl p-4 shadow-lg">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-gray-600 text-sm font-bold">
-                    {Object.keys(testAnswers).length}/{BOH_TEST.length}{" "}
-                    {isEn ? "answered" : "respondidas"}
+                    {Object.keys(testAnswers).length}/{BOH_TEST.length} {isEn ? "answered" : "respondidas"}
                   </span>
                   <span className="text-gray-400 text-sm">
                     {isEn ? "Need 16/20 to pass" : "Necesitas 16/20 para aprobar"}
@@ -1092,11 +1126,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                 <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
                   <div
                     className="bg-mint-500 h-2 rounded-full transition-all"
-                    style={{
-                      width: `${
-                        (Object.keys(testAnswers).length / BOH_TEST.length) * 100
-                      }%`,
-                    }}
+                    style={{ width: `${(Object.keys(testAnswers).length / BOH_TEST.length) * 100}%` }}
                   />
                 </div>
                 <button
@@ -1108,13 +1138,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                       : "bg-gray-300 text-gray-500 cursor-not-allowed"
                   }`}
                 >
-                  {submitting
-                    ? isEn
-                      ? "Submitting..."
-                      : "Enviando..."
-                    : isEn
-                    ? "Submit Test"
-                    : "Enviar Examen"}
+                  {submitting ? (isEn ? "Submitting..." : "Enviando...") : (isEn ? "Submit Test" : "Enviar Examen")}
                 </button>
               </div>
             </div>
@@ -1125,78 +1149,38 @@ export default function TrainingHub({ staffName, language, staffList }) {
             <div>
               {/* Show current test result if just submitted */}
               {testResult && (
-                <div
-                  className={`rounded-xl border-2 p-6 text-center mb-6 ${
-                    testResult.passed
-                      ? "bg-green-50 border-green-400"
-                      : "bg-red-50 border-red-400"
-                  }`}
-                >
-                  <p className="text-5xl mb-3">
-                    {testResult.passed ? "\u{1F389}" : "\u{1F4AA}"}
+                <div className={`rounded-xl border-2 p-6 text-center mb-6 ${testResult.passed ? "bg-green-50 border-green-400" : "bg-red-50 border-red-400"}`}>
+                  <p className="text-5xl mb-3">{testResult.passed ? "\u{1F389}" : "\u{1F4AA}"}</p>
+                  <p className={`text-2xl font-bold mb-2 ${testResult.passed ? "text-green-700" : "text-red-700"}`}>
+                    {testResult.passed ? (isEn ? "You Passed!" : "\u00A1Aprobaste!") : (isEn ? "Not Yet \u2014 Keep Trying!" : "\u00A1A\u00FAn no \u2014 Sigue intentando!")}
                   </p>
-                  <p
-                    className={`text-2xl font-bold mb-2 ${
-                      testResult.passed ? "text-green-700" : "text-red-700"
-                    }`}
-                  >
-                    {testResult.passed
-                      ? isEn
-                        ? "You Passed!"
-                        : "\u00A1Aprobaste!"
-                      : isEn
-                      ? "Not Yet — Keep Trying!"
-                      : "\u00A1Aún no — Sigue intentando!"}
-                  </p>
-                  <p className="text-3xl font-bold text-gray-800 mb-1">
-                    {testResult.score}%
-                  </p>
-                  <p className="text-gray-600">
-                    {testResult.correct}/{testResult.total}{" "}
-                    {isEn ? "correct" : "correctas"}
-                  </p>
+                  <p className="text-3xl font-bold text-gray-800 mb-1">{testResult.score}%</p>
+                  <p className="text-gray-600">{testResult.correct}/{testResult.total} {isEn ? "correct" : "correctas"}</p>
 
-                  {/* Show which questions were wrong */}
                   {testResult.details.some((d) => !d.isCorrect) && (
                     <div className="mt-4 text-left">
                       <p className="font-bold text-gray-700 mb-2">
                         {isEn ? "Review incorrect answers:" : "Revisa respuestas incorrectas:"}
                       </p>
-                      {testResult.details
-                        .filter((d) => !d.isCorrect)
-                        .map((d) => {
-                          const q = BOH_TEST.find((t) => t.id === d.questionId);
-                          return (
-                            <div
-                              key={d.questionId}
-                              className="bg-white rounded-lg border border-red-200 p-3 mb-2"
-                            >
-                              <p className="text-sm text-gray-800 font-bold">
-                                Q{d.questionId}: {isEn ? q.q : q.qEs}
-                              </p>
-                              <p className="text-sm text-red-600 mt-1">
-                                {isEn ? "Correct answer: " : "Respuesta correcta: "}
-                                {q.type === "mc"
-                                  ? (isEn ? q.options : q.optionsEs)[q.answer]
-                                  : q.answer
-                                  ? isEn
-                                    ? "True"
-                                    : "Verdadero"
-                                  : isEn
-                                  ? "False"
-                                  : "Falso"}
-                              </p>
-                            </div>
-                          );
-                        })}
+                      {testResult.details.filter((d) => !d.isCorrect).map((d) => {
+                        const q = BOH_TEST.find((t) => t.id === d.questionId);
+                        return (
+                          <div key={d.questionId} className="bg-white rounded-lg border border-red-200 p-3 mb-2">
+                            <p className="text-sm text-gray-800 font-bold">Q{d.questionId}: {isEn ? q.q : q.qEs}</p>
+                            <p className="text-sm text-red-600 mt-1">
+                              {isEn ? "Correct answer: " : "Respuesta correcta: "}
+                              {q.type === "mc"
+                                ? (isEn ? q.options : q.optionsEs)[q.answer]
+                                : q.answer ? (isEn ? "True" : "Verdadero") : (isEn ? "False" : "Falso")}
+                            </p>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
                   {!testResult.passed && (
-                    <button
-                      onClick={retakeTest}
-                      className="mt-4 bg-mint-600 text-white py-3 px-8 rounded-xl font-bold text-lg shadow-lg hover:bg-mint-700 transition-all"
-                    >
+                    <button onClick={retakeTest} className="mt-4 bg-mint-600 text-white py-3 px-8 rounded-xl font-bold text-lg shadow-lg hover:bg-mint-700 transition-all">
                       {"\u{1F504}"} {isEn ? "Retake Test" : "Repetir Examen"}
                     </button>
                   )}
@@ -1205,153 +1189,175 @@ export default function TrainingHub({ staffName, language, staffList }) {
 
               {/* Show previous result if no current test */}
               {!testResult && previousResult && (
-                <div
-                  className={`rounded-xl border-2 p-6 text-center mb-6 ${
-                    previousResult.passed
-                      ? "bg-green-50 border-green-400"
-                      : "bg-yellow-50 border-yellow-400"
-                  }`}
-                >
-                  <p className="text-4xl mb-3">
-                    {previousResult.passed ? "\u2705" : "\u{1F4CB}"}
-                  </p>
-                  <p className="font-bold text-lg text-gray-800 mb-1">
-                    {isEn ? "Your Last Result" : "Tu Último Resultado"}
-                  </p>
-                  <p className="text-3xl font-bold text-gray-800 mb-1">
-                    {previousResult.score}%
-                  </p>
-                  <p className="text-gray-600 mb-1">
-                    {previousResult.correct}/{previousResult.total}{" "}
-                    {isEn ? "correct" : "correctas"}
-                  </p>
-                  <p className="text-gray-400 text-xs">
-                    {isEn ? "Submitted: " : "Enviado: "}
-                    {new Date(previousResult.submittedAt).toLocaleDateString()}
-                  </p>
-                  {!previousResult.passed && (
-                    <button
-                      onClick={retakeTest}
-                      className="mt-4 bg-mint-600 text-white py-3 px-6 rounded-xl font-bold shadow-lg"
-                    >
-                      {"\u{1F504}"} {isEn ? "Retake Test" : "Repetir Examen"}
-                    </button>
-                  )}
+                <div className={`rounded-xl border-2 p-6 text-center mb-6 ${previousResult.passed ? "bg-green-50 border-green-400" : "bg-yellow-50 border-yellow-400"}`}>
+                  <p className="text-4xl mb-3">{previousResult.passed ? "\u2705" : "\u{1F4CB}"}</p>
+                  <p className="font-bold text-lg text-gray-800 mb-1">{isEn ? "Your Last Result" : "Tu \u00DAltimo Resultado"}</p>
+                  <p className="text-3xl font-bold text-gray-800 mb-1">{previousResult.score}%</p>
+                  <p className="text-gray-600 mb-1">{previousResult.correct}/{previousResult.total} {isEn ? "correct" : "correctas"}</p>
+                  <p className="text-gray-400 text-xs">{isEn ? "Submitted: " : "Enviado: "}{new Date(previousResult.submittedAt).toLocaleDateString()}</p>
+                  <button onClick={retakeTest} className="mt-4 bg-mint-600 text-white py-3 px-6 rounded-xl font-bold shadow-lg">
+                    {"\u{1F504}"} {isEn ? "Retake Test" : "Repetir Examen"}
+                  </button>
                 </div>
               )}
 
               {!testResult && !previousResult && !loadingPrev && (
                 <div className="bg-gray-50 border-2 border-gray-200 rounded-xl p-6 text-center">
                   <p className="text-gray-500">
-                    {isEn
-                      ? "No test results yet. Take the test first!"
-                      : "\u00A1Aún no hay resultados. Toma el examen primero!"}
+                    {isEn ? "No test results yet. Take the test first!" : "\u00A1A\u00FAn no hay resultados. Toma el examen primero!"}
                   </p>
-                  <button
-                    onClick={() => setBohView("test")}
-                    className="mt-3 bg-green-600 text-white py-2 px-6 rounded-xl font-bold"
-                  >
+                  <button onClick={() => setBohView("test")} className="mt-3 bg-green-600 text-white py-2 px-6 rounded-xl font-bold">
                     {isEn ? "Take Test" : "Tomar Examen"}
                   </button>
                 </div>
               )}
+            </div>
+          )}
 
-              {/* ─── ADMIN PANEL ─── */}
-              <div className="mt-8 border-t-2 border-gray-200 pt-6">
-                {!showAdminPanel ? (
-                  <div className="text-center">
-                    <p className="text-gray-400 text-xs mb-2">
-                      {isEn ? "Manager Access" : "Acceso de Gerente"}
-                    </p>
-                    <div className="flex items-center justify-center gap-2">
-                      <input
-                        type="password"
-                        value={adminPin}
-                        onChange={(e) => setAdminPin(e.target.value)}
-                        placeholder="PIN"
-                        className="w-24 p-2 border-2 border-gray-300 rounded-lg text-center font-bold"
-                        onKeyDown={(e) => e.key === "Enter" && unlockAdmin()}
-                      />
-                      <button
-                        onClick={unlockAdmin}
-                        className="bg-gray-700 text-white py-2 px-4 rounded-lg font-bold text-sm"
-                      >
-                        {"\u{1F512}"} {isEn ? "Unlock" : "Desbloquear"}
-                      </button>
-                    </div>
+          {/* ─── TRACKER VIEW (Admin) ─── */}
+          {bohView === "tracker" && (
+            <div>
+              {!adminUnlocked ? (
+                <div className="bg-gray-50 border-2 border-gray-200 rounded-xl p-6 text-center">
+                  <p className="text-2xl mb-3">{"\u{1F512}"}</p>
+                  <p className="font-bold text-gray-700 mb-3">
+                    {isEn ? "Manager Access Required" : "Se Requiere Acceso de Gerente"}
+                  </p>
+                  <div className="flex items-center justify-center gap-2">
+                    <input
+                      type="password"
+                      value={adminPin}
+                      onChange={(e) => setAdminPin(e.target.value)}
+                      placeholder={isEn ? "Enter PIN" : "Ingresa PIN"}
+                      className="w-32 p-3 border-2 border-gray-300 rounded-lg text-center font-bold text-lg"
+                      onKeyDown={(e) => e.key === "Enter" && unlockAdmin()}
+                    />
+                    <button
+                      onClick={unlockAdmin}
+                      className="bg-mint-600 text-white py-3 px-5 rounded-lg font-bold text-sm hover:bg-mint-700 transition-all"
+                    >
+                      {isEn ? "Unlock" : "Desbloquear"}
+                    </button>
                   </div>
-                ) : (
-                  <div>
-                    <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-bold text-lg text-gray-800">
-                        {"\u{1F4CA}"}{" "}
-                        {isEn
-                          ? "All Staff Test Results"
-                          : "Resultados de Exámenes de Todo el Personal"}
-                      </h3>
-                      <button
-                        onClick={loadAdminResults}
-                        className="bg-gray-200 text-gray-600 py-1 px-3 rounded-lg text-sm font-bold"
-                      >
-                        {"\u{1F504}"} {isEn ? "Refresh" : "Actualizar"}
-                      </button>
-                    </div>
+                  <p className="text-gray-400 text-xs mt-2">
+                    {isEn ? "Use your admin PIN" : "Usa tu PIN de admin"}
+                  </p>
+                </div>
+              ) : (
+                <div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-lg text-gray-800">
+                      {"\u{1F4CB}"} {isEn ? "Staff Training Tracker" : "Progreso de Capacitaci\u00F3n"}
+                    </h3>
+                    <button
+                      onClick={loadTrackerData}
+                      className="bg-gray-200 text-gray-600 py-1 px-3 rounded-lg text-sm font-bold"
+                    >
+                      {"\u{1F504}"} {isEn ? "Refresh" : "Actualizar"}
+                    </button>
+                  </div>
 
-                    {loadingAdmin ? (
-                      <p className="text-gray-400 text-center py-4">
-                        {isEn ? "Loading..." : "Cargando..."}
-                      </p>
-                    ) : allResults.length === 0 ? (
-                      <p className="text-gray-400 text-center py-4">
-                        {isEn
-                          ? "No test results submitted yet."
-                          : "Aún no se han enviado resultados."}
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {allResults.map((r) => (
-                          <div
-                            key={r.id}
-                            className={`flex items-center justify-between p-3 rounded-lg border-2 ${
-                              r.passed
-                                ? "bg-green-50 border-green-300"
-                                : "bg-red-50 border-red-300"
-                            }`}
-                          >
-                            <div>
-                              <p className="font-bold text-gray-800">
-                                {r.staffName}
-                              </p>
-                              <p className="text-xs text-gray-500">
-                                {new Date(r.submittedAt).toLocaleString()}
-                              </p>
-                            </div>
-                            <div className="text-right">
-                              <p
-                                className={`font-bold text-lg ${
-                                  r.passed ? "text-green-700" : "text-red-700"
-                                }`}
-                              >
-                                {r.score}%
-                              </p>
-                              <p className="text-xs text-gray-500">
-                                {r.correct}/{r.total}{" "}
-                                {r.passed
-                                  ? isEn
-                                    ? "\u2705 Passed"
-                                    : "\u2705 Aprobado"
-                                  : isEn
-                                  ? "\u274C Failed"
-                                  : "\u274C Reprobado"}
-                              </p>
-                            </div>
-                          </div>
-                        ))}
+                  {loadingTracker ? (
+                    <p className="text-gray-400 text-center py-4">{isEn ? "Loading..." : "Cargando..."}</p>
+                  ) : (
+                    <>
+                      {/* Summary counts */}
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        <div className="bg-green-50 border-2 border-green-300 rounded-lg p-3 text-center">
+                          <p className="text-2xl font-bold text-green-700">
+                            {allResults.filter(r => r.passed).length}
+                          </p>
+                          <p className="text-xs text-green-600 font-bold">{isEn ? "Passed" : "Aprobados"}</p>
+                        </div>
+                        <div className="bg-red-50 border-2 border-red-300 rounded-lg p-3 text-center">
+                          <p className="text-2xl font-bold text-red-700">
+                            {allResults.filter(r => !r.passed).length}
+                          </p>
+                          <p className="text-xs text-red-600 font-bold">{isEn ? "Failed" : "Reprobados"}</p>
+                        </div>
+                        <div className="bg-gray-50 border-2 border-gray-300 rounded-lg p-3 text-center">
+                          <p className="text-2xl font-bold text-gray-700">
+                            {(staffList || []).length - allResults.length}
+                          </p>
+                          <p className="text-xs text-gray-600 font-bold">{isEn ? "Not Started" : "Sin Iniciar"}</p>
+                        </div>
                       </div>
-                    )}
-                  </div>
-                )}
-              </div>
+
+                      {/* Staff checklist */}
+                      <div className="space-y-2">
+                        {(staffList || []).map((staff) => {
+                          const docId = staff.name.toLowerCase().replace(/\s+/g, "_");
+                          const result = allResults.find(r => r.id === docId);
+                          const progress = allProgress[docId];
+                          const lessonsCompleted = progress?.completedLessons?.length || 0;
+                          const hasTest = !!result;
+                          const passed = result?.passed;
+
+                          return (
+                            <div
+                              key={staff.name}
+                              className={`p-3 rounded-lg border-2 ${
+                                passed ? "bg-green-50 border-green-300"
+                                : hasTest ? "bg-red-50 border-red-300"
+                                : lessonsCompleted > 0 ? "bg-yellow-50 border-yellow-300"
+                                : "bg-gray-50 border-gray-200"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="font-bold text-gray-800">{staff.name}</p>
+                                  <div className="flex items-center gap-3 mt-1">
+                                    <span className="text-xs text-gray-500">
+                                      {"\u{1F4D6}"} {lessonsCompleted}/{BOH_LESSONS.length} {isEn ? "lessons" : "lecciones"}
+                                    </span>
+                                    {hasTest && (
+                                      <span className={`text-xs font-bold ${passed ? "text-green-600" : "text-red-600"}`}>
+                                        {"\u{1F4DD}"} {result.score}% {passed ? (isEn ? "Passed" : "Aprobado") : (isEn ? "Failed" : "Reprobado")}
+                                      </span>
+                                    )}
+                                    {!hasTest && (
+                                      <span className="text-xs text-gray-400">
+                                        {"\u{1F4DD}"} {isEn ? "No test yet" : "Sin examen"}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {hasTest && (
+                                    <p className="text-xs text-gray-400 mt-1">
+                                      {new Date(result.submittedAt).toLocaleDateString()}
+                                    </p>
+                                  )}
+                                </div>
+                                <div className="text-right">
+                                  {passed ? (
+                                    <span className="text-2xl">{"\u2705"}</span>
+                                  ) : hasTest ? (
+                                    <span className="text-2xl">{"\u274C"}</span>
+                                  ) : lessonsCompleted > 0 ? (
+                                    <span className="text-2xl">{"\u{1F7E1}"}</span>
+                                  ) : (
+                                    <span className="text-2xl">{"\u2B1C"}</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Legend */}
+                      <div className="mt-4 bg-white border border-gray-200 rounded-lg p-3">
+                        <p className="text-xs font-bold text-gray-600 mb-1">{isEn ? "Legend:" : "Leyenda:"}</p>
+                        <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+                          <span>{"\u2705"} {isEn ? "Passed" : "Aprobado"}</span>
+                          <span>{"\u274C"} {isEn ? "Failed" : "Reprobado"}</span>
+                          <span>{"\u{1F7E1}"} {isEn ? "In Progress" : "En Progreso"}</span>
+                          <span>{"\u2B1C"} {isEn ? "Not Started" : "Sin Iniciar"}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </>
