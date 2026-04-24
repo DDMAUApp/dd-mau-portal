@@ -1,261 +1,181 @@
-"""
-Toast Dashboard Scraper - Add this to scraper.py
-=================================================
+import { useState, useEffect } from 'react';
+import { db } from '../firebase';
+import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 
-This replaces the broken API-based labor cost calculation with
-direct scraping from the Toast dashboard, which has the real numbers.
+export default function ToastInvoices({ language }) {
+    const [orders, setOrders] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [location, setLocation] = useState("webster");
+    const [expandedOrder, setExpandedOrder] = useState(null);
 
-INSTRUCTIONS:
-1. Replace the Dockerfile and requirements.txt with the updated versions
-2. In scraper.py, add this class near the top (after imports)
-3. In run_scraper(), replace the labor cost calculation loop with the
-   dashboard scraper approach (see MAIN LOOP CHANGES below)
-4. Add these env vars to Railway:
-   TOAST_EMAIL=andrew.shih87@gmail.com
-   TOAST_PASSWORD=ZhongGuo87
-"""
+    const isEn = language !== "es";
 
-# ─── ADD THESE IMPORTS AT TOP OF scraper.py ─────────────────────────
-# from playwright.sync_api import sync_playwright
-# import re
-
-
-# ─── ADD THIS CLASS AFTER ToastAPI CLASS ────────────────────────────
-
-class ToastDashboardScraper:
-    """
-    Scrapes labor data directly from Toast's web dashboard.
-    This gets the REAL numbers that match what managers see in Toast.
-    """
-
-    def __init__(self):
-        self.email = os.environ.get("TOAST_EMAIL")
-        self.password = os.environ.get("TOAST_PASSWORD")
-        if not self.email or not self.password:
-            raise ValueError("TOAST_EMAIL and TOAST_PASSWORD env vars required")
-
-    def scrape_labor_data(self, locations):
-        """
-        Log into Toast dashboard and scrape labor cost breakdown for each location.
-
-        Returns dict keyed by firestore_key:
-          {
-            "labor_webster": {"laborCost": 424.97, "netSales": 1977.76, "laborPercent": 21.5},
-            "labor_maryland": {"laborCost": ..., "netSales": ..., "laborPercent": ...},
-          }
-        """
-        results = {}
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            context = browser.new_context(
-                viewport={"width": 1280, "height": 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            )
-            page = context.new_page()
-
-            try:
-                # ── Step 1: Login ──
-                log("  [TOAST-WEB] Logging in...")
-                page.goto("https://www.toasttab.com/login", wait_until="networkidle", timeout=30000)
-                page.wait_for_timeout(2000)
-
-                # Fill email
-                email_input = page.locator('input[type="email"], input[name="email"], #email')
-                if email_input.count() > 0:
-                    email_input.first.fill(self.email)
-                else:
-                    # Try generic input approach
-                    page.locator('input').first.fill(self.email)
-
-                # Fill password
-                pw_input = page.locator('input[type="password"], input[name="password"], #password')
-                if pw_input.count() > 0:
-                    pw_input.first.fill(self.password)
-
-                # Click login button
-                login_btn = page.locator('button[type="submit"], button:has-text("Log in"), button:has-text("Sign in")')
-                if login_btn.count() > 0:
-                    login_btn.first.click()
-
-                # Wait for redirect to dashboard
-                page.wait_for_url("**/restaurants/admin/**", timeout=15000)
-                page.wait_for_timeout(3000)
-                log("  [TOAST-WEB] Logged in successfully")
-
-                # ── Step 2: Scrape each location ──
-                for loc in locations:
-                    try:
-                        result = self._scrape_location(page, loc)
-                        if result:
-                            results[loc["firestore_key"]] = result
-                    except Exception as e:
-                        log(f"  [TOAST-WEB] Error scraping {loc['name']}: {e}")
-
-            except Exception as e:
-                log(f"  [TOAST-WEB] Login/scrape failed: {e}")
-            finally:
-                browser.close()
-
-        return results
-
-    def _scrape_location(self, page, loc):
-        """Scrape labor data for a single location from the labor breakdown page."""
-        log(f"  [TOAST-WEB] Scraping {loc['name']}...")
-
-        # Navigate to labor cost breakdown with today's date
-        from datetime import datetime
-        from zoneinfo import ZoneInfo
-        now_ct = datetime.now(ZoneInfo("America/Chicago"))
-        date_str = now_ct.strftime("%Y%m%d")
-
-        url = (
-            f"https://www.toasttab.com/restaurants/admin/reports/labor/"
-            f"labor-cost-breakdown?datePreset=TODAY"
-            f"&startDate={date_str}&endDate={date_str}"
-        )
-
-        page.goto(url, wait_until="networkidle", timeout=30000)
-        page.wait_for_timeout(3000)
-
-        # Check if we need to switch restaurant location
-        # The location selector is at the top of the page
-        current_loc = page.locator('text=WEBSTER GROVES, text=MARYLAND HEIGHTS').first
-        if current_loc.count() == 0:
-            # Try to find and click location selector
-            pass  # Will use whatever location is currently selected
-
-        # Look for the location name to see which one we're on
-        page_text = page.content()
-
-        # If this location doesn't match, try to switch
-        if loc["name"].upper() not in page_text.upper():
-            # Click the location dropdown
-            loc_selector = page.locator('[class*="location"], [data-testid*="location"]')
-            if loc_selector.count() > 0:
-                loc_selector.first.click()
-                page.wait_for_timeout(1000)
-                # Click the target location
-                page.locator(f'text="{loc["name"]}"').first.click()
-                page.wait_for_timeout(3000)
-
-        # ── Extract the summary values ──
-        # The labor breakdown page shows: Labor cost | Net sales | Labor % | SPLH
-        # These are in the summary bar near the top
-
-        labor_cost = self._extract_dollar_value(page, "Labor cost")
-        net_sales = self._extract_dollar_value(page, "Net sales")
-        labor_pct = self._extract_percent_value(page, "Labor %")
-
-        if labor_cost is not None and net_sales is not None and labor_pct is not None:
-            log(f"  [TOAST-WEB] {loc['name']}: Labor ${labor_cost:,.2f}, "
-                f"Sales ${net_sales:,.2f}, Labor% {labor_pct}%")
-            return {
-                "laborCost": round(labor_cost, 2),
-                "netSales": round(net_sales, 2),
-                "laborPercent": round(labor_pct, 2),
+    useEffect(() => {
+        setLoading(true);
+        setExpandedOrder(null);
+        // Composite index needed: location (ASC) + createdDate (DESC)
+        // On first load, Firestore console will show a link to create it
+        const q = query(
+            collection(db, "toast_invoices"),
+            where("location", "==", location),
+            orderBy("createdDate", "desc"),
+            limit(300)
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            setOrders(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            setLoading(false);
+        }, (err) => {
+            console.error("Toast invoices query error:", err);
+            // If composite index missing, show helpful message
+            if (err.message && err.message.includes("index")) {
+                console.error("Create the composite index using the link above ^^^");
             }
-        else:
-            log(f"  [TOAST-WEB] Could not extract all values for {loc['name']}")
-            log(f"    laborCost={labor_cost}, netSales={net_sales}, laborPct={labor_pct}")
-            return None
+            setLoading(false);
+        });
+        return () => unsub();
+    }, [location]);
 
-    def _extract_dollar_value(self, page, label):
-        """Extract a dollar value that appears near a label on the page."""
-        try:
-            # Strategy 1: Find the label text, then get the nearby dollar value
-            elements = page.query_selector_all(f'text="{label}"')
-            for el in elements:
-                # Get the parent container
-                parent = el.evaluate_handle("el => el.closest('div')").as_element()
-                if parent:
-                    parent_text = parent.inner_text()
-                    # Look for dollar amount pattern
-                    match = re.search(r'\$([0-9,]+\.?\d*)', parent_text)
-                    if match:
-                        return float(match.group(1).replace(",", ""))
+    // Group orders by business date
+    const grouped = {};
+    orders.forEach(o => {
+        const d = o.businessDate || "Unknown";
+        if (!grouped[d]) grouped[d] = [];
+        grouped[d].push(o);
+    });
+    const dates = Object.keys(grouped).sort().reverse();
 
-            # Strategy 2: Search the whole page for the pattern near the label
-            content = page.content()
-            # Find label position, then look for nearby dollar value
-            pattern = rf'{label}[^$]*?\$([0-9,]+\.?\d*)'
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                return float(match.group(1).replace(",", ""))
+    // Calculate totals
+    const grandTotal = orders.reduce((sum, o) => sum + (o.total || 0), 0);
+    const orderCount = orders.length;
 
-        except Exception as e:
-            log(f"    Error extracting {label}: {e}")
-        return None
+    return (
+        <div>
+            <h2 className="text-xl font-bold text-mint-700 mb-3">
+                🧾 {isEn ? "Toast Orders" : "Pedidos de Toast"}
+            </h2>
 
-    def _extract_percent_value(self, page, label):
-        """Extract a percentage value that appears near a label on the page."""
-        try:
-            elements = page.query_selector_all(f'text="{label}"')
-            for el in elements:
-                parent = el.evaluate_handle("el => el.closest('div')").as_element()
-                if parent:
-                    parent_text = parent.inner_text()
-                    match = re.search(r'(\d+\.?\d*)%', parent_text)
-                    if match:
-                        return float(match.group(1))
+            {/* Location toggle */}
+            <div className="flex gap-2 mb-3">
+                <button onClick={() => setLocation("webster")}
+                    className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${location === "webster" ? "bg-emerald-700 text-white border-emerald-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                    Webster
+                </button>
+                <button onClick={() => setLocation("maryland")}
+                    className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${location === "maryland" ? "bg-emerald-700 text-white border-emerald-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                    Maryland Heights
+                </button>
+            </div>
 
-            # Fallback: search page content
-            content = page.content()
-            pattern = rf'{label}[^%]*?(\d+\.?\d*)%'
-            match = re.search(pattern, content, re.IGNORECASE)
-            if match:
-                return float(match.group(1))
+            {/* Summary bar */}
+            {!loading && orders.length > 0 && (
+                <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-3 mb-4 flex justify-between items-center">
+                    <div>
+                        <p className="text-sm font-bold text-mint-800">{orderCount} {isEn ? "orders" : "pedidos"}</p>
+                        <p className="text-xs text-mint-600">{dates.length} {isEn ? "days" : "días"}</p>
+                    </div>
+                    <div className="text-right">
+                        <p className="text-lg font-bold text-mint-800">${grandTotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+                        <p className="text-xs text-mint-600">{isEn ? "total sales" : "ventas totales"}</p>
+                    </div>
+                </div>
+            )}
 
-        except Exception as e:
-            log(f"    Error extracting {label}: {e}")
-        return None
+            {loading ? (
+                <div className="text-center py-12">
+                    <p className="text-3xl mb-2">⏳</p>
+                    <p className="text-gray-400">{isEn ? "Loading orders..." : "Cargando pedidos..."}</p>
+                </div>
+            ) : orders.length === 0 ? (
+                <div className="text-center py-12">
+                    <p className="text-3xl mb-2">📭</p>
+                    <p className="text-gray-500 font-bold">{isEn ? "No orders found" : "No se encontraron pedidos"}</p>
+                    <p className="text-xs text-gray-400 mt-2">{isEn ? "Orders sync from Toast every 30 minutes." : "Los pedidos se sincronizan desde Toast cada 30 minutos."}</p>
+                    <p className="text-xs text-gray-400 mt-1">{isEn ? "Make sure the scraper is running on Railway." : "Asegúrate de que el scraper esté corriendo en Railway."}</p>
+                </div>
+            ) : (
+                <div>
+                    {dates.map(date => {
+                        const dayOrders = grouped[date];
+                        const dayTotal = dayOrders.reduce((s, o) => s + (o.total || 0), 0);
 
+                        return (
+                            <div key={date} className="mb-5">
+                                {/* Date header */}
+                                <div className="flex justify-between items-center mb-2 sticky top-16 bg-gray-50 py-1.5 z-10 border-b-2 border-mint-200">
+                                    <h3 className="text-sm font-bold text-gray-700">
+                                        📅 {new Date(date + "T12:00:00").toLocaleDateString(isEn ? "en-US" : "es-US", { weekday: "short", month: "short", day: "numeric" })}
+                                    </h3>
+                                    <div className="text-right">
+                                        <span className="text-xs text-gray-400 mr-2">{dayOrders.length} {isEn ? "orders" : "pedidos"}</span>
+                                        <span className="text-sm font-bold text-mint-700">${dayTotal.toFixed(2)}</span>
+                                    </div>
+                                </div>
 
-# ─── MAIN LOOP CHANGES ─────────────────────────────────────────────
-#
-# In run_scraper(), REPLACE the labor section of the main loop
-# (lines ~728-775) with this:
-#
-# The old code does:
-#   for loc in LOCATIONS:
-#       labor_cost = api.calculate_labor_cost(...)
-#       ...write labor-only...
-#       net_sales = api.calculate_net_sales(...)
-#       ...calculate labor_pct...
-#       ...write to firestore...
-#
-# NEW CODE (replace the labor section inside the while True loop):
-"""
-            # ── Scrape labor data from Toast dashboard ──
-            try:
-                dashboard = ToastDashboardScraper()
-                labor_results = dashboard.scrape_labor_data(LOCATIONS)
+                                {/* Order cards */}
+                                {dayOrders.map((order, i) => {
+                                    const expanded = expandedOrder === order.guid;
+                                    let timeStr = "—";
+                                    try {
+                                        if (order.createdDate) {
+                                            const dt = new Date(order.createdDate.replace("+0000", "Z"));
+                                            timeStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                        }
+                                    } catch(e) {}
 
-                for loc in LOCATIONS:
-                    fkey = loc["firestore_key"]
-                    if fkey in labor_results:
-                        data = labor_results[fkey]
-                        log(f"[{loc['name']}]")
-                        log(f"  Labor: ${data['laborCost']:,.2f} / ${data['netSales']:,.2f} = {data['laborPercent']}%")
+                                    return (
+                                        <div key={order.guid || i}
+                                            className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300"}`}
+                                            onClick={() => setExpandedOrder(expanded ? null : order.guid)}>
+                                            <div className="flex justify-between items-start">
+                                                <div className="flex-1">
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-sm font-bold text-gray-800">{timeStr}</p>
+                                                        <span className="text-xs text-gray-300">#{order.guid?.slice(-6).toUpperCase()}</span>
+                                                    </div>
+                                                    <p className="text-xs text-gray-500 mt-1">
+                                                        {order.diningOption || "—"} • {order.itemCount || 0} {isEn ? "items" : "artículos"} • {order.checkCount || 1} {isEn ? "check(s)" : "cuenta(s)"}
+                                                    </p>
+                                                    {!expanded && order.itemNames && order.itemNames.length > 0 && (
+                                                        <p className="text-xs text-gray-400 mt-1 truncate">
+                                                            {order.itemNames.slice(0, 3).join(", ")}
+                                                            {order.itemCount > 3 ? ` +${order.itemCount - 3}` : ""}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                                <div className="text-right ml-2">
+                                                    <p className="font-bold text-mint-700 text-base">${order.total?.toFixed(2)}</p>
+                                                    <span className={`text-xs px-2 py-0.5 rounded-full font-bold inline-block mt-1 ${order.paymentStatus === "CLOSED" ? "bg-green-100 text-green-700" : "bg-amber-100 text-amber-700"}`}>
+                                                        {order.paymentStatus || "OPEN"}
+                                                    </span>
+                                                </div>
+                                            </div>
 
-                        write_to_firestore(fkey, {
-                            "laborPercent": data["laborPercent"],
-                            "laborCost": data["laborCost"],
-                            "netSales": data["netSales"],
-                        })
-                    else:
-                        log(f"[{loc['name']}] No dashboard data available")
+                                            {/* Expanded item list */}
+                                            {expanded && order.itemNames && order.itemNames.length > 0 && (
+                                                <div className="mt-3 pt-3 border-t border-gray-100">
+                                                    <p className="text-xs font-bold text-gray-500 mb-1.5">{isEn ? "Items:" : "Artículos:"}</p>
+                                                    <div className="grid grid-cols-1 gap-1">
+                                                        {order.itemNames.map((name, ni) => (
+                                                            <p key={ni} className="text-xs text-gray-600 bg-gray-50 rounded px-2 py-1">• {name}</p>
+                                                        ))}
+                                                    </div>
+                                                    {order.itemCount > order.itemNames.length && (
+                                                        <p className="text-xs text-gray-400 italic mt-1">+{order.itemCount - order.itemNames.length} {isEn ? "more items" : "más artículos"}</p>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        );
+                    })}
 
-            except Exception as e:
-                log(f"  Dashboard scrape failed: {e}")
-                log(f"  Falling back to API-based calculation")
-                # ... keep existing API-based code as fallback ...
-
-            # ── 86 items (keep existing API-based code) ──
-            for loc in LOCATIONS:
-                try:
-                    items_86 = api.get_86_items(loc["restaurant_guid"])
-                    write_86_to_firestore(loc["firestore_key"], items_86)
-                except Exception as e:
-                    log(f"  86 fetch error for {loc['name']}: {e}")
-"""
+                    <p className="text-xs text-gray-300 text-center mt-4 mb-2">
+                        {isEn ? "Synced from Toast every 30 min" : "Sincronizado desde Toast cada 30 min"}
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+}
