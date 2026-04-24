@@ -3,7 +3,7 @@ import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, collection, query, orderBy, limit, addDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
-
+import ToastInvoices from './ToastInvoices';
 // CateringMenuItem sub-component
 function CateringMenuItem({ item, language, onAdd }) {
             const [open, setOpen] = useState(false);
@@ -21,12 +21,10 @@ function CateringMenuItem({ item, language, onAdd }) {
             const [qty, setQty] = useState(1);
             const [itemNote, setItemNote] = useState("");
             const [addError, setAddError] = useState("");
-
             const size = item.sizes[sizeIdx];
             const maxSauces = size.sauceCount || item.sauceCount || 0;
             const maxProteins = size.proteinCount || 0;
             const totalPcs = item.hasProteins ? (parseInt(size.label) || 0) : 0;
-
             const toggleSauce = (s) => {
                 if (selectedSauces.includes(s)) {
                     const newList = selectedSauces.filter(x => x !== s);
@@ -53,18 +51,14 @@ function CateringMenuItem({ item, language, onAdd }) {
                     });
                 }
             };
-
             const adjustSauceCount = (s, delta) => {
                 setSauceCounts(prev => ({ ...prev, [s]: Math.max(0, (prev[s] || 0) + delta) }));
             };
-
             const setSauceCountDirect = (s, val) => {
                 const num = parseInt(val);
                 setSauceCounts(prev => ({ ...prev, [s]: isNaN(num) ? 0 : Math.max(0, num) }));
             };
-
             const sauceCountTotal = Object.values(sauceCounts).reduce((s, v) => s + v, 0);
-
             const toggleProtein = (p) => {
                 if (selectedProteins.includes(p)) {
                     const newList = selectedProteins.filter(x => x !== p);
@@ -95,21 +89,17 @@ function CateringMenuItem({ item, language, onAdd }) {
                     });
                 }
             };
-
             const adjustProteinCount = (p, delta) => {
                 setProteinCounts(prev => {
                     const newVal = Math.max(0, (prev[p] || 0) + delta);
                     return { ...prev, [p]: newVal };
                 });
             };
-
             const setProteinCountDirect = (p, val) => {
                 const num = parseInt(val);
                 setProteinCounts(prev => ({ ...prev, [p]: isNaN(num) ? 0 : Math.max(0, num) }));
             };
-
             const proteinCountTotal = Object.values(proteinCounts).reduce((s, v) => s + v, 0);
-
             const toggleSamplerProtein = (groupIdx, p, max) => {
                 setSamplerProteins(prev => {
                     const updated = prev.map(a => [...a]);
@@ -118,20 +108,15 @@ function CateringMenuItem({ item, language, onAdd }) {
                     return updated;
                 });
             };
-
-
             const handleAdd = () => {
-                // Validate type choice (egg rolls)
                 if (item.typeOptions && !selectedType) {
                     setAddError(language === "es" ? "Elige un tipo" : "Choose a type");
                     return;
                 }
-                // Validate single sauce choice (egg rolls)
                 if (item.singleSauceOptions && !selectedSingleSauce) {
                     setAddError(language === "es" ? "Elige una salsa" : "Choose a sauce");
                     return;
                 }
-                // Validate multi-sauces with counts
                 if (item.hasSauces && maxSauces > 0) {
                     if (selectedSauces.length === 0) {
                         setAddError(language === "es" ? "Elige al menos una salsa" : "Choose at least one sauce");
@@ -142,7 +127,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                         return;
                     }
                 }
-                // Validate multi-proteins with counts
                 if (item.hasProteins && maxProteins > 0) {
                     if (selectedProteins.length === 0) {
                         setAddError(language === "es" ? "Elige al menos una proteína" : "Choose at least one protein");
@@ -153,17 +137,14 @@ function CateringMenuItem({ item, language, onAdd }) {
                         return;
                     }
                 }
-                // Validate single protein pick
                 if (item.proteinOptions && !singleProtein) {
                     setAddError(language === "es" ? "Elige una proteína" : "Choose a protein");
                     return;
                 }
-                // Validate base
                 if (item.hasBase && !selectedBase) {
                     setAddError(language === "es" ? "Elige una base" : "Choose a base");
                     return;
                 }
-                // Validate sampler sub-picks
                 if (item.samplerPicks) {
                     for (let i = 0; i < item.samplerPicks.length; i++) {
                         if (samplerProteins[i].length < item.samplerPicks[i].count) {
@@ -173,7 +154,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                         }
                     }
                 }
-                // Validate sampler egg roll type
                 if (item.samplerEggRollType && !samplerEggRoll) {
                     setAddError(language === "es" ? "Elige tipo de rollo de huevo" : "Choose egg roll type");
                     return;
@@ -193,7 +173,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                 setSamplerProteins(item.samplerPicks ? item.samplerPicks.map(() => []) : []);
                 setSamplerEggRoll("");
             };
-
             return (
                 <div className="mb-3 bg-white border-2 border-gray-200 rounded-lg overflow-hidden">
                     <div className="p-3 cursor-pointer flex justify-between items-center" onClick={() => setOpen(!open)}>
@@ -203,7 +182,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                         </div>
                         <span className={`text-lg transition-transform ${open ? "rotate-45" : ""}`}>➕</span>
                     </div>
-
                     {open && (
                         <div className="border-t border-gray-200 p-3 bg-gray-50 space-y-3">
                             {/* Size */}
@@ -218,8 +196,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     ))}
                                 </div>
                             </div>
-
-                            {/* Type choice (egg rolls: Vietnamese/Vegetarian) */}
                             {item.typeOptions && (
                                 <div>
                                     <p className="text-xs font-bold text-gray-600 mb-1">🥚 {language === "es" ? "Elige Tipo" : "Choose Type"} *</p>
@@ -236,8 +212,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Single sauce choice (egg rolls: Vinaigrette/Sweet Chili) */}
                             {item.singleSauceOptions && (
                                 <div>
                                     <p className="text-xs font-bold text-gray-600 mb-1">🥫 {language === "es" ? "Elige Salsa" : "Choose Sauce"} *</p>
@@ -254,8 +228,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Single protein pick (for trays, bowls, fried rice) */}
                             {item.proteinOptions && (
                                 <div>
                                     <p className="text-xs font-bold text-gray-600 mb-1">🍖 {language === "es" ? "Elige Proteína" : "Choose Protein"} *</p>
@@ -272,8 +244,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Multi protein pick with counts (spring rolls, bao, banh mi) */}
                             {item.hasProteins && maxProteins > 0 && (
                                 <div>
                                     <p className="text-xs font-bold text-gray-600 mb-1">🍖 {language === "es" ? "Elige Proteínas" : "Choose Proteins"} {totalPcs > 0 ? `(${totalPcs} ${language === "es" ? "piezas total" : "pcs total"})` : ""} *</p>
@@ -313,8 +283,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Sampler sub-item protein picks */}
                             {item.samplerPicks && item.samplerPicks.map((sp, gIdx) => (
                                 <div key={gIdx} className="bg-white border border-gray-200 rounded-lg p-2">
                                     <p className="text-xs font-bold text-gray-700 mb-1">🍖 {language === "es" ? sp.nameEs : sp.name} — {language === "es" ? `Elige ${sp.count} Proteínas` : `Choose ${sp.count} Proteins`} *</p>
@@ -333,8 +301,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     <p className="text-xs text-gray-400 mt-1">{samplerProteins[gIdx]?.length || 0}/{sp.count} {language === "es" ? "seleccionadas" : "selected"}</p>
                                 </div>
                             ))}
-
-                            {/* Sampler egg roll type */}
                             {item.samplerEggRollType && (
                                 <div className="bg-white border border-gray-200 rounded-lg p-2">
                                     <p className="text-xs font-bold text-gray-700 mb-1">🥚 {language === "es" ? "Rollos de Huevo (10 mitades) — Elige Tipo" : "Egg Rolls (10 halves) — Choose Type"} *</p>
@@ -351,8 +317,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Base selection */}
                             {item.hasBase && (
                                 <div>
                                     <p className="text-xs font-bold text-gray-600 mb-1">🍜 {language === "es" ? "Elige Base" : "Choose Base"} *</p>
@@ -366,8 +330,6 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Sauces with counts */}
                             {item.hasSauces && maxSauces > 0 && (
                                 <div>
                                     <p className="text-xs font-bold text-gray-600 mb-1">🥫 {language === "es" ? "Elige Salsas" : "Choose Sauces"} ({maxSauces} {language === "es" ? "porciones total" : "portions total"}) *</p>
@@ -405,20 +367,14 @@ function CateringMenuItem({ item, language, onAdd }) {
                                     </div>
                                 </div>
                             )}
-
-                            {/* Item note */}
                             {item.note && (
                                 <p className="text-xs text-gray-500 italic bg-amber-50 p-2 rounded-lg">ℹ️ {language === "es" ? (item.noteEs || item.note) : item.note}</p>
                             )}
-
-                            {/* Special request per item */}
                             <div>
                                 <p className="text-xs font-bold text-gray-600 mb-1">📝 {language === "es" ? "Petición Especial para este Artículo" : "Special Request for this Item"}</p>
                                 <input value={itemNote} onChange={e => setItemNote(e.target.value)}
                                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs" placeholder={language === "es" ? "Ej: sin cebolla, extra salsa..." : "e.g. no onions, extra sauce..."} />
                             </div>
-
-                            {/* Qty + Add */}
                             <div className="flex items-center gap-3">
                                 <div className="flex items-center border-2 border-gray-200 rounded-lg">
                                     <button onClick={() => setQty(Math.max(1, qty - 1))} className="px-3 py-2 text-lg font-bold text-gray-600">−</button>
@@ -435,9 +391,8 @@ function CateringMenuItem({ item, language, onAdd }) {
                 </div>
             );
         }
-
 export default function CateringOrder({ language, staffName }) {
-            const [step, setStep] = useState(1); // 1=customer, 2=menu, 3=summary
+            const [step, setStep] = useState(1);
             const [customer, setCustomer] = useState({
                 name: "", phone: "", email: "", date: "", time: "", guests: "", address: "",
                 orderType: "pickup", pickupLocation: ""
@@ -449,8 +404,8 @@ export default function CateringOrder({ language, staffName }) {
             const [showHistory, setShowHistory] = useState(false);
             const [specialNotes, setSpecialNotes] = useState("");
             const [deliveryFee, setDeliveryFee] = useState("15");
-            const [viewingOrder, setViewingOrder] = useState(null); // full invoice view
-            const [editingOrderId, setEditingOrderId] = useState(null); // editing existing order
+            const [viewingOrder, setViewingOrder] = useState(null);
+            const [editingOrderId, setEditingOrderId] = useState(null);
             const [wantPlates, setWantPlates] = useState(false);
             const [plateCount, setPlateCount] = useState(0);
             const [wantChopsticks, setWantChopsticks] = useState(false);
@@ -461,14 +416,13 @@ export default function CateringOrder({ language, staffName }) {
             const [customItemQty, setCustomItemQty] = useState(1);
             const [customItemNote, setCustomItemNote] = useState("");
             const [customItemOpen, setCustomItemOpen] = useState(false);
-
+            const [pageTab, setPageTab] = useState("catering");
             useEffect(() => {
                 const unsubscribe = onSnapshot(query(collection(db, "cateringOrders"), orderBy("createdAt", "desc"), limit(30)), snap => {
                     setOrderHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 });
                 return () => unsubscribe();
             }, []);
-
             const validateCustomer = () => {
                 const e = {};
                 if (!customer.name.trim()) e.name = true;
@@ -482,9 +436,7 @@ export default function CateringOrder({ language, staffName }) {
                 setErrors(e);
                 return Object.keys(e).length === 0;
             };
-
             const goToMenu = () => { if (validateCustomer()) setStep(2); };
-
             const addToCart = (item, sizeIdx, sauces, proteins, base, utensils, qty, itemNote, extras) => {
                 const size = item.sizes[sizeIdx];
                 setCart(prev => [...prev, {
@@ -505,7 +457,6 @@ export default function CateringOrder({ language, staffName }) {
                     samplerEggRoll: extras?.samplerEggRoll || ""
                 }]);
             };
-
             const addCustomItem = () => {
                 if (!customItemName.trim() || !customItemPrice) return;
                 setCart(prev => [...prev, {
@@ -522,7 +473,6 @@ export default function CateringOrder({ language, staffName }) {
                 }]);
                 setCustomItemName(""); setCustomItemPrice(""); setCustomItemQty(1); setCustomItemNote(""); setCustomItemOpen(false);
             };
-
             const removeFromCart = (id) => setCart(prev => prev.filter(i => i.id !== id));
             const getSubtotal = () => cart.reduce((sum, i) => sum + i.price * i.qty, 0);
             const getUtensilCost = () => (wantPlates ? plateCount * 1 : 0) + (wantChopsticks ? chopstickCount * 0.5 : 0);
@@ -532,7 +482,6 @@ export default function CateringOrder({ language, staffName }) {
             const getTaxableAmount = () => getSubtotal() + getUtensilCost();
             const getTax = () => taxExempt ? 0 : Math.round(getTaxableAmount() * getTaxRate() * 100) / 100;
             const getTotal = () => getSubtotal() + getUtensilCost() + getDelFee() + getTax();
-
             const submitOrder = async () => {
                 if (cart.length === 0) return;
                 const utensilInfo = {};
@@ -566,14 +515,12 @@ export default function CateringOrder({ language, staffName }) {
                     setSubmitted(true);
                 } catch (err) { console.error("Error submitting catering order:", err); }
             };
-
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
                 setCart([]); setErrors({}); setSubmitted(false); setSpecialNotes(""); setStep(1);
                 setDeliveryFee("15"); setEditingOrderId(null);
                 setWantPlates(false); setPlateCount(0); setWantChopsticks(false); setChopstickCount(0);
             };
-
             const loadOrderForEdit = (o) => {
                 setCustomer(o.customer || {});
                 setCart((o.items || []).map((item, i) => ({ ...item, id: Date.now() + i })));
@@ -586,8 +533,6 @@ export default function CateringOrder({ language, staffName }) {
                 setViewingOrder(null);
                 setStep(3);
             };
-
-            // Print invoice — builds HTML string used by both print and inline view
             const buildInvoiceHTML = (o) => {
                 const c = o.customer || {};
                 const itemsHTML = (o.items || []).map((item, i) => {
@@ -679,7 +624,6 @@ export default function CateringOrder({ language, staffName }) {
                 </div>
                 </body></html>`;
             };
-
             const printOrder = (o) => {
                 const w = window.open('', '_blank', 'width=800,height=1100');
                 if (!w) { alert('Please allow popups to print this order, or use the Share button on your phone.'); return; }
@@ -687,9 +631,8 @@ export default function CateringOrder({ language, staffName }) {
                 w.document.close();
                 setTimeout(() => w.print(), 300);
             };
-
             // Success screen
-            if (submitted) {
+            if (pageTab === "catering" && submitted) {
                 return (
                     <div className="p-4 pb-24">
                         <div className="max-w-lg mx-auto text-center mt-8">
@@ -707,23 +650,18 @@ export default function CateringOrder({ language, staffName }) {
                     </div>
                 );
             }
-
             // Full Invoice Detail View
-            if (viewingOrder) {
+            if (pageTab === "catering" && viewingOrder) {
                 const vo = viewingOrder;
                 const vc = vo.customer || {};
                 return (
                     <div className="p-2 pb-24">
-                        {/* Big action buttons at top */}
                         <div className="flex gap-2 mb-3">
                             <button onClick={() => setViewingOrder(null)} className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg font-bold text-sm">← {language === "es" ? "Volver" : "Back"}</button>
                             <button onClick={() => loadOrderForEdit(vo)} className="flex-1 py-3 bg-amber-500 text-white rounded-lg font-bold text-sm">✏️ {language === "es" ? "Editar Pedido" : "Edit Order"}</button>
                             <button onClick={() => printOrder(vo)} className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold text-sm">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
                         </div>
-
-                        {/* Invoice — paper-style */}
                         <div className="bg-white border-2 border-gray-300 rounded-lg overflow-hidden shadow-xl" style={{minHeight: "80vh"}}>
-                            {/* Green header bar */}
                             <div style={{background: "#255a37", color: "white", padding: "20px", textAlign: "center"}}>
                                 <h2 className="text-2xl font-bold" style={{margin: 0, letterSpacing: "1px"}}>DD Mau Vietnamese Eatery</h2>
                                 <p style={{margin: "4px 0 0", opacity: 0.85, fontSize: "14px"}}>{language === "es" ? "Factura de Catering" : "Catering Invoice"}</p>
@@ -731,8 +669,6 @@ export default function CateringOrder({ language, staffName }) {
                             <div style={{background: "#1a4028", color: "#8fbc8f", textAlign: "center", padding: "6px", fontSize: "13px", fontWeight: "bold", letterSpacing: "2px"}}>
                                 ORDER #{vo.id?.slice(-6).toUpperCase()}
                             </div>
-
-                            {/* Customer + Event boxes */}
                             <div style={{display: "flex", gap: "10px", padding: "16px"}}>
                                 <div style={{flex: 1, background: "#f4faf5", border: "1px solid #c8e6c9", borderRadius: "8px", padding: "12px"}}>
                                     <p style={{margin: "0 0 6px", fontSize: "11px", fontWeight: "bold", color: "#255a37", textTransform: "uppercase", letterSpacing: "1px", borderBottom: "1px solid #c8e6c9", paddingBottom: "4px"}}>{language === "es" ? "CLIENTE" : "CUSTOMER"}</p>
@@ -747,14 +683,11 @@ export default function CateringOrder({ language, staffName }) {
                                     <p style={{margin: "2px 0", fontSize: "13px"}}>{"🏪 " + (vc.pickupLocation === "maryland" ? "Maryland Heights" : "Webster") + " — " + (vc.orderType === "delivery" ? "🚗 " + (vc.address || "Delivery") : "Pickup")}</p>
                                 </div>
                             </div>
-
                             {vo.specialNotes && (
                                 <div style={{margin: "0 16px 12px", background: "#fff9e6", border: "1px solid #f0d060", borderRadius: "6px", padding: "10px", fontSize: "13px"}}>
                                     📝 <strong>{language === "es" ? "Notas Especiales" : "Special Notes"}:</strong> {vo.specialNotes}
                                 </div>
                             )}
-
-                            {/* Items table */}
                             <div style={{padding: "0 16px"}}>
                                 <table style={{width: "100%", borderCollapse: "collapse"}}>
                                     <thead>
@@ -795,8 +728,6 @@ export default function CateringOrder({ language, staffName }) {
                                     </tbody>
                                 </table>
                             </div>
-
-                            {/* Totals */}
                             <div style={{padding: "16px", background: "#f4faf5", marginTop: "8px"}}>
                                 <div style={{display: "flex", justifyContent: "flex-end", gap: "40px", padding: "4px 0", fontSize: "14px"}}>
                                     <span>Subtotal:</span><span style={{fontWeight: "bold"}}>${vo.subtotal?.toFixed(2)}</span>
@@ -820,8 +751,6 @@ export default function CateringOrder({ language, staffName }) {
                                     <span>TOTAL:</span><span>${vo.total?.toFixed(2)}</span>
                                 </div>
                             </div>
-
-                            {/* Footer */}
                             <div style={{textAlign: "center", color: "#888", fontSize: "11px", padding: "12px", borderTop: "1px solid #ddd"}}>
                                 <p style={{margin: "2px 0"}}>{language === "es" ? "Tomado por" : "Taken by"}: {vo.takenBy} | {vo.createdAt ? new Date(vo.createdAt).toLocaleString() : ""}</p>
                                 {vo.updatedAt && vo.updatedAt !== vo.createdAt && <p style={{margin: "2px 0"}}>{language === "es" ? "Actualizado" : "Updated"}: {new Date(vo.updatedAt).toLocaleString()}</p>}
@@ -829,8 +758,6 @@ export default function CateringOrder({ language, staffName }) {
                                 <span className={`inline-block mt-2 text-xs px-3 py-1 rounded-full font-bold ${vo.status === "new" ? "bg-amber-100 text-amber-700" : vo.status === "confirmed" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{vo.status?.toUpperCase()}</span>
                             </div>
                         </div>
-
-                        {/* Bottom action buttons — repeated for easy access */}
                         <div className="flex gap-2 mt-3">
                             <button onClick={() => loadOrderForEdit(vo)} className="flex-1 py-3 bg-amber-500 text-white rounded-lg font-bold text-sm">✏️ {language === "es" ? "Editar Pedido" : "Edit Order"}</button>
                             <button onClick={() => printOrder(vo)} className="flex-1 py-3 bg-blue-600 text-white rounded-lg font-bold text-sm">🖨️ {language === "es" ? "Imprimir" : "Print"}</button>
@@ -838,9 +765,8 @@ export default function CateringOrder({ language, staffName }) {
                     </div>
                 );
             }
-
             // Order History View
-            if (showHistory) {
+            if (pageTab === "catering" && showHistory) {
                 return (
                     <div className="p-4 pb-24">
                         <div className="flex items-center justify-between mb-4">
@@ -873,22 +799,37 @@ export default function CateringOrder({ language, staffName }) {
                     </div>
                 );
             }
-
             return (
                 <div className="p-4 pb-24">
+                    {/* ── Page Tab Bar ── */}
+                    <div className="flex gap-2 mb-4">
+                        <button onClick={() => setPageTab("catering")}
+                            className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "catering" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                            📝 {language === "es" ? "Catering" : "Catering"}
+                        </button>
+                        <button onClick={() => setPageTab("invoices")}
+                            className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "invoices" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
+                            🧾 {language === "es" ? "Pedidos Toast" : "Toast Orders"}
+                        </button>
+                    </div>
+
+                    {/* ── Toast Orders Tab ── */}
+                    {pageTab === "invoices" && <ToastInvoices language={language} />}
+
+                    {/* ── Catering Tab ── */}
+                    {pageTab === "catering" && (
+                    <>
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-2xl font-bold text-mint-700">🍜 {t("cateringOrders", language)}</h2>
                         <button onClick={() => setShowHistory(true)} className="text-xs bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full font-bold border border-amber-300">
                             📋 {language === "es" ? "Historial" : "History"}
                         </button>
                     </div>
-
                     {editingOrderId && (
                         <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 mb-4 text-xs text-amber-800 font-bold text-center">
                             ✏️ {language === "es" ? "Editando pedido existente" : "Editing existing order"} — #{editingOrderId.slice(-6).toUpperCase()}
                         </div>
                     )}
-
                     {/* Progress Steps */}
                     <div className="flex items-center justify-center gap-2 mb-6">
                         {[{n:1, label: language === "es" ? "Cliente" : "Customer"}, {n:2, label: language === "es" ? "Menú" : "Menu"}, {n:3, label: language === "es" ? "Resumen" : "Summary"}].map(s => (
@@ -899,14 +840,12 @@ export default function CateringOrder({ language, staffName }) {
                             </div>
                         ))}
                     </div>
-
                     {/* Step 1: Customer Info */}
                     {step === 1 && (
                         <div className="space-y-3">
                             <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3 text-xs text-cyan-700 mb-4">
                                 📞 {language === "es" ? "Completa toda la información del cliente. Todos los campos son obligatorios." : "Fill in all customer info. All fields are required."}
                             </div>
-
                             <div className="flex gap-2 mb-2">
                                 <button onClick={() => setCustomer(p => ({...p, orderType: "pickup"}))}
                                     className={`flex-1 py-3 rounded-lg font-bold text-sm border-2 transition ${customer.orderType === "pickup" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
@@ -917,8 +856,6 @@ export default function CateringOrder({ language, staffName }) {
                                     🚗 {t("delivery", language)}
                                 </button>
                             </div>
-
-                            {/* Store location — required for both pickup and delivery */}
                             <div>
                                 <label className="block text-xs font-bold text-gray-600 mb-1">🏪 {customer.orderType === "delivery" ? (language === "es" ? "Pedido Desde" : "Order From") : (language === "es" ? "Ubicación de Recogida" : "Pickup Location")} *</label>
                                 <div className="flex gap-2">
@@ -933,7 +870,6 @@ export default function CateringOrder({ language, staffName }) {
                                     ))}
                                 </div>
                             </div>
-
                             {customer.orderType === "delivery" && (
                                 <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
                                     <label className="text-xs font-bold text-amber-700">{language === "es" ? "Tarifa de Entrega: $" : "Delivery Fee: $"}</label>
@@ -941,7 +877,6 @@ export default function CateringOrder({ language, staffName }) {
                                         type="number" min="0" step="0.01" className="w-20 border border-amber-300 rounded px-2 py-1 text-sm font-bold text-center" />
                                 </div>
                             )}
-
                             <div>
                                 <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Nombre" : "Name"} *</label>
                                 <input value={customer.name} onChange={e => { setCustomer(p => ({...p, name: e.target.value})); setErrors(p => ({...p, name: false})); }}
@@ -984,17 +919,14 @@ export default function CateringOrder({ language, staffName }) {
                                         className={`w-full border-2 ${errors.address ? "border-red-400 bg-red-50" : "border-gray-200"} rounded-lg px-3 py-3 text-sm font-medium`} placeholder={language === "es" ? "Dirección completa" : "Full address"} />
                                 </div>
                             )}
-
                             {Object.values(errors).some(Boolean) && (
                                 <p className="text-red-500 text-xs font-bold text-center">⚠️ {language === "es" ? "Completa todos los campos requeridos" : "Please fill in all required fields"}</p>
                             )}
-
                             <button onClick={goToMenu} className="w-full bg-mint-700 text-white py-3 rounded-lg font-bold text-lg mt-2">
                                 {language === "es" ? "Siguiente → Menú" : "Next → Menu"} 🍜
                             </button>
                         </div>
                     )}
-
                     {/* Step 2: Menu Items */}
                     {step === 2 && (
                         <div>
@@ -1006,14 +938,11 @@ export default function CateringOrder({ language, staffName }) {
                                     </button>
                                 </div>
                             )}
-
-                            {/* Utensils & Extras — order-level, before food */}
                             <div className="mb-6">
                                 <h3 className="text-lg font-bold text-gray-800 mb-3 border-b-2 border-mint-200 pb-1">
                                     🍴 {language === "es" ? "Cubiertos y Extras" : "Utensils & Extras"}
                                 </h3>
                                 <div className="bg-white border-2 border-gray-200 rounded-lg p-3 space-y-3">
-                                    {/* Plates & Utensils */}
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => { setWantPlates(!wantPlates); if (wantPlates) setPlateCount(0); else setPlateCount(10); }}
                                             className={`flex-1 px-3 py-2.5 rounded-lg text-xs font-bold border-2 transition text-left ${wantPlates ? "bg-purple-500 text-white border-purple-500" : "bg-white text-gray-600 border-gray-200"}`}>
@@ -1031,8 +960,6 @@ export default function CateringOrder({ language, staffName }) {
                                         )}
                                     </div>
                                     {wantPlates && <p className="text-xs text-purple-500 ml-1">🍽️ {plateCount} × $1.00 = ${(plateCount * 1).toFixed(2)}</p>}
-
-                                    {/* Chopsticks */}
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => { setWantChopsticks(!wantChopsticks); if (wantChopsticks) setChopstickCount(0); else setChopstickCount(10); }}
                                             className={`flex-1 px-3 py-2.5 rounded-lg text-xs font-bold border-2 transition text-left ${wantChopsticks ? "bg-purple-500 text-white border-purple-500" : "bg-white text-gray-600 border-gray-200"}`}>
@@ -1050,7 +977,6 @@ export default function CateringOrder({ language, staffName }) {
                                         )}
                                     </div>
                                     {wantChopsticks && <p className="text-xs text-purple-500 ml-1">🥢 {chopstickCount} × $0.50 = ${(chopstickCount * 0.5).toFixed(2)}</p>}
-
                                     {(wantPlates || wantChopsticks) && (
                                         <div className="border-t border-gray-200 pt-2 mt-2">
                                             <p className="text-xs font-bold text-purple-700 text-right">{language === "es" ? "Total Cubiertos" : "Utensils Total"}: ${getUtensilCost().toFixed(2)}</p>
@@ -1058,7 +984,6 @@ export default function CateringOrder({ language, staffName }) {
                                     )}
                                 </div>
                             </div>
-
                             {CATERING_MENU.map((cat, catIdx) => (
                                 <div key={catIdx} className="mb-6">
                                     <h3 className="text-lg font-bold text-gray-800 mb-3 border-b-2 border-mint-200 pb-1">
@@ -1069,8 +994,6 @@ export default function CateringOrder({ language, staffName }) {
                                     ))}
                                 </div>
                             ))}
-
-                            {/* Custom / Open Item */}
                             <div className="mb-6">
                                 <h3 className="text-lg font-bold text-gray-800 mb-3 border-b-2 border-mint-200 pb-1">
                                     ✏️ {language === "es" ? "Artículo Personalizado" : "Custom Item"}
@@ -1122,7 +1045,6 @@ export default function CateringOrder({ language, staffName }) {
                                     </div>
                                 )}
                             </div>
-
                             <div className="flex gap-2 mt-4">
                                 <button onClick={() => setStep(1)} className="flex-1 bg-gray-100 text-gray-600 py-3 rounded-lg font-bold">← {language === "es" ? "Cliente" : "Customer"}</button>
                                 <button onClick={() => setStep(3)} className="flex-1 bg-mint-700 text-white py-3 rounded-lg font-bold" disabled={cart.length === 0}>
@@ -1131,7 +1053,6 @@ export default function CateringOrder({ language, staffName }) {
                             </div>
                         </div>
                     )}
-
                     {/* Step 3: Order Summary */}
                     {step === 3 && (
                         <div>
@@ -1147,7 +1068,6 @@ export default function CateringOrder({ language, staffName }) {
                                     <button onClick={() => setStep(1)} className="text-xs text-mint-700 font-bold">✏️ {language === "es" ? "Editar" : "Edit"}</button>
                                 </div>
                             </div>
-
                             <h3 className="font-bold text-gray-800 mb-2">{language === "es" ? "Artículos del Pedido" : "Order Items"}</h3>
                             {cart.length === 0 && <p className="text-gray-400 text-center py-4">{language === "es" ? "Sin artículos" : "No items"}</p>}
                             {cart.map((item) => (
@@ -1173,18 +1093,15 @@ export default function CateringOrder({ language, staffName }) {
                                     </div>
                                 </div>
                             ))}
-
                             <button onClick={() => setStep(2)} className="w-full border-2 border-dashed border-mint-300 text-mint-700 py-2 rounded-lg font-bold text-sm mb-4">
                                 + {language === "es" ? "Agregar Más" : "Add More Items"}
                             </button>
-
                             <div className="mb-4">
                                 <label className="block text-xs font-bold text-gray-600 mb-1">📝 {t("specialNotes", language)}</label>
                                 <textarea value={specialNotes} onChange={e => setSpecialNotes(e.target.value)}
                                     className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm" rows="3"
                                     placeholder={language === "es" ? "Alergias, peticiones especiales, instrucciones de entrega..." : "Allergies, special requests, delivery instructions..."} />
                             </div>
-
                             <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-4 mb-4">
                                 <div className="flex justify-between text-sm mb-1">
                                     <span className="text-gray-600">Subtotal</span>
@@ -1225,12 +1142,13 @@ export default function CateringOrder({ language, staffName }) {
                                     <span className="text-mint-800">${getTotal().toFixed(2)}</span>
                                 </div>
                             </div>
-
                             <button onClick={submitOrder} disabled={cart.length === 0}
                                 className={`w-full py-4 rounded-lg font-bold text-lg ${cart.length > 0 ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-400"}`}>
                                 ✅ {editingOrderId ? (language === "es" ? "Actualizar Pedido" : "Update Order") : t("submitOrder", language)}
                             </button>
                         </div>
+                    )}
+                    </>
                     )}
                 </div>
             );
