@@ -1,14 +1,28 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function ToastInvoices({ language }) {
     const [invoices, setInvoices] = useState([]);
     const [loading, setLoading] = useState(true);
     const [location, setLocation] = useState("webster");
     const [expandedInvoice, setExpandedInvoice] = useState(null);
+    const [refreshing, setRefreshing] = useState(false);
 
     const isEn = language !== "es";
+
+    const triggerRefresh = async () => {
+        setRefreshing(true);
+        try {
+            await setDoc(doc(db, "ops", "invoice_trigger"), {
+                triggeredAt: serverTimestamp(),
+                triggeredBy: "portal",
+            });
+        } catch (e) {
+            console.error("Trigger refresh error:", e);
+        }
+        setTimeout(() => setRefreshing(false), 3000);
+    };
 
     useEffect(() => {
         setLoading(true);
@@ -58,9 +72,15 @@ export default function ToastInvoices({ language }) {
 
     return (
         <div>
-            <h2 className="text-xl font-bold text-mint-700 mb-3">
-                🧾 {isEn ? "Catering Invoices" : "Facturas de Catering"}
-            </h2>
+            <div className="flex justify-between items-center mb-3">
+                <h2 className="text-xl font-bold text-mint-700">
+                    🧾 {isEn ? "Catering Invoices" : "Facturas de Catering"}
+                </h2>
+                <button onClick={triggerRefresh} disabled={refreshing}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border-2 transition ${refreshing ? "bg-gray-100 text-gray-400 border-gray-200" : "bg-white text-mint-700 border-mint-300 hover:bg-mint-50"}`}>
+                    {refreshing ? (isEn ? "⏳ Syncing..." : "⏳ Sincronizando...") : (isEn ? "🔄 Sync Now" : "🔄 Sincronizar")}
+                </button>
+            </div>
 
             {/* Location toggle */}
             <div className="flex gap-2 mb-3">
