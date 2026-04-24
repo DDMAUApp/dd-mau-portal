@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 export default function ToastInvoices({ language }) {
     const [invoices, setInvoices] = useState([]);
@@ -30,11 +30,12 @@ export default function ToastInvoices({ language }) {
         const q = query(
             collection(db, "toast_invoices"),
             where("location", "==", location),
-            orderBy("createdDate", "desc"),
             limit(200)
         );
         const unsub = onSnapshot(q, (snap) => {
-            setInvoices(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            docs.sort((a, b) => (b.createdDate || "").localeCompare(a.createdDate || ""));
+            setInvoices(docs);
             setLoading(false);
         }, (err) => {
             console.error("Toast invoices query error:", err);
