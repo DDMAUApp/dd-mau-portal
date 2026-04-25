@@ -982,7 +982,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     tr:nth-child(even){background:#f9f9f9}
                     .count{font-weight:bold;text-align:center;font-size:14px}
                     .pack{color:#666;font-size:11px}
-                    @media print{body{padding:10px}h1{font-size:16px}}
+                    .no-print{margin:20px 0;text-align:center}
+                    .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
+                    .btn-print{background:#2F5496;color:white} .btn-close{background:#e5e7eb;color:#555}
+                    @media print{body{padding:10px}h1{font-size:16px}.no-print{display:none !important}}
                 </style></head><body>`;
                 html += `<h1>DD Mau Order Sheet</h1><div class="date">${dateStr} at ${timeStr} — ${storeLocation}</div>`;
                 vendors.forEach(v => {
@@ -993,6 +996,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     html += `</table>`;
                 });
+                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
                 w.document.write(html);
@@ -2530,7 +2534,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             .cover-label { color: #666; font-size: 11px; }
                                             .cover-name { font-weight: bold; color: #15803d; }
                                             .working { color: #666; font-size: 12px; margin-top: 6px; }
-                                            @media print { body { padding: 10px; } }
+                                            .no-print { margin: 20px 0; text-align: center; }
+                                            .no-print button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
+                                            .btn-print { background: #2563eb; color: white; } .btn-close { background: #e5e7eb; color: #555; }
+                                            @media print { body { padding: 10px; } .no-print { display: none !important; } }
                                         </style></head><body>`;
                                         html += `<h1>\u{1F35C} DD Mau Break Plan</h1><div class="date">${today}</div>`;
 
@@ -2563,6 +2570,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             html += `</div></div>`;
                                         });
 
+                                        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
                                         printWindow.document.write(html);
