@@ -294,12 +294,11 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         </style></head><body>`;
         html += `<h1>DD Mau Weekly Prep List</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation}</div>`;
         days.forEach((dayName, dayIdx) => {
-            const dayItems = getItemsForDay(dayIdx);
+            const dayItems = getItemsForDay(dayIdx).filter(item => doneItems[item.id]);
             const isToday = dayIdx === now.getDay();
+            if (dayItems.length === 0) return;
             html += `<div class="day-header" style="${isToday ? "background:#059669" : ""}">${dayName}${isToday ? " (TODAY)" : ""}<span class="count">${dayItems.length} items</span></div>`;
-            if (dayItems.length === 0) {
-                html += `<div class="day-empty">No prep scheduled</div>`;
-            } else {
+            {
                 const byStation = {};
                 dayItems.forEach(item => {
                     const key = item.stationName;
@@ -423,8 +422,8 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                 <div className="flex items-center gap-2">
                     <span className="text-lg">{"\u{1F4CB}"}</span>
                     <div>
-                        <span className="font-bold text-sm">{language === "es" ? "Prep Semanal" : "Weekly Prep"}</span>
-                        <span className="text-purple-200 text-xs ml-2">{totalDone}/{totalItems} {language === "es" ? "listos" : "done"}</span>
+                        <span className="font-bold text-sm">{totalDone} {language === "es" ? "items seleccionados" : "items selected"}</span>
+                        <span className="text-purple-200 text-xs ml-2">{language === "es" ? "toca para ver/imprimir" : "tap to view/print"}</span>
                     </div>
                 </div>
                 <span className="text-xs bg-white/20 px-2 py-1 rounded-lg">{language === "es" ? "ver" : "view"} {"\u{25B8}"}</span>
@@ -577,50 +576,47 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                             <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-white font-bold">{"\u{2715}"}</button>
                         </div>
                         <div className="flex-1 overflow-y-auto">
-                            {DAY_LABELS.map((dayLabel, dayIdx) => {
-                                const dayItems = getItemsForDay(dayIdx);
-                                const isToday = dayIdx === new Date().getDay();
-                                const byStation = {};
-                                dayItems.forEach(item => {
-                                    const key = item.stationName;
-                                    if (!byStation[key]) byStation[key] = { nameEs: item.stationNameEs, items: [] };
-                                    byStation[key].items.push(item);
-                                });
-                                return (
-                                    <div key={dayIdx}>
-                                        <div className={`px-4 py-2 font-bold text-sm flex justify-between items-center ${isToday ? "bg-green-600 text-white" : "bg-purple-600 text-white"}`}>
-                                            <span>{language === "es" ? DAY_LABELS_ES[dayIdx] : dayLabel}{isToday ? (language === "es" ? " (HOY)" : " (TODAY)") : ""}</span>
-                                            <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{dayItems.length}</span>
-                                        </div>
-                                        {dayItems.length === 0 ? (
-                                            <div className="px-4 py-2 text-xs text-gray-400">{language === "es" ? "Sin prep" : "No prep scheduled"}</div>
-                                        ) : (
-                                            Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).map(([stName, st]) => (
+                            {(() => {
+                                let hasAny = false;
+                                const content = DAY_LABELS.map((dayLabel, dayIdx) => {
+                                    const dayItems = getItemsForDay(dayIdx).filter(item => doneItems[item.id]);
+                                    if (dayItems.length > 0) hasAny = true;
+                                    const isToday = dayIdx === new Date().getDay();
+                                    const byStation = {};
+                                    dayItems.forEach(item => {
+                                        const key = item.stationName;
+                                        if (!byStation[key]) byStation[key] = { nameEs: item.stationNameEs, items: [] };
+                                        byStation[key].items.push(item);
+                                    });
+                                    if (dayItems.length === 0) return null;
+                                    return (
+                                        <div key={dayIdx}>
+                                            <div className={`px-4 py-2 font-bold text-sm flex justify-between items-center ${isToday ? "bg-green-600 text-white" : "bg-purple-600 text-white"}`}>
+                                                <span>{language === "es" ? DAY_LABELS_ES[dayIdx] : dayLabel}{isToday ? (language === "es" ? " (HOY)" : " (TODAY)") : ""}</span>
+                                                <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{dayItems.length}</span>
+                                            </div>
+                                            {Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).map(([stName, st]) => (
                                                 <div key={stName}>
                                                     <div className="px-4 py-1 bg-gray-50 border-b border-gray-100">
                                                         <span className="text-[10px] font-bold text-purple-600 uppercase">{language === "es" ? st.nameEs : stName}</span>
                                                     </div>
-                                                    {st.items.sort((a, b) => a.name.localeCompare(b.name)).map(item => {
-                                                        const isDone = doneItems[item.id];
-                                                        return (
-                                                            <div key={item.id} className={`px-4 py-1.5 flex items-center gap-2 border-b border-gray-50 ${isDone ? "bg-green-50/60" : ""}`}>
-                                                                <button onClick={() => toggleDone(item.id)}
-                                                                    className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 text-xs transition ${isDone ? "bg-green-600 border-green-600 text-white" : "border-gray-300 text-transparent"}`}>
-                                                                    {"\u{2713}"}
-                                                                </button>
-                                                                <span className={`text-sm flex-1 ${isDone ? "line-through text-gray-400" : "text-gray-800"}`}>
-                                                                    {language === "es" && item.nameEs ? item.nameEs : item.name}
-                                                                </span>
-                                                                <span className="text-xs text-gray-400">{item.unit || ""}</span>
-                                                            </div>
-                                                        );
-                                                    })}
+                                                    {st.items.sort((a, b) => a.name.localeCompare(b.name)).map(item => (
+                                                        <div key={item.id} className="px-4 py-1.5 flex items-center gap-2 border-b border-gray-50 bg-green-50/60">
+                                                            <span className="w-5 h-5 rounded bg-green-600 text-white flex items-center justify-center flex-shrink-0 text-xs">{"\u{2713}"}</span>
+                                                            <span className="text-sm flex-1 text-gray-800">
+                                                                {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                            </span>
+                                                            <span className="text-xs text-gray-400">{item.unit || ""}</span>
+                                                        </div>
+                                                    ))}
                                                 </div>
-                                            ))
-                                        )}
-                                    </div>
-                                );
-                            })}
+                                            ))}
+                                        </div>
+                                    );
+                                });
+                                if (!hasAny) return <div className="p-8 text-center text-gray-400">{language === "es" ? "Marca items con \u2713 para agregarlos aqui" : "Check off items with \u2713 to add them here"}</div>;
+                                return content;
+                            })()}
                         </div>
                         <div className="border-t border-gray-200 p-3 flex gap-2 flex-shrink-0 bg-gray-50">
                             <button onClick={printCart} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 active:scale-95 transition">
