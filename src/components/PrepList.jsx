@@ -22,6 +22,15 @@ export default function PrepList({ language, staffName, storeLocation, staffList
     const [prepSearch, setPrepSearch] = useState("");
     const [selectedDay, setSelectedDay] = useState(new Date().getDay());
     const [showOnlyToday, setShowOnlyToday] = useState(false);
+    const [showPrepSheet, setShowPrepSheet] = useState(false);
+    const [prepSheetDay, setPrepSheetDay] = useState(new Date().getDay());
+    const [editingPrepItem, setEditingPrepItem] = useState(null); // { stationId, itemId, name, nameEs, unit, slowPar, busyPar }
+    const [addingToStation, setAddingToStation] = useState(null); // stationId
+    const [newPrepName, setNewPrepName] = useState("");
+    const [newPrepNameEs, setNewPrepNameEs] = useState("");
+    const [newPrepUnit, setNewPrepUnit] = useState("");
+    const [newPrepSlowPar, setNewPrepSlowPar] = useState("");
+    const [newPrepBusyPar, setNewPrepBusyPar] = useState("");
 
     const currentIsManager = isAdmin(staffName) || (staffList || []).some(s => s.name === staffName && (s.role === "manager" || s.role === "admin"));
 
@@ -126,6 +135,55 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         setDoneItems({});
         setPrepMeta({});
         await savePrep({}, {}, {}, null);
+    };
+
+    const saveEditPrepItem = () => {
+        if (!editingPrepItem) return;
+        const updated = stations.map(st =>
+            st.id === editingPrepItem.stationId ? {
+                ...st, items: st.items.map(it =>
+                    it.id === editingPrepItem.itemId ? { ...it, name: editingPrepItem.name, nameEs: editingPrepItem.nameEs, unit: editingPrepItem.unit, slowPar: editingPrepItem.slowPar, busyPar: editingPrepItem.busyPar } : it
+                )
+            } : st
+        );
+        setStations(updated);
+        savePrep(null, null, null, updated);
+        setEditingPrepItem(null);
+    };
+
+    const deletePrepItem = (stationId, itemId) => {
+        const updated = stations.map(st =>
+            st.id === stationId ? { ...st, items: st.items.filter(it => it.id !== itemId) } : st
+        );
+        setStations(updated);
+        savePrep(null, null, null, updated);
+        setEditingPrepItem(null);
+    };
+
+    const addPrepItem = (stationId) => {
+        if (!newPrepName.trim()) return;
+        const newId = "custom_" + Date.now();
+        const newItem = {
+            id: newId,
+            name: newPrepName.trim(),
+            nameEs: newPrepNameEs.trim() || newPrepName.trim(),
+            slowPar: newPrepSlowPar || "0",
+            busyPar: newPrepBusyPar || "0",
+            unit: newPrepUnit.trim() || "ea",
+            ingredients: [],
+            prepDays: [1, 2, 3, 4, 5, 6]
+        };
+        const updated = stations.map(st =>
+            st.id === stationId ? { ...st, items: [...st.items, newItem] } : st
+        );
+        setStations(updated);
+        savePrep(null, null, null, updated);
+        setAddingToStation(null);
+        setNewPrepName("");
+        setNewPrepNameEs("");
+        setNewPrepUnit("");
+        setNewPrepSlowPar("");
+        setNewPrepBusyPar("");
     };
 
     // Get all inventory items as flat list for ingredient picker
@@ -243,6 +301,51 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         w.print();
     };
 
+    // Print prep sheet for a specific day
+    const printPrepSheet = (dayNum) => {
+        const dayItems = getItemsForDay(dayNum);
+        const now = new Date();
+        const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+        const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        const dayName = DAY_LABELS[dayNum];
+        const byStation = {};
+        dayItems.forEach(item => {
+            const key = item.stationName;
+            if (!byStation[key]) byStation[key] = [];
+            byStation[key].push(item);
+        });
+        let html = `<html><head><title>DD Mau Prep Sheet - ${dayName}</title><style>
+            body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
+            h1{font-size:20px;color:#7c3aed;margin-bottom:4px}
+            .date{font-size:12px;color:#888;margin-bottom:16px}
+            .station{background:#7c3aed;color:white;padding:8px 12px;font-weight:bold;font-size:14px;margin-top:16px;border-radius:6px 6px 0 0}
+            table{width:100%;border-collapse:collapse;margin-bottom:12px}
+            th{background:#ede9fe;padding:6px 10px;text-align:left;font-size:11px;color:#7c3aed;border:1px solid #ccc}
+            td{padding:6px 10px;font-size:12px;border:1px solid #e0e0e0}
+            tr:nth-child(even){background:#f9f9f9}
+            .no-print{margin:20px 0;text-align:center}
+            .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
+            .btn-print{background:#7c3aed;color:white} .btn-close{background:#e5e7eb;color:#555}
+            @media print{.no-print{display:none !important}}
+        </style></head><body>`;
+        html += `<h1>DD Mau Prep Sheet - ${dayName}</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation} - ${busyMode ? "BUSY" : "SLOW"} day</div>`;
+        html += `<p style="font-size:13px;color:#555;margin-bottom:12px"><strong>${dayItems.length}</strong> items to prep</p>`;
+        Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).forEach(([stName, items]) => {
+            html += `<div class="station">${stName} (${items.length})</div>`;
+            html += `<table><tr><th>Item</th><th>Unit</th><th style="width:30px">\u2713</th></tr>`;
+            items.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => {
+                html += `<tr><td>${item.name}</td><td>${item.unit || ""}</td><td></td></tr>`;
+            });
+            html += `</table>`;
+        });
+        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="window.close()">\u{2715} Close</button></div>`;
+        html += `</body></html>`;
+        const w = window.open("", "_blank");
+        w.document.write(html);
+        w.document.close();
+        w.print();
+    };
+
     // Count stats
     let totalItems = 0, totalDone = 0, totalNeed = 0;
     stations.forEach(st => {
@@ -270,6 +373,10 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                 <button onClick={() => setShowCalendar(!showCalendar)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${showCalendar ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                     {"\u{1F4C5}"} {language === "es" ? "Semana" : "Week"}
+                </button>
+                <button onClick={() => setShowPrepSheet(!showPrepSheet)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${showPrepSheet ? "bg-teal-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                    {"\u{1F4CB}"} {language === "es" ? "Lista" : "Prep Sheet"}
                 </button>
                 {currentIsManager && (
                     <button onClick={resetDay}
@@ -352,6 +459,89 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                             ));
                         })()}
                     </div>
+                </div>
+            )}
+
+            {/* Prep Sheet Panel */}
+            {showPrepSheet && (
+                <div className="bg-white rounded-xl border-2 border-teal-200 overflow-hidden shadow-sm">
+                    <div className="bg-gradient-to-r from-teal-600 to-teal-500 text-white px-4 py-2 flex justify-between items-center">
+                        <span className="font-bold text-sm">{"\u{1F4CB}"} {language === "es" ? "Lista de Prep" : "Prep Sheet"}</span>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => printPrepSheet(prepSheetDay)} className="text-xs bg-white/20 px-2 py-1 rounded-lg hover:bg-white/30 transition">{"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir" : "Print"}</button>
+                            <button onClick={() => setShowPrepSheet(false)} className="text-white/70 hover:text-white">{"\u{2715}"}</button>
+                        </div>
+                    </div>
+                    {/* Day selector */}
+                    <div className="grid grid-cols-7 gap-0 border-b border-gray-200">
+                        {DAY_LABELS.map((day, idx) => {
+                            const dayItems = getItemsForDay(idx);
+                            const isToday = idx === new Date().getDay();
+                            const isSelected = idx === prepSheetDay;
+                            return (
+                                <button key={idx} onClick={() => setPrepSheetDay(idx)}
+                                    className={`py-2 text-center border-r border-gray-100 last:border-r-0 transition ${isSelected ? "bg-teal-100 border-b-2 border-b-teal-600" : ""} ${isToday ? "font-bold" : ""}`}>
+                                    <div className={`text-xs font-bold ${isSelected ? "text-teal-700" : isToday ? "text-teal-600" : "text-gray-500"}`}>
+                                        {language === "es" ? DAY_LABELS_ES[idx] : day}
+                                    </div>
+                                    <div className={`text-lg font-bold ${isSelected ? "text-teal-700" : "text-gray-700"}`}>{dayItems.length}</div>
+                                </button>
+                            );
+                        })}
+                    </div>
+                    {/* Items for selected day */}
+                    <div className="max-h-[60vh] overflow-y-auto">
+                        {(() => {
+                            const dayItems = getItemsForDay(prepSheetDay);
+                            if (dayItems.length === 0) return (
+                                <div className="p-6 text-center text-gray-400 text-sm">{language === "es" ? "No hay items para este dia" : "No items scheduled for this day"}</div>
+                            );
+                            const byStation = {};
+                            dayItems.forEach(item => {
+                                const key = item.stationName;
+                                if (!byStation[key]) byStation[key] = { nameEs: item.stationNameEs, items: [] };
+                                byStation[key].items.push(item);
+                            });
+                            return Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).map(([stName, st]) => (
+                                <div key={stName}>
+                                    <div className="px-3 py-1.5 bg-teal-50 border-b border-teal-100 flex justify-between items-center">
+                                        <span className="text-xs font-bold text-teal-700 uppercase">{language === "es" ? st.nameEs : stName}</span>
+                                        <span className="text-xs text-teal-500">{st.items.length} {language === "es" ? "items" : "items"}</span>
+                                    </div>
+                                    {st.items.sort((a, b) => a.name.localeCompare(b.name)).map(item => {
+                                        const isDone = doneItems[item.id];
+                                        return (
+                                            <div key={item.id} className={`px-3 py-2 flex items-center justify-between border-b border-gray-50 ${isDone ? "bg-green-50/60" : ""}`}>
+                                                <div className="flex items-center gap-2 flex-1 min-w-0">
+                                                    <button onClick={() => toggleDone(item.id)}
+                                                        className={`w-6 h-6 rounded-md border-2 flex items-center justify-center flex-shrink-0 transition ${isDone ? "bg-green-600 border-green-600 text-white" : "border-gray-300 text-transparent hover:border-green-400"}`}>
+                                                        {"\u{2713}"}
+                                                    </button>
+                                                    <span className={`text-sm truncate ${isDone ? "line-through text-gray-400" : "text-gray-800"}`}>
+                                                        {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                    </span>
+                                                </div>
+                                                <span className="text-xs text-gray-400 ml-2 flex-shrink-0">{item.unit || ""}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ));
+                        })()}
+                    </div>
+                    {/* Footer with count */}
+                    {(() => {
+                        const dayItems = getItemsForDay(prepSheetDay);
+                        const doneCnt = dayItems.filter(i => doneItems[i.id]).length;
+                        return dayItems.length > 0 ? (
+                            <div className="border-t border-gray-200 px-4 py-2 bg-gray-50 flex justify-between items-center">
+                                <span className="text-xs text-gray-500">{doneCnt}/{dayItems.length} {language === "es" ? "completados" : "completed"}</span>
+                                <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+                                    <div className="h-full bg-teal-500 rounded-full transition-all" style={{ width: (doneCnt / dayItems.length * 100) + "%" }} />
+                                </div>
+                            </div>
+                        ) : null;
+                    })()}
                 </div>
             )}
 
@@ -558,9 +748,28 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                                                                     {"\u{1F517}"} {language === "es" ? "Ing." : "Ing."}
                                                                 </button>
                                                             )}
+                                                            {currentIsManager && (
+                                                                <button onClick={() => setEditingPrepItem({ stationId: station.id, itemId: item.id, name: item.name, nameEs: item.nameEs || "", unit: item.unit || "", slowPar: item.slowPar || "", busyPar: item.busyPar || "" })}
+                                                                    className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium hover:bg-gray-200 transition">
+                                                                    {"\u{270F}\u{FE0F}"}
+                                                                </button>
+                                                            )}
                                                             {prepMeta[item.id] && isDone && (
                                                                 <span className="text-xs text-green-600">{"\u{2713}"} {prepMeta[item.id].by} {"\u{2014}"} {prepMeta[item.id].at}</span>
                                                             )}
+                                                        </div>
+                                                        {/* Prep Days inline */}
+                                                        <div className="flex gap-0.5 mt-1">
+                                                            {DAY_LABELS.map((day, idx) => {
+                                                                const isActive = item.prepDays && item.prepDays.includes(idx);
+                                                                return (
+                                                                    <button key={idx}
+                                                                        onClick={() => { if (currentIsManager) { const newDays = isActive ? (item.prepDays || []).filter(d => d !== idx) : [...(item.prepDays || []), idx].sort(); updatePrepDays(station.id, item.id, newDays); } }}
+                                                                        className={`w-7 h-5 rounded text-[9px] font-bold transition ${isActive ? "bg-indigo-600 text-white" : "bg-gray-100 text-gray-400"} ${currentIsManager ? "hover:opacity-80 cursor-pointer" : "cursor-default"}`}>
+                                                                        {language === "es" ? DAY_LABELS_ES[idx].charAt(0) : day.charAt(0)}
+                                                                    </button>
+                                                                );
+                                                            })}
                                                         </div>
                                                     </div>
                                                     <div className="w-16 text-center">
@@ -584,11 +793,107 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                                         );
                                     })}
                                 </div>
+                                {/* Add item button */}
+                                {currentIsManager && (
+                                    <div className="border-t border-gray-200">
+                                        {addingToStation === station.id ? (
+                                            <div className="p-3 bg-gray-50 space-y-2">
+                                                <input type="text" value={newPrepName} onChange={e => setNewPrepName(e.target.value)}
+                                                    placeholder={language === "es" ? "Nombre del item" : "Item name"}
+                                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+                                                <input type="text" value={newPrepNameEs} onChange={e => setNewPrepNameEs(e.target.value)}
+                                                    placeholder={language === "es" ? "Nombre en espanol" : "Spanish name"}
+                                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+                                                <div className="flex gap-2">
+                                                    <input type="text" value={newPrepUnit} onChange={e => setNewPrepUnit(e.target.value)}
+                                                        placeholder="Unit (ea, lb...)"
+                                                        className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+                                                    <input type="text" value={newPrepSlowPar} onChange={e => setNewPrepSlowPar(e.target.value)}
+                                                        placeholder="Slow par"
+                                                        className="w-20 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+                                                    <input type="text" value={newPrepBusyPar} onChange={e => setNewPrepBusyPar(e.target.value)}
+                                                        placeholder="Busy par"
+                                                        className="w-20 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500" />
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => addPrepItem(station.id)}
+                                                        className="flex-1 py-2 bg-purple-600 text-white rounded-lg text-sm font-bold hover:bg-purple-700 transition">
+                                                        {language === "es" ? "Agregar" : "Add Item"}
+                                                    </button>
+                                                    <button onClick={() => { setAddingToStation(null); setNewPrepName(""); setNewPrepNameEs(""); setNewPrepUnit(""); setNewPrepSlowPar(""); setNewPrepBusyPar(""); }}
+                                                        className="px-4 py-2 bg-gray-200 text-gray-600 rounded-lg text-sm font-bold hover:bg-gray-300 transition">
+                                                        {"\u{2715}"}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => { setAddingToStation(station.id); setNewPrepName(""); setNewPrepNameEs(""); setNewPrepUnit(""); setNewPrepSlowPar(""); setNewPrepBusyPar(""); }}
+                                                className="w-full py-2 text-sm font-bold text-purple-600 hover:bg-purple-50 transition">
+                                                + {language === "es" ? "Agregar Item" : "Add Item"}
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
                 );
             })}
+
+            {/* Edit Prep Item Modal */}
+            {editingPrepItem && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center" onClick={() => setEditingPrepItem(null)}>
+                    <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+                        <div className="bg-gray-700 text-white px-4 py-3 flex items-center justify-between">
+                            <h3 className="font-bold text-base">{"\u{270F}\u{FE0F}"} {language === "es" ? "Editar Item" : "Edit Item"}</h3>
+                            <button onClick={() => setEditingPrepItem(null)} className="w-8 h-8 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-white font-bold">{"\u{2715}"}</button>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase">{language === "es" ? "Nombre" : "Name"}</label>
+                                <input type="text" value={editingPrepItem.name} onChange={e => setEditingPrepItem({ ...editingPrepItem, name: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500 mt-1" />
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-500 uppercase">{language === "es" ? "Nombre en Espanol" : "Spanish Name"}</label>
+                                <input type="text" value={editingPrepItem.nameEs} onChange={e => setEditingPrepItem({ ...editingPrepItem, nameEs: e.target.value })}
+                                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500 mt-1" />
+                            </div>
+                            <div className="flex gap-3">
+                                <div className="flex-1">
+                                    <label className="text-xs font-bold text-gray-500 uppercase">Unit</label>
+                                    <input type="text" value={editingPrepItem.unit} onChange={e => setEditingPrepItem({ ...editingPrepItem, unit: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500 mt-1" />
+                                </div>
+                                <div className="w-24">
+                                    <label className="text-xs font-bold text-gray-500 uppercase">Slow Par</label>
+                                    <input type="text" value={editingPrepItem.slowPar} onChange={e => setEditingPrepItem({ ...editingPrepItem, slowPar: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500 mt-1" />
+                                </div>
+                                <div className="w-24">
+                                    <label className="text-xs font-bold text-gray-500 uppercase">Busy Par</label>
+                                    <input type="text" value={editingPrepItem.busyPar} onChange={e => setEditingPrepItem({ ...editingPrepItem, busyPar: e.target.value })}
+                                        className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-500 mt-1" />
+                                </div>
+                            </div>
+                        </div>
+                        <div className="border-t border-gray-200 p-3 flex gap-2 bg-gray-50">
+                            <button onClick={saveEditPrepItem}
+                                className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 active:scale-95 transition">
+                                {language === "es" ? "Guardar" : "Save"}
+                            </button>
+                            <button onClick={() => { if (window.confirm(language === "es" ? "Eliminar este item?" : "Delete this item?")) deletePrepItem(editingPrepItem.stationId, editingPrepItem.itemId); }}
+                                className="py-3 px-4 bg-red-100 text-red-600 rounded-xl font-bold text-sm hover:bg-red-200 active:scale-95 transition">
+                                {"\u{1F5D1}"}
+                            </button>
+                            <button onClick={() => setEditingPrepItem(null)}
+                                className="py-3 px-4 bg-gray-200 text-gray-600 rounded-xl font-bold text-sm hover:bg-gray-300 active:scale-95 transition">
+                                {"\u{2715}"}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
