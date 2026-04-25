@@ -2005,16 +2005,31 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             <span className="text-xs bg-white bg-opacity-20 px-2 py-0.5 rounded-full">{cartVendors[v].length} {language === "es" ? "artículos" : "items"}</span>
                                                         </div>
                                                         <div className="divide-y divide-gray-100">
-                                                            {cartVendors[v].sort((a, b) => a.name.localeCompare(b.name)).map(item => (
-                                                                <div key={item.id} className="flex items-center justify-between px-4 py-2">
-                                                                    <div className="flex-1 min-w-0">
-                                                                        <span className="text-sm text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
-                                                                        {item.pack && <span className="text-xs text-blue-400 ml-1">{item.pack}</span>}
-                                                                        <span className="text-xs text-gray-400 ml-1">({item.categoryName})</span>
+                                                            {cartVendors[v].sort((a, b) => a.name.localeCompare(b.name)).map(item => {
+                                                                const cheap = findCheapest(item);
+                                                                let cheapLabel = "";
+                                                                if (cheap) {
+                                                                    const cParsed = parsePackToUnits(cheap.pack);
+                                                                    const cPerUnit = (cheap.price && cParsed && cParsed.total > 0) ? (cheap.price / cParsed.total) : null;
+                                                                    cheapLabel = cheap.vendor;
+                                                                    if (cPerUnit !== null) cheapLabel += " $" + cPerUnit.toFixed(2) + "/" + cParsed.unit;
+                                                                    else if (cheap.price) cheapLabel += " $" + cheap.price.toFixed(2);
+                                                                    if (cheap.pack) cheapLabel += " (" + cheap.pack + ")";
+                                                                }
+                                                                return (
+                                                                <div key={item.id} className="px-4 py-2">
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <span className="text-sm text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
+                                                                            {item.pack && <span className="text-xs text-blue-400 ml-1">{item.pack}</span>}
+                                                                            <span className="text-xs text-gray-400 ml-1">({item.categoryName})</span>
+                                                                        </div>
+                                                                        <span className="font-bold text-mint-700 text-lg ml-3">{item.count}</span>
                                                                     </div>
-                                                                    <span className="font-bold text-mint-700 text-lg ml-3">{item.count}</span>
+                                                                    {cheapLabel && <div style={{fontSize: "10px", color: "#856404", background: "#fff3cd", padding: "2px 6px", borderRadius: "4px", marginTop: "2px"}}>{"\u{1F4B0}"} {language === "es" ? "Mas barato" : "Cheaper"}: {cheapLabel}</div>}
                                                                 </div>
-                                                            ))}
+                                                                );
+                                                            })}
                                                         </div>
                                                     </div>
                                                 ))}
@@ -2262,8 +2277,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 <div className="divide-y divide-gray-100">
                                                     {vItems.map(item => {
                                                         const count = inventory[item.id] || 0;
+                                                        const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
                                                         return (
-                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""}`}>
+                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
+                                                                {isEditing ? (
+                                                                    <div className="space-y-2">
+                                                                        <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
+                                                                            placeholder="Item name" className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                        <input type="text" value={invEditNameEs} onChange={(e) => setInvEditNameEs(e.target.value)}
+                                                                            placeholder="Nombre en español" className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                        <div className="flex gap-2">
+                                                                            <input type="text" value={invEditSupplier} onChange={(e) => setInvEditSupplier(e.target.value)}
+                                                                                placeholder={language === "es" ? "Proveedor" : "Vendor"} className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                            <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
+                                                                                placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                        </div>
+                                                                        <div className="flex gap-2">
+                                                                            <button onClick={() => saveInvEdit(item.catIdx, item.itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
+                                                                            <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
                                                                 <div className="flex items-center justify-between">
                                                                     <div className="flex-1 min-w-0 pr-2">
                                                                         <p className={`text-sm font-semibold ${count > 0 ? "text-green-800" : "text-gray-800"} truncate`}>
@@ -2275,11 +2309,30 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                         </div>
                                                                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                                                             <span className="text-xs text-blue-600 font-medium">{language === "es" ? item.catNameEs : item.catName}</span>
+                                                                            {item.vendorOptions && item.vendorOptions.length > 1 ? (
+                                                                                <select
+                                                                                    value={item.preferredVendor || item.vendor || ""}
+                                                                                    onChange={(e) => changePreferredVendor(item.catIdx, item.itemIdx, e.target.value)}
+                                                                                    className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+                                                                                    title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
+                                                                                    {item.vendorOptions.map(vo => (
+                                                                                        <option key={vo.vendor} value={vo.vendor}>
+                                                                                            {vo.vendor}{vo.price != null ? ` ($${vo.price.toFixed(2)})` : ""}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                </select>
+                                                                            ) : (
+                                                                                (item.preferredVendor || item.vendor) && <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
+                                                                            )}
                                                                             {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                             {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
-                                                                            {item.vendorOptions && item.vendorOptions.length > 1 && (
-                                                                                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">{item.vendorOptions.length} vendors</span>
-                                                                            )}
+                                                                            <button onClick={() => {
+                                                                                setInvEditingIdx({catIdx: item.catIdx, itemIdx: item.itemIdx});
+                                                                                setInvEditName(item.name);
+                                                                                setInvEditNameEs(item.nameEs || "");
+                                                                                setInvEditSupplier(item.vendor || item.supplier || "");
+                                                                                setInvEditOrderDay(item.orderDay || "");
+                                                                            }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                         </div>
                                                                     </div>
                                                                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -2290,6 +2343,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                             className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                     </div>
                                                                 </div>
+                                                                )}
                                                             </div>
                                                         );
                                                     })}
@@ -2319,17 +2373,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const personItems = {};
                                 SPLIT_LISTS.forEach(p => { personItems[p.name] = []; });
 
-                                customInventory.forEach(cat => {
+                                customInventory.forEach((cat, cIdx) => {
                                     // Find the default person for this category
                                     const defaultPerson = SPLIT_LISTS.find(p => p.categories.includes(cat.name));
                                     if (!defaultPerson) return;
-                                    cat.items.forEach(item => {
+                                    cat.items.forEach((item, iIdx) => {
                                         const assignedTo = getPersonForItem(item, defaultPerson.name);
                                         if (personItems[assignedTo]) {
-                                            personItems[assignedTo].push({ ...item, catName: cat.name, catNameEs: cat.nameEs });
+                                            personItems[assignedTo].push({ ...item, catName: cat.name, catNameEs: cat.nameEs, catIdx: cIdx, itemIdx: iIdx });
                                         } else {
                                             // If override points to non-existent person, keep with default
-                                            personItems[defaultPerson.name].push({ ...item, catName: cat.name, catNameEs: cat.nameEs });
+                                            personItems[defaultPerson.name].push({ ...item, catName: cat.name, catNameEs: cat.nameEs, catIdx: cIdx, itemIdx: iIdx });
                                         }
                                     });
                                 });
@@ -2392,11 +2446,29 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             <div className="divide-y divide-gray-100">
                                                                 {filteredItems.map((item) => {
                                                                     const count = inventory[item.id] || 0;
-                                                                    const vendorLabel = item.preferredVendor || item.vendor || "";
                                                                     const isMoving = splitMovingItem && splitMovingItem.itemId === item.id;
                                                                     const wasMoved = !!splitOverrides[item.id];
+                                                                    const isEditing = invEditingIdx && invEditingIdx.catIdx === item.catIdx && invEditingIdx.itemIdx === item.itemIdx;
                                                                     return (
-                                                                        <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""}`}>
+                                                                        <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
+                                                                            {isEditing ? (
+                                                                                <div className="space-y-2">
+                                                                                    <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
+                                                                                        placeholder="Item name" className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                                    <input type="text" value={invEditNameEs} onChange={(e) => setInvEditNameEs(e.target.value)}
+                                                                                        placeholder="Nombre en español" className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                                    <div className="flex gap-2">
+                                                                                        <input type="text" value={invEditSupplier} onChange={(e) => setInvEditSupplier(e.target.value)}
+                                                                                            placeholder={language === "es" ? "Proveedor" : "Vendor"} className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                                        <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
+                                                                                            placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                                    </div>
+                                                                                    <div className="flex gap-2">
+                                                                                        <button onClick={() => saveInvEdit(item.catIdx, item.itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
+                                                                                        <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                                    </div>
+                                                                                </div>
+                                                                            ) : (
                                                                             <div className="flex items-center justify-between">
                                                                                 <div className="flex-1 min-w-0 pr-2">
                                                                                     <div className="flex items-center gap-1">
@@ -2406,12 +2478,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                         {wasMoved && <span className="text-xs bg-purple-100 text-purple-600 px-1 rounded">{"\u{21C4}"}</span>}
                                                                                     </div>
                                                                                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                                                                        {vendorLabel && <span className="text-xs text-blue-600 font-medium">{vendorLabel}</span>}
+                                                                                        {item.vendorOptions && item.vendorOptions.length > 1 ? (
+                                                                                            <select
+                                                                                                value={item.preferredVendor || item.vendor || ""}
+                                                                                                onChange={(e) => changePreferredVendor(item.catIdx, item.itemIdx, e.target.value)}
+                                                                                                className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+                                                                                                title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
+                                                                                                {item.vendorOptions.map(vo => (
+                                                                                                    <option key={vo.vendor} value={vo.vendor}>
+                                                                                                        {vo.vendor}{vo.price != null ? ` ($${vo.price.toFixed(2)})` : ""}
+                                                                                                    </option>
+                                                                                                ))}
+                                                                                            </select>
+                                                                                        ) : (
+                                                                                            (item.preferredVendor || item.vendor) && <span className="text-xs text-blue-600 font-medium">{item.preferredVendor || item.vendor}</span>
+                                                                                        )}
                                                                                         {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
+                                                                                        {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
                                                                                         <button onClick={() => setSplitMovingItem(isMoving ? null : { itemId: item.id, fromPerson: person.name })}
                                                                                             className={`text-xs px-1.5 py-0.5 rounded font-medium transition ${isMoving ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
                                                                                             {isMoving ? "\u{2715}" : "\u{21C4}"} {language === "es" ? "Mover" : "Move"}
                                                                                         </button>
+                                                                                        <button onClick={() => {
+                                                                                            setInvEditingIdx({catIdx: item.catIdx, itemIdx: item.itemIdx});
+                                                                                            setInvEditName(item.name);
+                                                                                            setInvEditNameEs(item.nameEs || "");
+                                                                                            setInvEditSupplier(item.vendor || item.supplier || "");
+                                                                                            setInvEditOrderDay(item.orderDay || "");
+                                                                                        }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                     </div>
                                                                                     {isMoving && (
                                                                                         <div className="flex gap-1 mt-1">
@@ -2438,6 +2532,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                         className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                                 </div>
                                                                             </div>
+                                                                            )}
                                                                         </div>
                                                                     );
                                                                 })}
