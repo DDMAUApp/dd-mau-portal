@@ -700,6 +700,10 @@ export default function CateringOrder({ language, staffName }) {
                         <p>DD Mau Vietnamese Eatery — ddmaustl.com</p>
                     </div>
                 </div>
+                <div class="no-print">
+                    <button class="btn-print" onclick="window.print()">🖨️ Print Again</button>
+                    <button class="btn-close" onclick="window.close()">✕ Close</button>
+                </div>
                 </body></html>`;
             };
             const printOrder = (o) => {
