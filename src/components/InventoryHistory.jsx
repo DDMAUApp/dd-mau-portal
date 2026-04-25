@@ -42,7 +42,7 @@ export default function InventoryHistory({ language, customInventory: customInve
             useEffect(() => {
                 const fetchHistory = async () => {
                     try {
-                        const colRef = collection(db, "inventoryHistory_" + storeLocation); const snapshot = await getDocs(colRef); // converted;
+                        const colRef = collection(db, "inventoryHistory_" + storeLocation); const snapshot = await getDocs(colRef);
                         const dates = snapshot.docs.map(doc => doc.id).sort().reverse().slice(0, 30);
                         setHistoryDates(dates);
                         if (dates.length > 0) setSelectedDate(dates[0]);
@@ -84,7 +84,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                         }
                     } catch (err) { console.error("Error loading day:", err); }
                     setHistEditMode(false);
-                    setAddingToCategory(null);
+                    setShowAddPicker(false);
                 };
                 fetchDay();
             }, [selectedDate, historyDates, storeLocation]);
@@ -127,6 +127,9 @@ export default function InventoryHistory({ language, customInventory: customInve
                 setHistEditMode(false);
             };
 
+            // Get display vendor for an item (prefer vendor, fall back to supplier for old data)
+            const getItemVendor = (item) => item.preferredVendor || item.vendor || item.supplier || "";
+
             // Add item from inventory picker to the saved list
             const addItemFromPicker = async (item, categoryName) => {
                 // Check if item already exists in the saved list
@@ -139,8 +142,19 @@ export default function InventoryHistory({ language, customInventory: customInve
                     await saveToFirestore({ counts: newCounts });
                     return;
                 }
-                // Find or create category in saved list
-                const newItem = { id: item.id, name: item.name, nameEs: item.nameEs || "", supplier: item.supplier || "", orderDay: item.orderDay || "" };
+                // Find or create category in saved list — include new fields
+                const newItem = {
+                    id: item.id,
+                    name: item.name,
+                    nameEs: item.nameEs || "",
+                    vendor: item.vendor || "",
+                    supplier: item.vendor || item.supplier || "",
+                    pack: item.pack || "",
+                    price: item.price || null,
+                    preferredVendor: item.preferredVendor || item.vendor || "",
+                    subcat: item.subcat || "",
+                    orderDay: item.orderDay || ""
+                };
                 let updatedItems = [...(dayData.items || [])];
                 const catIdx = updatedItems.findIndex(c => c.category === categoryName);
                 if (catIdx >= 0) {
@@ -175,44 +189,69 @@ export default function InventoryHistory({ language, customInventory: customInve
                 if (!dayData || !dayData.items) return;
                 const dateLabel = formatDate(selectedDate);
                 const titleName = listName || (language === "es" ? "Conteo de Inventario" : "Inventory Count");
+
+                // Group items by preferred vendor for the print view
+                const vendorGroups = {};
+                dayData.items.forEach(cat => {
+                    cat.items.forEach(item => {
+                        const count = dayData.counts?.[item.id] || 0;
+                        if (count > 0) {
+                            const v = getItemVendor(item) || "Other";
+                            if (!vendorGroups[v]) vendorGroups[v] = [];
+                            vendorGroups[v].push({ ...item, count, categoryName: cat.category });
+                        }
+                    });
+                });
+                const vendors = Object.keys(vendorGroups).sort();
+
                 let html = `<!DOCTYPE html><html><head><title>DD Mau - ${titleName}</title>
                     <style>
-                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; color: #222; }
-                        h1 { font-size: 20px; margin-bottom: 4px; }
+                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; color: #222; max-width: 800px; margin: 0 auto; }
+                        h1 { font-size: 20px; margin-bottom: 4px; color: #2F5496; }
                         .subtitle { font-size: 12px; color: #666; margin-bottom: 16px; }
-                        table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-                        th { background: #d9ecdb; text-align: left; padding: 6px 10px; font-size: 13px; border: 1px solid #ccc; }
+                        .vendor-header { background: #2F5496; color: white; padding: 8px 12px; font-weight: bold; font-size: 14px; margin-top: 16px; border-radius: 6px 6px 0 0; }
+                        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+                        th { background: #D6E4F0; text-align: left; padding: 6px 10px; font-size: 11px; color: #2F5496; border: 1px solid #ccc; }
                         td { padding: 5px 10px; font-size: 12px; border: 1px solid #ddd; }
-                        .count { text-align: right; font-weight: bold; width: 50px; }
-                        .diff-pos { color: green; font-size: 11px; }
-                        .diff-neg { color: red; font-size: 11px; }
-                        .supplier { color: #999; font-size: 11px; }
+                        tr:nth-child(even) { background: #f9f9f9; }
+                        .count { text-align: center; font-weight: bold; font-size: 14px; width: 50px; }
+                        .pack { color: #666; font-size: 11px; }
+                        .cat-label { color: #999; font-size: 10px; }
                         .ordered { text-decoration: line-through; color: #999; }
                         .check { color: green; font-weight: bold; }
-                        @media print { body { padding: 0; } }
+                        @media print { body { padding: 10px; } h1 { font-size: 16px; } }
                     </style></head><body>`;
                 html += `<h1>🍜 DD Mau — ${titleName}</h1>`;
                 html += `<div class="subtitle">${dateLabel} • ${language === "es" ? "Última actualización" : "Last updated"}: ${new Date(dayData.date).toLocaleString()}</div>`;
 
-                dayData.items.forEach(cat => {
-                    html += `<table><tr><th colspan="4">${cat.category}</th></tr>`;
-                    cat.items.forEach(item => {
-                        const count = dayData.counts?.[item.id] || 0;
-                        const prevCount = prevData?.counts?.[item.id];
-                        const diff = prevCount !== undefined ? count - prevCount : null;
-                        const name = language === "es" && item.nameEs ? item.nameEs : item.name;
-                        const supplierStr = item.supplier ? ` <span class="supplier">(${item.supplier})</span>` : "";
-                        const isOrdered = ordered[item.id];
-                        let diffStr = "";
-                        if (diff !== null && diff !== 0) {
-                            diffStr = diff > 0
-                                ? ` <span class="diff-pos">+${diff}</span>`
-                                : ` <span class="diff-neg">${diff}</span>`;
-                        }
-                        html += `<tr><td style="width:30px">${isOrdered ? '<span class="check">✓</span>' : '☐'}</td><td class="${isOrdered ? 'ordered' : ''}">${name}${supplierStr}</td><td class="count">${count}</td><td style="width:40px">${diffStr}</td></tr>`;
+                if (vendors.length > 0) {
+                    // Print grouped by vendor (matching Operations print style)
+                    vendors.forEach(v => {
+                        const items = vendorGroups[v].sort((a, b) => a.name.localeCompare(b.name));
+                        html += `<div class="vendor-header">${v} (${items.length} items)</div>`;
+                        html += `<table><tr><th>Item</th><th style="width:50px">Qty</th><th>Pack</th><th style="width:30px">✓</th></tr>`;
+                        items.forEach(item => {
+                            const name = language === "es" && item.nameEs ? item.nameEs : item.name;
+                            const isOrdered = ordered[item.id];
+                            html += `<tr><td class="${isOrdered ? 'ordered' : ''}">${name} <span class="cat-label">${item.categoryName || ""}</span></td><td class="count">${item.count}</td><td class="pack">${item.pack || ""}</td><td>${isOrdered ? '<span class="check">✓</span>' : '☐'}</td></tr>`;
+                        });
+                        html += `</table>`;
                     });
-                    html += `</table>`;
-                });
+                } else {
+                    // Fallback: print by category if nothing counted
+                    dayData.items.forEach(cat => {
+                        html += `<table><tr><th colspan="4">${cat.category}</th></tr>`;
+                        cat.items.forEach(item => {
+                            const count = dayData.counts?.[item.id] || 0;
+                            const name = language === "es" && item.nameEs ? item.nameEs : item.name;
+                            const vendorStr = getItemVendor(item);
+                            const vendorLabel = vendorStr ? ` <span class="cat-label">(${vendorStr})</span>` : "";
+                            const isOrdered = ordered[item.id];
+                            html += `<tr><td style="width:30px">${isOrdered ? '<span class="check">✓</span>' : '☐'}</td><td class="${isOrdered ? 'ordered' : ''}">${name}${vendorLabel}</td><td class="count">${count}</td><td class="pack">${item.pack || ""}</td></tr>`;
+                        });
+                        html += `</table>`;
+                    });
+                }
 
                 html += `</body></html>`;
                 const win = window.open("", "_blank");
@@ -322,6 +361,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                                             const prevCount = prevData?.counts?.[item.id];
                                             const diff = prevCount !== undefined ? (dayData.counts?.[item.id] || 0) - prevCount : null;
                                             const isOrdered = ordered[item.id];
+                                            const vendorLabel = getItemVendor(item);
 
                                             return (
                                                 <div key={idx} className={`flex items-center gap-2 px-2 py-2 text-sm ${isOrdered && !histEditMode ? "bg-green-50" : ""}`}>
@@ -335,7 +375,8 @@ export default function InventoryHistory({ language, customInventory: customInve
                                                     )}
                                                     <div className={`flex-1 min-w-0 ${isOrdered && !histEditMode ? "line-through text-gray-400" : ""}`}>
                                                         <span className="text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
-                                                        {item.supplier && <span className="text-xs text-gray-400 ml-1">({item.supplier})</span>}
+                                                        {vendorLabel && <span className="text-xs text-gray-400 ml-1">({vendorLabel})</span>}
+                                                        {item.pack && <span className="text-xs text-blue-400 ml-1">{item.pack}</span>}
                                                     </div>
                                                     <div className="flex items-center gap-2 flex-shrink-0">
                                                         {histEditMode ? (
@@ -392,8 +433,10 @@ export default function InventoryHistory({ language, customInventory: customInve
                                                     if (!searchLower) return !existingIds.has(item.id);
                                                     const nameMatch = (item.name || "").toLowerCase().includes(searchLower);
                                                     const nameEsMatch = (item.nameEs || "").toLowerCase().includes(searchLower);
+                                                    const vendorMatch = (item.vendor || "").toLowerCase().includes(searchLower);
                                                     const supplierMatch = (item.supplier || "").toLowerCase().includes(searchLower);
-                                                    return (nameMatch || nameEsMatch || supplierMatch);
+                                                    const preferredMatch = (item.preferredVendor || "").toLowerCase().includes(searchLower);
+                                                    return (nameMatch || nameEsMatch || vendorMatch || supplierMatch || preferredMatch);
                                                 });
                                                 if (matchingItems.length === 0) return null;
                                                 hasResults = true;
@@ -402,13 +445,15 @@ export default function InventoryHistory({ language, customInventory: customInve
                                                         <div className="px-3 py-1.5 bg-gray-50 border-b text-xs font-bold text-gray-500 uppercase">{catName}</div>
                                                         {matchingItems.map(item => {
                                                             const alreadyIn = existingIds.has(item.id);
+                                                            const itemVendor = item.preferredVendor || item.vendor || item.supplier || "";
                                                             return (
                                                                 <button key={item.id}
                                                                     onClick={() => { addItemFromPicker(item, catName); }}
                                                                     className={`w-full text-left px-3 py-2.5 border-b border-gray-100 flex items-center justify-between hover:bg-blue-50 transition ${alreadyIn ? "bg-green-50" : ""}`}>
                                                                     <div>
                                                                         <span className="text-sm text-gray-800 font-medium">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
-                                                                        {item.supplier && <span className="text-xs text-gray-400 ml-2">({item.supplier})</span>}
+                                                                        {itemVendor && <span className="text-xs text-gray-400 ml-2">({itemVendor})</span>}
+                                                                        {item.pack && <span className="text-xs text-blue-400 ml-1">{item.pack}</span>}
                                                                     </div>
                                                                     <span className="text-xs font-bold text-blue-600">
                                                                         {alreadyIn
@@ -427,7 +472,9 @@ export default function InventoryHistory({ language, customInventory: customInve
                                             return cat.items.every(item =>
                                                 !(item.name || "").toLowerCase().includes(s) &&
                                                 !(item.nameEs || "").toLowerCase().includes(s) &&
-                                                !(item.supplier || "").toLowerCase().includes(s)
+                                                !(item.vendor || "").toLowerCase().includes(s) &&
+                                                !(item.supplier || "").toLowerCase().includes(s) &&
+                                                !(item.preferredVendor || "").toLowerCase().includes(s)
                                             );
                                         }) && (
                                             <div className="p-4 text-center text-gray-400 text-sm">
@@ -456,4 +503,3 @@ export default function InventoryHistory({ language, customInventory: customInve
                 </div>
             );
         }
-
