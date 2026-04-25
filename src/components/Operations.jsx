@@ -92,6 +92,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            // Split list state: overrides move items between people, writeIns are custom items per person
+            const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
+            const [splitWriteIns, setSplitWriteIns] = useState({}); // {personName: [{id, name, count}]}
+            const [splitWriteInValues, setSplitWriteInValues] = useState({}); // {personName: "text"}
+            const [splitMovingItem, setSplitMovingItem] = useState(null); // {itemId, fromPerson}
 
             // Break Planner state
             const DEFAULT_STATIONS = [
@@ -523,7 +528,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); };
+                // Load split list config (overrides + write-ins)
+                const unsubSplit = onSnapshot(doc(db, "ops", "splitConfig_" + storeLocation), (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.overrides) setSplitOverrides(data.overrides);
+                        if (data.writeIns) setSplitWriteIns(data.writeIns);
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -978,6 +992,45 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 );
                 setCustomInventory(updated);
                 await saveInventory(inventory, updated);
+            };
+
+            // Split list helpers
+            const saveSplitConfig = async (overrides, writeIns) => {
+                try {
+                    await setDoc(doc(db, "ops", "splitConfig_" + storeLocation), { overrides, writeIns, date: new Date().toISOString() });
+                } catch (err) { console.error("Error saving split config:", err); }
+            };
+
+            const moveSplitItem = async (itemId, toPerson) => {
+                const updated = { ...splitOverrides, [itemId]: toPerson };
+                setSplitOverrides(updated);
+                setSplitMovingItem(null);
+                await saveSplitConfig(updated, splitWriteIns);
+            };
+
+            const addSplitWriteIn = async (personName) => {
+                const input = (splitWriteInValues[personName] || "").trim();
+                if (!input) return;
+                const existing = splitWriteIns[personName] || [];
+                const newId = "sw-" + personName + "-" + Date.now();
+                const updated = { ...splitWriteIns, [personName]: [...existing, { id: newId, name: input, count: 0 }] };
+                setSplitWriteIns(updated);
+                setSplitWriteInValues(prev => ({ ...prev, [personName]: "" }));
+                await saveSplitConfig(splitOverrides, updated);
+            };
+
+            const removeSplitWriteIn = async (personName, itemId) => {
+                const existing = splitWriteIns[personName] || [];
+                const updated = { ...splitWriteIns, [personName]: existing.filter(i => i.id !== itemId) };
+                setSplitWriteIns(updated);
+                await saveSplitConfig(splitOverrides, updated);
+            };
+
+            const updateSplitWriteInCount = async (personName, itemId, newCount) => {
+                const existing = splitWriteIns[personName] || [];
+                const updated = { ...splitWriteIns, [personName]: existing.map(i => i.id === itemId ? { ...i, count: newCount } : i) };
+                setSplitWriteIns(updated);
+                await saveSplitConfig(splitOverrides, updated);
             };
 
             const toggleCatCollapse = (key) => {
@@ -2255,16 +2308,52 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     { name: "Brandon", nameEs: "Brandon", emoji: "\u{1F964}", color: "from-green-700 to-green-600", label: language === "es" ? "Bebidas" : "Beverages", categories: ["Beverages"] }
                                 ];
                                 const searchLower = invSearch.toLowerCase().trim();
-                                return SPLIT_LISTS.map((person, pIdx) => {
-                                    const personCats = customInventory.filter(cat => person.categories.includes(cat.name));
-                                    let totalCounted = 0;
-                                    let totalItems = 0;
-                                    personCats.forEach(cat => {
-                                        cat.items.forEach(item => {
-                                            totalItems++;
-                                            if ((inventory[item.id] || 0) > 0) totalCounted++;
-                                        });
+
+                                // Build item assignments: default by category, then apply overrides
+                                const getPersonForItem = (item, defaultPerson) => {
+                                    if (splitOverrides[item.id]) return splitOverrides[item.id];
+                                    return defaultPerson;
+                                };
+
+                                // Collect all items per person (including moved items from other people)
+                                const personItems = {};
+                                SPLIT_LISTS.forEach(p => { personItems[p.name] = []; });
+
+                                customInventory.forEach(cat => {
+                                    // Find the default person for this category
+                                    const defaultPerson = SPLIT_LISTS.find(p => p.categories.includes(cat.name));
+                                    if (!defaultPerson) return;
+                                    cat.items.forEach(item => {
+                                        const assignedTo = getPersonForItem(item, defaultPerson.name);
+                                        if (personItems[assignedTo]) {
+                                            personItems[assignedTo].push({ ...item, catName: cat.name, catNameEs: cat.nameEs });
+                                        } else {
+                                            // If override points to non-existent person, keep with default
+                                            personItems[defaultPerson.name].push({ ...item, catName: cat.name, catNameEs: cat.nameEs });
+                                        }
                                     });
+                                });
+
+                                return SPLIT_LISTS.map((person, pIdx) => {
+                                    const allItems = personItems[person.name] || [];
+                                    // Group items by category for display
+                                    const catGroups = {};
+                                    allItems.forEach(item => {
+                                        const key = item.catName;
+                                        if (!catGroups[key]) catGroups[key] = { name: item.catName, nameEs: item.catNameEs, items: [] };
+                                        catGroups[key].items.push(item);
+                                    });
+                                    const catList = Object.values(catGroups);
+
+                                    let totalCounted = 0;
+                                    let totalItems = allItems.length;
+                                    allItems.forEach(item => { if ((inventory[item.id] || 0) > 0) totalCounted++; });
+
+                                    // Include write-ins in total
+                                    const writeIns = splitWriteIns[person.name] || [];
+                                    totalItems += writeIns.length;
+                                    writeIns.forEach(wi => { if (wi.count > 0) totalCounted++; });
+
                                     const pKey = "split-" + pIdx;
                                     const isCollapsed = collapsedCats[pKey] && !searchLower;
                                     return (
@@ -2283,53 +2372,125 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     <span className="text-white text-xs">{isCollapsed ? "\u{25B6}" : "\u{25BC}"}</span>
                                                 </div>
                                             </button>
-                                            {!isCollapsed && personCats.map((category, catIdx) => {
-                                                let filteredItems = searchLower
-                                                    ? category.items.filter(item =>
-                                                        (item.name || "").toLowerCase().includes(searchLower) ||
-                                                        (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                                        (item.vendor || "").toLowerCase().includes(searchLower))
-                                                    : category.items;
-                                                if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
-                                                if (filteredItems.length === 0) return null;
-                                                const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
-                                                return (
-                                                    <div key={catIdx}>
-                                                        <div className="px-3 py-1.5 bg-gray-50 border-y border-gray-100 flex justify-between items-center">
-                                                            <span className="text-xs font-bold text-gray-500 uppercase">{language === "es" ? category.nameEs : category.name}</span>
-                                                            {countedInCat > 0 && <span className="text-xs text-mint-700 font-bold">{countedInCat} {"\u{2713}"}</span>}
-                                                        </div>
-                                                        <div className="divide-y divide-gray-100">
-                                                            {filteredItems.map((item) => {
-                                                                const count = inventory[item.id] || 0;
-                                                                const vendorLabel = item.preferredVendor || item.vendor || "";
-                                                                return (
-                                                                    <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""}`}>
-                                                                        <div className="flex items-center justify-between">
-                                                                            <div className="flex-1 min-w-0 pr-2">
-                                                                                <p className={`text-sm font-semibold ${count > 0 ? "text-green-800" : "text-gray-800"} truncate`}>
-                                                                                    {language === "es" && item.nameEs ? item.nameEs : item.name}
-                                                                                </p>
-                                                                                <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                                                                    {vendorLabel && <span className="text-xs text-blue-600 font-medium">{vendorLabel}</span>}
-                                                                                    {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
+                                            {!isCollapsed && (<>
+                                                {catList.map((category, catIdx) => {
+                                                    let filteredItems = searchLower
+                                                        ? category.items.filter(item =>
+                                                            (item.name || "").toLowerCase().includes(searchLower) ||
+                                                            (item.nameEs || "").toLowerCase().includes(searchLower) ||
+                                                            (item.vendor || "").toLowerCase().includes(searchLower))
+                                                        : category.items;
+                                                    if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
+                                                    if (filteredItems.length === 0) return null;
+                                                    const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
+                                                    return (
+                                                        <div key={catIdx}>
+                                                            <div className="px-3 py-1.5 bg-gray-50 border-y border-gray-100 flex justify-between items-center">
+                                                                <span className="text-xs font-bold text-gray-500 uppercase">{language === "es" ? category.nameEs : category.name}</span>
+                                                                {countedInCat > 0 && <span className="text-xs text-mint-700 font-bold">{countedInCat} {"\u{2713}"}</span>}
+                                                            </div>
+                                                            <div className="divide-y divide-gray-100">
+                                                                {filteredItems.map((item) => {
+                                                                    const count = inventory[item.id] || 0;
+                                                                    const vendorLabel = item.preferredVendor || item.vendor || "";
+                                                                    const isMoving = splitMovingItem && splitMovingItem.itemId === item.id;
+                                                                    const wasMoved = !!splitOverrides[item.id];
+                                                                    return (
+                                                                        <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""}`}>
+                                                                            <div className="flex items-center justify-between">
+                                                                                <div className="flex-1 min-w-0 pr-2">
+                                                                                    <div className="flex items-center gap-1">
+                                                                                        <p className={`text-sm font-semibold ${count > 0 ? "text-green-800" : "text-gray-800"} truncate`}>
+                                                                                            {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                                                        </p>
+                                                                                        {wasMoved && <span className="text-xs bg-purple-100 text-purple-600 px-1 rounded">{"\u{21C4}"}</span>}
+                                                                                    </div>
+                                                                                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                                                        {vendorLabel && <span className="text-xs text-blue-600 font-medium">{vendorLabel}</span>}
+                                                                                        {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
+                                                                                        <button onClick={() => setSplitMovingItem(isMoving ? null : { itemId: item.id, fromPerson: person.name })}
+                                                                                            className={`text-xs px-1.5 py-0.5 rounded font-medium transition ${isMoving ? "bg-purple-600 text-white" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
+                                                                                            {isMoving ? "\u{2715}" : "\u{21C4}"} {language === "es" ? "Mover" : "Move"}
+                                                                                        </button>
+                                                                                    </div>
+                                                                                    {isMoving && (
+                                                                                        <div className="flex gap-1 mt-1">
+                                                                                            {SPLIT_LISTS.filter(p => p.name !== person.name).map(p => (
+                                                                                                <button key={p.name} onClick={() => moveSplitItem(item.id, p.name)}
+                                                                                                    className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded-lg font-bold hover:bg-purple-200 active:scale-95 transition">
+                                                                                                    {p.emoji} {p.name}
+                                                                                                </button>
+                                                                                            ))}
+                                                                                            {wasMoved && (
+                                                                                                <button onClick={() => { const updated = { ...splitOverrides }; delete updated[item.id]; setSplitOverrides(updated); saveSplitConfig(updated, splitWriteIns); setSplitMovingItem(null); }}
+                                                                                                    className="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-lg font-bold hover:bg-gray-200 active:scale-95 transition">
+                                                                                                    {"\u{21A9}"} {language === "es" ? "Original" : "Reset"}
+                                                                                                </button>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    )}
+                                                                                </div>
+                                                                                <div className="flex items-center gap-1 flex-shrink-0">
+                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                                        className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                                    <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
+                                                                                    <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                                        className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                                 </div>
                                                                             </div>
-                                                                            <div className="flex items-center gap-1 flex-shrink-0">
-                                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
-                                                                                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
-                                                                                <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
-                                                                                <button onClick={() => updateInventoryCount(item.id, count + 1)}
-                                                                                    className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
-                                                                            </div>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {/* Write-in items for this person */}
+                                                {writeIns.length > 0 && (
+                                                    <div>
+                                                        <div className="px-3 py-1.5 bg-yellow-50 border-y border-yellow-200 flex justify-between items-center">
+                                                            <span className="text-xs font-bold text-yellow-700 uppercase">{"\u{270D}\u{FE0F}"} {language === "es" ? "Artículos Escritos" : "Write-In Items"}</span>
+                                                        </div>
+                                                        <div className="divide-y divide-gray-100">
+                                                            {writeIns.map(wi => (
+                                                                <div key={wi.id} className={`px-3 py-2 ${wi.count > 0 ? "bg-yellow-50/50" : ""}`}>
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="flex-1 min-w-0 pr-2">
+                                                                            <p className={`text-sm font-semibold ${wi.count > 0 ? "text-yellow-800" : "text-gray-800"}`}>{wi.name}</p>
+                                                                        </div>
+                                                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                                                            <button onClick={() => updateSplitWriteInCount(person.name, wi.id, Math.max(0, wi.count - 1))}
+                                                                                className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${wi.count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                            <span className={`w-10 text-center font-bold text-lg ${wi.count > 0 ? "text-yellow-700" : "text-gray-300"}`}>{wi.count}</span>
+                                                                            <button onClick={() => updateSplitWriteInCount(person.name, wi.id, wi.count + 1)}
+                                                                                className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                            <button onClick={() => removeSplitWriteIn(person.name, wi.id)}
+                                                                                className="w-7 h-7 rounded-lg bg-red-50 text-red-400 font-bold text-sm flex items-center justify-center hover:bg-red-100 ml-1">{"\u{2715}"}</button>
                                                                         </div>
                                                                     </div>
-                                                                );
-                                                            })}
+                                                                </div>
+                                                            ))}
                                                         </div>
                                                     </div>
-                                                );
-                                            })}
+                                                )}
+                                                {/* Write-in input */}
+                                                <div className="px-3 py-2 bg-gray-50 border-t border-gray-200">
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="text"
+                                                            value={splitWriteInValues[person.name] || ""}
+                                                            onChange={e => setSplitWriteInValues(prev => ({ ...prev, [person.name]: e.target.value }))}
+                                                            onKeyDown={e => { if (e.key === "Enter") addSplitWriteIn(person.name); }}
+                                                            placeholder={language === "es" ? `\u{270D}\u{FE0F} Escribir para ${person.name}...` : `\u{270D}\u{FE0F} Write in for ${person.name}...`}
+                                                            className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
+                                                        {(splitWriteInValues[person.name] || "").trim() && (
+                                                            <button onClick={() => addSplitWriteIn(person.name)}
+                                                                className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
+                                                                {language === "es" ? "Agregar" : "Add"}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </>)}
                                         </div>
                                     );
                                 });
