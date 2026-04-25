@@ -2,8 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
-import { t } from '../data/translations';
-import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF } from '../data/staff';
+import { t, autoTranslateItem } from '../data/translations';
+import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import InventoryHistory from './InventoryHistory';
 
@@ -86,6 +86,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
             const [writeInValues, setWriteInValues] = useState({});
+            const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
+            const [collapsedCats, setCollapsedCats] = useState({});
+            const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
 
             // Break Planner state
             const DEFAULT_STATIONS = [
@@ -818,7 +821,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Filter categories to only include items with counts
                 const filteredItems = items.map(cat => ({
                     category: cat.category || cat.name || "",
-                    items: cat.items.filter(i => cleanCounts[i.id]).map(i => ({ id: i.id, name: i.name, nameEs: i.nameEs || "", supplier: i.supplier || "", orderDay: i.orderDay || "" }))
+                    items: cat.items.filter(i => cleanCounts[i.id]).map(i => ({ id: i.id, name: i.name, nameEs: i.nameEs || "", vendor: i.vendor || i.supplier || "", supplier: i.vendor || i.supplier || "", orderDay: i.orderDay || "", pack: i.pack || "", price: i.price || null }))
                 })).filter(cat => cat.items.length > 0);
                 // Filter countMeta to only include items with counts
                 const cleanMeta = {};
@@ -882,7 +885,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const translated = autoTranslateItem(input);
                 const category = customInventory[catIdx];
                 const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
-                const newItem = { id: catIdx + "-" + (maxId + 1), name: translated.name, nameEs: translated.nameEs, supplier: "", orderDay: "" };
+                const newItem = { id: catIdx + "-" + (maxId + 1), name: translated.name, nameEs: translated.nameEs, vendor: "", supplier: "", orderDay: "", pack: "", price: null, subcat: "" };
                 const updated = customInventory.map((cat, idx) =>
                     idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
                 );
@@ -899,8 +902,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     id: catIdx + "-" + (maxId + 1),
                     name: invNewName.trim(),
                     nameEs: invNewNameEs.trim(),
+                    vendor: invNewSupplier.trim(),
                     supplier: invNewSupplier.trim(),
-                    orderDay: invNewOrderDay
+                    orderDay: invNewOrderDay,
+                    pack: "",
+                    price: null,
+                    subcat: ""
                 };
                 const updated = customInventory.map((cat, idx) =>
                     idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
@@ -916,7 +923,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     cIdx === catIdx
                         ? { ...cat, items: cat.items.map((item, iIdx) =>
                             iIdx === itemIdx
-                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay }
+                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay }
                                 : item
                             )}
                         : cat
@@ -934,6 +941,54 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 );
                 setCustomInventory(updated);
                 await saveInventory(inventory, updated);
+            };
+
+            const toggleCatCollapse = (key) => {
+                setCollapsedCats(prev => ({ ...prev, [key]: !prev[key] }));
+            };
+
+            const printInventory = () => {
+                const counted = {};
+                customInventory.forEach(cat => {
+                    cat.items.forEach(item => {
+                        if ((inventory[item.id] || 0) > 0) {
+                            const v = item.vendor || "Other";
+                            if (!counted[v]) counted[v] = [];
+                            counted[v].push({ ...item, count: inventory[item.id] });
+                        }
+                    });
+                });
+                const vendors = Object.keys(counted).sort();
+                const now = new Date();
+                const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+                const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                let html = `<html><head><title>DD Mau Order - ${dateStr}</title><style>
+                    body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
+                    h1{font-size:20px;color:#2F5496;margin-bottom:4px}
+                    .date{font-size:12px;color:#888;margin-bottom:16px}
+                    .vendor{background:#2F5496;color:white;padding:8px 12px;font-weight:bold;font-size:14px;margin-top:16px;border-radius:6px 6px 0 0}
+                    table{width:100%;border-collapse:collapse;margin-bottom:12px}
+                    th{background:#D6E4F0;padding:6px 10px;text-align:left;font-size:11px;color:#2F5496;border:1px solid #ccc}
+                    td{padding:6px 10px;font-size:12px;border:1px solid #e0e0e0}
+                    tr:nth-child(even){background:#f9f9f9}
+                    .count{font-weight:bold;text-align:center;font-size:14px}
+                    .pack{color:#666;font-size:11px}
+                    @media print{body{padding:10px}h1{font-size:16px}}
+                </style></head><body>`;
+                html += `<h1>DD Mau Order Sheet</h1><div class="date">${dateStr} at ${timeStr} — ${storeLocation}</div>`;
+                vendors.forEach(v => {
+                    html += `<div class="vendor">${v} (${counted[v].length} items)</div>`;
+                    html += `<table><tr><th>Item</th><th style="width:60px">Qty</th><th>Pack</th><th style="width:30px">✓</th></tr>`;
+                    counted[v].sort((a,b) => a.name.localeCompare(b.name)).forEach(item => {
+                        html += `<tr><td>${item.name}</td><td class="count">${item.count}</td><td class="pack">${item.pack || ""}</td><td></td></tr>`;
+                    });
+                    html += `</table>`;
+                });
+                html += `</body></html>`;
+                const w = window.open("", "_blank");
+                w.document.write(html);
+                w.document.close();
+                w.print();
             };
 
             // Get tasks for current side + period
@@ -1632,20 +1687,36 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     {activeTab === "checklist" && renderChecklist()}
 
                     {activeTab === "inventory" && (
-                        <div className="space-y-4">
-                            <div className="flex justify-between items-center">
-                                {lastUpdated.inventory && <p className="text-xs text-gray-500">{t("lastUpdated", language)}: {lastUpdated.inventory}</p>}
-                                <button onClick={() => { setInvEditMode(!invEditMode); setInvEditingIdx(null); setInvShowAddForm(null); }}
-                                    className={`px-4 py-2 rounded-lg font-bold transition ${invEditMode ? "bg-green-700 text-white" : "bg-blue-700 text-white"}`}>
-                                    {invEditMode ? (language === "es" ? "Listo" : "Done Editing") : (language === "es" ? "Editar" : "Edit")}
-                                </button>
+                        <div className="space-y-3">
+                            {/* ── TOP TOOLBAR ── */}
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5">
+                                    <button onClick={() => setInvViewMode("category")}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "category" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                        {language === "es" ? "Categoría" : "Category"}
+                                    </button>
+                                    <button onClick={() => setInvViewMode("vendor")}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "vendor" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                        {language === "es" ? "Proveedor" : "Vendor"}
+                                    </button>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                    <button onClick={printInventory} title="Print"
+                                        className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-blue-50 hover:text-blue-700 transition text-lg">
+                                        {"\u{1F5A8}"}
+                                    </button>
+                                    <button onClick={() => { setInvEditMode(!invEditMode); setInvEditingIdx(null); setInvShowAddForm(null); }}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invEditMode ? "bg-green-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                        {invEditMode ? (language === "es" ? "Listo" : "Done") : (language === "es" ? "Editar" : "Edit")}
+                                    </button>
+                                </div>
                             </div>
 
-                            {/* Search bar */}
+                            {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
                                 <div className="relative">
                                     <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
-                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items..."}
+                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo o proveedor..." : "\u{1F50D} Search items or vendor..."}
                                         className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white" />
                                     {invSearch && (
                                         <button onClick={() => setInvSearch("")}
@@ -1654,7 +1725,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 </div>
                             )}
 
-                            {/* Cart summary {"\u{2014}"} items with counts */}
+                            {/* ── CART SUMMARY ── */}
                             {!invEditMode && (() => {
                                 const itemCount = Object.values(inventory).filter(v => v > 0).length;
                                 const totalQty = Object.values(inventory).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
@@ -1664,170 +1735,290 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         <span className="text-sm font-bold text-mint-700">
                                             {"\u{1F6D2}"} {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
                                         </span>
-                                        <span className="text-xs text-mint-600">
-                                            {language === "es" ? "Solo estos se guardarán" : "Only these will be saved"}
-                                        </span>
+                                        <button onClick={() => setInvShowOnlyCounted(!invShowOnlyCounted)}
+                                            className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyCounted ? "bg-mint-700 text-white" : "bg-mint-100 text-mint-700 hover:bg-mint-200"}`}>
+                                            {invShowOnlyCounted ? (language === "es" ? "Ver Todo" : "Show All") : (language === "es" ? "Solo Contados" : "Counted Only")}
+                                        </button>
                                     </div>
                                 );
                             })()}
 
-                            {customInventory.map((category, catIdx) => {
-                                // Filter items by search
+                            {/* ── CATEGORY VIEW ── */}
+                            {invViewMode === "category" && customInventory.map((category, catIdx) => {
                                 const searchLower = invSearch.toLowerCase().trim();
-                                const filteredItems = searchLower
+                                let filteredItems = searchLower
                                     ? category.items.filter(item =>
                                         (item.name || "").toLowerCase().includes(searchLower) ||
                                         (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                        (item.supplier || "").toLowerCase().includes(searchLower)
+                                        (item.vendor || "").toLowerCase().includes(searchLower)
                                     )
                                     : category.items;
-                                // Hide empty categories when searching
-                                if (searchLower && filteredItems.length === 0) return null;
+                                if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
+                                if ((searchLower || invShowOnlyCounted) && filteredItems.length === 0) return null;
+                                const catKey = "cat-" + catIdx;
+                                const isCollapsed = collapsedCats[catKey] && !searchLower;
+                                const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
+
+                                // Group by subcategory
+                                const subcats = [];
+                                let currentSub = null;
+                                filteredItems.forEach(item => {
+                                    const sub = item.subcat || "";
+                                    if (sub !== currentSub) {
+                                        subcats.push({ name: sub, items: [] });
+                                        currentSub = sub;
+                                    }
+                                    subcats[subcats.length - 1].items.push(item);
+                                });
+
                                 return (
-                                <div key={category.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
-                                    <div className="p-3 bg-mint-50 border-b font-bold text-mint-700 flex justify-between items-center">
-                                        <span>{language === "es" ? category.nameEs : category.name}</span>
-                                        {!invEditMode && <span className="text-xs font-normal text-gray-500">{filteredItems.length} {language === "es" ? "artículos" : "items"}</span>}
-                                    </div>
-                                    <div className="p-3 space-y-2">
-                                        {filteredItems.map((item) => {
-                                            const itemIdx = category.items.indexOf(item);
-                                            const isEditing = invEditMode && invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
-                                            return (
-                                                <div key={item.id} className={`p-2 rounded border ${isEditing ? "border-blue-500 bg-blue-50" : "border-transparent"}`}>
-                                                    {isEditing ? (
-                                                        <div className="space-y-2">
-                                                            <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
-                                                                placeholder={language === "es" ? "Nombre del artículo" : "Item name"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                            <input type="text" value={invEditNameEs} onChange={(e) => setInvEditNameEs(e.target.value)}
-                                                                placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                            <input type="text" value={invEditSupplier} onChange={(e) => setInvEditSupplier(e.target.value)}
-                                                                placeholder={language === "es" ? "Proveedor" : "Supplier"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                            <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
-                                                                placeholder={language === "es" ? "Día de pedido" : "Order day"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                            <div className="flex gap-2">
-                                                                <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-700 text-white py-1 rounded hover:bg-green-800">{language === "es" ? "Guardar" : "Save"}</button>
-                                                                <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-500 text-white py-1 rounded hover:bg-gray-600">{language === "es" ? "Cancelar" : "Cancel"}</button>
-                                                            </div>
+                                <div key={category.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                                    {/* Category header — tap to collapse */}
+                                    <button onClick={() => toggleCatCollapse(catKey)}
+                                        className="w-full p-3 bg-gradient-to-r from-mint-700 to-mint-600 flex justify-between items-center">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-white text-sm font-bold">{language === "es" ? category.nameEs : category.name}</span>
+                                            <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full">{filteredItems.length}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {countedInCat > 0 && <span className="bg-white text-mint-700 text-xs font-bold px-2 py-0.5 rounded-full">{countedInCat} {"\u{2713}"}</span>}
+                                            <span className="text-white text-xs">{isCollapsed ? "\u{25B6}" : "\u{25BC}"}</span>
+                                        </div>
+                                    </button>
+
+                                    {!isCollapsed && (
+                                        <div className="divide-y divide-gray-100">
+                                            {subcats.map((subGroup, subIdx) => (
+                                                <div key={subIdx}>
+                                                    {/* Subcategory header */}
+                                                    {subGroup.name && (
+                                                        <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-100">
+                                                            <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">{subGroup.name}</span>
                                                         </div>
-                                                    ) : (
-                                                        <div className="flex items-center justify-between text-sm">
-                                                            <div className="flex-1">
-                                                                <p className="font-semibold text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</p>
-                                                                {language === "es" && item.nameEs && <p className="text-xs text-gray-400 italic">{item.name}</p>}
-                                                                {language !== "es" && item.nameEs && <p className="text-xs text-gray-400 italic">{item.nameEs}</p>}
-                                                                <p className="text-xs text-gray-500">{t("supplier", language)}: {item.supplier}</p>
-                                                                {invCountMeta[item.id] && (inventory[item.id] || 0) > 0 && (
-                                                                    <p className="text-xs text-mint-600">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
-                                                                )}
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                                {invEditMode ? (
-                                                                    <>
-                                                                        <button onClick={() => {
-                                                                            setInvEditingIdx({catIdx, itemIdx});
-                                                                            setInvEditName(item.name);
-                                                                            setInvEditNameEs(item.nameEs || "");
-                                                                            setInvEditSupplier(item.supplier);
-                                                                            setInvEditOrderDay(item.orderDay);
-                                                                        }} className="text-xl hover:text-blue-700">{"\u{270F}"}{"\u{FE0F}"}</button>
-                                                                        <button onClick={() => deleteInvItem(catIdx, itemIdx)} className="text-xl hover:text-red-700">{"\u{1F5D1}"}{"\u{FE0F}"}</button>
-                                                                    </>
+                                                    )}
+
+                                                    {subGroup.items.map((item) => {
+                                                        const itemIdx = category.items.indexOf(item);
+                                                        const count = inventory[item.id] || 0;
+                                                        const isEditing = invEditMode && invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
+                                                        return (
+                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
+                                                                {isEditing ? (
+                                                                    <div className="space-y-2">
+                                                                        <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
+                                                                            placeholder="Item name" className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                        <input type="text" value={invEditNameEs} onChange={(e) => setInvEditNameEs(e.target.value)}
+                                                                            placeholder="Nombre en español" className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                        <div className="flex gap-2">
+                                                                            <input type="text" value={invEditSupplier} onChange={(e) => setInvEditSupplier(e.target.value)}
+                                                                                placeholder={language === "es" ? "Proveedor" : "Vendor"} className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                            <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
+                                                                                placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                        </div>
+                                                                        <div className="flex gap-2">
+                                                                            <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
+                                                                            <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                        </div>
+                                                                    </div>
                                                                 ) : (
-                                                                    <div className="flex items-center gap-1">
-                                                                        <button onClick={() => updateInventoryCount(item.id, Math.max(0, (inventory[item.id] || 0) - 1))}
-                                                                            className="w-9 h-9 rounded-lg bg-gray-200 text-gray-700 font-bold text-xl flex items-center justify-center hover:bg-red-100 active:bg-red-200 transition">{"\u{2212}"}</button>
-                                                                        <span className="w-10 text-center font-bold text-lg">{inventory[item.id] || 0}</span>
-                                                                        <button onClick={() => updateInventoryCount(item.id, (inventory[item.id] || 0) + 1)}
-                                                                            className="w-9 h-9 rounded-lg bg-gray-200 text-gray-700 font-bold text-xl flex items-center justify-center hover:bg-green-100 active:bg-green-200 transition">+</button>
+                                                                    <div className="flex items-center justify-between">
+                                                                        <div className="flex-1 min-w-0 pr-2">
+                                                                            <p className={`text-sm font-semibold ${count > 0 ? "text-green-800" : "text-gray-800"} truncate`}>
+                                                                                {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                                            </p>
+                                                                            <div className="flex items-center gap-2 mt-0.5">
+                                                                                {language === "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.name}</span>}
+                                                                                {language !== "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.nameEs}</span>}
+                                                                            </div>
+                                                                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                                                                                {item.vendor && <span className="text-xs text-gray-500">{item.vendor}</span>}
+                                                                                {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
+                                                                                {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
+                                                                            </div>
+                                                                            {invCountMeta[item.id] && count > 0 && (
+                                                                                <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                                                            {invEditMode ? (
+                                                                                <>
+                                                                                    <button onClick={() => {
+                                                                                        setInvEditingIdx({catIdx, itemIdx});
+                                                                                        setInvEditName(item.name);
+                                                                                        setInvEditNameEs(item.nameEs || "");
+                                                                                        setInvEditSupplier(item.vendor || item.supplier || "");
+                                                                                        setInvEditOrderDay(item.orderDay || "");
+                                                                                    }} className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 text-sm">{"\u{270F}\u{FE0F}"}</button>
+                                                                                    <button onClick={() => deleteInvItem(catIdx, itemIdx)} className="w-8 h-8 rounded-lg bg-red-50 text-red-500 flex items-center justify-center hover:bg-red-100 text-sm">{"\u{1F5D1}\u{FE0F}"}</button>
+                                                                                </>
+                                                                            ) : (
+                                                                                <>
+                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                                        className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                                    <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
+                                                                                    <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                                        className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                                </>
+                                                                            )}
+                                                                        </div>
                                                                     </div>
                                                                 )}
                                                             </div>
-                                                        </div>
-                                                    )}
+                                                        );
+                                                    })}
                                                 </div>
-                                            );
-                                        })}
-                                        {/* Write-in line {"\u{2014}"} always visible when not in edit mode */}
-                                        {!invEditMode && (
-                                            <div className="p-2 border-t border-dashed border-gray-200">
-                                                <div className="flex items-center gap-2">
-                                                    <input type="text"
-                                                        value={writeInValues[catIdx] || ""}
-                                                        onChange={e => setWriteInValues(prev => ({ ...prev, [catIdx]: e.target.value }))}
-                                                        onKeyDown={e => { if (e.key === "Enter") quickAddItem(catIdx); }}
-                                                        placeholder={language === "es" ? "\u{270D}\u{FE0F} Escribir artículo..." : "\u{270D}\u{FE0F} Write in item..."}
-                                                        className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-gray-50 focus:outline-none focus:border-mint-500 focus:bg-white" />
-                                                    {(writeInValues[catIdx] || "").trim() && (
-                                                        <button onClick={() => quickAddItem(catIdx)}
-                                                            className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
-                                                            {language === "es" ? "Agregar" : "Add"}
-                                                        </button>
-                                                    )}
+                                            ))}
+                                            {/* Write-in */}
+                                            {!invEditMode && (
+                                                <div className="px-3 py-2 bg-gray-50">
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="text"
+                                                            value={writeInValues[catIdx] || ""}
+                                                            onChange={e => setWriteInValues(prev => ({ ...prev, [catIdx]: e.target.value }))}
+                                                            onKeyDown={e => { if (e.key === "Enter") quickAddItem(catIdx); }}
+                                                            placeholder={language === "es" ? "\u{270D}\u{FE0F} Escribir artículo..." : "\u{270D}\u{FE0F} Write in item..."}
+                                                            className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
+                                                        {(writeInValues[catIdx] || "").trim() && (
+                                                            <button onClick={() => quickAddItem(catIdx)}
+                                                                className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
+                                                                {language === "es" ? "Agregar" : "Add"}
+                                                            </button>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        )}
-                                        {invEditMode && invShowAddForm === catIdx ? (
-                                            <div className="p-2 border-2 border-green-500 rounded bg-green-50 space-y-2">
-                                                <input type="text" value={invNewName} onChange={(e) => setInvNewName(e.target.value)}
-                                                    placeholder={language === "es" ? "Nombre del artículo" : "New item name"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                <input type="text" value={invNewNameEs} onChange={(e) => setInvNewNameEs(e.target.value)}
-                                                    placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                <input type="text" value={invNewSupplier} onChange={(e) => setInvNewSupplier(e.target.value)}
-                                                    placeholder={language === "es" ? "Proveedor" : "Supplier"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                <input type="text" value={invNewOrderDay} onChange={(e) => setInvNewOrderDay(e.target.value)}
-                                                    placeholder={language === "es" ? "Día de pedido" : "Order day"} className="w-full px-2 py-1 border-2 border-gray-300 rounded focus:border-mint-700 focus:outline-none" />
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => addInvItem(catIdx)} className="flex-1 bg-green-700 text-white py-1 rounded hover:bg-green-800">{language === "es" ? "Agregar" : "Add"}</button>
-                                                    <button onClick={() => setInvShowAddForm(null)} className="flex-1 bg-gray-500 text-white py-1 rounded hover:bg-gray-600">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                            )}
+                                            {invEditMode && invShowAddForm === catIdx ? (
+                                                <div className="p-3 bg-green-50 border-t-2 border-green-500 space-y-2">
+                                                    <input type="text" value={invNewName} onChange={(e) => setInvNewName(e.target.value)}
+                                                        placeholder={language === "es" ? "Nombre del artículo" : "New item name"} className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                    <input type="text" value={invNewNameEs} onChange={(e) => setInvNewNameEs(e.target.value)}
+                                                        placeholder={language === "es" ? "Nombre en español" : "Name in Spanish"} className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                    <div className="flex gap-2">
+                                                        <input type="text" value={invNewSupplier} onChange={(e) => setInvNewSupplier(e.target.value)}
+                                                            placeholder={language === "es" ? "Proveedor" : "Vendor"} className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                        <input type="text" value={invNewOrderDay} onChange={(e) => setInvNewOrderDay(e.target.value)}
+                                                            placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => addInvItem(catIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Agregar" : "Add"}</button>
+                                                        <button onClick={() => setInvShowAddForm(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ) : invEditMode && (
-                                            <button onClick={() => setInvShowAddForm(catIdx)} className="w-full py-2 text-green-700 font-bold border-2 border-green-700 rounded hover:bg-green-50">{language === "es" ? "+ Agregar Artículo" : "+ Add Item"}</button>
-                                        )}
-                                    </div>
+                                            ) : invEditMode && (
+                                                <button onClick={() => setInvShowAddForm(catIdx)} className="w-full py-2 text-green-600 font-bold text-sm bg-green-50 hover:bg-green-100 border-t border-green-200 transition">
+                                                    + {language === "es" ? "Agregar Artículo" : "Add Item"}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             ); })}
 
-                            {/* Save & Reset Button + Confirmation */}
+                            {/* ── VENDOR VIEW ── */}
+                            {invViewMode === "vendor" && (() => {
+                                const vendorGroups = {};
+                                customInventory.forEach((cat, catIdx) => {
+                                    cat.items.forEach(item => {
+                                        const v = item.vendor || item.supplier || "Other";
+                                        if (!vendorGroups[v]) vendorGroups[v] = [];
+                                        const searchLower = invSearch.toLowerCase().trim();
+                                        const matchesSearch = !searchLower ||
+                                            (item.name || "").toLowerCase().includes(searchLower) ||
+                                            (item.nameEs || "").toLowerCase().includes(searchLower) ||
+                                            v.toLowerCase().includes(searchLower);
+                                        const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
+                                        if (matchesSearch && matchesCounted) {
+                                            vendorGroups[v].push({ ...item, catIdx, itemIdx: cat.items.indexOf(item), catName: cat.name, catNameEs: cat.nameEs });
+                                        }
+                                    });
+                                });
+                                const vendorNames = Object.keys(vendorGroups).filter(v => vendorGroups[v].length > 0).sort((a, b) => vendorGroups[b].length - vendorGroups[a].length);
+                                return vendorNames.map(vendor => {
+                                    const vItems = vendorGroups[vendor].sort((a, b) => a.name.localeCompare(b.name));
+                                    const vKey = "ven-" + vendor;
+                                    const isCollapsed = collapsedCats[vKey] && !invSearch;
+                                    const countedInV = vItems.filter(i => (inventory[i.id] || 0) > 0).length;
+                                    return (
+                                        <div key={vendor} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                                            <button onClick={() => toggleCatCollapse(vKey)}
+                                                className="w-full p-3 bg-gradient-to-r from-blue-700 to-blue-600 flex justify-between items-center">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-white text-sm font-bold">{vendor}</span>
+                                                    <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full">{vItems.length}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    {countedInV > 0 && <span className="bg-white text-blue-700 text-xs font-bold px-2 py-0.5 rounded-full">{countedInV} {"\u{2713}"}</span>}
+                                                    <span className="text-white text-xs">{isCollapsed ? "\u{25B6}" : "\u{25BC}"}</span>
+                                                </div>
+                                            </button>
+                                            {!isCollapsed && (
+                                                <div className="divide-y divide-gray-100">
+                                                    {vItems.map(item => {
+                                                        const count = inventory[item.id] || 0;
+                                                        return (
+                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""}`}>
+                                                                <div className="flex items-center justify-between">
+                                                                    <div className="flex-1 min-w-0 pr-2">
+                                                                        <p className={`text-sm font-semibold ${count > 0 ? "text-green-800" : "text-gray-800"} truncate`}>
+                                                                            {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                                        </p>
+                                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                                            {language === "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.name}</span>}
+                                                                            {language !== "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.nameEs}</span>}
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                                            <span className="text-xs text-blue-600 font-medium">{language === "es" ? item.catNameEs : item.catName}</span>
+                                                                            {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
+                                                                            {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
+                                                                        </div>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1 flex-shrink-0">
+                                                                        <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                            className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                        <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
+                                                                        <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                            className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                });
+                            })()}
+
+                            {/* ── SAVE & RESET ── */}
                             {!invEditMode && (
                                 <div className="sticky bottom-20 pt-3">
                                     {showSaveConfirm ? (
                                         <div className="bg-white border-2 border-mint-700 rounded-xl p-4 shadow-xl">
                                             <p className="text-center text-lg font-bold text-gray-800 mb-4">
-                                                {language === "es" ? "¿Ya REVISASTE?" : "Did you LOOK?"}
+                                                {language === "es" ? "\u{00BF}Ya REVISASTE?" : "Did you LOOK?"}
                                             </p>
                                             <div className="flex gap-3">
-                                                <button
-                                                    onClick={saveAndResetInventory}
-                                                    disabled={inventorySaving}
-                                                    className="flex-1 py-3 rounded-xl font-bold text-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition"
-                                                >
-                                                    {inventorySaving
-                                                        ? (language === "es" ? "Guardando..." : "Saving...")
-                                                        : (language === "es" ? "\u{2705} Sí" : "\u{2705} Yes")}
+                                                <button onClick={saveAndResetInventory} disabled={inventorySaving}
+                                                    className="flex-1 py-3 rounded-xl font-bold text-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
+                                                    {inventorySaving ? (language === "es" ? "Guardando..." : "Saving...") : (language === "es" ? "\u{2705} S\u{00ED}" : "\u{2705} Yes")}
                                                 </button>
-                                                <button
-                                                    onClick={() => setShowSaveConfirm(false)}
-                                                    disabled={inventorySaving}
-                                                    className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-200 text-gray-700 hover:bg-gray-300 transition"
-                                                >
+                                                <button onClick={() => setShowSaveConfirm(false)} disabled={inventorySaving}
+                                                    className="flex-1 py-3 rounded-xl font-bold text-lg bg-gray-200 text-gray-700 hover:bg-gray-300 transition">
                                                     {language === "es" ? "Cancelar" : "Cancel"}
                                                 </button>
                                             </div>
                                         </div>
                                     ) : (
-                                        <button
-                                            onClick={() => setShowSaveConfirm(true)}
-                                            className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition"
-                                        >
+                                        <button onClick={() => setShowSaveConfirm(true)}
+                                            className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
                                             {language === "es" ? "\u{1F4BE} Guardar y Reiniciar Conteos" : "\u{1F4BE} Save & Reset Counts"}
                                         </button>
                                     )}
                                 </div>
                             )}
 
-                            {/* {"\u{2500}"}{"\u{2500}"} SAVED INVENTORY LISTS {"\u{2500}"}{"\u{2500}"} */}
+                            {/* ── SAVED LISTS ── */}
                             <div className="mt-6 pt-4 border-t-2 border-gray-200">
                                 <h3 className="text-lg font-bold text-mint-700 mb-1">{"\u{1F4E6}"} {language === "es" ? "Listas Guardadas" : "Saved Lists"}</h3>
                                 <p className="text-xs text-gray-500 mb-3">{language === "es"
@@ -2770,7 +2961,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.yieldsEs} onChange={e => updateField("yieldsEs", e.target.value)} placeholder="e.g. 19 litros" />
                             </div>
                         </div>
- 
+
                         <div className="border-t pt-3 mt-3">
                             <h3 className="font-bold text-sm text-amber-800 mb-2">{"\u{1F4DD}"} {t("ingredients", language)}</h3>
                             {renderListEditor("ingredientsEn", language === "es" ? "Inglés" : "English")}
