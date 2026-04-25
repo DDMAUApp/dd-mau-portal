@@ -76,11 +76,19 @@ export default function ToastOrders({ language }) {
 
     const orderTypeLabel = (type) => {
         if (!type) return "";
-        const t = type.toUpperCase();
-        if (t.includes("TAKE") || t.includes("PICKUP")) return "🥡 Pickup";
+        const t = type.toUpperCase().trim();
+        // Toast dining option names (resolved from config)
+        if (t === "TO GO" || t === "TOGO" || t === "TO-GO") return "🥡 To Go";
+        if (t === "CALL IN" || t === "CALL-IN" || t === "CALLIN") return "📞 Call In";
+        if (t === "DINE IN" || t === "DINE-IN" || t === "DINEIN" || t === "FOR HERE" || t === "HERE") return "🍽️ Dine In";
+        if (t.includes("TAKE") || t.includes("PICKUP") || t.includes("PICK UP") || t.includes("PICK-UP")) return "🥡 Pickup";
         if (t.includes("DELIVER")) return "🚗 Delivery";
-        if (t.includes("ONLINE")) return "📱 Online";
+        if (t.includes("ONLINE") || t.includes("WEB")) return "📱 Online";
         if (t.includes("PHONE")) return "📞 Phone";
+        if (t.includes("CURBSIDE")) return "🚗 Curbside";
+        if (t.includes("CATERING")) return "🎉 Catering";
+        // If it's a clean name from Toast config, just show it with a generic icon
+        if (type.length < 30 && !type.includes("-") && type !== type.toUpperCase()) return `📋 ${type}`;
         return type;
     };
 
