@@ -58,11 +58,11 @@ export const CATERING_MENU = [
                 name: "Banh Mi",
                 nameEs: "Bánh Mì",
                 sizes: [
-                    { label: "12 PCS", price: 77.99, sauceCount: 2, proteinCount: 2 },
-                    { label: "24 PCS", price: 154.99, sauceCount: 3, proteinCount: 3 },
-                    { label: "36 PCS", price: 223.99, sauceCount: 4, proteinCount: 4 }
+                    { label: "12 PCS", price: 77.99, proteinCount: 2 },
+                    { label: "24 PCS", price: 154.99, proteinCount: 3 },
+                    { label: "36 PCS", price: 223.99, proteinCount: 4 }
                 ],
-                hasSauces: true,
+                hasSauces: false,
                 hasProteins: true
             }
         ]
