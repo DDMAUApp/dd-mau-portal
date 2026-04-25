@@ -984,6 +984,82 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setCollapsedCats(prev => ({ ...prev, [key]: !prev[key] }));
             };
 
+            // Parse pack string to total units for price-per-unit comparison
+            const parsePackToUnits = (pack) => {
+                if (!pack) return null;
+                const p = pack.trim().toUpperCase();
+                let m;
+                // Direct weight: '50lb', '30 LB'
+                m = p.match(/^(\d+\.?\d*)\s*(LB|LBS?)$/); if (m) return { total: parseFloat(m[1]), unit: "lb" };
+                if (p === "LB") return { total: 1, unit: "lb" };
+                if (p === "EA") return { total: 1, unit: "ea" };
+                // Multiplied lb packs: '4/19 LBA', '3/17#AVG', '5/10#UP', '2/5 LB'
+                m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*(LB|LBA|LBS?|#AVG|#UP|#)/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "lb" };
+                // '5x5lb', '6/5lb'
+                m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*LBS?$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "lb" };
+                // Gallons: '4/1 GA', '5 GA', '9/0.5GAL', '5gal'
+                m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*GA[L]?$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "gal" };
+                m = p.match(/^(\d+\.?\d*)\s*GA[L]?$/); if (m) return { total: parseFloat(m[1]), unit: "gal" };
+                // Liters: '5 LT'
+                m = p.match(/^(\d+\.?\d*)\s*LT$/); if (m) return { total: parseFloat(m[1]), unit: "lt" };
+                // Ounce packs to lb: '120/1.5 OZ', '48/3 OZ'
+                m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*OZ$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]) / 16, unit: "lb" };
+                // Count packs: '12/500 CT', '200 EA', '12/100 EA'
+                m = p.match(/^(\d+)[/xX](\d+)\s*(CT|EA)$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "ct" };
+                m = p.match(/^(\d+)\s*(CT|EA)$/); if (m) return { total: parseFloat(m[1]), unit: "ct" };
+                // Simple count: '1000', '400pc', '500pk', '2500p'
+                m = p.match(/^(\d+)\s*(PC|PK|P|SET)?$/); if (m) return { total: parseFloat(m[1]), unit: "ct" };
+                // Multiplied without unit: '10/25', '4x125'
+                m = p.match(/^(\d+)[/xX](\d+)$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "ct" };
+                // '80/550CT', '1/500CT'
+                m = p.match(/^(\d+)[/xX](\d+)\s*CT$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "ct" };
+                // Quarts: '12/1 QT'
+                m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*QT$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]) * 0.25, unit: "gal" };
+                // Rolls: '6 RL'
+                m = p.match(/^(\d+)\s*RL$/); if (m) return { total: parseFloat(m[1]), unit: "rl" };
+                // Feet: '3/1150FT'
+                m = p.match(/^(\d+)[/xX](\d+)\s*FT$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "ft" };
+                // '1/40 LB'
+                m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*LB$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "lb" };
+                return null;
+            };
+
+            // Find cheapest vendor by price per unit (not just raw price)
+            const findCheapest = (item) => {
+                if (!item.vendorOptions || item.vendorOptions.length < 2) return null;
+                const withPrices = item.vendorOptions.filter(vo => vo.price && vo.price > 0);
+                if (withPrices.length < 2) return null;
+                // Calculate price per unit for each vendor
+                const rated = withPrices.map(vo => {
+                    const parsed = parsePackToUnits(vo.pack);
+                    const perUnit = parsed && parsed.total > 0 ? vo.price / parsed.total : null;
+                    return { ...vo, perUnit, unitType: parsed ? parsed.unit : null };
+                });
+                // Only compare vendors with the same unit type, or fallback to raw price
+                const prefVendor = item.preferredVendor || item.vendor || "";
+                const prefOption = rated.find(r => r.vendor === prefVendor);
+                if (!prefOption) return null;
+                // Find cheapest per-unit among same-unit vendors
+                let cheapest = null;
+                if (prefOption.perUnit !== null) {
+                    const sameUnit = rated.filter(r => r.unitType === prefOption.unitType && r.perUnit !== null);
+                    if (sameUnit.length > 1) {
+                        sameUnit.sort((a, b) => a.perUnit - b.perUnit);
+                        if (sameUnit[0].vendor !== prefVendor && sameUnit[0].perUnit < prefOption.perUnit * 0.95) {
+                            cheapest = sameUnit[0];
+                        }
+                    }
+                } else {
+                    // No pack info — compare raw prices
+                    const others = rated.filter(r => r.vendor !== prefVendor);
+                    others.sort((a, b) => a.price - b.price);
+                    if (others.length > 0 && others[0].price < (prefOption.price || Infinity) * 0.95) {
+                        cheapest = others[0];
+                    }
+                }
+                return cheapest;
+            };
+
             const printInventory = () => {
                 const counted = {};
                 customInventory.forEach(cat => {
@@ -1000,7 +1076,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
                 let html = `<html><head><title>DD Mau Order - ${dateStr}</title><style>
-                    body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
+                    body{font-family:Arial,sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#333}
                     h1{font-size:20px;color:#2F5496;margin-bottom:4px}
                     .date{font-size:12px;color:#888;margin-bottom:16px}
                     .vendor{background:#2F5496;color:white;padding:8px 12px;font-weight:bold;font-size:14px;margin-top:16px;border-radius:6px 6px 0 0}
@@ -1010,6 +1086,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     tr:nth-child(even){background:#f9f9f9}
                     .count{font-weight:bold;text-align:center;font-size:14px}
                     .pack{color:#666;font-size:11px}
+                    .price{text-align:right;font-size:11px}
+                    .cheaper{background:#fff3cd;font-size:10px;color:#856404}
                     .no-print{margin:20px 0;text-align:center}
                     .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
                     .btn-print{background:#2F5496;color:white} .btn-close{background:#e5e7eb;color:#555}
@@ -1018,9 +1096,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 html += `<h1>DD Mau Order Sheet</h1><div class="date">${dateStr} at ${timeStr} — ${storeLocation}</div>`;
                 vendors.forEach(v => {
                     html += `<div class="vendor">${v} (${counted[v].length} items)</div>`;
-                    html += `<table><tr><th>Item</th><th style="width:60px">Qty</th><th>Pack</th><th style="width:30px">✓</th></tr>`;
+                    html += `<table><tr><th>Item</th><th style="width:50px">Qty</th><th>Pack</th><th style="width:65px">Price</th><th style="width:65px">$/Unit</th><th>Cheaper Option</th><th style="width:30px">\u2713</th></tr>`;
                     counted[v].sort((a,b) => a.name.localeCompare(b.name)).forEach(item => {
-                        html += `<tr><td>${item.name}</td><td class="count">${item.count}</td><td class="pack">${item.pack || ""}</td><td></td></tr>`;
+                        const prefVendor = item.preferredVendor || item.vendor || "";
+                        const prefOption = (item.vendorOptions || []).find(vo => vo.vendor === prefVendor);
+                        const price = prefOption?.price || item.price;
+                        const pack = prefOption?.pack || item.pack || "";
+                        const parsed = parsePackToUnits(pack);
+                        const perUnit = (price && parsed && parsed.total > 0) ? (price / parsed.total) : null;
+                        const perUnitStr = perUnit !== null ? ("$" + perUnit.toFixed(2) + "/" + parsed.unit) : "";
+                        const priceStr = price ? "$" + price.toFixed(2) : "";
+                        const cheap = findCheapest(item);
+                        let cheapStr = "";
+                        if (cheap) {
+                            const cParsed = parsePackToUnits(cheap.pack);
+                            const cPerUnit = (cheap.price && cParsed && cParsed.total > 0) ? (cheap.price / cParsed.total) : null;
+                            cheapStr = cheap.vendor;
+                            if (cPerUnit !== null) cheapStr += " $" + cPerUnit.toFixed(2) + "/" + cParsed.unit;
+                            else if (cheap.price) cheapStr += " $" + cheap.price.toFixed(2);
+                            if (cheap.pack) cheapStr += " (" + cheap.pack + ")";
+                        }
+                        html += `<tr><td>${item.name}</td><td class="count">${item.count}</td><td class="pack">${pack}</td><td class="price">${priceStr}</td><td class="price">${perUnitStr}</td><td class="cheaper">${cheapStr}</td><td></td></tr>`;
                     });
                     html += `</table>`;
                 });
