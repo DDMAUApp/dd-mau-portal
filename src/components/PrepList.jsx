@@ -131,10 +131,23 @@ export default function PrepList({ language, staffName, storeLocation, staffList
     };
 
     const resetDay = async () => {
-        setOnHand({});
-        setDoneItems({});
-        setPrepMeta({});
-        await savePrep({}, {}, {}, null);
+        if (!window.confirm(language === "es" ? "Reiniciar todos los conteos y marcas de hoy?" : "Reset all counts and checkmarks for today?")) return;
+        const emptyOnHand = {};
+        const emptyDone = {};
+        const emptyMeta = {};
+        setOnHand(emptyOnHand);
+        setDoneItems(emptyDone);
+        setPrepMeta(emptyMeta);
+        try {
+            await setDoc(doc(db, "ops", "prepList_" + storeLocation), {
+                onHand: emptyOnHand,
+                doneItems: emptyDone,
+                prepMeta: emptyMeta,
+                customStations: stations,
+                busyMode: busyMode,
+                date: new Date().toISOString()
+            });
+        } catch (err) { console.error("Error resetting prep:", err); }
     };
 
     const saveEditPrepItem = () => {
@@ -256,42 +269,52 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         setCollapsedStations(prev => ({ ...prev, [key]: !prev[key] }));
     };
 
-    // Print cart
+    // Print cart - weekly prep items calendar view
     const printCart = () => {
-        const ingredients = getCartIngredients();
         const now = new Date();
         const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
         const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        // Group by category
-        const byCat = {};
-        ingredients.forEach(ing => {
-            const cat = ing.catName || "Other";
-            if (!byCat[cat]) byCat[cat] = [];
-            byCat[cat].push(ing);
-        });
-        let html = `<html><head><title>DD Mau Prep Ingredients - ${dateStr}</title><style>
-            body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
+        const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        let html = `<html><head><title>DD Mau Weekly Prep List</title><style>
+            body{font-family:Arial,sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#333}
             h1{font-size:20px;color:#7c3aed;margin-bottom:4px}
             .date{font-size:12px;color:#888;margin-bottom:16px}
-            .cat{background:#7c3aed;color:white;padding:8px 12px;font-weight:bold;font-size:14px;margin-top:16px;border-radius:6px 6px 0 0}
-            table{width:100%;border-collapse:collapse;margin-bottom:12px}
-            th{background:#ede9fe;padding:6px 10px;text-align:left;font-size:11px;color:#7c3aed;border:1px solid #ccc}
+            .day-header{background:#7c3aed;color:white;padding:10px 14px;font-weight:bold;font-size:16px;margin-top:24px;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;align-items:center}
+            .day-header .count{background:rgba(255,255,255,0.25);padding:2px 10px;border-radius:12px;font-size:13px}
+            .day-empty{padding:12px 14px;color:#aaa;font-size:13px;border:1px solid #e0e0e0;border-top:none;border-radius:0 0 8px 8px}
+            .station{background:#ede9fe;padding:5px 12px;font-weight:bold;font-size:11px;color:#7c3aed;text-transform:uppercase;border:1px solid #ccc;border-top:none}
+            table{width:100%;border-collapse:collapse}
             td{padding:6px 10px;font-size:12px;border:1px solid #e0e0e0}
             tr:nth-child(even){background:#f9f9f9}
-            .used{font-size:10px;color:#888}
+            .unit{font-size:10px;color:#888}
             .no-print{margin:20px 0;text-align:center}
             .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
             .btn-print{background:#7c3aed;color:white} .btn-close{background:#e5e7eb;color:#555}
-            @media print{.no-print{display:none !important}}
+            @media print{.no-print{display:none !important} .day-header,.station{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>`;
-        html += `<h1>DD Mau Prep Ingredients</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation} - ${busyMode ? "BUSY" : "SLOW"} day</div>`;
-        Object.keys(byCat).sort().forEach(cat => {
-            html += `<div class="cat">${cat} (${byCat[cat].length})</div>`;
-            html += `<table><tr><th>Ingredient</th><th>Used By</th><th style="width:30px">\u2713</th></tr>`;
-            byCat[cat].sort((a, b) => a.name.localeCompare(b.name)).forEach(ing => {
-                html += `<tr><td>${ing.name}</td><td class="used">${ing.usedBy.join(", ")}</td><td></td></tr>`;
-            });
-            html += `</table>`;
+        html += `<h1>DD Mau Weekly Prep List</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation}</div>`;
+        days.forEach((dayName, dayIdx) => {
+            const dayItems = getItemsForDay(dayIdx);
+            const isToday = dayIdx === now.getDay();
+            html += `<div class="day-header" style="${isToday ? "background:#059669" : ""}">${dayName}${isToday ? " (TODAY)" : ""}<span class="count">${dayItems.length} items</span></div>`;
+            if (dayItems.length === 0) {
+                html += `<div class="day-empty">No prep scheduled</div>`;
+            } else {
+                const byStation = {};
+                dayItems.forEach(item => {
+                    const key = item.stationName;
+                    if (!byStation[key]) byStation[key] = [];
+                    byStation[key].push(item);
+                });
+                Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).forEach(([stName, items]) => {
+                    html += `<div class="station">${stName} (${items.length})</div>`;
+                    html += `<table>`;
+                    items.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => {
+                        html += `<tr><td>${item.name}</td><td class="unit">${item.unit || ""}</td><td style="width:30px"></td></tr>`;
+                    });
+                    html += `</table>`;
+                });
+            }
         });
         html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="window.close()">\u{2715} Close</button></div>`;
         html += `</body></html>`;
@@ -398,9 +421,9 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             <div onClick={() => setShowCart(true)}
                 className="bg-gradient-to-r from-purple-600 to-purple-500 text-white rounded-xl p-3 flex justify-between items-center cursor-pointer active:scale-[0.98] transition shadow-md">
                 <div className="flex items-center gap-2">
-                    <span className="text-lg">{"\u{1F9EA}"}</span>
+                    <span className="text-lg">{"\u{1F4CB}"}</span>
                     <div>
-                        <span className="font-bold text-sm">{cartIngredients.length} {language === "es" ? "ingredientes necesarios" : "ingredients needed"}</span>
+                        <span className="font-bold text-sm">{language === "es" ? "Prep Semanal" : "Weekly Prep"}</span>
                         <span className="text-purple-200 text-xs ml-2">{totalDone}/{totalItems} {language === "es" ? "listos" : "done"}</span>
                     </div>
                 </div>
@@ -545,44 +568,63 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                 </div>
             )}
 
-            {/* Cart Modal */}
+            {/* Cart Modal - Weekly Prep Items */}
             {showCart && (
                 <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center" onClick={() => setShowCart(false)}>
-                    <div className="bg-white w-full max-w-lg max-h-[85vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                    <div className="bg-white w-full max-w-lg max-h-[90vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                         <div className="bg-purple-700 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
-                            <h3 className="font-bold text-lg">{"\u{1F9EA}"} {language === "es" ? "Ingredientes Necesarios" : "Ingredients Needed"} ({cartIngredients.length})</h3>
+                            <h3 className="font-bold text-lg">{"\u{1F4CB}"} {language === "es" ? "Prep de la Semana" : "Weekly Prep"}</h3>
                             <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-white font-bold">{"\u{2715}"}</button>
                         </div>
                         <div className="flex-1 overflow-y-auto">
-                            {cartIngredients.length === 0 ? (
-                                <div className="p-8 text-center text-gray-400">{language === "es" ? "No se necesitan ingredientes" : "No ingredients needed - all prepped!"}</div>
-                            ) : (
-                                (() => {
-                                    const byCat = {};
-                                    cartIngredients.forEach(ing => {
-                                        const cat = ing.catName || "Other";
-                                        if (!byCat[cat]) byCat[cat] = [];
-                                        byCat[cat].push(ing);
-                                    });
-                                    return Object.entries(byCat).sort(([a], [b]) => a.localeCompare(b)).map(([cat, items]) => (
-                                        <div key={cat}>
-                                            <div className="bg-purple-600 text-white px-4 py-2 font-bold text-sm">{cat} ({items.length})</div>
-                                            <div className="divide-y divide-gray-100">
-                                                {items.sort((a, b) => a.name.localeCompare(b.name)).map(ing => (
-                                                    <div key={ing.id} className="px-4 py-2">
-                                                        <div className="text-sm text-gray-800 font-medium">{language === "es" && ing.nameEs ? ing.nameEs : ing.name}</div>
-                                                        <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Usado en" : "Used by"}: {ing.usedBy.join(", ")}</div>
-                                                    </div>
-                                                ))}
-                                            </div>
+                            {DAY_LABELS.map((dayLabel, dayIdx) => {
+                                const dayItems = getItemsForDay(dayIdx);
+                                const isToday = dayIdx === new Date().getDay();
+                                const byStation = {};
+                                dayItems.forEach(item => {
+                                    const key = item.stationName;
+                                    if (!byStation[key]) byStation[key] = { nameEs: item.stationNameEs, items: [] };
+                                    byStation[key].items.push(item);
+                                });
+                                return (
+                                    <div key={dayIdx}>
+                                        <div className={`px-4 py-2 font-bold text-sm flex justify-between items-center ${isToday ? "bg-green-600 text-white" : "bg-purple-600 text-white"}`}>
+                                            <span>{language === "es" ? DAY_LABELS_ES[dayIdx] : dayLabel}{isToday ? (language === "es" ? " (HOY)" : " (TODAY)") : ""}</span>
+                                            <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{dayItems.length}</span>
                                         </div>
-                                    ));
-                                })()
-                            )}
+                                        {dayItems.length === 0 ? (
+                                            <div className="px-4 py-2 text-xs text-gray-400">{language === "es" ? "Sin prep" : "No prep scheduled"}</div>
+                                        ) : (
+                                            Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).map(([stName, st]) => (
+                                                <div key={stName}>
+                                                    <div className="px-4 py-1 bg-gray-50 border-b border-gray-100">
+                                                        <span className="text-[10px] font-bold text-purple-600 uppercase">{language === "es" ? st.nameEs : stName}</span>
+                                                    </div>
+                                                    {st.items.sort((a, b) => a.name.localeCompare(b.name)).map(item => {
+                                                        const isDone = doneItems[item.id];
+                                                        return (
+                                                            <div key={item.id} className={`px-4 py-1.5 flex items-center gap-2 border-b border-gray-50 ${isDone ? "bg-green-50/60" : ""}`}>
+                                                                <button onClick={() => toggleDone(item.id)}
+                                                                    className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 text-xs transition ${isDone ? "bg-green-600 border-green-600 text-white" : "border-gray-300 text-transparent"}`}>
+                                                                    {"\u{2713}"}
+                                                                </button>
+                                                                <span className={`text-sm flex-1 ${isDone ? "line-through text-gray-400" : "text-gray-800"}`}>
+                                                                    {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                                </span>
+                                                                <span className="text-xs text-gray-400">{item.unit || ""}</span>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                );
+                            })}
                         </div>
                         <div className="border-t border-gray-200 p-3 flex gap-2 flex-shrink-0 bg-gray-50">
                             <button onClick={printCart} className="flex-1 py-3 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 active:scale-95 transition">
-                                {"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir" : "Print"}
+                                {"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir Semana" : "Print Week"}
                             </button>
                             <button onClick={() => setShowCart(false)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-300 active:scale-95 transition">
                                 {"\u{2715}"} {language === "es" ? "Cerrar" : "Close"}
