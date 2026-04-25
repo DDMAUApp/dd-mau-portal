@@ -219,7 +219,10 @@ export default function InventoryHistory({ language, customInventory: customInve
                         .cat-label { color: #999; font-size: 10px; }
                         .ordered { text-decoration: line-through; color: #999; }
                         .check { color: green; font-weight: bold; }
-                        @media print { body { padding: 10px; } h1 { font-size: 16px; } }
+                        .no-print { margin: 20px 0; text-align: center; }
+                        .no-print button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
+                        .btn-print { background: #2F5496; color: white; } .btn-close { background: #e5e7eb; color: #555; }
+                        @media print { body { padding: 10px; } h1 { font-size: 16px; } .no-print { display: none !important; } }
                     </style></head><body>`;
                 html += `<h1>🍜 DD Mau — ${titleName}</h1>`;
                 html += `<div class="subtitle">${dateLabel} • ${language === "es" ? "Última actualización" : "Last updated"}: ${new Date(dayData.date).toLocaleString()}</div>`;
@@ -253,6 +256,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                     });
                 }
 
+                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
                 html += `</body></html>`;
                 const win = window.open("", "_blank");
                 win.document.write(html);
