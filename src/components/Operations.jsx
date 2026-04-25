@@ -91,6 +91,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
+            const [showCart, setShowCart] = useState(false);
 
             // Break Planner state
             const DEFAULT_STATIONS = [
@@ -1778,13 +1779,79 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 if (itemCount === 0) return null;
                                 return (
                                     <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
-                                        <span className="text-sm font-bold text-mint-700">
+                                        <button onClick={() => setShowCart(true)} className="text-sm font-bold text-mint-700 flex items-center gap-1 hover:text-mint-900 transition">
                                             {"\u{1F6D2}"} {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
-                                        </span>
+                                            <span className="text-xs text-mint-500 ml-1">{language === "es" ? "ver ▸" : "view ▸"}</span>
+                                        </button>
                                         <button onClick={() => setInvShowOnlyCounted(!invShowOnlyCounted)}
                                             className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyCounted ? "bg-mint-700 text-white" : "bg-mint-100 text-mint-700 hover:bg-mint-200"}`}>
                                             {invShowOnlyCounted ? (language === "es" ? "Ver Todo" : "Show All") : (language === "es" ? "Solo Contados" : "Counted Only")}
                                         </button>
+                                    </div>
+                                );
+                            })()}
+
+                            {/* ── CART MODAL ── */}
+                            {showCart && (() => {
+                                const cartVendors = {};
+                                customInventory.forEach(cat => {
+                                    cat.items.forEach(item => {
+                                        const qty = inventory[item.id] || 0;
+                                        if (qty > 0) {
+                                            const v = item.preferredVendor || item.vendor || "Other";
+                                            if (!cartVendors[v]) cartVendors[v] = [];
+                                            cartVendors[v].push({ ...item, count: qty, categoryName: cat.name });
+                                        }
+                                    });
+                                });
+                                const vendors = Object.keys(cartVendors).sort();
+                                const totalItems = vendors.reduce((s, v) => s + cartVendors[v].length, 0);
+                                const totalQty = vendors.reduce((s, v) => s + cartVendors[v].reduce((a, i) => a + i.count, 0), 0);
+
+                                return (
+                                    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center" onClick={() => setShowCart(false)}>
+                                        <div className="bg-white w-full max-w-lg max-h-[85vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                                            {/* Header */}
+                                            <div className="bg-mint-700 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
+                                                <h3 className="font-bold text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"}, {totalQty} {language === "es" ? "total" : "total"}</h3>
+                                                <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-white font-bold hover:bg-opacity-30 transition">{"\u{2715}"}</button>
+                                            </div>
+                                            {/* Cart items grouped by vendor */}
+                                            <div className="flex-1 overflow-y-auto">
+                                                {vendors.map(v => (
+                                                    <div key={v}>
+                                                        <div className="bg-blue-600 text-white px-4 py-2 font-bold text-sm flex justify-between items-center">
+                                                            <span>{v}</span>
+                                                            <span className="text-xs bg-white bg-opacity-20 px-2 py-0.5 rounded-full">{cartVendors[v].length} {language === "es" ? "artículos" : "items"}</span>
+                                                        </div>
+                                                        <div className="divide-y divide-gray-100">
+                                                            {cartVendors[v].sort((a, b) => a.name.localeCompare(b.name)).map(item => (
+                                                                <div key={item.id} className="flex items-center justify-between px-4 py-2">
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <span className="text-sm text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
+                                                                        {item.pack && <span className="text-xs text-blue-400 ml-1">{item.pack}</span>}
+                                                                        <span className="text-xs text-gray-400 ml-1">({item.categoryName})</span>
+                                                                    </div>
+                                                                    <span className="font-bold text-mint-700 text-lg ml-3">{item.count}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {vendors.length === 0 && (
+                                                    <div className="p-8 text-center text-gray-400">{language === "es" ? "El carrito está vacío" : "Cart is empty"}</div>
+                                                )}
+                                            </div>
+                                            {/* Footer buttons */}
+                                            <div className="border-t border-gray-200 p-3 flex gap-2 flex-shrink-0 bg-gray-50">
+                                                <button onClick={printInventory} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-95 transition">
+                                                    {"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir" : "Print"}
+                                                </button>
+                                                <button onClick={() => setShowCart(false)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-300 active:scale-95 transition">
+                                                    {"\u{2715}"} {language === "es" ? "Cerrar" : "Close"}
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 );
                             })()}
