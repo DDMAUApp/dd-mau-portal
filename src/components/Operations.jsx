@@ -83,6 +83,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invNewSupplier, setInvNewSupplier] = useState("");
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
+            const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
@@ -538,7 +539,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); };
+                // Live vendor prices (from scrapers)
+                const unsubSyscoPrices = onSnapshot(doc(db, "vendor_prices", "sysco"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setLivePrices(prev => ({ ...prev, sysco: docSnap.data() }));
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -1076,6 +1084,37 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // '1/40 LB'
                 m = p.match(/^(\d+)[/xX](\d+\.?\d*)\s*LB$/); if (m) return { total: parseFloat(m[1]) * parseFloat(m[2]), unit: "lb" };
                 return null;
+            };
+
+            // Get live scraped price for an item from a specific vendor
+            const getLivePrice = (itemId, vendor) => {
+                const vendorKey = (vendor || "").toLowerCase().replace(/\s+/g, '');
+                const vendorMap = { "sysco": "sysco", "usfoods": "usfoods", "costcobusiness": "costco" };
+                const key = vendorMap[vendorKey];
+                if (!key || !livePrices[key] || !livePrices[key].prices) return null;
+                const priceData = livePrices[key].prices[itemId];
+                if (!priceData || !priceData.found || !priceData.price) return null;
+                return priceData;
+            };
+
+            // Get vendor option label with live price if available
+            const getVendorOptionLabel = (vo, itemId) => {
+                const live = getLivePrice(itemId, vo.vendor);
+                if (live && live.price) return `${vo.vendor} ($${live.price.toFixed(2)} LIVE)`;
+                if (vo.price != null) return `${vo.vendor} ($${vo.price.toFixed(2)})`;
+                return vo.vendor;
+            };
+
+            // Render live price badge for an item
+            const renderLivePriceBadge = (itemId, item) => {
+                const prefVendor = item.preferredVendor || item.vendor || "";
+                const live = getLivePrice(itemId, prefVendor);
+                if (!live) return null;
+                return (
+                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold animate-pulse" title={`Sysco live: ${live.resultName || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
+                        {"\u{1F4E1}"} ${live.price.toFixed(2)}{live.pack ? ` / ${live.pack}` : ""}
+                    </span>
+                );
             };
 
             // Find cheapest vendor by price per unit (not just raw price)
@@ -1944,6 +1983,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 </div>
                             </div>
 
+                            {/* ── LIVE PRICES INDICATOR ── */}
+                            {livePrices.sysco && livePrices.sysco.lastScraped && (
+                                <div className="flex items-center gap-2 px-2 py-1 bg-green-50 rounded-lg border border-green-200">
+                                    <span className="text-xs text-green-700 font-medium">{"\u{1F4E1}"} {language === "es" ? "Precios Sysco en vivo" : "Sysco live prices"}</span>
+                                    <span className="text-xs text-green-500">{livePrices.sysco.foundCount || 0}/{livePrices.sysco.totalItems || 0} items</span>
+                                    <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                                </div>
+                            )}
+
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
                                 <div className="relative">
@@ -2152,13 +2200,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                         title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
                                                                                         {item.vendorOptions.map(vo => (
                                                                                             <option key={vo.vendor} value={vo.vendor}>
-                                                                                                {vo.vendor}{vo.price != null ? ` ($${vo.price.toFixed(2)})` : ""}
+                                                                                                {getVendorOptionLabel(vo, item.id)}
                                                                                             </option>
                                                                                         ))}
                                                                                     </select>
                                                                                 ) : (
                                                                                     item.vendor && <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
                                                                                 )}
+                                                                                {renderLivePriceBadge(item.id, item)}
                                                                                 {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                 {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
                                                                                 <button onClick={() => {
@@ -2316,13 +2365,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                     title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
                                                                                     {item.vendorOptions.map(vo => (
                                                                                         <option key={vo.vendor} value={vo.vendor}>
-                                                                                            {vo.vendor}{vo.price != null ? ` ($${vo.price.toFixed(2)})` : ""}
+                                                                                            {getVendorOptionLabel(vo, item.id)}
                                                                                         </option>
                                                                                     ))}
                                                                                 </select>
                                                                             ) : (
                                                                                 (item.preferredVendor || item.vendor) && <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
                                                                             )}
+                                                                            {renderLivePriceBadge(item.id, item)}
                                                                             {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                             {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
                                                                             <button onClick={() => {
@@ -2485,13 +2535,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                                 title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
                                                                                                 {item.vendorOptions.map(vo => (
                                                                                                     <option key={vo.vendor} value={vo.vendor}>
-                                                                                                        {vo.vendor}{vo.price != null ? ` ($${vo.price.toFixed(2)})` : ""}
+                                                                                                        {getVendorOptionLabel(vo, item.id)}
                                                                                                     </option>
                                                                                                 ))}
                                                                                             </select>
                                                                                         ) : (
                                                                                             (item.preferredVendor || item.vendor) && <span className="text-xs text-blue-600 font-medium">{item.preferredVendor || item.vendor}</span>
                                                                                         )}
+                                                                                        {renderLivePriceBadge(item.id, item)}
                                                                                         {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                         {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
                                                                                         <button onClick={() => setSplitMovingItem(isMoving ? null : { itemId: item.id, fromPerson: person.name })}
