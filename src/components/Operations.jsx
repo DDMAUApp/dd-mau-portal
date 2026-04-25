@@ -89,6 +89,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
             const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
+            const [vendorChangeLog, setVendorChangeLog] = useState([]);
+            const [showVendorLog, setShowVendorLog] = useState(false);
 
             // Break Planner state
             const DEFAULT_STATIONS = [
@@ -486,7 +488,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); };
+                // Load vendor change log
+                const unsubVendorLog = onSnapshot(doc(db, "ops", "vendorLog_" + storeLocation), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setVendorChangeLog(docSnap.data().log || []);
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -952,7 +961,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 customInventory.forEach(cat => {
                     cat.items.forEach(item => {
                         if ((inventory[item.id] || 0) > 0) {
-                            const v = item.vendor || "Other";
+                            const v = item.preferredVendor || item.vendor || "Other";
                             if (!counted[v]) counted[v] = [];
                             counted[v].push({ ...item, count: inventory[item.id] });
                         }
@@ -989,6 +998,39 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 w.document.write(html);
                 w.document.close();
                 w.print();
+            };
+
+            const changePreferredVendor = async (catIdx, itemIdx, newVendor) => {
+                const item = customInventory[catIdx]?.items[itemIdx];
+                if (!item) return;
+                const oldVendor = item.preferredVendor || item.vendor || "";
+                if (newVendor === oldVendor) return;
+                const now = new Date();
+                const logEntry = {
+                    itemName: item.name,
+                    itemId: item.id,
+                    from: oldVendor,
+                    to: newVendor,
+                    changedBy: staffName,
+                    date: now.toISOString(),
+                    dateStr: now.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                };
+                const updated = customInventory.map((cat, cIdx) =>
+                    cIdx === catIdx
+                        ? { ...cat, items: cat.items.map((it, iIdx) =>
+                            iIdx === itemIdx ? { ...it, preferredVendor: newVendor } : it
+                        )}
+                        : cat
+                );
+                setCustomInventory(updated);
+                const newLog = [logEntry, ...vendorChangeLog].slice(0, 50);
+                setVendorChangeLog(newLog);
+                try {
+                    await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
+                        counts: inventory, customInventory: updated, countMeta: invCountMeta, date: now.toISOString()
+                    });
+                    await setDoc(doc(db, "ops", "vendorLog_" + storeLocation), { log: newLog }, { merge: true });
+                } catch (err) { console.error("Error saving vendor change:", err); }
             };
 
             // Get tasks for current side + period
@@ -1830,8 +1872,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                 {language === "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.name}</span>}
                                                                                 {language !== "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.nameEs}</span>}
                                                                             </div>
-                                                                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                                                                                {item.vendor && <span className="text-xs text-gray-500">{item.vendor}</span>}
+                                                                            <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                                                {item.vendorOptions && item.vendorOptions.length > 1 ? (
+                                                                                    <select
+                                                                                        value={item.preferredVendor || item.vendor || ""}
+                                                                                        onChange={(e) => changePreferredVendor(catIdx, itemIdx, e.target.value)}
+                                                                                        className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+                                                                                        title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
+                                                                                        {item.vendorOptions.map(vo => (
+                                                                                            <option key={vo.vendor} value={vo.vendor}>
+                                                                                                {vo.vendor}{vo.price != null ? ` ($${vo.price.toFixed(2)})` : ""}
+                                                                                            </option>
+                                                                                        ))}
+                                                                                    </select>
+                                                                                ) : (
+                                                                                    item.vendor && <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
+                                                                                )}
                                                                                 {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                 {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
                                                                             </div>
@@ -1966,10 +2022,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                             {language === "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.name}</span>}
                                                                             {language !== "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.nameEs}</span>}
                                                                         </div>
-                                                                        <div className="flex items-center gap-2 mt-0.5">
+                                                                        <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                                                             <span className="text-xs text-blue-600 font-medium">{language === "es" ? item.catNameEs : item.catName}</span>
                                                                             {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                             {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
+                                                                            {item.vendorOptions && item.vendorOptions.length > 1 && (
+                                                                                <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">{item.vendorOptions.length} vendors</span>
+                                                                            )}
                                                                         </div>
                                                                     </div>
                                                                     <div className="flex items-center gap-1 flex-shrink-0">
@@ -2014,6 +2073,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
                                             {language === "es" ? "\u{1F4BE} Guardar y Reiniciar Conteos" : "\u{1F4BE} Save & Reset Counts"}
                                         </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* ── VENDOR CHANGE LOG ── */}
+                            {vendorChangeLog.length > 0 && (
+                                <div className="mt-4">
+                                    <button onClick={() => setShowVendorLog(!showVendorLog)}
+                                        className="flex items-center gap-2 text-sm font-bold text-amber-700 hover:text-amber-800">
+                                        <span>{"\u{1F4DD}"}</span>
+                                        <span>{language === "es" ? "Cambios de Proveedor" : "Vendor Changes"} ({vendorChangeLog.length})</span>
+                                        <span className="text-xs">{showVendorLog ? "\u{25BC}" : "\u{25B6}"}</span>
+                                    </button>
+                                    {showVendorLog && (
+                                        <div className="mt-2 bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+                                            {vendorChangeLog.slice(0, 20).map((entry, i) => (
+                                                <div key={i} className="px-3 py-2 border-b border-amber-100 last:border-0">
+                                                    <p className="text-xs font-semibold text-gray-800">{entry.itemName}</p>
+                                                    <p className="text-xs text-gray-600">
+                                                        <span className="text-red-500 line-through">{entry.from}</span>
+                                                        <span className="mx-1">{"\u{2192}"}</span>
+                                                        <span className="text-green-700 font-bold">{entry.to}</span>
+                                                    </p>
+                                                    <p className="text-xs text-gray-400">{entry.changedBy} {"\u{2014}"} {entry.dateStr}</p>
+                                                </div>
+                                            ))}
+                                        </div>
                                     )}
                                 </div>
                             )}
