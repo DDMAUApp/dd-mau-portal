@@ -6,6 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import InventoryHistory from './InventoryHistory';
+import PrepList from './PrepList';
 
 // Constants
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
@@ -1877,6 +1878,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             className={`flex-1 py-2 rounded-lg font-bold transition ${activeTab === "breaks" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
                             Breaks
                         </button>
+                        <button onClick={() => { setActiveTab("prep"); setEditMode(false); }}
+                            className={`flex-1 py-2 rounded-lg font-bold transition ${activeTab === "prep" ? "bg-orange-600 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            {language === "es" ? "Prep" : "Prep"}
+                        </button>
                     </div>
 
                     {/* {"\u{2500}"}{"\u{2500}"} TASK DEADLINE ALERTS {"\u{2500}"}{"\u{2500}"} */}
@@ -2156,32 +2161,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                 )}
                                                                                 {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                 {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
+                                                                                <button onClick={() => {
+                                                                                    setInvEditingIdx({catIdx, itemIdx});
+                                                                                    setInvEditName(item.name);
+                                                                                    setInvEditNameEs(item.nameEs || "");
+                                                                                    setInvEditSupplier(item.vendor || item.supplier || "");
+                                                                                    setInvEditOrderDay(item.orderDay || "");
+                                                                                }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                             </div>
                                                                             {invCountMeta[item.id] && count > 0 && (
                                                                                 <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
                                                                             )}
                                                                         </div>
                                                                         <div className="flex items-center gap-1 flex-shrink-0">
-                                                                            {invEditMode ? (
-                                                                                <>
-                                                                                    <button onClick={() => {
-                                                                                        setInvEditingIdx({catIdx, itemIdx});
-                                                                                        setInvEditName(item.name);
-                                                                                        setInvEditNameEs(item.nameEs || "");
-                                                                                        setInvEditSupplier(item.vendor || item.supplier || "");
-                                                                                        setInvEditOrderDay(item.orderDay || "");
-                                                                                    }} className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center hover:bg-blue-100 text-sm">{"\u{270F}\u{FE0F}"}</button>
-                                                                                    <button onClick={() => deleteInvItem(catIdx, itemIdx)} className="w-8 h-8 rounded-lg bg-red-50 text-red-500 flex items-center justify-center hover:bg-red-100 text-sm">{"\u{1F5D1}\u{FE0F}"}</button>
-                                                                                </>
-                                                                            ) : (
-                                                                                <>
-                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
-                                                                                        className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
-                                                                                    <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
-                                                                                    <button onClick={() => updateInventoryCount(item.id, count + 1)}
-                                                                                        className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
-                                                                                </>
-                                                                            )}
+                                                                            <>
+                                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
+                                                                                <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
+                                                                                <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                                    className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
+                                                                            </>
                                                                         </div>
                                                                     </div>
                                                                 )}
@@ -3122,6 +3121,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 );
                             })()}
                         </div>
+                    )}
+
+                    {activeTab === "prep" && (
+                        <PrepList
+                            language={language}
+                            staffName={staffName}
+                            storeLocation={storeLocation}
+                            staffList={staffList}
+                        />
                     )}
                 </div>
             );
