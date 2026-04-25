@@ -484,7 +484,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         const data = docSnap.data();
                         setInventory(data.counts || {});
                         setInvCountMeta(data.countMeta || {});
-                        if (data.customInventory) setCustomInventory(data.customInventory);
+                        if (data.customInventory) {
+                            // Merge Firestore custom items into the master INVENTORY_CATEGORIES
+                            // so new items from inventory.js always appear
+                            const merged = INVENTORY_CATEGORIES.map(masterCat => {
+                                const savedCat = data.customInventory.find(sc => sc.name === masterCat.name);
+                                if (!savedCat) return { ...masterCat, items: [...masterCat.items] };
+                                // Build a set of IDs from the master list
+                                const masterIds = new Set(masterCat.items.map(it => it.id));
+                                // Start with all master items (preserves new additions)
+                                const mergedItems = masterCat.items.map(mi => {
+                                    const savedItem = savedCat.items.find(si => si.id === mi.id);
+                                    // Keep any custom fields from saved (like changed vendor) but use master name/data as base
+                                    return savedItem ? { ...mi, ...savedItem, name: mi.name, nameEs: mi.nameEs } : { ...mi };
+                                });
+                                // Add any custom items the user added that aren't in master
+                                savedCat.items.forEach(si => {
+                                    if (!masterIds.has(si.id)) mergedItems.push(si);
+                                });
+                                return { ...masterCat, items: mergedItems };
+                            });
+                            // Add any custom categories from Firestore not in master
+                            data.customInventory.forEach(sc => {
+                                if (!INVENTORY_CATEGORIES.find(mc => mc.name === sc.name)) {
+                                    merged.push(sc);
+                                }
+                            });
+                            setCustomInventory(merged);
+                        }
                         setLastUpdated(prev => ({ ...prev, inventory: new Date(data.date).toLocaleString() }));
                     }
                 });
