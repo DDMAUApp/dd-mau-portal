@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
@@ -19,6 +19,32 @@ import MaintenanceRequest from './components/MaintenanceRequest';
 import AdminPanel from './components/AdminPanel';
 import InsuranceEnrollment from './components/InsuranceEnrollment';
 import useGeofence from './components/hooks/useGeofence';
+
+// Version check hook — polls /version.json every 2 minutes
+function useVersionCheck() {
+    const [updateAvailable, setUpdateAvailable] = useState(false);
+    const savedVersion = useRef(null);
+    useEffect(() => {
+        let timer;
+        async function check() {
+            try {
+                const res = await fetch("/version.json?t=" + Date.now());
+                if (!res.ok) return;
+                const data = await res.json();
+                if (savedVersion.current === null) {
+                    savedVersion.current = data.v;
+                } else if (data.v !== savedVersion.current) {
+                    setUpdateAvailable(true);
+                }
+            } catch (e) { /* ignore */ }
+        }
+        check();
+        timer = setInterval(check, 2 * 60 * 1000);
+        return () => clearInterval(timer);
+    }, []);
+    return updateAvailable;
+}
+
 // One-time migration: copy old non-suffixed docs/collections to _webster if they exist
 async function runMigrations() {
     try {
@@ -66,6 +92,7 @@ export default function App() {
     const [activeTab, setActiveTab] = useState("home");
     const [staffList, setStaffList] = useState(DEFAULT_STAFF);
     const { isAtDDMau, checking: geoChecking, error: geoError } = useGeofence();
+    const updateAvailable = useVersionCheck();
     // Load staff list from Firestore
     useEffect(() => {
         const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {
@@ -112,8 +139,14 @@ export default function App() {
     }
     return (
         <div className="bg-white min-h-screen">
+            {/* Update banner */}
+            {updateAvailable && (
+                <div onClick={() => window.location.reload()} style={{position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999, background: "#2563eb", color: "white", textAlign: "center", padding: "10px 16px", fontSize: "14px", fontWeight: 600, cursor: "pointer"}}>
+                    {language === "es" ? "Nueva actualizacion disponible — toca para refrescar" : "New update available — tap to refresh"}
+                </div>
+            )}
             {/* Header */}
-            <div className="bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 sticky top-0 z-40 shadow-lg">
+            <div className="bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 sticky top-0 z-40 shadow-lg" style={updateAvailable ? {marginTop: "40px"} : {}}>
                 <div className="max-w-lg mx-auto flex justify-between items-center">
                     <div>
                         <h1 className="text-2xl font-bold">🍜 DD Mau</h1>
@@ -163,9 +196,9 @@ export default function App() {
                         <div style={{padding: "16px"}}>
                             <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px"}}>
                                 {[
-                                    { tab: "training", icon: "📚", label: t("trainingHub", language), sub: language === "es" ? "Módulos" : "Modules" },
+                                    { tab: "training", icon: "📚", label: t("trainingHub", language), sub: language === "es" ? "Modulos" : "Modules" },
                                     { tab: "operations", icon: "📋", label: t("dailyOps", language), sub: language === "es" ? "Listas" : "Checklists" },
-                                    { tab: "menu", icon: "🍜", label: t("menuReference", language), sub: language === "es" ? "Menú completo" : "Full menu" },
+                                    { tab: "menu", icon: "🍜", label: t("menuReference", language), sub: language === "es" ? "Menu completo" : "Full menu" },
                                     { tab: "schedule", icon: "📅", label: t("weeklySchedule", language), sub: language === "es" ? "Tus turnos" : "Your shifts" },
                                 ].map(b => (
                                     <button key={b.tab} onClick={() => setActiveTab(b.tab)}
@@ -188,7 +221,7 @@ export default function App() {
                                         <p style={{fontSize: "13px", fontWeight: 700, color: "#6b7280", margin: 0}}>{t("recipesTitle", language)}</p>
                                         <p style={{fontSize: "10px", color: "#4b5563", margin: "2px 0 0"}}>
                                             {geoChecking ? (language === "es" ? "Verificando..." : "Checking...") :
-                                             geoError === "denied" ? (language === "es" ? "Ubicación denegada" : "Location denied") :
+                                             geoError === "denied" ? (language === "es" ? "Ubicacion denegada" : "Location denied") :
                                              geoError ? (language === "es" ? "No disponible" : "Unavailable") :
                                              (language === "es" ? "Solo en DD Mau" : "In-store only")}
                                         </p>
@@ -202,7 +235,7 @@ export default function App() {
                                     <p style={{fontSize: "10px", color: "#f87171", margin: "2px 0 0"}}>{language === "es" ? "Agotados" : "Out of Stock"}</p>
                                 </button>
                                 {[
-                                    { tab: "catering", icon: "🍽️", label: language === "es" ? "Pedidos" : "Orders", sub: language === "es" ? "Catering y más" : "Catering & more" },
+                                    { tab: "catering", icon: "🍽️", label: language === "es" ? "Pedidos" : "Orders", sub: language === "es" ? "Catering y mas" : "Catering & more" },
                                     { tab: "maintenance", icon: "🔧", label: language === "es" ? "Mantenimiento" : "Maintenance", sub: language === "es" ? "Reportar" : "Report issue" },
                                 ].map(b => (
                                     <button key={b.tab} onClick={() => setActiveTab(b.tab)}
@@ -212,17 +245,17 @@ export default function App() {
                                         <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{b.sub}</p>
                                     </button>
                                 ))}
-<button onClick={() => setActiveTab("insurance")} style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
-                <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🏥</div>
-                <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{language === "es" ? "Seguro" : "Insurance"}</p>
-                <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Beneficios" : "Benefits"}</p>
-              </button>
+                                <button onClick={() => setActiveTab("insurance")} style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                                    <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🏥</div>
+                                    <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{language === "es" ? "Seguro" : "Insurance"}</p>
+                                    <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Beneficios" : "Benefits"}</p>
+                                </button>
                                 {staffIsAdmin && (
                                     <button onClick={() => setActiveTab("admin")}
                                         style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
                                         <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>⚙️</div>
                                         <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("adminPanel", language)}</p>
-                                        <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Configuración" : "Settings"}</p>
+                                        <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Configuracion" : "Settings"}</p>
                                     </button>
                                 )}
                             </div>
