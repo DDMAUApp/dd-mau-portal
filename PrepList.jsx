@@ -315,7 +315,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                 });
             }
         });
-        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">\u{2715} Close</button></div>`;
+        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button></div>`;
         html += `</body></html>`;
         const w = window.open("", "_blank");
         w.document.write(html);
@@ -360,7 +360,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             });
             html += `</table>`;
         });
-        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">\u{2715} Close</button></div>`;
+        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button></div>`;
         html += `</body></html>`;
         const w = window.open("", "_blank");
         w.document.write(html);

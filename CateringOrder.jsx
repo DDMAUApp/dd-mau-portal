@@ -702,7 +702,7 @@ export default function CateringOrder({ language, staffName }) {
                 </div>
                 <div class="no-print">
                     <button class="btn-print" onclick="window.print()">🖨️ Print Again</button>
-                    <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">✕ Close</button>
+                    <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button>
                 </div>
                 </body></html>`;
             };

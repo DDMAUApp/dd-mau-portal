@@ -256,7 +256,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                     });
                 }
 
-                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">✕ Close</button></div>`;
+                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button></div>`;
                 html += `</body></html>`;
                 const win = window.open("", "_blank");
                 win.document.write(html);

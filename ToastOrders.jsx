@@ -161,7 +161,7 @@ export default function ToastOrders({ language }) {
         <div style="margin-top:30px;font-size:11px;color:#bbb;border-top:1px solid #ddd;padding-top:10px;">Printed from DD Mau Staff Portal</div>
         <div class="no-print">
             <button class="btn-print" onclick="window.print()">🖨️ Print Again</button>
-            <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">✕ Close</button>
+            <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button>
         </div>
         </body></html>`;
 
