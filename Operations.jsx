@@ -1214,7 +1214,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     html += `</table>`;
                 });
-                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
+                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">✕ Close</button></div>`;
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
                 w.document.write(html);
@@ -3159,7 +3159,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             html += `</div></div>`;
                                         });
 
-                                        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
+                                        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){history.back()}},200)">✕ Close</button></div>`;
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
                                         printWindow.document.write(html);
