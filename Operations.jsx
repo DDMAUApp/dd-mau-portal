@@ -1182,11 +1182,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     .pack{color:#666;font-size:11px}
                     .price{text-align:right;font-size:11px}
                     .cheaper{background:#fff3cd;font-size:10px;color:#856404}
-                    .no-print{margin:20px 0;text-align:center}
+                    .no-print{position:sticky;top:0;z-index:1000;background:#2F5496;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
                     .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
-                    .btn-print{background:#2F5496;color:white} .btn-close{background:#e5e7eb;color:#555}
+                    .btn-print{background:white;color:#2F5496} .btn-close{background:#ff4444;color:white}
                     @media print{body{padding:10px}h1{font-size:16px}.no-print{display:none !important}}
                 </style></head><body>`;
+                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                 html += `<h1>DD Mau Order Sheet</h1><div class="date">${dateStr} at ${timeStr} — ${storeLocation}</div>`;
                 vendors.forEach(v => {
                     html += `<div class="vendor">${v} (${counted[v].length} items)</div>`;
@@ -1214,7 +1215,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     html += `</table>`;
                 });
-                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button></div>`;
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
                 w.document.write(html);
@@ -3123,11 +3123,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             .cover-label { color: #666; font-size: 11px; }
                                             .cover-name { font-weight: bold; color: #15803d; }
                                             .working { color: #666; font-size: 12px; margin-top: 6px; }
-                                            .no-print { margin: 20px 0; text-align: center; }
+                                            .no-print { position:sticky;top:0;z-index:1000;background:#2563eb;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3) }
                                             .no-print button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
-                                            .btn-print { background: #2563eb; color: white; } .btn-close { background: #e5e7eb; color: #555; }
+                                            .btn-print { background: white; color: #2563eb; } .btn-close { background: #ff4444; color: white; }
                                             @media print { body { padding: 10px; } .no-print { display: none !important; } }
                                         </style></head><body>`;
+                                        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                                         html += `<h1>\u{1F35C} DD Mau Break Plan</h1><div class="date">${today}</div>`;
 
                                         // Stations
@@ -3159,7 +3160,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             html += `</div></div>`;
                                         });
 
-                                        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button></div>`;
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
                                         printWindow.document.write(html);

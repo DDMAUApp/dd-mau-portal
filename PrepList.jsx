@@ -287,11 +287,12 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             td{padding:6px 10px;font-size:12px;border:1px solid #e0e0e0}
             tr:nth-child(even){background:#f9f9f9}
             .unit{font-size:10px;color:#888}
-            .no-print{margin:20px 0;text-align:center}
+            .no-print{position:sticky;top:0;z-index:1000;background:#7c3aed;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
             .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
-            .btn-print{background:#7c3aed;color:white} .btn-close{background:#e5e7eb;color:#555}
+            .btn-print{background:white;color:#7c3aed} .btn-close{background:#ff4444;color:white}
             @media print{.no-print{display:none !important} .day-header,.station{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>`;
+        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
         html += `<h1>DD Mau Weekly Prep List</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation}</div>`;
         days.forEach((dayName, dayIdx) => {
             const dayItems = getItemsForDay(dayIdx).filter(item => doneItems[item.id]);
@@ -315,7 +316,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                 });
             }
         });
-        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button></div>`;
+        // buttons are in sticky top bar
         html += `</body></html>`;
         const w = window.open("", "_blank");
         w.document.write(html);
@@ -345,11 +346,12 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             th{background:#ede9fe;padding:6px 10px;text-align:left;font-size:11px;color:#7c3aed;border:1px solid #ccc}
             td{padding:6px 10px;font-size:12px;border:1px solid #e0e0e0}
             tr:nth-child(even){background:#f9f9f9}
-            .no-print{margin:20px 0;text-align:center}
+            .no-print{position:sticky;top:0;z-index:1000;background:#7c3aed;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
             .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
-            .btn-print{background:#7c3aed;color:white} .btn-close{background:#e5e7eb;color:#555}
+            .btn-print{background:white;color:#7c3aed} .btn-close{background:#ff4444;color:white}
             @media print{.no-print{display:none !important}}
         </style></head><body>`;
+        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
         html += `<h1>DD Mau Prep Sheet - ${dayName}</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation} - ${busyMode ? "BUSY" : "SLOW"} day</div>`;
         html += `<p style="font-size:13px;color:#555;margin-bottom:12px"><strong>${dayItems.length}</strong> items to prep</p>`;
         Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).forEach(([stName, items]) => {
@@ -360,7 +362,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             });
             html += `</table>`;
         });
-        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button></div>`;
+        // buttons are in sticky top bar
         html += `</body></html>`;
         const w = window.open("", "_blank");
         w.document.write(html);

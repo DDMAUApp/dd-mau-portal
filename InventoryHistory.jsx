@@ -219,11 +219,12 @@ export default function InventoryHistory({ language, customInventory: customInve
                         .cat-label { color: #999; font-size: 10px; }
                         .ordered { text-decoration: line-through; color: #999; }
                         .check { color: green; font-weight: bold; }
-                        .no-print { margin: 20px 0; text-align: center; }
+                        .no-print { position:sticky;top:0;z-index:1000;background:#2F5496;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3) }
                         .no-print button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
-                        .btn-print { background: #2F5496; color: white; } .btn-close { background: #e5e7eb; color: #555; }
+                        .btn-print { background: white; color: #2F5496; } .btn-close { background: #ff4444; color: white; }
                         @media print { body { padding: 10px; } h1 { font-size: 16px; } .no-print { display: none !important; } }
                     </style></head><body>`;
+                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                 html += `<h1>🍜 DD Mau — ${titleName}</h1>`;
                 html += `<div class="subtitle">${dateLabel} • ${language === "es" ? "Última actualización" : "Last updated"}: ${new Date(dayData.date).toLocaleString()}</div>`;
 
@@ -256,7 +257,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                     });
                 }
 
-                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button></div>`;
+                // buttons are in sticky top bar
                 html += `</body></html>`;
                 const win = window.open("", "_blank");
                 win.document.write(html);
