@@ -84,6 +84,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
+            const [syscoTriggerStatus, setSyscoTriggerStatus] = useState(null); // null | "requesting" | "running" | "done" | "error"
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
@@ -546,7 +547,24 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); };
+                // Listen for Sysco scrape trigger status updates
+                const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.status === "running") setSyscoTriggerStatus("running");
+                        else if (data.status === "done") {
+                            setSyscoTriggerStatus("done");
+                            setTimeout(() => setSyscoTriggerStatus(null), 4000);
+                        } else if (data.status === "error") {
+                            setSyscoTriggerStatus("error");
+                            setTimeout(() => setSyscoTriggerStatus(null), 5000);
+                        } else if (!data.trigger) {
+                            // idle state
+                        }
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -2747,7 +2765,45 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     {syscoData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(syscoData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
                                                 </div>
                                             </div>
-                                            <div className="text-2xl">{"\u{1F4B0}"}</div>
+                                            <button
+                                                onClick={async () => {
+                                                    if (syscoTriggerStatus === "requesting" || syscoTriggerStatus === "running") return;
+                                                    setSyscoTriggerStatus("requesting");
+                                                    try {
+                                                        await setDoc(doc(db, "vendor_prices", "sysco_trigger"), {
+                                                            trigger: true,
+                                                            requestedAt: new Date().toISOString(),
+                                                            requestedBy: staffName || "unknown",
+                                                            status: "pending"
+                                                        });
+                                                    } catch (e) {
+                                                        console.error("Trigger error:", e);
+                                                        setSyscoTriggerStatus("error");
+                                                        setTimeout(() => setSyscoTriggerStatus(null), 4000);
+                                                    }
+                                                }}
+                                                disabled={syscoTriggerStatus === "requesting" || syscoTriggerStatus === "running"}
+                                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                                                    syscoTriggerStatus === "running" || syscoTriggerStatus === "requesting"
+                                                        ? "bg-blue-500/30 text-blue-100 cursor-wait"
+                                                        : syscoTriggerStatus === "done"
+                                                            ? "bg-green-500/30 text-green-100"
+                                                            : syscoTriggerStatus === "error"
+                                                                ? "bg-red-500/30 text-red-100"
+                                                                : "bg-white/20 hover:bg-white/30 text-white cursor-pointer"
+                                                }`}
+                                                title={language === "es" ? "Solicitar actualizacion de precios" : "Request price refresh"}
+                                            >
+                                                {syscoTriggerStatus === "running" || syscoTriggerStatus === "requesting" ? (
+                                                    <><span className="animate-spin inline-block">{"\u{1F504}"}</span> {language === "es" ? "Actualizando..." : "Refreshing..."}</>
+                                                ) : syscoTriggerStatus === "done" ? (
+                                                    <>{"\u{2705}"} {language === "es" ? "Listo" : "Done!"}</>
+                                                ) : syscoTriggerStatus === "error" ? (
+                                                    <>{"\u{274C}"} {language === "es" ? "Error" : "Error"}</>
+                                                ) : (
+                                                    <>{"\u{1F504}"} {language === "es" ? "Actualizar Precios" : "Refresh Prices"}</>
+                                                )}
+                                            </button>
                                         </div>
 
                                         {Object.keys(prices).length === 0 && (
