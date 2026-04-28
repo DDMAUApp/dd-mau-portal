@@ -1110,9 +1110,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const prefVendor = item.preferredVendor || item.vendor || "";
                 const live = getLivePrice(itemId, prefVendor);
                 if (!live) return null;
+                const vendorLabel = prefVendor || "Vendor";
                 return (
-                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold animate-pulse" title={`Sysco live: ${live.resultName || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
-                        {"\u{1F4E1}"} ${live.price.toFixed(2)}{live.pack ? ` / ${live.pack}` : ""}
+                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold animate-pulse" title={`${vendorLabel} live: ${live.resultName || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
+                        {"\u{1F4E1}"} <span className="text-green-800 font-semibold">{vendorLabel}</span> ${live.price.toFixed(2)}{live.pack ? ` / ${live.pack}` : ""}
                     </span>
                 );
             };
@@ -1181,11 +1182,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     .pack{color:#666;font-size:11px}
                     .price{text-align:right;font-size:11px}
                     .cheaper{background:#fff3cd;font-size:10px;color:#856404}
-                    .no-print{margin:20px 0;text-align:center}
+                    .no-print{position:sticky;top:0;z-index:1000;background:#2F5496;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
                     .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
-                    .btn-print{background:#2F5496;color:white} .btn-close{background:#e5e7eb;color:#555}
+                    .btn-print{background:white;color:#2F5496} .btn-close{background:#ff4444;color:white}
                     @media print{body{padding:10px}h1{font-size:16px}.no-print{display:none !important}}
                 </style></head><body>`;
+                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                 html += `<h1>DD Mau Order Sheet</h1><div class="date">${dateStr} at ${timeStr} — ${storeLocation}</div>`;
                 vendors.forEach(v => {
                     html += `<div class="vendor">${v} (${counted[v].length} items)</div>`;
@@ -1213,7 +1215,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     html += `</table>`;
                 });
-                html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
                 w.document.write(html);
@@ -1970,6 +1971,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "split" ? "bg-purple-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "Dividir" : "Split"}
                                     </button>
+                                    <button onClick={() => setInvViewMode("pricing")}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "pricing" ? "bg-blue-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                        {language === "es" ? "Precios" : "Pricing"}
+                                    </button>
                                 </div>
                                 <div className="flex items-center gap-1.5">
                                     <button onClick={printInventory} title="Print"
@@ -2641,8 +2646,158 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 });
                             })()}
 
+                            {/* ── PRICING VIEW ── */}
+                            {invViewMode === "pricing" && (() => {
+                                const syscoData = livePrices.sysco || {};
+                                const prices = syscoData.prices || {};
+                                const priceEntries = Object.entries(prices);
+
+                                // Sysco ID → inventory item mapping
+                                const SYSCO_INVENTORY_MAP = {
+                                    // === Proteins / Seafood ===
+                                    "5106402": { invId: "0-26", note: "Shrimp White P&D Tail-off 21/25" },
+                                    "7952468": { invId: "0-27", note: "Shrimp White P&D Tail-off 31/40" },
+                                    "7411241": { invId: "0-28", note: "Shrimp White P&D Tail-on 21/25" },
+                                    "7950306": { invId: "0-25", note: "Shrimp 31/40 Tail-on" },
+                                    "2398519": { invId: "0-32", note: "Scallops 60-80 Count" },
+                                    // === Produce ===
+                                    "7350788": { invId: "1-19", note: "Green Onion" },
+                                    "7078475": { invId: "1-12", note: "Cilantro Iceless" },
+                                    "1008010": { invId: "1-5", note: "Cabbage Red" },
+                                    "1491810": { invId: "1-4", note: "Cabbage Green" },
+                                    "1821529": { invId: "1-21", note: "Shallots Fresh" },
+                                    // === Frozen ===
+                                    "4390807": { invId: "9-9", note: "Sweet Potato Waffle Fry Battered" },
+                                    "0937631": { invId: "9-2", note: "Churros" },
+                                    // === Rice & Dry ===
+                                    "4671434": { invId: "4-12", note: "Rice Long Grain / Jasmine" },
+                                    // === Sauces & Condiments ===
+                                    "7257721": { invId: "3-54", note: "Sriracha Packets" },
+                                    "7011275": { invId: "3-54", note: "Sriracha Packets (Huy Fong)" },
+                                    // === Beverages ===
+                                    "7101689": { invId: null, note: "Tazo Chai Tea Concentrate (no inv match)" },
+                                    // === Paper & Disposable ===
+                                    "7385215": { invId: "7-4", note: "Container Togo Kraft #8" },
+                                    "6977799": { invId: "7-65", note: "Napkin XpressNap Natural" },
+                                    "2102038": { invId: "7-54", note: "Bamboo Picks Knotted 4in" },
+                                    "7213296": { invId: null, note: "Bag Poly Deli HD 8.5x8.5 (no inv match)" },
+                                    "7701311": { invId: null, note: "Bag Plastic HD 7-Day Pre Portion (no inv match)" },
+                                    "4527950": { invId: null, note: "Dispenser Towel Manual (no inv match)" },
+                                    // === Day Labels (all map to Label Roll) ===
+                                    "9904133": { invId: "7-74", note: "Label Friday" },
+                                    "9903882": { invId: "7-74", note: "Label Monday" },
+                                    "9904135": { invId: "7-74", note: "Label Saturday" },
+                                    "9904127": { invId: "7-74", note: "Label Thursday" },
+                                    "9904138": { invId: "7-74", note: "Label Wednesday" },
+                                    // === Chemical & Janitorial ===
+                                    "0616526": { invId: "8-3", note: "Degreaser" },
+                                    "7670021": { invId: "8-4", note: "Delimer Descaler" },
+                                    "7260143": { invId: "8-1", note: "Cleaner Floor Alkaline No-rinse" },
+                                    "9901417": { invId: "8-2", note: "Cleaner Grill High Temp" },
+                                    "5287489": { invId: "8-12", note: "Hand Soap Antibacterial" },
+                                    "5256670": { invId: "8-18", note: "Sanitizer Tablets" },
+                                    "8265625": { invId: "8-5", note: "Detergent Machine Solid Power" },
+                                    "1293212": { invId: null, note: "Cleaner Vigoroso Lavender (no inv match)" },
+                                    "6892063": { invId: null, note: "Cleaner Freezer (no inv match)" },
+                                    "5061239": { invId: "8-13", note: "Sanitizer Machine Ecotemp" },
+                                    "4278760": { invId: "8-8", note: "Rinse Aid SmartPower" },
+                                    // === Supplies & Equipment ===
+                                    "3438292": { invId: null, note: "Spray Bottle 32oz (no inv match)" },
+                                };
+
+                                // Build flat inventory lookup
+                                const invLookup = {};
+                                customInventory.forEach(cat => cat.items.forEach(item => { invLookup[item.id] = item; }));
+
+                                // Sort: matched (has invId) first, then mapped-but-no-match, then unknown, all alphabetical
+                                const sorted = [...priceEntries].sort((a, b) => {
+                                    const aMap = SYSCO_INVENTORY_MAP[a[0]];
+                                    const bMap = SYSCO_INVENTORY_MAP[b[0]];
+                                    const aRank = aMap && aMap.invId ? 0 : 1;
+                                    const bRank = bMap && bMap.invId ? 0 : 1;
+                                    if (aRank !== bRank) return aRank - bRank;
+                                    return (a[1].name || "").localeCompare(b[1].name || "");
+                                });
+
+                                return (
+                                    <div className="space-y-2">
+                                        {/* Header */}
+                                        <div className="bg-gradient-to-r from-blue-700 to-blue-600 text-white rounded-xl p-3 flex items-center justify-between">
+                                            <div>
+                                                <div className="font-bold text-sm">{language === "es" ? "Precios de Sysco — Historial de Compras" : "Sysco Pricing — Purchase History"}</div>
+                                                <div className="text-blue-200 text-xs mt-0.5">
+                                                    {priceEntries.length} {language === "es" ? "articulos" : "items"}
+                                                    {syscoData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(syscoData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
+                                                </div>
+                                            </div>
+                                            <div className="text-2xl">{"\u{1F4B0}"}</div>
+                                        </div>
+
+                                        {priceEntries.length === 0 && (
+                                            <div className="text-center py-8 text-gray-400 text-sm">
+                                                {language === "es" ? "No hay datos de precios todavia. El scraper se ejecuta diariamente." : "No pricing data yet. The scraper runs daily."}
+                                            </div>
+                                        )}
+
+                                        {/* Matched items section */}
+                                        {sorted.filter(([k]) => { const m = SYSCO_INVENTORY_MAP[k]; return m && m.invId; }).length > 0 && (
+                                            <div className="text-xs font-bold text-green-700 px-1 pt-1">{"\u{2705}"} {language === "es" ? "Asociado a inventario" : "Matched to Inventory"}</div>
+                                        )}
+
+                                        {(() => {
+                                            let unmatchedHeaderShown = false;
+                                            const hasMatched = sorted.some(([k]) => { const m = SYSCO_INVENTORY_MAP[k]; return m && m.invId; });
+                                            return sorted.map(([key, data]) => {
+                                            const match = SYSCO_INVENTORY_MAP[key];
+                                            const invItem = match && match.invId ? invLookup[match.invId] : null;
+                                            const isMatched = !!(match && match.invId);
+                                            const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && hasMatched;
+                                            if (showUnmatchedHeader) unmatchedHeaderShown = true;
+
+                                            return (
+                                                <div key={key}>
+                                                    {showUnmatchedHeader && (
+                                                        <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en Sysco" : "Sysco Only"}</div>
+                                                    )}
+                                                    <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                        <div className="flex items-start justify-between gap-2">
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
+                                                                {invItem && (
+                                                                    <div className="text-xs text-green-600 mt-0.5">{"\u{2194}\u{FE0F}"} {invItem.name}</div>
+                                                                )}
+                                                                {!invItem && match && match.note && (
+                                                                    <div className="text-xs text-gray-400 mt-0.5 italic">{match.note}</div>
+                                                                )}
+                                                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
+                                                                    {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
+                                                                    {data.brand && <span>{data.brand}</span>}
+                                                                    {key && <span className="text-gray-400">#{key}</span>}
+                                                                </div>
+                                                                {data.lastOrdered && (
+                                                                    <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-right flex-shrink-0">
+                                                                {data.price != null ? (
+                                                                    <div className="font-bold text-lg text-blue-700">${data.price.toFixed(2)}</div>
+                                                                ) : (
+                                                                    <div className="text-sm text-gray-400">—</div>
+                                                                )}
+                                                                <div className="text-xs text-gray-500">/{data.unit || "CS"}</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        });
+                                        })()}
+                                    </div>
+                                );
+                            })()}
+
                             {/* ── SAVE & RESET ── */}
-                            {!invEditMode && (
+                            {!invEditMode && invViewMode !== "pricing" && (
                                 <div className="sticky bottom-20 pt-3">
                                     {showSaveConfirm ? (
                                         <div className="bg-white border-2 border-mint-700 rounded-xl p-4 shadow-xl">
@@ -3122,11 +3277,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             .cover-label { color: #666; font-size: 11px; }
                                             .cover-name { font-weight: bold; color: #15803d; }
                                             .working { color: #666; font-size: 12px; margin-top: 6px; }
-                                            .no-print { margin: 20px 0; text-align: center; }
+                                            .no-print { position:sticky;top:0;z-index:1000;background:#2563eb;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3) }
                                             .no-print button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
-                                            .btn-print { background: #2563eb; color: white; } .btn-close { background: #e5e7eb; color: #555; }
+                                            .btn-print { background: white; color: #2563eb; } .btn-close { background: #ff4444; color: white; }
                                             @media print { body { padding: 10px; } .no-print { display: none !important; } }
                                         </style></head><body>`;
+                                        html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
                                         html += `<h1>\u{1F35C} DD Mau Break Plan</h1><div class="date">${today}</div>`;
 
                                         // Stations
@@ -3158,7 +3314,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             html += `</div></div>`;
                                         });
 
-                                        html += `<div class="no-print"><button class="btn-print" onclick="window.print()">🖨️ Print Again</button><button class="btn-close" onclick="window.close()">✕ Close</button></div>`;
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
                                         printWindow.document.write(html);
