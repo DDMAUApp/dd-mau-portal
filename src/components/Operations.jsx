@@ -2855,7 +2855,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                 {data.price != null ? (
                                                                     <>
                                                                         <div className="font-bold text-lg text-blue-700">${data.price.toFixed(2)}</div>
-                                                                        <div className="text-xs text-gray-500">/{data.unit || "CS"}</div>
+                                                                        <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
                                                                     </>
                                                                 ) : (
                                                                     <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
