@@ -2650,7 +2650,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             {invViewMode === "pricing" && (() => {
                                 const syscoData = livePrices.sysco || {};
                                 const prices = syscoData.prices || {};
-                                const priceEntries = Object.entries(prices);
 
                                 // Sysco ID → inventory item mapping
                                 const SYSCO_INVENTORY_MAP = {
@@ -2709,8 +2708,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const invLookup = {};
                                 customInventory.forEach(cat => cat.items.forEach(item => { invLookup[item.id] = item; }));
 
-                                // Sort: matched (has invId) first, then mapped-but-no-match, then unknown, all alphabetical
-                                const sorted = [...priceEntries].sort((a, b) => {
+                                // Merge: show ALL 39 mapped items, fill in live price data where available
+                                const allEntries = Object.keys(SYSCO_INVENTORY_MAP).map(syscoId => {
+                                    const liveData = prices[syscoId] || {};
+                                    const mapEntry = SYSCO_INVENTORY_MAP[syscoId];
+                                    return [syscoId, {
+                                        name: liveData.name || mapEntry.note || `Sysco Item ${syscoId}`,
+                                        price: liveData.price != null ? liveData.price : null,
+                                        pack: liveData.pack || "",
+                                        brand: liveData.brand || "",
+                                        unit: liveData.unit || "CS",
+                                        lastOrdered: liveData.lastOrdered || "",
+                                    }];
+                                });
+                                // Also add any scraped items NOT in the map (future new items)
+                                Object.entries(prices).forEach(([k, v]) => {
+                                    if (!SYSCO_INVENTORY_MAP[k]) allEntries.push([k, v]);
+                                });
+
+                                // Sort: matched (has invId) first, then unmatched, alphabetical within each
+                                const sorted = [...allEntries].sort((a, b) => {
                                     const aMap = SYSCO_INVENTORY_MAP[a[0]];
                                     const bMap = SYSCO_INVENTORY_MAP[b[0]];
                                     const aRank = aMap && aMap.invId ? 0 : 1;
@@ -2726,16 +2743,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             <div>
                                                 <div className="font-bold text-sm">{language === "es" ? "Precios de Sysco — Historial de Compras" : "Sysco Pricing — Purchase History"}</div>
                                                 <div className="text-blue-200 text-xs mt-0.5">
-                                                    {priceEntries.length} {language === "es" ? "articulos" : "items"}
+                                                    {allEntries.length} {language === "es" ? "articulos" : "items"} &middot; {allEntries.filter(([,d]) => d.price != null).length} {language === "es" ? "con precio" : "with prices"}
                                                     {syscoData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(syscoData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
                                                 </div>
                                             </div>
                                             <div className="text-2xl">{"\u{1F4B0}"}</div>
                                         </div>
 
-                                        {priceEntries.length === 0 && (
-                                            <div className="text-center py-8 text-gray-400 text-sm">
-                                                {language === "es" ? "No hay datos de precios todavia. El scraper se ejecuta diariamente." : "No pricing data yet. The scraper runs daily."}
+                                        {Object.keys(prices).length === 0 && (
+                                            <div className="text-center py-3 text-gray-400 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
+                                                {language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily."}
                                             </div>
                                         )}
 
@@ -2780,11 +2797,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             </div>
                                                             <div className="text-right flex-shrink-0">
                                                                 {data.price != null ? (
-                                                                    <div className="font-bold text-lg text-blue-700">${data.price.toFixed(2)}</div>
+                                                                    <>
+                                                                        <div className="font-bold text-lg text-blue-700">${data.price.toFixed(2)}</div>
+                                                                        <div className="text-xs text-gray-500">/{data.unit || "CS"}</div>
+                                                                    </>
                                                                 ) : (
-                                                                    <div className="text-sm text-gray-400">—</div>
+                                                                    <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
                                                                 )}
-                                                                <div className="text-xs text-gray-500">/{data.unit || "CS"}</div>
                                                             </div>
                                                         </div>
                                                     </div>
