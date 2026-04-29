@@ -5,6 +5,7 @@ import {
   setDoc,
   getDoc,
   getDocs,
+  addDoc,
   collection,
   onSnapshot,
   serverTimestamp,
@@ -793,7 +794,10 @@ export default function TrainingHub({ staffName, language, staffList }) {
 
     try {
       const docId = staffName.toLowerCase().replace(/\s+/g, "_");
+      // Save latest result (overwrites previous for quick lookup)
       await setDoc(doc(db, "training_results", docId), result);
+      // Also save to history subcollection so all attempts are tracked
+      await addDoc(collection(db, "training_results", docId, "history"), result);
     } catch (err) {
       console.error("Failed to save training result:", err);
     }
