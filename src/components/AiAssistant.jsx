@@ -61,17 +61,15 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
         })();
     }, []);
 
-    // Build conversation history for context
-    const buildConversation = () => {
-        return messages.map(m => ({
-            role: m.role,
-            content: m.content,
-        }));
-    };
-
     // Send message to AI Router
     const sendMessage = async (text) => {
         if (!text.trim() || loading) return;
+
+        // Capture conversation history BEFORE adding new user message
+        // (the router appends the current message itself)
+        const conversation = messages
+            .filter(m => !m.isError)
+            .map(m => ({ role: m.role, content: m.content }));
 
         const userMsg = { role: "user", content: text.trim(), timestamp: Date.now() };
         setMessages(prev => [...prev, userMsg]);
@@ -80,7 +78,6 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
         setError(null);
 
         try {
-            const conversation = buildConversation();
 
             const systemPrompt = [
                 "You are DD Mau's AI assistant, helping staff at a Vietnamese restaurant in St. Louis.",
