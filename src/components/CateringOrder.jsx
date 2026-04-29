@@ -492,8 +492,9 @@ export default function CateringOrder({ language, staffName }) {
                 const size = item.sizes[sizeIdx];
                 setCart(prev => [...prev, {
                     id: Date.now() + Math.random(),
-                    name: language === "es" ? (item.nameEs || item.name) : item.name,
+                    name: item.name,
                     nameEn: item.name,
+                    nameEs: item.nameEs || item.name,
                     size: size.label,
                     price: size.price,
                     qty: qty || 1,
@@ -529,8 +530,9 @@ export default function CateringOrder({ language, staffName }) {
                 const size = item.sizes[sizeIdx];
                 setCart(prev => prev.map(ci => ci.id === oldId ? {
                     id: oldId,
-                    name: language === "es" ? (item.nameEs || item.name) : item.name,
+                    name: item.name,
                     nameEn: item.name,
+                    nameEs: item.nameEs || item.name,
                     size: size.label,
                     price: size.price,
                     qty: qty || 1,
@@ -656,11 +658,15 @@ export default function CateringOrder({ language, staffName }) {
                     .totals .line{display:flex;justify-content:flex-end;gap:40px;padding:4px 0;font-size:14px}
                     .totals .total-line{font-size:20px;font-weight:bold;color:#255a37;border-top:3px solid #255a37;padding-top:10px;margin-top:8px}
                     .footer{text-align:center;color:#888;font-size:11px;padding:12px;border-top:1px solid #ddd}
-                    .no-print{margin:16px 0;text-align:center}
+                    .no-print{position:sticky;top:0;z-index:1000;background:#255a37;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
                     .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
-                    .btn-print{background:#255a37;color:white} .btn-edit{background:#f59e0b;color:white} .btn-close{background:#e5e7eb;color:#555}
+                    .btn-print{background:white;color:#255a37} .btn-edit{background:#f59e0b;color:white} .btn-close{background:#ff4444;color:white}
                     @media print{.no-print{display:none !important} body{padding:0;margin:0} .invoice{border:none}}
                 </style></head><body>
+                <div class="no-print">
+                    <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button>
+                    <button class="btn-print" onclick="window.print()">🖨️ Print</button>
+                </div>
                 <div class="invoice">
                     <div class="header">
                         <h1>DD Mau Vietnamese Eatery</h1>
@@ -699,10 +705,6 @@ export default function CateringOrder({ language, staffName }) {
                         ${o.updatedAt && o.updatedAt !== o.createdAt ? '<p>Updated: ' + new Date(o.updatedAt).toLocaleString() + '</p>' : ''}
                         <p>DD Mau Vietnamese Eatery — ddmaustl.com</p>
                     </div>
-                </div>
-                <div class="no-print">
-                    <button class="btn-print" onclick="window.print()">🖨️ Print Again</button>
-                    <button class="btn-close" onclick="window.close()">✕ Close</button>
                 </div>
                 </body></html>`;
             };
@@ -1174,7 +1176,7 @@ export default function CateringOrder({ language, staffName }) {
                                     ) : (
                                         <div className="flex justify-between items-start bg-white border border-gray-200 rounded-lg p-3 mb-2">
                                             <div className="flex-1">
-                                                <p className="font-bold text-sm text-gray-800">{item.isCustom && "✏️ "}{item.qty}x {item.name}</p>
+                                                <p className="font-bold text-sm text-gray-800">{item.isCustom && "✏️ "}{item.qty}x {language === "es" ? (item.nameEs || item.name) : (item.nameEn || item.name)}</p>
                                                 {item.size !== "Custom" && <p className="text-xs text-gray-500">{item.size}</p>}
                                                 {item.type && <p className="text-xs text-gray-400">{language === "es" ? "Tipo" : "Type"}: {item.type}</p>}
                                                 {item.proteins?.length > 0 && <p className="text-xs text-gray-400">{language === "es" ? "Proteínas" : "Proteins"}: {item.proteins.join(", ")}</p>}
