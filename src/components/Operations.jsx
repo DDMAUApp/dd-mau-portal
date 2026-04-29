@@ -766,8 +766,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const handlePasswordSubmit = (e) => {
                 e.preventDefault();
-                if (password === "12345") { setPasswordEntered(true); setPassword(""); }
-                else { alert(language === "es" ? "Contraseña incorrecta" : "Incorrect password"); }
+                // Validate PIN against manager/admin staff list instead of hardcoded password
+                const matchedStaff = (staffList || []).find(s => String(s.pin) === String(password));
+                if (matchedStaff && (matchedStaff.role === "admin" || matchedStaff.role === "manager")) {
+                    setPasswordEntered(true); setPassword("");
+                } else {
+                    alert(language === "es" ? "PIN de gerente incorrecto" : "Incorrect manager PIN");
+                }
             };
 
             const toggleCheckItem = async (taskId, parentTask) => {
