@@ -42,9 +42,17 @@ export default function ToastInvoices({ language }) {
         const html = `<!DOCTYPE html><html><head><title>Invoice #${inv.invoiceNumber || ""}</title>
         <style>
             body { font-family: Arial, Helvetica, sans-serif; max-width:700px; margin:0 auto; padding:30px 40px; color:#222; font-size:14px; }
-            @media print { body { padding:20px; } }
+            .no-print { position:sticky; top:0; z-index:1000; background:#059669; padding:10px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,.3); }
+            .no-print button { padding:12px 24px; font-size:16px; font-weight:bold; border:none; border-radius:8px; cursor:pointer; margin:0 6px; }
+            .btn-print { background:white; color:#059669; }
+            .btn-close { background:#ff4444; color:white; }
+            @media print { body { padding:20px; } .no-print { display:none !important; } }
         </style></head>
         <body>
+        <div class="no-print">
+            <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button>
+            <button class="btn-print" onclick="window.print()">🖨️ Print</button>
+        </div>
         <!-- Header -->
         <table style="width:100%;margin-bottom:20px;"><tr>
             <td style="vertical-align:top;width:50%;">
