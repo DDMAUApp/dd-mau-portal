@@ -85,6 +85,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
             const [syscoTriggerStatus, setSyscoTriggerStatus] = useState(null); // null | "requesting" | "running" | "done" | "error"
+            const [syscoScrapeStatus, setSyscoScrapeStatus] = useState(null); // { status, detail, pricesFound, updatedAt }
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
@@ -564,7 +565,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); };
+                // Listen for Sysco scrape health status (login_failed, no_prices, etc.)
+                const unsubSyscoStatus = onSnapshot(doc(db, "vendor_prices", "sysco_status"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setSyscoScrapeStatus(docSnap.data());
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -2012,13 +2020,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             </div>
 
                             {/* ── LIVE PRICES INDICATOR ── */}
-                            {livePrices.sysco && livePrices.sysco.lastScraped && (
-                                <div className="flex items-center gap-2 px-2 py-1 bg-green-50 rounded-lg border border-green-200">
-                                    <span className="text-xs text-green-700 font-medium">{"\u{1F4E1}"} {language === "es" ? "Precios Sysco en vivo" : "Sysco live prices"}</span>
-                                    <span className="text-xs text-green-500">{livePrices.sysco.foundCount || 0}/{livePrices.sysco.totalItems || 0} items</span>
-                                    <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                                </div>
-                            )}
+                            {(() => {
+                                const ss = syscoScrapeStatus || {};
+                                const isStale = livePrices.sysco?.lastScraped && (Date.now() - new Date(livePrices.sysco.lastScraped).getTime() > 48 * 60 * 60 * 1000);
+                                const hasFailed = ss.status && ss.status !== "success" && ss.status !== "running";
+                                const hasData = livePrices.sysco && livePrices.sysco.lastScraped;
+
+                                if (hasFailed) return (
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-red-50 rounded-lg border border-red-300">
+                                        <span className="text-xs text-red-700 font-medium">{"\u{1F6A8}"} {ss.status === "login_failed" ? (language === "es" ? "Sysco login fallido" : "Sysco login failed") : (language === "es" ? "Error del scraper Sysco" : "Sysco scraper error")}</span>
+                                        <span className="text-xs text-red-500 ml-auto">{ss.updatedAt ? new Date(ss.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}</span>
+                                    </div>
+                                );
+                                if (isStale && hasData) return (
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-yellow-50 rounded-lg border border-yellow-300">
+                                        <span className="text-xs text-yellow-700 font-medium">{"\u{23F0}"} {language === "es" ? "Precios Sysco desactualizados" : "Sysco prices stale"}</span>
+                                        <span className="text-xs text-yellow-500">{livePrices.sysco.foundCount || 0}/{livePrices.sysco.totalItems || 0} items</span>
+                                        <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                                    </div>
+                                );
+                                if (hasData) return (
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-green-50 rounded-lg border border-green-200">
+                                        <span className="text-xs text-green-700 font-medium">{"\u{1F4E1}"} {language === "es" ? "Precios Sysco en vivo" : "Sysco live prices"}</span>
+                                        <span className="text-xs text-green-500">{livePrices.sysco.foundCount || 0}/{livePrices.sysco.totalItems || 0} items</span>
+                                        <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                                    </div>
+                                );
+                                return null;
+                            })()}
 
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
@@ -2674,99 +2703,110 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const syscoData = livePrices.sysco || {};
                                 const prices = syscoData.prices || {};
 
-                                // Sysco ID → inventory item mapping
-                                const SYSCO_INVENTORY_MAP = {
-                                    // === Proteins / Seafood ===
-                                    "5106402": { invId: "0-26", note: "Shrimp White P&D Tail-off 21/25" },
-                                    "7952468": { invId: "0-27", note: "Shrimp White P&D Tail-off 31/40" },
-                                    "7411241": { invId: "0-28", note: "Shrimp White P&D Tail-on 21/25" },
-                                    "7950306": { invId: "0-25", note: "Shrimp 31/40 Tail-on" },
-                                    "2398519": { invId: "0-32", note: "Scallops 60-80 Count" },
-                                    // === Produce ===
-                                    "7350788": { invId: "1-19", note: "Green Onion" },
-                                    "7078475": { invId: "1-12", note: "Cilantro Iceless" },
-                                    "1008010": { invId: "1-5", note: "Cabbage Red" },
-                                    "1491810": { invId: "1-4", note: "Cabbage Green" },
-                                    "1821529": { invId: "1-21", note: "Shallots Fresh" },
-                                    // === Frozen ===
-                                    "4390807": { invId: "9-9", note: "Sweet Potato Waffle Fry Battered" },
-                                    "0937631": { invId: "9-2", note: "Churros" },
-                                    // === Rice & Dry ===
-                                    "4671434": { invId: "4-12", note: "Rice Long Grain / Jasmine" },
-                                    // === Sauces & Condiments ===
-                                    "7257721": { invId: "3-54", note: "Sriracha Packets" },
-                                    "7011275": { invId: "3-54", note: "Sriracha Packets (Huy Fong)" },
-                                    // === Beverages ===
-                                    "7101689": { invId: null, note: "Tazo Chai Tea Concentrate (no inv match)" },
-                                    // === Paper & Disposable ===
-                                    "7385215": { invId: "7-4", note: "Container Togo Kraft #8" },
-                                    "6977799": { invId: "7-65", note: "Napkin XpressNap Natural" },
-                                    "2102038": { invId: "7-54", note: "Bamboo Picks Knotted 4in" },
-                                    "7213296": { invId: null, note: "Bag Poly Deli HD 8.5x8.5 (no inv match)" },
-                                    "7701311": { invId: null, note: "Bag Plastic HD 7-Day Pre Portion (no inv match)" },
-                                    "4527950": { invId: null, note: "Dispenser Towel Manual (no inv match)" },
-                                    // === Day Labels (all map to Label Roll) ===
-                                    "9904133": { invId: "7-74", note: "Label Friday" },
-                                    "9903882": { invId: "7-74", note: "Label Monday" },
-                                    "9904135": { invId: "7-74", note: "Label Saturday" },
-                                    "9904127": { invId: "7-74", note: "Label Thursday" },
-                                    "9904138": { invId: "7-74", note: "Label Wednesday" },
-                                    // === Chemical & Janitorial ===
-                                    "0616526": { invId: "8-3", note: "Degreaser" },
-                                    "7670021": { invId: "8-4", note: "Delimer Descaler" },
-                                    "7260143": { invId: "8-1", note: "Cleaner Floor Alkaline No-rinse" },
-                                    "9901417": { invId: "8-2", note: "Cleaner Grill High Temp" },
-                                    "5287489": { invId: "8-12", note: "Hand Soap Antibacterial" },
-                                    "5256670": { invId: "8-18", note: "Sanitizer Tablets" },
-                                    "8265625": { invId: "8-5", note: "Detergent Machine Solid Power" },
-                                    "1293212": { invId: null, note: "Cleaner Vigoroso Lavender (no inv match)" },
-                                    "6892063": { invId: null, note: "Cleaner Freezer (no inv match)" },
-                                    "5061239": { invId: "8-13", note: "Sanitizer Machine Ecotemp" },
-                                    "4278760": { invId: "8-8", note: "Rinse Aid SmartPower" },
-                                    // === Supplies & Equipment ===
-                                    "3438292": { invId: null, note: "Spray Bottle 32oz (no inv match)" },
+                                // Known Sysco ID → inventory ID overrides (for items where name matching fails)
+                                const SYSCO_OVERRIDES = {
+                                    "5106402": "0-26", "7952468": "0-27", "7411241": "0-28",
+                                    "7950306": "0-25", "2398519": "0-32", "7350788": "1-19",
+                                    "7078475": "1-12", "1008010": "1-5", "1491810": "1-4",
+                                    "1821529": "1-21", "4390807": "9-9", "0937631": "9-2",
+                                    "4671434": "4-12", "7257721": "3-54", "7011275": "3-54",
+                                    "7385215": "7-4", "6977799": "7-65", "2102038": "7-54",
+                                    "9904133": "7-74", "9903882": "7-74", "9904135": "7-74",
+                                    "9904127": "7-74", "9904138": "7-74", "0616526": "8-3",
+                                    "7670021": "8-4", "7260143": "8-1", "9901417": "8-2",
+                                    "5287489": "8-12", "5256670": "8-18", "8265625": "8-5",
+                                    "5061239": "8-13", "4278760": "8-8",
                                 };
 
-                                // Build flat inventory lookup
+                                // Build flat inventory lookup + keyword index for auto-matching
                                 const invLookup = {};
-                                customInventory.forEach(cat => cat.items.forEach(item => { invLookup[item.id] = item; }));
+                                const invByName = []; // [{id, name, nameLower, keywords}]
+                                customInventory.forEach(cat => cat.items.forEach(item => {
+                                    invLookup[item.id] = item;
+                                    const nameLower = (item.name || "").toLowerCase();
+                                    const keywords = nameLower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 1);
+                                    invByName.push({ id: item.id, name: item.name, nameLower, keywords });
+                                }));
 
-                                // Merge: show ALL 39 mapped items, fill in live price data where available
-                                const allEntries = Object.keys(SYSCO_INVENTORY_MAP).map(syscoId => {
-                                    const liveData = prices[syscoId] || {};
-                                    const mapEntry = SYSCO_INVENTORY_MAP[syscoId];
+                                // Auto-match: find best inventory item for a scraped Sysco item name
+                                const autoMatch = (syscoName) => {
+                                    if (!syscoName) return null;
+                                    const sLower = syscoName.toLowerCase();
+                                    const sKeywords = sLower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
+                                    if (sKeywords.length === 0) return null;
+                                    let bestId = null, bestScore = 0;
+                                    for (const inv of invByName) {
+                                        // Exact substring match is strongest
+                                        if (inv.nameLower.includes(sLower) || sLower.includes(inv.nameLower)) {
+                                            const score = Math.min(inv.nameLower.length, sLower.length) + 100;
+                                            if (score > bestScore) { bestScore = score; bestId = inv.id; }
+                                            continue;
+                                        }
+                                        // Keyword overlap
+                                        let overlap = 0;
+                                        for (const kw of sKeywords) {
+                                            if (inv.keywords.some(ik => ik.includes(kw) || kw.includes(ik))) overlap++;
+                                        }
+                                        const score = overlap / Math.max(sKeywords.length, 1) * 50;
+                                        if (score > bestScore && overlap >= 2) { bestScore = score; bestId = inv.id; }
+                                    }
+                                    return bestScore >= 30 ? bestId : null;
+                                };
+
+                                // Build entries from ALL scraped prices, matching to inventory
+                                const allEntries = Object.entries(prices).map(([syscoId, data]) => {
+                                    // Try override first, then auto-match by name
+                                    const overrideInvId = SYSCO_OVERRIDES[syscoId] || null;
+                                    const autoInvId = !overrideInvId ? autoMatch(data.name) : null;
+                                    const invId = overrideInvId || autoInvId;
                                     return [syscoId, {
-                                        name: liveData.name || mapEntry.note || `Sysco Item ${syscoId}`,
-                                        price: liveData.price != null ? liveData.price : null,
-                                        pack: liveData.pack || "",
-                                        brand: liveData.brand || "",
-                                        unit: liveData.unit || "CS",
-                                        lastOrdered: liveData.lastOrdered || "",
+                                        ...data,
+                                        name: data.name || `Sysco Item ${syscoId}`,
+                                        invId,
+                                        matchType: overrideInvId ? "known" : autoInvId ? "auto" : null,
                                     }];
                                 });
-                                // Also add any scraped items NOT in the map (future new items)
-                                Object.entries(prices).forEach(([k, v]) => {
-                                    if (!SYSCO_INVENTORY_MAP[k]) allEntries.push([k, v]);
-                                });
 
-                                // Sort: matched (has invId) first, then unmatched, alphabetical within each
+                                // Sort: matched first, then unmatched, alphabetical within each
                                 const sorted = [...allEntries].sort((a, b) => {
-                                    const aMap = SYSCO_INVENTORY_MAP[a[0]];
-                                    const bMap = SYSCO_INVENTORY_MAP[b[0]];
-                                    const aRank = aMap && aMap.invId ? 0 : 1;
-                                    const bRank = bMap && bMap.invId ? 0 : 1;
+                                    const aRank = a[1].invId ? 0 : 1;
+                                    const bRank = b[1].invId ? 0 : 1;
                                     if (aRank !== bRank) return aRank - bRank;
                                     return (a[1].name || "").localeCompare(b[1].name || "");
                                 });
 
+                                const matchedCount = sorted.filter(([,d]) => d.invId).length;
+                                const withPriceCount = sorted.filter(([,d]) => d.price != null).length;
+
+                                // Scrape health status
+                                const scrapeStatus = syscoScrapeStatus || {};
+                                const isStale = syscoData.lastScraped && (Date.now() - new Date(syscoData.lastScraped).getTime() > 48 * 60 * 60 * 1000); // >48h old
+                                const hasFailed = scrapeStatus.status && scrapeStatus.status !== "success" && scrapeStatus.status !== "running";
+
                                 return (
                                     <div className="space-y-2">
+                                        {/* Scrape health alert */}
+                                        {(hasFailed || isStale) && (
+                                            <div className={`rounded-xl p-3 border text-sm ${hasFailed ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"}`}>
+                                                <div className="font-bold text-sm">
+                                                    {hasFailed ? (scrapeStatus.status === "login_failed"
+                                                        ? (language === "es" ? "\u{1F6A8} Fallo de inicio de sesion en Sysco" : "\u{1F6A8} Sysco Login Failed")
+                                                        : scrapeStatus.status === "no_prices"
+                                                            ? (language === "es" ? "\u{26A0}\u{FE0F} No se encontraron precios" : "\u{26A0}\u{FE0F} No Prices Found")
+                                                            : (language === "es" ? "\u{274C} Error del scraper" : "\u{274C} Scraper Error")
+                                                    ) : (language === "es" ? "\u{23F0} Datos desactualizados (>48h)" : "\u{23F0} Stale Data (>48h old)")}
+                                                </div>
+                                                {scrapeStatus.detail && <div className="text-xs text-gray-600 mt-1">{scrapeStatus.detail}</div>}
+                                                {scrapeStatus.updatedAt && <div className="text-xs text-gray-400 mt-1">{language === "es" ? "Ultimo intento" : "Last attempt"}: {new Date(scrapeStatus.updatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>}
+                                            </div>
+                                        )}
+
                                         {/* Header */}
                                         <div className="bg-gradient-to-r from-blue-700 to-blue-600 text-white rounded-xl p-3 flex items-center justify-between">
                                             <div>
                                                 <div className="font-bold text-sm">{language === "es" ? "Precios de Sysco — Historial de Compras" : "Sysco Pricing — Purchase History"}</div>
                                                 <div className="text-blue-200 text-xs mt-0.5">
-                                                    {allEntries.length} {language === "es" ? "articulos" : "items"} &middot; {allEntries.filter(([,d]) => d.price != null).length} {language === "es" ? "con precio" : "with prices"}
+                                                    {sorted.length} {language === "es" ? "articulos" : "items"} &middot; {withPriceCount} {language === "es" ? "con precio" : "with prices"} &middot; {matchedCount} {language === "es" ? "vinculados" : "matched"}
                                                     {syscoData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(syscoData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
                                                 </div>
                                             </div>
@@ -2811,41 +2851,46 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </button>
                                         </div>
 
-                                        {Object.keys(prices).length === 0 && (
+                                        {/* Scraper running indicator */}
+                                        {scrapeStatus.status === "running" && (
+                                            <div className="text-center py-2 text-blue-600 text-xs bg-blue-50 rounded-lg border border-blue-200 animate-pulse">
+                                                {"\u{1F504}"} {language === "es" ? "Scraper ejecutandose ahora..." : "Scraper running now..."}
+                                            </div>
+                                        )}
+
+                                        {Object.keys(prices).length === 0 && scrapeStatus.status !== "running" && (
                                             <div className="text-center py-3 text-gray-400 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
                                                 {language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily."}
                                             </div>
                                         )}
 
                                         {/* Matched items section */}
-                                        {sorted.filter(([k]) => { const m = SYSCO_INVENTORY_MAP[k]; return m && m.invId; }).length > 0 && (
-                                            <div className="text-xs font-bold text-green-700 px-1 pt-1">{"\u{2705}"} {language === "es" ? "Asociado a inventario" : "Matched to Inventory"}</div>
+                                        {matchedCount > 0 && (
+                                            <div className="text-xs font-bold text-green-700 px-1 pt-1">{"\u{2705}"} {language === "es" ? "Asociado a inventario" : "Matched to Inventory"} ({matchedCount})</div>
                                         )}
 
                                         {(() => {
                                             let unmatchedHeaderShown = false;
-                                            const hasMatched = sorted.some(([k]) => { const m = SYSCO_INVENTORY_MAP[k]; return m && m.invId; });
                                             return sorted.map(([key, data]) => {
-                                            const match = SYSCO_INVENTORY_MAP[key];
-                                            const invItem = match && match.invId ? invLookup[match.invId] : null;
-                                            const isMatched = !!(match && match.invId);
-                                            const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && hasMatched;
+                                            const invItem = data.invId ? invLookup[data.invId] : null;
+                                            const isMatched = !!data.invId;
+                                            const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && matchedCount > 0;
                                             if (showUnmatchedHeader) unmatchedHeaderShown = true;
 
                                             return (
                                                 <div key={key}>
                                                     {showUnmatchedHeader && (
-                                                        <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en Sysco" : "Sysco Only"}</div>
+                                                        <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en Sysco" : "Sysco Only"} ({sorted.length - matchedCount})</div>
                                                     )}
                                                     <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
                                                         <div className="flex items-start justify-between gap-2">
                                                             <div className="flex-1 min-w-0">
                                                                 <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
                                                                 {invItem && (
-                                                                    <div className="text-xs text-green-600 mt-0.5">{"\u{2194}\u{FE0F}"} {invItem.name}</div>
-                                                                )}
-                                                                {!invItem && match && match.note && (
-                                                                    <div className="text-xs text-gray-400 mt-0.5 italic">{match.note}</div>
+                                                                    <div className="text-xs text-green-600 mt-0.5">
+                                                                        {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
+                                                                        {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                    </div>
                                                                 )}
                                                                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
                                                                     {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
@@ -2859,7 +2904,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             <div className="text-right flex-shrink-0">
                                                                 {data.price != null ? (
                                                                     <>
-                                                                        <div className="font-bold text-lg text-blue-700">${data.price.toFixed(2)}</div>
+                                                                        <div className="font-bold text-lg text-blue-700">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
                                                                         <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
                                                                     </>
                                                                 ) : (
