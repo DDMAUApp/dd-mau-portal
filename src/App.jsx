@@ -1,24 +1,71 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense, Component } from 'react';
 import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS } from './data/staff';
-// Components
+// Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
-import TrainingHub from './components/TrainingHub';
-import Operations from './components/Operations';
-import MenuReference from './components/MenuReference';
-import Schedule from './components/Schedule';
-import Recipes from './components/Recipes';
-import LaborDashboard from './components/LaborDashboard';
-import Eighty6Dashboard from './components/Eighty6Dashboard';
-import CateringOrder from './components/CateringOrder';
-import MaintenanceRequest from './components/MaintenanceRequest';
-import AdminPanel from './components/AdminPanel';
-import InsuranceEnrollment from './components/InsuranceEnrollment';
 import useGeofence from './components/hooks/useGeofence';
+// Components — lazy loaded (only when tab is active)
+const TrainingHub = lazy(() => import('./components/TrainingHub'));
+const Operations = lazy(() => import('./components/Operations'));
+const MenuReference = lazy(() => import('./components/MenuReference'));
+const Schedule = lazy(() => import('./components/Schedule'));
+const Recipes = lazy(() => import('./components/Recipes'));
+const LaborDashboard = lazy(() => import('./components/LaborDashboard'));
+const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard'));
+const CateringOrder = lazy(() => import('./components/CateringOrder'));
+const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest'));
+const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'));
+
+// Error boundary — catches render errors in child components
+class ErrorBoundary extends Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error, errorInfo) {
+        console.error("ErrorBoundary caught:", error, errorInfo);
+    }
+    render() {
+        if (this.state.hasError) {
+            const isEs = this.props.language === "es";
+            return (
+                <div style={{padding: "32px 16px", textAlign: "center"}}>
+                    <p style={{fontSize: "40px", marginBottom: "12px"}}>⚠️</p>
+                    <p style={{fontSize: "18px", fontWeight: 700, color: "#dc2626", marginBottom: "8px"}}>
+                        {isEs ? "Algo salió mal" : "Something went wrong"}
+                    </p>
+                    <p style={{fontSize: "14px", color: "#6b7280", marginBottom: "16px"}}>
+                        {isEs ? "Esta sección tuvo un error. Intenta recargar." : "This section had an error. Try reloading."}
+                    </p>
+                    <button onClick={() => this.setState({ hasError: false, error: null })}
+                        style={{padding: "10px 24px", background: "#059669", color: "white", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "14px", cursor: "pointer"}}>
+                        {isEs ? "Reintentar" : "Try Again"}
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+// Loading spinner for lazy-loaded components
+function TabLoading({ language }) {
+    return (
+        <div style={{padding: "48px 16px", textAlign: "center"}}>
+            <div style={{width: "32px", height: "32px", border: "3px solid #e5e7eb", borderTopColor: "#059669", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto 12px"}} />
+            <p style={{fontSize: "14px", color: "#9ca3af"}}>{language === "es" ? "Cargando..." : "Loading..."}</p>
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        </div>
+    );
+}
 
 // Version check hook — polls /version.json every 2 minutes
 function useVersionCheck() {
@@ -82,8 +129,8 @@ async function runMigrations() {
         }
     } catch (err) { console.error("Migration error:", err); }
 }
-// Run once on load
-runMigrations();
+let migrationRan = false;
+
 export default function App() {
     const [staffName, setStaffName] = useState(null);
     const [staffLocation, setStaffLocation] = useState("webster");
@@ -93,6 +140,13 @@ export default function App() {
     const [staffList, setStaffList] = useState(DEFAULT_STAFF);
     const { isAtDDMau, checking: geoChecking, error: geoError } = useGeofence();
     const updateAvailable = useVersionCheck();
+    // Run migrations once on first mount
+    useEffect(() => {
+        if (!migrationRan) {
+            migrationRan = true;
+            runMigrations();
+        }
+    }, []);
     // Load staff list from Firestore
     useEffect(() => {
         const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {
@@ -190,7 +244,7 @@ export default function App() {
                 {activeTab === "home" && (
                     <div className="pb-24" style={{background: "#111827"}}>
                         <div style={{background: "linear-gradient(135deg, #059669, #047857)", padding: "24px 16px 20px", color: "white"}}>
-                            <p style={{fontSize: "13px", opacity: 0.8, margin: 0}}>{language === "es" ? "Buenas tardes" : new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening"}</p>
+                            <p style={{fontSize: "13px", opacity: 0.8, margin: 0}}>{language === "es" ? (new Date().getHours() < 12 ? "Buenos días" : new Date().getHours() < 17 ? "Buenas tardes" : "Buenas noches") : new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening"}</p>
                             <h2 style={{fontSize: "22px", fontWeight: 700, margin: "4px 0 0"}}>{t("welcome", language)}, {staffName}!</h2>
                         </div>
                         <div style={{padding: "16px"}}>
@@ -263,17 +317,21 @@ export default function App() {
                         </div>
                     </div>
                 )}
-                {activeTab === "training" && <TrainingHub staffName={staffName} language={language} staffList={staffList} />}
-                {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
-                {activeTab === "menu" && <MenuReference language={language} />}
-                {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} />}
-                {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} staffList={staffList} />}
-                {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
-                {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
-                {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
-                {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
-                {activeTab === "insurance" && <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />}
-                {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
+                <Suspense fallback={<TabLoading language={language} />}>
+                    <ErrorBoundary language={language} key={activeTab}>
+                        {activeTab === "training" && <TrainingHub staffName={staffName} language={language} staffList={staffList} />}
+                        {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
+                        {activeTab === "menu" && <MenuReference language={language} />}
+                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} />}
+                        {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
+                        {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
+                        {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
+                        {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
+                        {activeTab === "insurance" && <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
+                    </ErrorBoundary>
+                </Suspense>
             </div>
             {/* Bottom Navigation */}
             <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow">
