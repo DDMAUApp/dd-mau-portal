@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -12,6 +12,8 @@ export default function ToastOrders({ language }) {
 
     const isEn = language !== "es";
 
+    const refreshTimeoutRef = useRef(null);
+
     const triggerRefresh = async () => {
         setRefreshing(true);
         try {
@@ -22,7 +24,8 @@ export default function ToastOrders({ language }) {
         } catch (e) {
             console.error("Trigger refresh error:", e);
         }
-        setTimeout(() => setRefreshing(false), 3000);
+        if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = setTimeout(() => setRefreshing(false), 3000);
     };
 
     // Auto-refresh every 60 seconds
@@ -30,7 +33,10 @@ export default function ToastOrders({ language }) {
         const interval = setInterval(() => {
             triggerRefresh();
         }, 60000);
-        return () => clearInterval(interval);
+        return () => {
+            clearInterval(interval);
+            if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        };
     }, []);
 
     useEffect(() => {
@@ -119,12 +125,16 @@ export default function ToastOrders({ language }) {
         const html = `<!DOCTYPE html><html><head><title>Order #${ord.orderNumber || ""}</title>
         <style>
             body { font-family: Arial, Helvetica, sans-serif; max-width:700px; margin:0 auto; padding:30px 40px; color:#222; font-size:14px; }
-            .no-print { margin:20px 0; text-align:center; }
+            .no-print { position:sticky;top:0;z-index:1000;background:#255a37;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3) }
             .no-print button { padding:12px 24px; font-size:16px; font-weight:bold; border:none; border-radius:8px; cursor:pointer; margin:0 6px; }
-            .btn-print { background:#255a37; color:white; } .btn-close { background:#e5e7eb; color:#555; }
+            .btn-print { background:white; color:#255a37; } .btn-close { background:#ff4444; color:white; }
             @media print { body { padding:20px; } .no-print { display:none !important; } }
         </style></head>
         <body>
+        <div class="no-print">
+            <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button>
+            <button class="btn-print" onclick="window.print()">🖨️ Print</button>
+        </div>
         <table style="width:100%;margin-bottom:20px;"><tr>
             <td style="vertical-align:top;width:50%;">
                 <div style="font-size:20px;font-weight:bold;color:#333;margin-bottom:2px;">DD Mau</div>
@@ -159,10 +169,6 @@ export default function ToastOrders({ language }) {
 
         ${ord.specialInstructions ? `<div style="margin-top:16px;padding:8px;background:#f5f5f5;border-radius:4px;font-size:13px;"><strong>Notes:</strong> ${ord.specialInstructions}</div>` : ""}
         <div style="margin-top:30px;font-size:11px;color:#bbb;border-top:1px solid #ddd;padding-top:10px;">Printed from DD Mau Staff Portal</div>
-        <div class="no-print">
-            <button class="btn-print" onclick="window.print()">🖨️ Print Again</button>
-            <button class="btn-close" onclick="window.close()">✕ Close</button>
-        </div>
         </body></html>`;
 
         const printWindow = window.open("", "_blank", "width=700,height=900");
