@@ -552,15 +552,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
-                        if (data.status === "running") setSyscoTriggerStatus("running");
-                        else if (data.status === "done") {
+                        if (data.status === "running") {
+                            setSyscoTriggerStatus("running");
+                        } else if (data.status === "done") {
                             setSyscoTriggerStatus("done");
                             setTimeout(() => setSyscoTriggerStatus(null), 4000);
                         } else if (data.status === "error") {
                             setSyscoTriggerStatus("error");
                             setTimeout(() => setSyscoTriggerStatus(null), 5000);
+                        } else if (data.status === "pending") {
+                            setSyscoTriggerStatus("requesting");
                         } else if (!data.trigger) {
-                            // idle state
+                            setSyscoTriggerStatus(null);
                         }
                     }
                 });
@@ -2022,9 +2025,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             {/* ── LIVE PRICES INDICATOR ── */}
                             {(() => {
                                 const ss = syscoScrapeStatus || {};
-                                const isStale = livePrices.sysco?.lastScraped && (Date.now() - new Date(livePrices.sysco.lastScraped).getTime() > 48 * 60 * 60 * 1000);
+                                const lastScrapedMs = livePrices.sysco?.lastScraped ? new Date(livePrices.sysco.lastScraped).getTime() : 0;
+                                const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000);
                                 const hasFailed = ss.status && ss.status !== "success" && ss.status !== "running";
-                                const hasData = livePrices.sysco && livePrices.sysco.lastScraped;
+                                const hasData = livePrices.sysco && lastScrapedMs > 0;
 
                                 if (hasFailed) return (
                                     <div className="flex items-center gap-2 px-2 py-1 bg-red-50 rounded-lg border border-red-300">
@@ -2780,7 +2784,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                                 // Scrape health status
                                 const scrapeStatus = syscoScrapeStatus || {};
-                                const isStale = syscoData.lastScraped && (Date.now() - new Date(syscoData.lastScraped).getTime() > 48 * 60 * 60 * 1000); // >48h old
+                                const lastScrapedMs = syscoData.lastScraped ? new Date(syscoData.lastScraped).getTime() : 0;
+                                const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000); // >48h old
                                 const hasFailed = scrapeStatus.status && scrapeStatus.status !== "success" && scrapeStatus.status !== "running";
 
                                 return (
