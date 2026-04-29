@@ -20,6 +20,7 @@ const CateringOrder = lazy(() => import('./components/CateringOrder'));
 const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest'));
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'));
+const AiAssistant = lazy(() => import('./components/AiAssistant'));
 
 // Error boundary — catches render errors in child components
 class ErrorBoundary extends Component {
@@ -304,6 +305,11 @@ export default function App() {
                                     <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{language === "es" ? "Seguro" : "Insurance"}</p>
                                     <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Beneficios" : "Benefits"}</p>
                                 </button>
+                                <button onClick={() => setActiveTab("ai")} style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
+                                    <div style={{width: "44px", height: "44px", background: "#5b21b6", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🤖</div>
+                                    <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{language === "es" ? "Asistente AI" : "AI Assistant"}</p>
+                                    <p style={{fontSize: "10px", color: "#a78bfa", margin: "2px 0 0"}}>{language === "es" ? "Preguntame" : "Ask anything"}</p>
+                                </button>
                                 {staffIsAdmin && (
                                     <button onClick={() => setActiveTab("admin")}
                                         style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
@@ -329,6 +335,7 @@ export default function App() {
                         {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "insurance" && <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "ai" && <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
                     </ErrorBoundary>
                 </Suspense>
@@ -351,6 +358,13 @@ export default function App() {
                             <span className="text-xs font-bold mt-1">{b.label}</span>
                         </button>
                     ))}
+                    <button
+                        onClick={() => setActiveTab("ai")}
+                        className={`flex flex-col items-center justify-center flex-1 h-full transition ${activeTab === "ai" ? "text-purple-700 bg-purple-50" : "text-gray-600 hover:text-purple-700"}`}
+                    >
+                        <span className="text-2xl">🤖</span>
+                        <span className="text-xs font-bold mt-1">{language === "es" ? "AI" : "AI"}</span>
+                    </button>
                     {(isAtDDMau || staffIsAdmin) && (
                         <button
                             onClick={() => setActiveTab("recipes")}
