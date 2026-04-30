@@ -86,6 +86,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
             const [syscoTriggerStatus, setSyscoTriggerStatus] = useState(null); // null | "requesting" | "running" | "done" | "error"
             const [syscoScrapeStatus, setSyscoScrapeStatus] = useState(null); // { status, detail, pricesFound, updatedAt }
+            const [usfoodsTriggerStatus, setUsfoodsTriggerStatus] = useState(null);
+            const [usfoodsScrapeStatus, setUsfoodsScrapeStatus] = useState(null);
+            const [pricingVendor, setPricingVendor] = useState("sysco"); // "sysco" or "usfoods"
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
@@ -261,18 +264,57 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
             }, [livePrices.sysco, SYSCO_OVERRIDES, autoMatch]);
 
-            // Reverse lookup: inventory item ID → Sysco price data (for inline price badges)
+            // US Foods pricing data (same pattern as Sysco)
+            const usfoodsPricingData = useMemo(() => {
+                const ufData = livePrices.usfoods || {};
+                const prices = ufData.prices || {};
+                const allEntries = Object.entries(prices).map(([ufId, data]) => {
+                    const autoInvId = autoMatch(data.name);
+                    return [ufId, {
+                        ...data,
+                        name: data.name || `US Foods Item ${ufId}`,
+                        invId: autoInvId,
+                        matchType: autoInvId ? "auto" : null,
+                    }];
+                });
+                const sorted = [...allEntries].sort((a, b) => {
+                    const aRank = a[1].invId ? 0 : 1;
+                    const bRank = b[1].invId ? 0 : 1;
+                    if (aRank !== bRank) return aRank - bRank;
+                    return (a[1].name || "").localeCompare(b[1].name || "");
+                });
+                return {
+                    ufData,
+                    sorted,
+                    matchedCount: sorted.filter(([,d]) => d.invId).length,
+                    withPriceCount: sorted.filter(([,d]) => d.price != null).length,
+                };
+            }, [livePrices.usfoods, autoMatch]);
+
+            // Reverse lookup: inventory item ID → best vendor price data (for inline price badges)
             const invToSyscoPrice = useMemo(() => {
                 const map = {};
+                // Add Sysco matches
                 if (syscoPricingData && syscoPricingData.sorted) {
                     for (const [, data] of syscoPricingData.sorted) {
                         if (data.invId && data.price != null) {
-                            map[data.invId] = data;
+                            map[data.invId] = { ...data, vendor: "Sysco" };
+                        }
+                    }
+                }
+                // Add US Foods matches (only if cheaper or no Sysco match)
+                if (usfoodsPricingData && usfoodsPricingData.sorted) {
+                    for (const [, data] of usfoodsPricingData.sorted) {
+                        if (data.invId && data.price != null) {
+                            const existing = map[data.invId];
+                            if (!existing || data.price < existing.price) {
+                                map[data.invId] = { ...data, vendor: "US Foods" };
+                            }
                         }
                     }
                 }
                 return map;
-            }, [syscoPricingData]);
+            }, [syscoPricingData, usfoodsPricingData]);
 
             // Load skills matrix from Firestore
             useEffect(() => {
@@ -669,7 +711,41 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); };
+                // US Foods live prices
+                const unsubUsfoodsPrices = onSnapshot(doc(db, "vendor_prices", "usfoods"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setLivePrices(prev => ({ ...prev, usfoods: docSnap.data() }));
+                    }
+                });
+
+                // US Foods trigger status
+                const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.status === "running") {
+                            setUsfoodsTriggerStatus("running");
+                        } else if (data.status === "done") {
+                            setUsfoodsTriggerStatus("done");
+                            setTimeout(() => setUsfoodsTriggerStatus(null), 4000);
+                        } else if (data.status === "error") {
+                            setUsfoodsTriggerStatus("error");
+                            setTimeout(() => setUsfoodsTriggerStatus(null), 5000);
+                        } else if (data.status === "pending") {
+                            setUsfoodsTriggerStatus("requesting");
+                        } else if (!data.trigger) {
+                            setUsfoodsTriggerStatus(null);
+                        }
+                    }
+                });
+
+                // US Foods scrape health status
+                const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setUsfoodsScrapeStatus(docSnap.data());
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -1233,7 +1309,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const renderLivePriceBadge = (itemId, item) => {
                 const live = getLivePrice(itemId);
                 if (!live) return null;
-                const vendorLabel = item.preferredVendor || item.vendor || "Sysco";
+                const vendorLabel = live.vendor || item.preferredVendor || item.vendor || "Sysco";
                 const hasSalePrice = live.originalPrice && live.originalPrice !== live.price;
                 return (
                     <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${hasSalePrice ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`} title={`${vendorLabel} live: ${live.name || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
@@ -2799,22 +2875,44 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                             {/* ── PRICING VIEW ── */}
                             {invViewMode === "pricing" && (() => {
-                                const { syscoData, sorted, matchedCount, withPriceCount } = syscoPricingData;
+                                const isSysco = pricingVendor === "sysco";
+                                const pData = isSysco ? syscoPricingData : usfoodsPricingData;
+                                const sorted = pData.sorted || [];
+                                const matchedCount = pData.matchedCount || 0;
+                                const withPriceCount = pData.withPriceCount || 0;
+                                const vendorData = isSysco ? (pData.syscoData || {}) : (pData.ufData || {});
+                                const vendorName = isSysco ? "Sysco" : "US Foods";
+                                const vendorColor = isSysco ? "blue" : "orange";
 
                                 // Scrape health status
-                                const scrapeStatus = syscoScrapeStatus || {};
-                                const lastScrapedMs = syscoData.lastScraped ? new Date(syscoData.lastScraped).getTime() : 0;
+                                const scrapeStatus = (isSysco ? syscoScrapeStatus : usfoodsScrapeStatus) || {};
+                                const triggerStatus = isSysco ? syscoTriggerStatus : usfoodsTriggerStatus;
+                                const setTriggerStatus = isSysco ? setSyscoTriggerStatus : setUsfoodsTriggerStatus;
+                                const triggerDocName = isSysco ? "sysco_trigger" : "usfoods_trigger";
+                                const lastScrapedMs = vendorData.lastScraped ? new Date(vendorData.lastScraped).getTime() : 0;
                                 const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000);
                                 const hasFailed = scrapeStatus.status && scrapeStatus.status !== "success" && scrapeStatus.status !== "running";
 
                                 return (
                                     <div className="space-y-2">
+                                        {/* Vendor toggle */}
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setPricingVendor("sysco")}
+                                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${pricingVendor === "sysco" ? "bg-blue-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                                Sysco
+                                            </button>
+                                            <button onClick={() => setPricingVendor("usfoods")}
+                                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${pricingVendor === "usfoods" ? "bg-orange-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                                US Foods
+                                            </button>
+                                        </div>
+
                                         {/* Scrape health alert */}
                                         {(hasFailed || isStale) && (
                                             <div className={`rounded-xl p-3 border text-sm ${hasFailed ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"}`}>
                                                 <div className="font-bold text-sm">
                                                     {hasFailed ? (scrapeStatus.status === "login_failed"
-                                                        ? (language === "es" ? "\u{1F6A8} Fallo de inicio de sesion en Sysco" : "\u{1F6A8} Sysco Login Failed")
+                                                        ? (language === "es" ? `\u{1F6A8} Fallo de inicio de sesion en ${vendorName}` : `\u{1F6A8} ${vendorName} Login Failed`)
                                                         : scrapeStatus.status === "no_prices"
                                                             ? (language === "es" ? "\u{26A0}\u{FE0F} No se encontraron precios" : "\u{26A0}\u{FE0F} No Prices Found")
                                                             : (language === "es" ? "\u{274C} Error del scraper" : "\u{274C} Scraper Error")
@@ -2826,20 +2924,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         )}
 
                                         {/* Header */}
-                                        <div className="bg-gradient-to-r from-blue-700 to-blue-600 text-white rounded-xl p-3 flex items-center justify-between">
+                                        <div className={`bg-gradient-to-r ${isSysco ? "from-blue-700 to-blue-600" : "from-orange-600 to-orange-500"} text-white rounded-xl p-3 flex items-center justify-between`}>
                                             <div>
-                                                <div className="font-bold text-sm">{language === "es" ? "Precios de Sysco — Historial de Compras" : "Sysco Pricing — Purchase History"}</div>
-                                                <div className="text-blue-200 text-xs mt-0.5">
+                                                <div className="font-bold text-sm">{language === "es" ? `Precios de ${vendorName} — Historial` : `${vendorName} Pricing — Purchase History`}</div>
+                                                <div className={`${isSysco ? "text-blue-200" : "text-orange-200"} text-xs mt-0.5`}>
                                                     {sorted.length} {language === "es" ? "articulos" : "items"} &middot; {withPriceCount} {language === "es" ? "con precio" : "with prices"} &middot; {matchedCount} {language === "es" ? "vinculados" : "matched"}
-                                                    {syscoData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(syscoData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
+                                                    {vendorData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(vendorData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
                                                 </div>
                                             </div>
                                             <button
                                                 onClick={async () => {
-                                                    if (syscoTriggerStatus === "requesting" || syscoTriggerStatus === "running") return;
-                                                    setSyscoTriggerStatus("requesting");
+                                                    if (triggerStatus === "requesting" || triggerStatus === "running") return;
+                                                    setTriggerStatus("requesting");
                                                     try {
-                                                        await setDoc(doc(db, "vendor_prices", "sysco_trigger"), {
+                                                        await setDoc(doc(db, "vendor_prices", triggerDocName), {
                                                             trigger: true,
                                                             requestedAt: new Date().toISOString(),
                                                             requestedBy: staffName || "unknown",
@@ -2847,27 +2945,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         });
                                                     } catch (e) {
                                                         console.error("Trigger error:", e);
-                                                        setSyscoTriggerStatus("error");
-                                                        setTimeout(() => setSyscoTriggerStatus(null), 4000);
+                                                        setTriggerStatus("error");
+                                                        setTimeout(() => setTriggerStatus(null), 4000);
                                                     }
                                                 }}
-                                                disabled={syscoTriggerStatus === "requesting" || syscoTriggerStatus === "running"}
+                                                disabled={triggerStatus === "requesting" || triggerStatus === "running"}
                                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                                                    syscoTriggerStatus === "running" || syscoTriggerStatus === "requesting"
-                                                        ? "bg-blue-500/30 text-blue-100 cursor-wait"
-                                                        : syscoTriggerStatus === "done"
+                                                    triggerStatus === "running" || triggerStatus === "requesting"
+                                                        ? "bg-white/10 text-white/60 cursor-wait"
+                                                        : triggerStatus === "done"
                                                             ? "bg-green-500/30 text-green-100"
-                                                            : syscoTriggerStatus === "error"
+                                                            : triggerStatus === "error"
                                                                 ? "bg-red-500/30 text-red-100"
                                                                 : "bg-white/20 hover:bg-white/30 text-white cursor-pointer"
                                                 }`}
                                                 title={language === "es" ? "Solicitar actualizacion de precios" : "Request price refresh"}
                                             >
-                                                {syscoTriggerStatus === "running" || syscoTriggerStatus === "requesting" ? (
+                                                {triggerStatus === "running" || triggerStatus === "requesting" ? (
                                                     <><span className="animate-spin inline-block">{"\u{1F504}"}</span> {language === "es" ? "Actualizando..." : "Refreshing..."}</>
-                                                ) : syscoTriggerStatus === "done" ? (
+                                                ) : triggerStatus === "done" ? (
                                                     <>{"\u{2705}"} {language === "es" ? "Listo" : "Done!"}</>
-                                                ) : syscoTriggerStatus === "error" ? (
+                                                ) : triggerStatus === "error" ? (
                                                     <>{"\u{274C}"} {language === "es" ? "Error" : "Error"}</>
                                                 ) : (
                                                     <>{"\u{1F504}"} {language === "es" ? "Actualizar Precios" : "Refresh Prices"}</>
