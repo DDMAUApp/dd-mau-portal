@@ -225,12 +225,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                     let overlap = 0;
                     for (const kw of sKeywords) {
-                        if (inv.keywords.some(ik => ik.includes(kw) || kw.includes(ik))) overlap++;
+                        if (inv.keywords.some(ik => ik === kw || (kw.length > 3 && ik.includes(kw)) || (ik.length > 3 && kw.includes(ik)))) overlap++;
                     }
                     const score = overlap / Math.max(sKeywords.length, 1) * 50;
-                    if (score > bestScore && overlap >= 2) { bestScore = score; bestId = inv.id; }
+                    if (score > bestScore && overlap >= 1) { bestScore = score; bestId = inv.id; }
                 }
-                return bestScore >= 30 ? bestId : null;
+                return bestScore >= 15 ? bestId : null;
             }, [invByName]);
 
             const syscoPricingData = useMemo(() => {
@@ -2882,7 +2882,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </div>
                                         )}
 
-                                        {Object.keys(prices).length === 0 && scrapeStatus.status !== "running" && (
+                                        {sorted.length === 0 && scrapeStatus.status !== "running" && (
                                             <div className="text-center py-3 text-gray-400 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
                                                 {language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily."}
                                             </div>
