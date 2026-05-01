@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -12,6 +12,9 @@ export default function ToastOrders({ language }) {
 
     const isEn = language !== "es";
 
+    const refreshTimeoutRef = useRef(null);
+    const isMountedRef = useRef(true);
+
     const triggerRefresh = async () => {
         setRefreshing(true);
         try {
@@ -22,7 +25,10 @@ export default function ToastOrders({ language }) {
         } catch (e) {
             console.error("Trigger refresh error:", e);
         }
-        setTimeout(() => setRefreshing(false), 3000);
+        if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = setTimeout(() => {
+            if (isMountedRef.current) setRefreshing(false);
+        }, 3000);
     };
 
     // Auto-refresh every 60 seconds
@@ -30,7 +36,19 @@ export default function ToastOrders({ language }) {
         const interval = setInterval(() => {
             triggerRefresh();
         }, 60000);
-        return () => clearInterval(interval);
+        return () => {
+            isMountedRef.current = false;
+            clearInterval(interval);
+            if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        };
+    }, []);
+
+    // Set mounted flag on initial render
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+        };
     }, []);
 
     useEffect(() => {

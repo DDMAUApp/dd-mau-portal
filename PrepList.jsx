@@ -1,9 +1,22 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, query } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { isAdmin } from '../data/staff';
+
+// Debounce helper — delays Firestore writes until tapping stops
+function useDebounce(fn, delay) {
+    const timerRef = useRef(null);
+    const fnRef = useRef(fn);
+    fnRef.current = fn;
+    const debounced = useCallback((...args) => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => fnRef.current(...args), delay);
+    }, [delay]);
+    useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
+    return debounced;
+}
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_LABELS_ES = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"];
@@ -67,7 +80,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         return () => unsub();
     }, [storeLocation]);
 
-    const savePrep = async (newOnHand, newDone, newMeta, newStations, newBusy) => {
+    const savePrepRaw = async (newOnHand, newDone, newMeta, newStations, newBusy) => {
         try {
             await setDoc(doc(db, "ops", "prepList_" + storeLocation), {
                 onHand: newOnHand || onHand,
@@ -79,11 +92,15 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             });
         } catch (err) { console.error("Error saving prep:", err); }
     };
+    // Debounced version for rapid count changes (500ms delay)
+    const savePrepDebounced = useDebounce(savePrepRaw, 500);
+    // Immediate save for non-count changes
+    const savePrep = savePrepRaw;
 
     const updateOnHand = (itemId, val) => {
         const updated = { ...onHand, [itemId]: Math.max(0, val) };
         setOnHand(updated);
-        savePrep(updated, null, null, null);
+        savePrepDebounced(updated, null, null, null);
     };
 
     const toggleDone = (itemId) => {
