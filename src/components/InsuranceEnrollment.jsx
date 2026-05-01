@@ -327,6 +327,10 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     <div class="row"><span class="label">Date</span><span class="val">${f.signatureDate || "—"}</span></div>
     </div></body></html>`;
     const win = window.open("", "_blank");
+    if (!win) {
+      alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+      return;
+    }
     win.document.write(html);
     win.document.close();
     win.focus();
@@ -595,7 +599,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
                 {[
                   form.enrollMedical && (L("Medical", "Médico")),
                   form.enrollDental && (L("Dental", "Dental")),
-                  form.enrollVision && (L("Visión", "Visión")),
+                  form.enrollVision && (L("Vision", "Visión")),
                   form.enrollLife && (L("Life", "Vida")),
                 ].filter(Boolean).join(", ") || L("None selected", "Ninguna")}
               </span>

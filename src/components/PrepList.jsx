@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, query } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { isAdmin } from '../data/staff';
@@ -336,6 +336,10 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         // buttons are in sticky top bar
         html += `</body></html>`;
         const w = window.open("", "_blank");
+        if (!w) {
+            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+            return;
+        }
         w.document.write(html);
         w.document.close();
         w.print();
@@ -382,6 +386,10 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         // buttons are in sticky top bar
         html += `</body></html>`;
         const w = window.open("", "_blank");
+        if (!w) {
+            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+            return;
+        }
         w.document.write(html);
         w.document.close();
         w.print();

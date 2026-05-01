@@ -1429,6 +1429,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
+                if (!w) {
+                    alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                    return;
+                }
                 w.document.write(html);
                 w.document.close();
                 w.print();
@@ -3579,6 +3583,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
+                                        if (!printWindow) {
+                                            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                                            return;
+                                        }
                                         printWindow.document.write(html);
                                         printWindow.document.close();
                                         printWindow.focus();
