@@ -454,11 +454,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (oldDocSnap.exists() && oldDocSnap.data().date === breakDate && oldDocSnap.data().plan) {
                             getDoc(doc(db, "ops", docId)).then(newDocSnap => {
                                 if (!newDocSnap.exists()) {
-                                    setDoc(doc(db, "ops", docId), oldDocSnap.data());
+                                    setDoc(doc(db, "ops", docId), oldDocSnap.data()).catch(err => console.error("Migration error:", err));
                                 }
-                            });
+                            }).catch(err => console.error("Migration check error:", err));
                         }
-                    });
+                    }).catch(err => console.error("Migration read error:", err));
                 }
                 return () => unsubBreakPlan();
             }, [breakDate, storeLocation]);
@@ -788,6 +788,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const currentMinutes = now.getHours() * 60 + now.getMinutes();
                 const tasks = customTasksRef.current;
                 const ch = checksRef.current;
+                const lists = checklistListsRef.current;
                 const todayKey = getTodayKey();
                 const alerts = [];
                 ["FOH", "BOH"].forEach(side => {
@@ -797,9 +798,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             if (!item.completeBy || !item.assignTo) return;
                             const itemAssignees = Array.isArray(item.assignTo) ? item.assignTo : [item.assignTo];
                             if (!itemAssignees.includes(staffName)) return;
-                            const done = item.subtasks && item.subtasks.length > 0
-                                ? item.subtasks.every(s => ch[s.id])
-                                : !!ch[item.id];
+                            // Check all lists for this side to find where task might be checked
+                            let done = false;
+                            const sideListCount = (lists[side] && lists[side].length) || 1;
+                            for (let listIdx = 0; listIdx < sideListCount; listIdx++) {
+                                const prefix = getCheckPrefix(side, listIdx);
+                                if (item.subtasks && item.subtasks.length > 0) {
+                                    if (item.subtasks.every(s => ch[prefix + s.id])) { done = true; break; }
+                                } else {
+                                    if (ch[prefix + item.id]) { done = true; break; }
+                                }
+                            }
                             if (done) return;
                             const [h, m] = item.completeBy.split(":").map(Number);
                             const deadlineMinutes = h * 60 + m;
@@ -976,7 +985,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // If checking ON and the parent task has a follow-up, check if task is now complete
                 if (newVal && parentTask && parentTask.followUp && parentTask.followUp.question) {
                     const allDone = parentTask.subtasks && parentTask.subtasks.length > 0
-                        ? parentTask.subtasks.every(s => (currentPrefix + s.id) === pKey ? true : newChecks[currentPrefix + s.id])
+                        ? parentTask.subtasks.every(s => (currentPrefix + s.id) === pKey ? newVal : newChecks[currentPrefix + s.id])
                         : true;
                     if (allDone) setShowFollowUpFor(parentTask.id);
                 }
