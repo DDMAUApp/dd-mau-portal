@@ -198,6 +198,47 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 "5061239": "8-13", "4278760": "8-8",
             }), []);
 
+            // ── Sysco item → category mapping (from purchase history) ──
+            const SYSCO_ITEM_CATEGORIES = useMemo(() => ({
+                // Proteins & Seafood
+                "6034780": "Proteins & Seafood", "7246665": "Proteins & Seafood",
+                "2398519": "Proteins & Seafood", "5636997": "Proteins & Seafood",
+                "7411241": "Proteins & Seafood", "5351494": "Proteins & Seafood",
+                // Produce
+                "5818259": "Produce", "1675859": "Produce", "1491810": "Produce",
+                "1008010": "Produce", "7078475": "Produce", "5179760": "Produce",
+                "5430934": "Produce", "1908318": "Produce", "5852689": "Produce",
+                "7759566": "Produce", "5893973": "Produce", "4678555": "Produce",
+                "7350788": "Produce", "5131753": "Produce", "1821529": "Produce",
+                // Dairy & Eggs
+                "4906361": "Dairy & Eggs", "6680073": "Dairy & Eggs", "3051695": "Dairy & Eggs",
+                // Beverages
+                "6236614": "Beverages", "4306627": "Beverages", "7101689": "Beverages",
+                // Supplies & Packaging
+                "7701311": "Supplies & Packaging", "7213296": "Supplies & Packaging",
+                "6155841": "Supplies & Packaging", "6138219": "Supplies & Packaging",
+                "3438292": "Supplies & Packaging", "4681957": "Supplies & Packaging",
+                "7385215": "Supplies & Packaging", "6669499": "Supplies & Packaging",
+                "6541129": "Supplies & Packaging", "9904133": "Supplies & Packaging",
+                "9903882": "Supplies & Packaging", "9904135": "Supplies & Packaging",
+                "9904127": "Supplies & Packaging", "9904138": "Supplies & Packaging",
+                "2102038": "Supplies & Packaging", "6855423": "Supplies & Packaging",
+                "6298877": "Supplies & Packaging", "5597443": "Supplies & Packaging",
+                // Cleaning & Chemicals
+                "9792611": "Cleaning & Chemicals", "7260143": "Cleaning & Chemicals",
+                "1293212": "Cleaning & Chemicals", "0616526": "Cleaning & Chemicals",
+                "4278760": "Cleaning & Chemicals", "6350461": "Cleaning & Chemicals",
+                "7670021": "Cleaning & Chemicals",
+                // Sauces & Condiments
+                "4136768": "Sauces & Condiments", "7257721": "Sauces & Condiments",
+                "7011275": "Sauces & Condiments", "4485085": "Sauces & Condiments",
+                // Other Food
+                "0937631": "Other Food", "4390807": "Other Food",
+            }), []);
+
+            const SYSCO_CATEGORY_ORDER = ["Proteins & Seafood", "Produce", "Dairy & Eggs", "Beverages", "Sauces & Condiments", "Other Food", "Supplies & Packaging", "Cleaning & Chemicals", "Uncategorized"];
+            const SYSCO_CATEGORY_EMOJI = { "Proteins & Seafood": "\u{1F969}", "Produce": "\u{1F966}", "Dairy & Eggs": "\u{1F95A}", "Beverages": "\u{2615}", "Supplies & Packaging": "\u{1F4E6}", "Cleaning & Chemicals": "\u{1F9F9}", "Sauces & Condiments": "\u{1F336}\u{FE0F}", "Other Food": "\u{1F372}", "Uncategorized": "\u{2753}" };
+
             const invByName = useMemo(() => {
                 const result = [];
                 customInventory.forEach(cat => cat.items.forEach(item => {
@@ -243,26 +284,36 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const overrideInvId = SYSCO_OVERRIDES[syscoId] || null;
                     const autoInvId = !overrideInvId ? autoMatch(data.name) : null;
                     const invId = overrideInvId || autoInvId;
+                    const category = SYSCO_ITEM_CATEGORIES[syscoId] || "Uncategorized";
                     return [syscoId, {
                         ...data,
                         name: data.name || `Sysco Item ${syscoId}`,
                         invId,
                         matchType: overrideInvId ? "known" : autoInvId ? "auto" : null,
+                        category,
                     }];
                 });
                 const sorted = [...allEntries].sort((a, b) => {
-                    const aRank = a[1].invId ? 0 : 1;
-                    const bRank = b[1].invId ? 0 : 1;
-                    if (aRank !== bRank) return aRank - bRank;
+                    const aCatIdx = SYSCO_CATEGORY_ORDER.indexOf(a[1].category);
+                    const bCatIdx = SYSCO_CATEGORY_ORDER.indexOf(b[1].category);
+                    if (aCatIdx !== bCatIdx) return aCatIdx - bCatIdx;
                     return (a[1].name || "").localeCompare(b[1].name || "");
                 });
+                // Group by category
+                const byCategory = {};
+                for (const entry of sorted) {
+                    const cat = entry[1].category;
+                    if (!byCategory[cat]) byCategory[cat] = [];
+                    byCategory[cat].push(entry);
+                }
                 return {
                     syscoData,
                     sorted,
+                    byCategory,
                     matchedCount: sorted.filter(([,d]) => d.invId).length,
                     withPriceCount: sorted.filter(([,d]) => d.price != null).length,
                 };
-            }, [livePrices.sysco, SYSCO_OVERRIDES, autoMatch]);
+            }, [livePrices.sysco, SYSCO_OVERRIDES, SYSCO_ITEM_CATEGORIES, autoMatch]);
 
             // US Foods pricing data (same pattern as Sysco)
             const usfoodsPricingData = useMemo(() => {
@@ -1888,7 +1939,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         <span className="text-xs text-gray-400">{checks[currentPrefix + item.id + "_photoTime"] ? new Date(checks[currentPrefix + item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
                                                     </div>
                                                     <img src={photoUrl} alt="Task photo" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
-                                                        onClick={() => window.open(photoUrl, "_blank")} />
+                                                        onClick={() => {
+                                                            const w = window.open(photoUrl, "_blank");
+                                                            if (!w) {
+                                                                alert(language === "es" ? "Por favor permita ventanas emergentes para ver la foto." : "Please allow pop-ups to view the photo.");
+                                                            }
+                                                        }} />
                                                 </div>
                                             ) : (
                                                 <div>
@@ -2999,66 +3055,128 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </div>
                                         )}
 
-                                        {/* Matched items section */}
-                                        {matchedCount > 0 && (
-                                            <div className="text-xs font-bold text-green-700 px-1 pt-1">{"\u{2705}"} {language === "es" ? "Asociado a inventario" : "Matched to Inventory"} ({matchedCount})</div>
-                                        )}
-
-                                        {(() => {
-                                            let unmatchedHeaderShown = false;
-                                            return sorted.map(([key, data]) => {
-                                            const invItem = data.invId ? invLookup[data.invId] : null;
-                                            const isMatched = !!data.invId;
-                                            const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && matchedCount > 0;
-                                            if (showUnmatchedHeader) unmatchedHeaderShown = true;
-
-                                            return (
-                                                <div key={key}>
-                                                    {showUnmatchedHeader && (
-                                                        <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en Sysco" : "Sysco Only"} ({sorted.length - matchedCount})</div>
-                                                    )}
-                                                    <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
-                                                                {invItem && (
-                                                                    <div className="text-xs text-green-600 mt-0.5">
-                                                                        {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
-                                                                        {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
-                                                                    </div>
-                                                                )}
-                                                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
-                                                                    {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
-                                                                    {data.brand && <span>{data.brand}</span>}
-                                                                    {key && <span className="text-gray-400">#{key}</span>}
-                                                                </div>
-                                                                {data.lastOrdered && (
-                                                                    <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
-                                                                )}
+                                        {/* Category-grouped items (Sysco) or flat list (US Foods) */}
+                                        {isSysco && pData.byCategory ? (
+                                            SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
+                                                const catItems = pData.byCategory[cat];
+                                                const catEmoji = SYSCO_CATEGORY_EMOJI[cat] || "";
+                                                const catCollapsed = collapsedCats["sysco_" + cat];
+                                                const catSaleCount = catItems.filter(([,d]) => d.originalPrice && d.originalPrice !== d.price).length;
+                                                return (
+                                                    <div key={cat}>
+                                                        <button onClick={() => setCollapsedCats(prev => ({...prev, ["sysco_" + cat]: !prev["sysco_" + cat]}))}
+                                                            className="w-full flex items-center justify-between px-3 py-2 bg-gray-100 rounded-xl mt-2 hover:bg-gray-200 transition">
+                                                            <div className="flex items-center gap-2">
+                                                                <span>{catEmoji}</span>
+                                                                <span className="font-bold text-sm text-gray-700">{cat}</span>
+                                                                <span className="text-xs text-gray-400">({catItems.length})</span>
+                                                                {catSaleCount > 0 && <span className="text-xs text-red-500 font-bold">{catSaleCount} on sale</span>}
                                                             </div>
-                                                            <div className="text-right flex-shrink-0">
-                                                                {data.price != null ? (
-                                                                    <>
-                                                                        {data.originalPrice && data.originalPrice !== data.price ? (
+                                                            <span className="text-gray-400 text-xs">{catCollapsed ? "\u{25B6}" : "\u{25BC}"}</span>
+                                                        </button>
+                                                        {!catCollapsed && catItems.map(([key, data]) => {
+                                                            const invItem = data.invId ? invLookup[data.invId] : null;
+                                                            const isMatched = !!data.invId;
+                                                            return (
+                                                                <div key={key} className={`rounded-xl p-3 border mt-1 ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                                    <div className="flex items-start justify-between gap-2">
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
+                                                                            {invItem && (
+                                                                                <div className="text-xs text-green-600 mt-0.5">
+                                                                                    {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
+                                                                                    {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
+                                                                                {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
+                                                                                {data.brand && <span>{data.brand}</span>}
+                                                                                {key && <span className="text-gray-400">#{key}</span>}
+                                                                            </div>
+                                                                            {data.lastOrdered && (
+                                                                                <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="text-right flex-shrink-0">
+                                                                            {data.price != null ? (
+                                                                                <>
+                                                                                    {data.originalPrice && data.originalPrice !== data.price ? (
+                                                                                        <>
+                                                                                            <div className="text-sm text-gray-400 line-through">${typeof data.originalPrice === "number" ? data.originalPrice.toFixed(2) : data.originalPrice}</div>
+                                                                                            <div className="font-bold text-lg text-red-600">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <div className="font-bold text-lg text-blue-700">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                    )}
+                                                                                    <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            (() => {
+                                                let unmatchedHeaderShown = false;
+                                                return sorted.map(([key, data]) => {
+                                                    const invItem = data.invId ? invLookup[data.invId] : null;
+                                                    const isMatched = !!data.invId;
+                                                    const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && matchedCount > 0;
+                                                    if (showUnmatchedHeader) unmatchedHeaderShown = true;
+                                                    return (
+                                                        <div key={key}>
+                                                            {showUnmatchedHeader && (
+                                                                <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en US Foods" : "US Foods Only"} ({sorted.length - matchedCount})</div>
+                                                            )}
+                                                            <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                                <div className="flex items-start justify-between gap-2">
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Item ${key}`}</div>
+                                                                        {invItem && (
+                                                                            <div className="text-xs text-green-600 mt-0.5">
+                                                                                {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
+                                                                                {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                            </div>
+                                                                        )}
+                                                                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
+                                                                            {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
+                                                                            {data.brand && <span>{data.brand}</span>}
+                                                                            {key && <span className="text-gray-400">#{key}</span>}
+                                                                        </div>
+                                                                        {data.lastOrdered && (
+                                                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="text-right flex-shrink-0">
+                                                                        {data.price != null ? (
                                                                             <>
-                                                                                <div className="text-sm text-gray-400 line-through">${typeof data.originalPrice === "number" ? data.originalPrice.toFixed(2) : data.originalPrice}</div>
-                                                                                <div className="font-bold text-lg text-red-600">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                {data.originalPrice && data.originalPrice !== data.price ? (
+                                                                                    <>
+                                                                                        <div className="text-sm text-gray-400 line-through">${typeof data.originalPrice === "number" ? data.originalPrice.toFixed(2) : data.originalPrice}</div>
+                                                                                        <div className="font-bold text-lg text-red-600">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <div className="font-bold text-lg text-blue-700">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                )}
+                                                                                <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
                                                                             </>
                                                                         ) : (
-                                                                            <div className="font-bold text-lg text-blue-700">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                            <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
                                                                         )}
-                                                                        <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
-                                                                    </>
-                                                                ) : (
-                                                                    <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
-                                                                )}
+                                                                    </div>
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        });
-                                        })()}
+                                                    );
+                                                });
+                                            })()
+                                        )}
                                     </div>
                                 );
                             })()}
