@@ -13,6 +13,7 @@ export default function ToastOrders({ language }) {
     const isEn = language !== "es";
 
     const refreshTimeoutRef = useRef(null);
+    const isMountedRef = useRef(true);
 
     const triggerRefresh = async () => {
         setRefreshing(true);
@@ -25,7 +26,9 @@ export default function ToastOrders({ language }) {
             console.error("Trigger refresh error:", e);
         }
         if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = setTimeout(() => setRefreshing(false), 3000);
+        refreshTimeoutRef.current = setTimeout(() => {
+            if (isMountedRef.current) setRefreshing(false);
+        }, 3000);
     };
 
     // Auto-refresh every 60 seconds
@@ -34,8 +37,17 @@ export default function ToastOrders({ language }) {
             triggerRefresh();
         }, 60000);
         return () => {
+            isMountedRef.current = false;
             clearInterval(interval);
             if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        };
+    }, []);
+
+    // Set mounted flag on initial render
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
         };
     }, []);
 
@@ -149,6 +161,7 @@ export default function ToastOrders({ language }) {
                     ${ord.orderType ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Type</td><td>${ord.orderType}</td></tr>` : ""}
                     ${timeStr ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Placed</td><td>${timeStr}</td></tr>` : ""}
                     ${ord.status ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Status</td><td>${ord.status}</td></tr>` : ""}
+                    ${ord.serverName ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Server</td><td>${ord.serverName}</td></tr>` : ""}
                 </table>
             </td>
         </tr></table>
@@ -172,6 +185,12 @@ export default function ToastOrders({ language }) {
         </body></html>`;
 
         const printWindow = window.open("", "_blank", "width=700,height=900");
+        if (!printWindow) {
+            alert(isEn
+                ? "Please allow pop-ups to print orders."
+                : "Por favor permita ventanas emergentes para imprimir pedidos.");
+            return;
+        }
         printWindow.document.write(html);
         printWindow.document.close();
         printWindow.focus();
@@ -257,6 +276,9 @@ export default function ToastOrders({ language }) {
                                         </div>
                                         {ord.customerName && (
                                             <p className="text-sm text-gray-700 mt-1 font-medium">{ord.customerName}</p>
+                                        )}
+                                        {ord.serverName && (
+                                            <p className="text-xs text-gray-500 mt-0.5">{isEn ? "Server" : "Mesero"}: {ord.serverName}</p>
                                         )}
                                         {!expanded && (
                                             <p className="text-xs text-gray-400 mt-1">

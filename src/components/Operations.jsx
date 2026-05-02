@@ -1221,7 +1221,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const addInvItem = async (catIdx) => {
                 if (!invNewName.trim()) return;
                 const category = customInventory[catIdx];
-                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1])), -1);
+                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
                 const newItem = {
                     id: catIdx + "-" + (maxId + 1),
                     name: invNewName.trim(),
