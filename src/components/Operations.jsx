@@ -2316,10 +2316,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <div className="relative">
                                     <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
                                         placeholder={language === "es" ? "\u{1F50D} Buscar artículo o proveedor..." : "\u{1F50D} Search items or vendor..."}
-                                        className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white" />
+                                        className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
                                     {invSearch && (
-                                        <button onClick={() => setInvSearch("")}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg">{"\u{2715}"}</button>
+                                        <button type="button" onClick={() => { setInvSearch(""); setDebouncedInvSearch(""); }}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
                                     )}
                                 </div>
                             )}
