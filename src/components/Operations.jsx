@@ -2315,10 +2315,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             {!invEditMode && (
                                 <div className="relative">
                                     <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
-                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo o proveedor..." : "\u{1F50D} Search items or vendor..."}
+                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items..."}
                                         className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
                                     {invSearch && (
-                                        <button type="button" onClick={() => { setInvSearch(""); setDebouncedInvSearch(""); }}
+                                        <button type="button" onClick={() => { setInvSearch(""); setDebouncedInvSearch(""); setCollapsedCats({}); }}
                                             className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
                                     )}
                                 </div>
@@ -2429,8 +2429,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 let filteredItems = searchLower
                                     ? category.items.filter(item =>
                                         (item.name || "").toLowerCase().includes(searchLower) ||
-                                        (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                        (item.vendor || "").toLowerCase().includes(searchLower)
+                                        (item.nameEs || "").toLowerCase().includes(searchLower)
                                     )
                                     : category.items;
                                 if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
@@ -2613,8 +2612,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         const searchLower = debouncedInvSearch.toLowerCase().trim();
                                         const matchesSearch = !searchLower ||
                                             (item.name || "").toLowerCase().includes(searchLower) ||
-                                            (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                            v.toLowerCase().includes(searchLower);
+                                            (item.nameEs || "").toLowerCase().includes(searchLower);
                                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
                                         if (matchesSearch && matchesCounted) {
                                             vendorGroups[v].push({ ...item, catIdx, itemIdx: cat.items.indexOf(item), catName: cat.name, catNameEs: cat.nameEs });
@@ -2799,8 +2797,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     let filteredItems = searchLower
                                                         ? category.items.filter(item =>
                                                             (item.name || "").toLowerCase().includes(searchLower) ||
-                                                            (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                                            (item.vendor || "").toLowerCase().includes(searchLower))
+                                                            (item.nameEs || "").toLowerCase().includes(searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
                                                     if (filteredItems.length === 0) return null;
