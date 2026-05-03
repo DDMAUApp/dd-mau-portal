@@ -31,7 +31,11 @@ export default function ToastOrders({ language }) {
         }, 3000);
     };
 
-    // Auto-refresh every 60 seconds
+    // Auto-refresh every 60 seconds. The mount flag is initialized via
+    // `useRef(true)` on the line above and flipped to false in the cleanup —
+    // a separate "set mount flag on initial render" useEffect was redundant
+    // and has been removed (it ran AFTER this effect set up the interval and
+    // duplicated the cleanup, which masked any subtle ordering bugs).
     useEffect(() => {
         const interval = setInterval(() => {
             triggerRefresh();
@@ -40,14 +44,6 @@ export default function ToastOrders({ language }) {
             isMountedRef.current = false;
             clearInterval(interval);
             if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
-        };
-    }, []);
-
-    // Set mounted flag on initial render
-    useEffect(() => {
-        isMountedRef.current = true;
-        return () => {
-            isMountedRef.current = false;
         };
     }, []);
 

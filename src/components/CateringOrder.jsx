@@ -13,8 +13,11 @@ function CateringMenuItem({ item, language, onAdd, editData, onSaveEdit, onCance
             const initFromEdit = () => {
                 if (!editData) return {};
                 const ci = editData.cartItem;
-                // Find size index
-                const sIdx = item.sizes.findIndex(s => s.label === ci.size) || 0;
+                // Find size index — explicit -1 check because `findIndex(...) || 0`
+                // would leave sIdx as -1 (truthy in JS) when the saved size no
+                // longer exists in item.sizes, breaking subsequent array access.
+                const foundSizeIdx = item.sizes.findIndex(s => s.label === ci.size);
+                const sIdx = foundSizeIdx >= 0 ? foundSizeIdx : 0;
                 // Parse proteins: "Chicken x6" → { selected: ["Chicken"], counts: { Chicken: 6 } }
                 let initProteins = []; let initProteinCounts = {};
                 let initSingleProtein = "";
@@ -593,7 +596,7 @@ export default function CateringOrder({ language, staffName }) {
                         await addDoc(collection(db, "cateringOrders"), order);
                     }
                     setSubmitted(true);
-                } catch (err) { console.error("Error submitting catering order:", err); }
+                } catch (err) { console.error("Error submitting catering order:", err); setSubmitted(false); }
             };
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
@@ -748,7 +751,7 @@ export default function CateringOrder({ language, staffName }) {
                         <div className="bg-white border-2 border-gray-300 rounded-lg overflow-hidden shadow-xl" style={{minHeight: "80vh"}}>
                             <div style={{background: "#255a37", color: "white", padding: "20px", textAlign: "center"}}>
                                 <h2 className="text-2xl font-bold" style={{margin: 0, letterSpacing: "1px"}}>DD Mau Vietnamese Eatery</h2>
-                                <p style={{margin: "4px 0 0", opacity: 0.85, fontSize: "14px"}}>{language === "es" ? "Factura de Catering" : "Catering Invoice"}</p>
+                                <p style={{margin: "4px 0 0", opacity: 0.85, fontSize: "14px"}}>Catering Invoice</p>
                             </div>
                             <div style={{background: "#1a4028", color: "#8fbc8f", textAlign: "center", padding: "6px", fontSize: "13px", fontWeight: "bold", letterSpacing: "2px"}}>
                                 ORDER #{vo.id?.slice(-6).toUpperCase()}
@@ -836,8 +839,8 @@ export default function CateringOrder({ language, staffName }) {
                                 </div>
                             </div>
                             <div style={{textAlign: "center", color: "#888", fontSize: "11px", padding: "12px", borderTop: "1px solid #ddd"}}>
-                                <p style={{margin: "2px 0"}}>{language === "es" ? "Tomado por" : "Taken by"}: {vo.takenBy} | {vo.createdAt ? new Date(vo.createdAt).toLocaleString() : ""}</p>
-                                {vo.updatedAt && vo.updatedAt !== vo.createdAt && <p style={{margin: "2px 0"}}>{language === "es" ? "Actualizado" : "Updated"}: {new Date(vo.updatedAt).toLocaleString()}</p>}
+                                <p style={{margin: "2px 0"}}>{language === "es" ? "Tomado por" : "Taken by"}: {vo.takenBy} | {vo.createdAt ? new Date(vo.createdAt).toLocaleString() : "N/A"}</p>
+                                {vo.updatedAt && vo.createdAt && vo.updatedAt !== vo.createdAt && <p style={{margin: "2px 0"}}>{language === "es" ? "Actualizado" : "Updated"}: {new Date(vo.updatedAt).toLocaleString()}</p>}
                                 <p style={{margin: "6px 0 0"}}>DD Mau Vietnamese Eatery — ddmaustl.com</p>
                                 <span className={`inline-block mt-2 text-xs px-3 py-1 rounded-full font-bold ${vo.status === "new" ? "bg-amber-100 text-amber-700" : vo.status === "confirmed" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"}`}>{vo.status?.toUpperCase()}</span>
                             </div>
