@@ -100,6 +100,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            const invLocalWriteRef = useRef(false); // flag to skip onSnapshot echo after local writes
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
             const [splitWriteIns, setSplitWriteIns] = useState({}); // {personName: [{id, name, count}]}
@@ -684,6 +685,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
                 const unsubInventorySnapshot = onSnapshot(inventoryDocRef, (docSnap) => {
+                    // Skip the echo from our own writes to avoid re-render thrashing
+                    if (invLocalWriteRef.current) {
+                        invLocalWriteRef.current = false;
+                        return;
+                    }
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         setInventory(data.counts || {});
@@ -1180,6 +1186,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (count === 0) delete newMeta[itemId];
                 setInvCountMeta(newMeta);
                 try {
+                    invLocalWriteRef.current = true; // skip the onSnapshot echo
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), { counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
@@ -1196,6 +1203,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     setInventory(resetCounts);
                     setInvCountMeta({});
+                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), { counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
@@ -1204,6 +1212,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const saveInventory = async (counts, items) => {
                 try {
+                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
                         counts, customInventory: items, countMeta: invCountMeta, date: new Date().toISOString()
                     });
@@ -1523,6 +1532,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const newLog = [logEntry, ...vendorChangeLog].slice(0, 50);
                 setVendorChangeLog(newLog);
                 try {
+                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
                         counts: inventory, customInventory: updated, countMeta: invCountMeta, date: now.toISOString()
                     });
