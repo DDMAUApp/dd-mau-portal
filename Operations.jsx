@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
@@ -84,9 +84,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
+            const [syscoTriggerStatus, setSyscoTriggerStatus] = useState(null); // null | "requesting" | "running" | "done" | "error"
+            const [syscoScrapeStatus, setSyscoScrapeStatus] = useState(null); // { status, detail, pricesFound, updatedAt }
+            const [usfoodsTriggerStatus, setUsfoodsTriggerStatus] = useState(null);
+            const [usfoodsScrapeStatus, setUsfoodsScrapeStatus] = useState(null);
+            const [pricingVendor, setPricingVendor] = useState("sysco"); // "sysco" or "usfoods"
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
+            const [debouncedInvSearch, setDebouncedInvSearch] = useState("");
             const [writeInValues, setWriteInValues] = useState({});
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
@@ -94,6 +100,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            const invLocalWriteRef = useRef(false); // flag to skip onSnapshot echo after local writes
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
             const [splitWriteIns, setSplitWriteIns] = useState({}); // {personName: [{id, name, count}]}
@@ -174,9 +181,200 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Labor percentage state (admin-only, from Toast scraper)
             const [laborData, setLaborData] = useState(null);
-            const FOH_ROLES = ["FOH", "Manager", "Owner", "Shift Lead", "Marketing"];
-            const bohStaff = (staffList || []).filter(s => s.role && !FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both"));
-            const fohStaff = (staffList || []).filter(s => FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both"));
+            const FOH_ROLES = useMemo(() => ["FOH", "Manager", "Owner", "Shift Lead", "Marketing"], []);
+            const bohStaff = useMemo(() => (staffList || []).filter(s => s.role && !FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both")), [staffList, storeLocation, FOH_ROLES]);
+            const fohStaff = useMemo(() => (staffList || []).filter(s => FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both")), [staffList, storeLocation, FOH_ROLES]);
+
+            // ── Memoized inventory lookup + Sysco price matching ──
+            const SYSCO_OVERRIDES = useMemo(() => ({
+                "5106402": "0-26", "7952468": "0-27", "7411241": "0-28",
+                "7950306": "0-25", "2398519": "0-32", "7350788": "1-19",
+                "7078475": "1-12", "1008010": "1-5", "1491810": "1-4",
+                "1821529": "1-21", "4390807": "9-9", "0937631": "9-2",
+                "4671434": "4-12", "7257721": "3-54", "7011275": "3-54",
+                "7385215": "7-4", "6977799": "7-65", "2102038": "7-54",
+                "9904133": "7-74", "9903882": "7-74", "9904135": "7-74",
+                "9904127": "7-74", "9904138": "7-74", "0616526": "8-3",
+                "7670021": "8-4", "7260143": "8-1", "9901417": "8-2",
+                "5287489": "8-12", "5256670": "8-18", "8265625": "8-5",
+                "5061239": "8-13", "4278760": "8-8",
+            }), []);
+
+            // ── Sysco item → category mapping (from purchase history) ──
+            const SYSCO_ITEM_CATEGORIES = useMemo(() => ({
+                // Proteins & Seafood
+                "6034780": "Proteins & Seafood", "7246665": "Proteins & Seafood",
+                "2398519": "Proteins & Seafood", "5636997": "Proteins & Seafood",
+                "7411241": "Proteins & Seafood", "5351494": "Proteins & Seafood",
+                // Produce
+                "5818259": "Produce", "1675859": "Produce", "1491810": "Produce",
+                "1008010": "Produce", "7078475": "Produce", "5179760": "Produce",
+                "5430934": "Produce", "1908318": "Produce", "5852689": "Produce",
+                "7759566": "Produce", "5893973": "Produce", "4678555": "Produce",
+                "7350788": "Produce", "5131753": "Produce", "1821529": "Produce",
+                // Dairy & Eggs
+                "4906361": "Dairy & Eggs", "6680073": "Dairy & Eggs", "3051695": "Dairy & Eggs",
+                // Beverages
+                "6236614": "Beverages", "4306627": "Beverages", "7101689": "Beverages",
+                // Supplies & Packaging
+                "7701311": "Supplies & Packaging", "7213296": "Supplies & Packaging",
+                "6155841": "Supplies & Packaging", "6138219": "Supplies & Packaging",
+                "3438292": "Supplies & Packaging", "4681957": "Supplies & Packaging",
+                "7385215": "Supplies & Packaging", "6669499": "Supplies & Packaging",
+                "6541129": "Supplies & Packaging", "9904133": "Supplies & Packaging",
+                "9903882": "Supplies & Packaging", "9904135": "Supplies & Packaging",
+                "9904127": "Supplies & Packaging", "9904138": "Supplies & Packaging",
+                "2102038": "Supplies & Packaging", "6855423": "Supplies & Packaging",
+                "6298877": "Supplies & Packaging", "5597443": "Supplies & Packaging",
+                // Cleaning & Chemicals
+                "9792611": "Cleaning & Chemicals", "7260143": "Cleaning & Chemicals",
+                "1293212": "Cleaning & Chemicals", "0616526": "Cleaning & Chemicals",
+                "4278760": "Cleaning & Chemicals", "6350461": "Cleaning & Chemicals",
+                "7670021": "Cleaning & Chemicals",
+                // Sauces & Condiments
+                "4136768": "Sauces & Condiments", "7257721": "Sauces & Condiments",
+                "7011275": "Sauces & Condiments", "4485085": "Sauces & Condiments",
+                // Other Food
+                "0937631": "Other Food", "4390807": "Other Food",
+            }), []);
+
+            const SYSCO_CATEGORY_ORDER = ["Proteins & Seafood", "Produce", "Dairy & Eggs", "Beverages", "Sauces & Condiments", "Other Food", "Supplies & Packaging", "Cleaning & Chemicals", "Uncategorized"];
+            const SYSCO_CATEGORY_EMOJI = { "Proteins & Seafood": "\u{1F969}", "Produce": "\u{1F966}", "Dairy & Eggs": "\u{1F95A}", "Beverages": "\u{2615}", "Supplies & Packaging": "\u{1F4E6}", "Cleaning & Chemicals": "\u{1F9F9}", "Sauces & Condiments": "\u{1F336}\u{FE0F}", "Other Food": "\u{1F372}", "Uncategorized": "\u{2753}" };
+
+            const invByName = useMemo(() => {
+                const result = [];
+                customInventory.forEach(cat => cat.items.forEach(item => {
+                    const nameLower = (item.name || "").toLowerCase();
+                    const keywords = nameLower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 1);
+                    result.push({ id: item.id, name: item.name, nameLower, keywords });
+                }));
+                return result;
+            }, [customInventory]);
+
+            const invLookup = useMemo(() => {
+                const lookup = {};
+                customInventory.forEach(cat => cat.items.forEach(item => { lookup[item.id] = item; }));
+                return lookup;
+            }, [customInventory]);
+
+            const autoMatch = useCallback((syscoName) => {
+                if (!syscoName) return null;
+                const sLower = syscoName.toLowerCase();
+                const sKeywords = sLower.replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(w => w.length > 2);
+                if (sKeywords.length === 0) return null;
+                let bestId = null, bestScore = 0;
+                for (const inv of invByName) {
+                    if (inv.nameLower.includes(sLower) || sLower.includes(inv.nameLower)) {
+                        const score = Math.min(inv.nameLower.length, sLower.length) + 100;
+                        if (score > bestScore) { bestScore = score; bestId = inv.id; }
+                        continue;
+                    }
+                    let overlap = 0;
+                    for (const kw of sKeywords) {
+                        if (inv.keywords.some(ik => ik === kw || (kw.length > 3 && ik.includes(kw)) || (ik.length > 3 && kw.includes(ik)))) overlap++;
+                    }
+                    const score = overlap / Math.max(sKeywords.length, 1) * 50;
+                    if (score > bestScore && overlap >= 1) { bestScore = score; bestId = inv.id; }
+                }
+                return bestScore >= 15 ? bestId : null;
+            }, [invByName]);
+
+            const syscoPricingData = useMemo(() => {
+                const syscoData = livePrices.sysco || {};
+                const prices = syscoData.prices || {};
+                const allEntries = Object.entries(prices).map(([syscoId, data]) => {
+                    const overrideInvId = SYSCO_OVERRIDES[syscoId] || null;
+                    const autoInvId = !overrideInvId ? autoMatch(data.name) : null;
+                    const invId = overrideInvId || autoInvId;
+                    const category = SYSCO_ITEM_CATEGORIES[syscoId] || "Uncategorized";
+                    return [syscoId, {
+                        ...data,
+                        name: data.name || `Sysco Item ${syscoId}`,
+                        invId,
+                        matchType: overrideInvId ? "known" : autoInvId ? "auto" : null,
+                        category,
+                    }];
+                });
+                const sorted = [...allEntries].sort((a, b) => {
+                    const aCatIdx = SYSCO_CATEGORY_ORDER.indexOf(a[1].category);
+                    const bCatIdx = SYSCO_CATEGORY_ORDER.indexOf(b[1].category);
+                    if (aCatIdx !== bCatIdx) return aCatIdx - bCatIdx;
+                    return (a[1].name || "").localeCompare(b[1].name || "");
+                });
+                // Group by category
+                const byCategory = {};
+                for (const entry of sorted) {
+                    const cat = entry[1].category;
+                    if (!byCategory[cat]) byCategory[cat] = [];
+                    byCategory[cat].push(entry);
+                }
+                return {
+                    syscoData,
+                    sorted,
+                    byCategory,
+                    matchedCount: sorted.filter(([,d]) => d.invId).length,
+                    withPriceCount: sorted.filter(([,d]) => d.price != null).length,
+                };
+            }, [livePrices.sysco, SYSCO_OVERRIDES, SYSCO_ITEM_CATEGORIES, autoMatch]);
+
+            // US Foods pricing data (same pattern as Sysco)
+            const usfoodsPricingData = useMemo(() => {
+                const ufData = livePrices.usfoods || {};
+                const prices = ufData.prices || {};
+                const allEntries = Object.entries(prices).map(([ufId, data]) => {
+                    const autoInvId = autoMatch(data.name);
+                    return [ufId, {
+                        ...data,
+                        name: data.name || `US Foods Item ${ufId}`,
+                        invId: autoInvId,
+                        matchType: autoInvId ? "auto" : null,
+                    }];
+                });
+                const sorted = [...allEntries].sort((a, b) => {
+                    const aRank = a[1].invId ? 0 : 1;
+                    const bRank = b[1].invId ? 0 : 1;
+                    if (aRank !== bRank) return aRank - bRank;
+                    return (a[1].name || "").localeCompare(b[1].name || "");
+                });
+                return {
+                    ufData,
+                    sorted,
+                    matchedCount: sorted.filter(([,d]) => d.invId).length,
+                    withPriceCount: sorted.filter(([,d]) => d.price != null).length,
+                };
+            }, [livePrices.usfoods, autoMatch]);
+
+            // Reverse lookup: inventory item ID → best vendor price data (for inline price badges)
+            const invToSyscoPrice = useMemo(() => {
+                const map = {};
+                // Add Sysco matches
+                if (syscoPricingData && syscoPricingData.sorted) {
+                    for (const [, data] of syscoPricingData.sorted) {
+                        if (data.invId && data.price != null) {
+                            map[data.invId] = { ...data, vendor: "Sysco" };
+                        }
+                    }
+                }
+                // Add US Foods matches (only if cheaper or no Sysco match)
+                if (usfoodsPricingData && usfoodsPricingData.sorted) {
+                    for (const [, data] of usfoodsPricingData.sorted) {
+                        if (data.invId && data.price != null) {
+                            const existing = map[data.invId];
+                            if (!existing || data.price < existing.price) {
+                                map[data.invId] = { ...data, vendor: "US Foods" };
+                            }
+                        }
+                    }
+                }
+                return map;
+            }, [syscoPricingData, usfoodsPricingData]);
+
+            // Debounce inventory search to prevent UI freezing on every keystroke
+            useEffect(() => {
+                if (!invSearch) { setDebouncedInvSearch(""); return; }
+                const timer = setTimeout(() => setDebouncedInvSearch(invSearch), 250);
+                return () => clearTimeout(timer);
+            }, [invSearch]);
 
             // Load skills matrix from Firestore
             useEffect(() => {
@@ -316,11 +514,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (oldDocSnap.exists() && oldDocSnap.data().date === breakDate && oldDocSnap.data().plan) {
                             getDoc(doc(db, "ops", docId)).then(newDocSnap => {
                                 if (!newDocSnap.exists()) {
-                                    setDoc(doc(db, "ops", docId), oldDocSnap.data());
+                                    setDoc(doc(db, "ops", docId), oldDocSnap.data()).catch(err => console.error("Migration error:", err));
                                 }
-                            });
+                            }).catch(err => console.error("Migration check error:", err));
                         }
-                    });
+                    }).catch(err => console.error("Migration read error:", err));
                 }
                 return () => unsubBreakPlan();
             }, [breakDate, storeLocation]);
@@ -487,6 +685,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
                 const unsubInventorySnapshot = onSnapshot(inventoryDocRef, (docSnap) => {
+                    // Skip the echo from our own writes to avoid re-render thrashing
+                    if (invLocalWriteRef.current) {
+                        invLocalWriteRef.current = false;
+                        return;
+                    }
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         setInventory(data.counts || {});
@@ -546,7 +749,68 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); };
+                // Listen for Sysco scrape trigger status updates
+                const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.status === "running") {
+                            setSyscoTriggerStatus("running");
+                        } else if (data.status === "done") {
+                            setSyscoTriggerStatus("done");
+                            setTimeout(() => setSyscoTriggerStatus(null), 4000);
+                        } else if (data.status === "error") {
+                            setSyscoTriggerStatus("error");
+                            setTimeout(() => setSyscoTriggerStatus(null), 5000);
+                        } else if (data.status === "pending") {
+                            setSyscoTriggerStatus("requesting");
+                        } else if (!data.trigger) {
+                            setSyscoTriggerStatus(null);
+                        }
+                    }
+                });
+
+                // Listen for Sysco scrape health status (login_failed, no_prices, etc.)
+                const unsubSyscoStatus = onSnapshot(doc(db, "vendor_prices", "sysco_status"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setSyscoScrapeStatus(docSnap.data());
+                    }
+                });
+
+                // US Foods live prices
+                const unsubUsfoodsPrices = onSnapshot(doc(db, "vendor_prices", "usfoods"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setLivePrices(prev => ({ ...prev, usfoods: docSnap.data() }));
+                    }
+                });
+
+                // US Foods trigger status
+                const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        const data = docSnap.data();
+                        if (data.status === "running") {
+                            setUsfoodsTriggerStatus("running");
+                        } else if (data.status === "done") {
+                            setUsfoodsTriggerStatus("done");
+                            setTimeout(() => setUsfoodsTriggerStatus(null), 4000);
+                        } else if (data.status === "error") {
+                            setUsfoodsTriggerStatus("error");
+                            setTimeout(() => setUsfoodsTriggerStatus(null), 5000);
+                        } else if (data.status === "pending") {
+                            setUsfoodsTriggerStatus("requesting");
+                        } else if (!data.trigger) {
+                            setUsfoodsTriggerStatus(null);
+                        }
+                    }
+                });
+
+                // US Foods scrape health status
+                const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
+                    if (docSnap.exists()) {
+                        setUsfoodsScrapeStatus(docSnap.data());
+                    }
+                });
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the date has changed
@@ -589,6 +853,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const currentMinutes = now.getHours() * 60 + now.getMinutes();
                 const tasks = customTasksRef.current;
                 const ch = checksRef.current;
+                const lists = checklistListsRef.current;
                 const todayKey = getTodayKey();
                 const alerts = [];
                 ["FOH", "BOH"].forEach(side => {
@@ -598,9 +863,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             if (!item.completeBy || !item.assignTo) return;
                             const itemAssignees = Array.isArray(item.assignTo) ? item.assignTo : [item.assignTo];
                             if (!itemAssignees.includes(staffName)) return;
-                            const done = item.subtasks && item.subtasks.length > 0
-                                ? item.subtasks.every(s => ch[s.id])
-                                : !!ch[item.id];
+                            // Check all lists for this side to find where task might be checked
+                            let done = false;
+                            const sideListCount = (lists[side] && lists[side].length) || 1;
+                            for (let listIdx = 0; listIdx < sideListCount; listIdx++) {
+                                const prefix = getCheckPrefix(side, listIdx);
+                                if (item.subtasks && item.subtasks.length > 0) {
+                                    if (item.subtasks.every(s => ch[prefix + s.id])) { done = true; break; }
+                                } else {
+                                    if (ch[prefix + item.id]) { done = true; break; }
+                                }
+                            }
                             if (done) return;
                             const [h, m] = item.completeBy.split(":").map(Number);
                             const deadlineMinutes = h * 60 + m;
@@ -748,8 +1021,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const handlePasswordSubmit = (e) => {
                 e.preventDefault();
-                if (password === "12345") { setPasswordEntered(true); setPassword(""); }
-                else { alert(language === "es" ? "Contraseña incorrecta" : "Incorrect password"); }
+                // Validate PIN against manager/admin staff list instead of hardcoded password
+                const matchedStaff = (staffList || []).find(s => String(s.pin) === String(password));
+                if (matchedStaff && (matchedStaff.role === "admin" || matchedStaff.role === "manager")) {
+                    setPasswordEntered(true); setPassword("");
+                } else {
+                    alert(language === "es" ? "PIN de gerente incorrecto" : "Incorrect manager PIN");
+                }
             };
 
             const toggleCheckItem = async (taskId, parentTask) => {
@@ -772,7 +1050,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // If checking ON and the parent task has a follow-up, check if task is now complete
                 if (newVal && parentTask && parentTask.followUp && parentTask.followUp.question) {
                     const allDone = parentTask.subtasks && parentTask.subtasks.length > 0
-                        ? parentTask.subtasks.every(s => (currentPrefix + s.id) === pKey ? true : newChecks[currentPrefix + s.id])
+                        ? parentTask.subtasks.every(s => (currentPrefix + s.id) === pKey ? newVal : newChecks[currentPrefix + s.id])
                         : true;
                     if (allDone) setShowFollowUpFor(parentTask.id);
                 }
@@ -908,6 +1186,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (count === 0) delete newMeta[itemId];
                 setInvCountMeta(newMeta);
                 try {
+                    invLocalWriteRef.current = true; // skip the onSnapshot echo
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), { counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error updating inventory:", err); }
             };
@@ -924,6 +1203,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     setInventory(resetCounts);
                     setInvCountMeta({});
+                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), { counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
@@ -932,6 +1212,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const saveInventory = async (counts, items) => {
                 try {
+                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
                         counts, customInventory: items, countMeta: invCountMeta, date: new Date().toISOString()
                     });
@@ -957,7 +1238,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const addInvItem = async (catIdx) => {
                 if (!invNewName.trim()) return;
                 const category = customInventory[catIdx];
-                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1])), -1);
+                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
                 const newItem = {
                     id: catIdx + "-" + (maxId + 1),
                     name: invNewName.trim(),
@@ -1086,20 +1367,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return null;
             };
 
-            // Get live scraped price for an item from a specific vendor
-            const getLivePrice = (itemId, vendor) => {
-                const vendorKey = (vendor || "").toLowerCase().replace(/\s+/g, '');
-                const vendorMap = { "sysco": "sysco", "usfoods": "usfoods", "costcobusiness": "costco" };
-                const key = vendorMap[vendorKey];
-                if (!key || !livePrices[key] || !livePrices[key].prices) return null;
-                const priceData = livePrices[key].prices[itemId];
-                if (!priceData || !priceData.found || !priceData.price) return null;
-                return priceData;
+            // Get live scraped price for an inventory item (uses reverse lookup from Sysco matching)
+            const getLivePrice = (itemId) => {
+                const data = invToSyscoPrice[itemId];
+                if (!data || !data.price) return null;
+                return data;
             };
 
             // Get vendor option label with live price if available
             const getVendorOptionLabel = (vo, itemId) => {
-                const live = getLivePrice(itemId, vo.vendor);
+                const live = getLivePrice(itemId);
                 if (live && live.price) return `${vo.vendor} ($${live.price.toFixed(2)} LIVE)`;
                 if (vo.price != null) return `${vo.vendor} ($${vo.price.toFixed(2)})`;
                 return vo.vendor;
@@ -1107,13 +1384,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Render live price badge for an item
             const renderLivePriceBadge = (itemId, item) => {
-                const prefVendor = item.preferredVendor || item.vendor || "";
-                const live = getLivePrice(itemId, prefVendor);
+                const live = getLivePrice(itemId);
                 if (!live) return null;
-                const vendorLabel = prefVendor || "Vendor";
+                const vendorLabel = live.vendor || item.preferredVendor || item.vendor || "Sysco";
+                const hasSalePrice = live.originalPrice && live.originalPrice !== live.price;
                 return (
-                    <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-bold animate-pulse" title={`${vendorLabel} live: ${live.resultName || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
-                        {"\u{1F4E1}"} <span className="text-green-800 font-semibold">{vendorLabel}</span> ${live.price.toFixed(2)}{live.pack ? ` / ${live.pack}` : ""}
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${hasSalePrice ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`} title={`${vendorLabel} live: ${live.name || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
+                        {"\u{1F4E1}"} <span className={hasSalePrice ? "text-red-800 font-semibold" : "text-green-800 font-semibold"}>{vendorLabel}</span>
+                        {hasSalePrice && <span className="line-through text-gray-400 ml-1">${live.originalPrice.toFixed(2)}</span>}
+                        <span className={hasSalePrice ? "text-red-700 font-bold ml-1" : ""}> ${live.price.toFixed(2)}</span>
+                        {live.pack ? ` / ${live.pack}` : ""}
                     </span>
                 );
             };
@@ -1217,6 +1497,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
+                if (!w) {
+                    alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                    return;
+                }
                 w.document.write(html);
                 w.document.close();
                 w.print();
@@ -1248,6 +1532,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const newLog = [logEntry, ...vendorChangeLog].slice(0, 50);
                 setVendorChangeLog(newLog);
                 try {
+                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
                         counts: inventory, customInventory: updated, countMeta: invCountMeta, date: now.toISOString()
                     });
@@ -1672,7 +1957,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         <span className="text-xs text-gray-400">{checks[currentPrefix + item.id + "_photoTime"] ? new Date(checks[currentPrefix + item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
                                                     </div>
                                                     <img src={photoUrl} alt="Task photo" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
-                                                        onClick={() => window.open(photoUrl, "_blank")} />
+                                                        onClick={() => {
+                                                            const w = window.open(photoUrl, "_blank");
+                                                            if (!w) {
+                                                                alert(language === "es" ? "Por favor permita ventanas emergentes para ver la foto." : "Please allow pop-ups to view the photo.");
+                                                            }
+                                                        }} />
                                                 </div>
                                             ) : (
                                                 <div>
@@ -1989,23 +2279,47 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             </div>
 
                             {/* ── LIVE PRICES INDICATOR ── */}
-                            {livePrices.sysco && livePrices.sysco.lastScraped && (
-                                <div className="flex items-center gap-2 px-2 py-1 bg-green-50 rounded-lg border border-green-200">
-                                    <span className="text-xs text-green-700 font-medium">{"\u{1F4E1}"} {language === "es" ? "Precios Sysco en vivo" : "Sysco live prices"}</span>
-                                    <span className="text-xs text-green-500">{livePrices.sysco.foundCount || 0}/{livePrices.sysco.totalItems || 0} items</span>
-                                    <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                                </div>
-                            )}
+                            {(() => {
+                                const ss = syscoScrapeStatus || {};
+                                const lastScrapedMs = livePrices.sysco?.lastScraped ? new Date(livePrices.sysco.lastScraped).getTime() : 0;
+                                const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000);
+                                const hasFailed = ss.status && ss.status !== "success" && ss.status !== "running";
+                                const hasData = livePrices.sysco && lastScrapedMs > 0;
+                                const matchedInvCount = Object.keys(invToSyscoPrice).length;
+                                const totalSyscoItems = livePrices.sysco?.totalItems || 0;
+
+                                if (hasFailed) return (
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-red-50 rounded-lg border border-red-300">
+                                        <span className="text-xs text-red-700 font-medium">{"\u{1F6A8}"} {ss.status === "login_failed" ? (language === "es" ? "Sysco login fallido" : "Sysco login failed") : (language === "es" ? "Error del scraper Sysco" : "Sysco scraper error")}</span>
+                                        <span className="text-xs text-red-500 ml-auto">{ss.updatedAt ? new Date(ss.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}</span>
+                                    </div>
+                                );
+                                if (isStale && hasData) return (
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-yellow-50 rounded-lg border border-yellow-300">
+                                        <span className="text-xs text-yellow-700 font-medium">{"\u{23F0}"} {language === "es" ? "Precios Sysco desactualizados" : "Sysco prices stale"}</span>
+                                        <span className="text-xs text-yellow-500">{matchedInvCount} {language === "es" ? "vinculados" : "matched"} / {totalSyscoItems} total</span>
+                                        <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                                    </div>
+                                );
+                                if (hasData) return (
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-green-50 rounded-lg border border-green-200">
+                                        <span className="text-xs text-green-700 font-medium">{"\u{1F4E1}"} {language === "es" ? "Precios Sysco en vivo" : "Sysco live prices"}</span>
+                                        <span className="text-xs text-green-500">{matchedInvCount} {language === "es" ? "vinculados" : "matched"} / {totalSyscoItems} total</span>
+                                        <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                                    </div>
+                                );
+                                return null;
+                            })()}
 
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
                                 <div className="relative">
                                     <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
-                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo o proveedor..." : "\u{1F50D} Search items or vendor..."}
-                                        className="w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white" />
+                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items..."}
+                                        className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
                                     {invSearch && (
-                                        <button onClick={() => setInvSearch("")}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg">{"\u{2715}"}</button>
+                                        <button type="button" onClick={() => { setInvSearch(""); setDebouncedInvSearch(""); setCollapsedCats({}); }}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
                                     )}
                                 </div>
                             )}
@@ -2111,12 +2425,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                             {/* ── CATEGORY VIEW ── */}
                             {invViewMode === "category" && customInventory.map((category, catIdx) => {
-                                const searchLower = invSearch.toLowerCase().trim();
+                                const searchLower = debouncedInvSearch.toLowerCase().trim();
                                 let filteredItems = searchLower
                                     ? category.items.filter(item =>
                                         (item.name || "").toLowerCase().includes(searchLower) ||
-                                        (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                        (item.vendor || "").toLowerCase().includes(searchLower)
+                                        (item.nameEs || "").toLowerCase().includes(searchLower)
                                     )
                                     : category.items;
                                 if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
@@ -2296,11 +2609,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     cat.items.forEach(item => {
                                         const v = item.vendor || item.supplier || "Other";
                                         if (!vendorGroups[v]) vendorGroups[v] = [];
-                                        const searchLower = invSearch.toLowerCase().trim();
+                                        const searchLower = debouncedInvSearch.toLowerCase().trim();
                                         const matchesSearch = !searchLower ||
                                             (item.name || "").toLowerCase().includes(searchLower) ||
-                                            (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                            v.toLowerCase().includes(searchLower);
+                                            (item.nameEs || "").toLowerCase().includes(searchLower);
                                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
                                         if (matchesSearch && matchesCounted) {
                                             vendorGroups[v].push({ ...item, catIdx, itemIdx: cat.items.indexOf(item), catName: cat.name, catNameEs: cat.nameEs });
@@ -2311,7 +2623,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 return vendorNames.map(vendor => {
                                     const vItems = vendorGroups[vendor].sort((a, b) => a.name.localeCompare(b.name));
                                     const vKey = "ven-" + vendor;
-                                    const isCollapsed = collapsedCats[vKey] && !invSearch;
+                                    const isCollapsed = collapsedCats[vKey] && !debouncedInvSearch;
                                     const countedInV = vItems.filter(i => (inventory[i.id] || 0) > 0).length;
                                     return (
                                         <div key={vendor} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -2415,7 +2727,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     { name: "Yuly", nameEs: "Yuly", emoji: "\u{1F4E6}", color: "from-amber-600 to-amber-500", label: language === "es" ? "Seco, Papel y Salsas" : "Dry, Paper & Sauces", categories: ["Sauces & Seasonings", "Rice & Noodles", "Oils & Cooking", "Paper & Supplies", "Cleaning"] },
                                     { name: "Brandon", nameEs: "Brandon", emoji: "\u{1F964}", color: "from-green-700 to-green-600", label: language === "es" ? "Bebidas" : "Beverages", categories: ["Beverages"] }
                                 ];
-                                const searchLower = invSearch.toLowerCase().trim();
+                                const searchLower = debouncedInvSearch.toLowerCase().trim();
 
                                 // Build item assignments: default by category, then apply overrides
                                 const getPersonForItem = (item, defaultPerson) => {
@@ -2485,8 +2797,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     let filteredItems = searchLower
                                                         ? category.items.filter(item =>
                                                             (item.name || "").toLowerCase().includes(searchLower) ||
-                                                            (item.nameEs || "").toLowerCase().includes(searchLower) ||
-                                                            (item.vendor || "").toLowerCase().includes(searchLower))
+                                                            (item.nameEs || "").toLowerCase().includes(searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
                                                     if (filteredItems.length === 0) return null;
@@ -2648,150 +2959,239 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                             {/* ── PRICING VIEW ── */}
                             {invViewMode === "pricing" && (() => {
-                                const syscoData = livePrices.sysco || {};
-                                const prices = syscoData.prices || {};
-                                const priceEntries = Object.entries(prices);
+                                const isSysco = pricingVendor === "sysco";
+                                const pData = isSysco ? syscoPricingData : usfoodsPricingData;
+                                const sorted = pData.sorted || [];
+                                const matchedCount = pData.matchedCount || 0;
+                                const withPriceCount = pData.withPriceCount || 0;
+                                const vendorData = isSysco ? (pData.syscoData || {}) : (pData.ufData || {});
+                                const vendorName = isSysco ? "Sysco" : "US Foods";
+                                const vendorColor = isSysco ? "blue" : "orange";
 
-                                // Sysco ID → inventory item mapping
-                                const SYSCO_INVENTORY_MAP = {
-                                    // === Proteins / Seafood ===
-                                    "5106402": { invId: "0-26", note: "Shrimp White P&D Tail-off 21/25" },
-                                    "7952468": { invId: "0-27", note: "Shrimp White P&D Tail-off 31/40" },
-                                    "7411241": { invId: "0-28", note: "Shrimp White P&D Tail-on 21/25" },
-                                    "7950306": { invId: "0-25", note: "Shrimp 31/40 Tail-on" },
-                                    "2398519": { invId: "0-32", note: "Scallops 60-80 Count" },
-                                    // === Produce ===
-                                    "7350788": { invId: "1-19", note: "Green Onion" },
-                                    "7078475": { invId: "1-12", note: "Cilantro Iceless" },
-                                    "1008010": { invId: "1-5", note: "Cabbage Red" },
-                                    "1491810": { invId: "1-4", note: "Cabbage Green" },
-                                    "1821529": { invId: "1-21", note: "Shallots Fresh" },
-                                    // === Frozen ===
-                                    "4390807": { invId: "9-9", note: "Sweet Potato Waffle Fry Battered" },
-                                    "0937631": { invId: "9-2", note: "Churros" },
-                                    // === Rice & Dry ===
-                                    "4671434": { invId: "4-12", note: "Rice Long Grain / Jasmine" },
-                                    // === Sauces & Condiments ===
-                                    "7257721": { invId: "3-54", note: "Sriracha Packets" },
-                                    "7011275": { invId: "3-54", note: "Sriracha Packets (Huy Fong)" },
-                                    // === Beverages ===
-                                    "7101689": { invId: null, note: "Tazo Chai Tea Concentrate (no inv match)" },
-                                    // === Paper & Disposable ===
-                                    "7385215": { invId: "7-4", note: "Container Togo Kraft #8" },
-                                    "6977799": { invId: "7-65", note: "Napkin XpressNap Natural" },
-                                    "2102038": { invId: "7-54", note: "Bamboo Picks Knotted 4in" },
-                                    "7213296": { invId: null, note: "Bag Poly Deli HD 8.5x8.5 (no inv match)" },
-                                    "7701311": { invId: null, note: "Bag Plastic HD 7-Day Pre Portion (no inv match)" },
-                                    "4527950": { invId: null, note: "Dispenser Towel Manual (no inv match)" },
-                                    // === Day Labels (all map to Label Roll) ===
-                                    "9904133": { invId: "7-74", note: "Label Friday" },
-                                    "9903882": { invId: "7-74", note: "Label Monday" },
-                                    "9904135": { invId: "7-74", note: "Label Saturday" },
-                                    "9904127": { invId: "7-74", note: "Label Thursday" },
-                                    "9904138": { invId: "7-74", note: "Label Wednesday" },
-                                    // === Chemical & Janitorial ===
-                                    "0616526": { invId: "8-3", note: "Degreaser" },
-                                    "7670021": { invId: "8-4", note: "Delimer Descaler" },
-                                    "7260143": { invId: "8-1", note: "Cleaner Floor Alkaline No-rinse" },
-                                    "9901417": { invId: "8-2", note: "Cleaner Grill High Temp" },
-                                    "5287489": { invId: "8-12", note: "Hand Soap Antibacterial" },
-                                    "5256670": { invId: "8-18", note: "Sanitizer Tablets" },
-                                    "8265625": { invId: "8-5", note: "Detergent Machine Solid Power" },
-                                    "1293212": { invId: null, note: "Cleaner Vigoroso Lavender (no inv match)" },
-                                    "6892063": { invId: null, note: "Cleaner Freezer (no inv match)" },
-                                    "5061239": { invId: "8-13", note: "Sanitizer Machine Ecotemp" },
-                                    "4278760": { invId: "8-8", note: "Rinse Aid SmartPower" },
-                                    // === Supplies & Equipment ===
-                                    "3438292": { invId: null, note: "Spray Bottle 32oz (no inv match)" },
-                                };
-
-                                // Build flat inventory lookup
-                                const invLookup = {};
-                                customInventory.forEach(cat => cat.items.forEach(item => { invLookup[item.id] = item; }));
-
-                                // Sort: matched (has invId) first, then mapped-but-no-match, then unknown, all alphabetical
-                                const sorted = [...priceEntries].sort((a, b) => {
-                                    const aMap = SYSCO_INVENTORY_MAP[a[0]];
-                                    const bMap = SYSCO_INVENTORY_MAP[b[0]];
-                                    const aRank = aMap && aMap.invId ? 0 : 1;
-                                    const bRank = bMap && bMap.invId ? 0 : 1;
-                                    if (aRank !== bRank) return aRank - bRank;
-                                    return (a[1].name || "").localeCompare(b[1].name || "");
-                                });
+                                // Scrape health status
+                                const scrapeStatus = (isSysco ? syscoScrapeStatus : usfoodsScrapeStatus) || {};
+                                const triggerStatus = isSysco ? syscoTriggerStatus : usfoodsTriggerStatus;
+                                const setTriggerStatus = isSysco ? setSyscoTriggerStatus : setUsfoodsTriggerStatus;
+                                const triggerDocName = isSysco ? "sysco_trigger" : "usfoods_trigger";
+                                const lastScrapedMs = vendorData.lastScraped ? new Date(vendorData.lastScraped).getTime() : 0;
+                                const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000);
+                                const hasFailed = scrapeStatus.status && scrapeStatus.status !== "success" && scrapeStatus.status !== "running";
 
                                 return (
                                     <div className="space-y-2">
-                                        {/* Header */}
-                                        <div className="bg-gradient-to-r from-blue-700 to-blue-600 text-white rounded-xl p-3 flex items-center justify-between">
-                                            <div>
-                                                <div className="font-bold text-sm">{language === "es" ? "Precios de Sysco — Historial de Compras" : "Sysco Pricing — Purchase History"}</div>
-                                                <div className="text-blue-200 text-xs mt-0.5">
-                                                    {priceEntries.length} {language === "es" ? "articulos" : "items"}
-                                                    {syscoData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(syscoData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
-                                                </div>
-                                            </div>
-                                            <div className="text-2xl">{"\u{1F4B0}"}</div>
+                                        {/* Vendor toggle */}
+                                        <div className="flex gap-2">
+                                            <button onClick={() => setPricingVendor("sysco")}
+                                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${pricingVendor === "sysco" ? "bg-blue-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                                Sysco
+                                            </button>
+                                            <button onClick={() => setPricingVendor("usfoods")}
+                                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${pricingVendor === "usfoods" ? "bg-orange-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                                US Foods
+                                            </button>
                                         </div>
 
-                                        {priceEntries.length === 0 && (
-                                            <div className="text-center py-8 text-gray-400 text-sm">
-                                                {language === "es" ? "No hay datos de precios todavia. El scraper se ejecuta diariamente." : "No pricing data yet. The scraper runs daily."}
+                                        {/* Scrape health alert */}
+                                        {(hasFailed || isStale) && (
+                                            <div className={`rounded-xl p-3 border text-sm ${hasFailed ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"}`}>
+                                                <div className="font-bold text-sm">
+                                                    {hasFailed ? (scrapeStatus.status === "login_failed"
+                                                        ? (language === "es" ? `\u{1F6A8} Fallo de inicio de sesion en ${vendorName}` : `\u{1F6A8} ${vendorName} Login Failed`)
+                                                        : scrapeStatus.status === "no_prices"
+                                                            ? (language === "es" ? "\u{26A0}\u{FE0F} No se encontraron precios" : "\u{26A0}\u{FE0F} No Prices Found")
+                                                            : (language === "es" ? "\u{274C} Error del scraper" : "\u{274C} Scraper Error")
+                                                    ) : (language === "es" ? "\u{23F0} Datos desactualizados (>48h)" : "\u{23F0} Stale Data (>48h old)")}
+                                                </div>
+                                                {scrapeStatus.detail && <div className="text-xs text-gray-600 mt-1">{scrapeStatus.detail}</div>}
+                                                {scrapeStatus.updatedAt && <div className="text-xs text-gray-400 mt-1">{language === "es" ? "Ultimo intento" : "Last attempt"}: {new Date(scrapeStatus.updatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>}
                                             </div>
                                         )}
 
-                                        {/* Matched items section */}
-                                        {sorted.filter(([k]) => { const m = SYSCO_INVENTORY_MAP[k]; return m && m.invId; }).length > 0 && (
-                                            <div className="text-xs font-bold text-green-700 px-1 pt-1">{"\u{2705}"} {language === "es" ? "Asociado a inventario" : "Matched to Inventory"}</div>
+                                        {/* Header */}
+                                        <div className={`bg-gradient-to-r ${isSysco ? "from-blue-700 to-blue-600" : "from-orange-600 to-orange-500"} text-white rounded-xl p-3 flex items-center justify-between`}>
+                                            <div>
+                                                <div className="font-bold text-sm">{language === "es" ? `Precios de ${vendorName} — Historial` : `${vendorName} Pricing — Purchase History`}</div>
+                                                <div className={`${isSysco ? "text-blue-200" : "text-orange-200"} text-xs mt-0.5`}>
+                                                    {sorted.length} {language === "es" ? "articulos" : "items"} &middot; {withPriceCount} {language === "es" ? "con precio" : "with prices"} &middot; {matchedCount} {language === "es" ? "vinculados" : "matched"}
+                                                    {vendorData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(vendorData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={async () => {
+                                                    if (triggerStatus === "requesting" || triggerStatus === "running") return;
+                                                    setTriggerStatus("requesting");
+                                                    try {
+                                                        await setDoc(doc(db, "vendor_prices", triggerDocName), {
+                                                            trigger: true,
+                                                            requestedAt: new Date().toISOString(),
+                                                            requestedBy: staffName || "unknown",
+                                                            status: "pending"
+                                                        });
+                                                    } catch (e) {
+                                                        console.error("Trigger error:", e);
+                                                        setTriggerStatus("error");
+                                                        setTimeout(() => setTriggerStatus(null), 4000);
+                                                    }
+                                                }}
+                                                disabled={triggerStatus === "requesting" || triggerStatus === "running"}
+                                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                                                    triggerStatus === "running" || triggerStatus === "requesting"
+                                                        ? "bg-white/10 text-white/60 cursor-wait"
+                                                        : triggerStatus === "done"
+                                                            ? "bg-green-500/30 text-green-100"
+                                                            : triggerStatus === "error"
+                                                                ? "bg-red-500/30 text-red-100"
+                                                                : "bg-white/20 hover:bg-white/30 text-white cursor-pointer"
+                                                }`}
+                                                title={language === "es" ? "Solicitar actualizacion de precios" : "Request price refresh"}
+                                            >
+                                                {triggerStatus === "running" || triggerStatus === "requesting" ? (
+                                                    <><span className="animate-spin inline-block">{"\u{1F504}"}</span> {language === "es" ? "Actualizando..." : "Refreshing..."}</>
+                                                ) : triggerStatus === "done" ? (
+                                                    <>{"\u{2705}"} {language === "es" ? "Listo" : "Done!"}</>
+                                                ) : triggerStatus === "error" ? (
+                                                    <>{"\u{274C}"} {language === "es" ? "Error" : "Error"}</>
+                                                ) : (
+                                                    <>{"\u{1F504}"} {language === "es" ? "Actualizar Precios" : "Refresh Prices"}</>
+                                                )}
+                                            </button>
+                                        </div>
+
+                                        {/* Scraper running indicator */}
+                                        {scrapeStatus.status === "running" && (
+                                            <div className="text-center py-2 text-blue-600 text-xs bg-blue-50 rounded-lg border border-blue-200 animate-pulse">
+                                                {"\u{1F504}"} {language === "es" ? "Scraper ejecutandose ahora..." : "Scraper running now..."}
+                                            </div>
                                         )}
 
-                                        {(() => {
-                                            let unmatchedHeaderShown = false;
-                                            const hasMatched = sorted.some(([k]) => { const m = SYSCO_INVENTORY_MAP[k]; return m && m.invId; });
-                                            return sorted.map(([key, data]) => {
-                                            const match = SYSCO_INVENTORY_MAP[key];
-                                            const invItem = match && match.invId ? invLookup[match.invId] : null;
-                                            const isMatched = !!(match && match.invId);
-                                            const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && hasMatched;
-                                            if (showUnmatchedHeader) unmatchedHeaderShown = true;
+                                        {sorted.length === 0 && scrapeStatus.status !== "running" && (
+                                            <div className="text-center py-3 text-gray-400 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
+                                                {language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily."}
+                                            </div>
+                                        )}
 
-                                            return (
-                                                <div key={key}>
-                                                    {showUnmatchedHeader && (
-                                                        <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en Sysco" : "Sysco Only"}</div>
-                                                    )}
-                                                    <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
-                                                        <div className="flex items-start justify-between gap-2">
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
-                                                                {invItem && (
-                                                                    <div className="text-xs text-green-600 mt-0.5">{"\u{2194}\u{FE0F}"} {invItem.name}</div>
-                                                                )}
-                                                                {!invItem && match && match.note && (
-                                                                    <div className="text-xs text-gray-400 mt-0.5 italic">{match.note}</div>
-                                                                )}
-                                                                <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
-                                                                    {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
-                                                                    {data.brand && <span>{data.brand}</span>}
-                                                                    {key && <span className="text-gray-400">#{key}</span>}
-                                                                </div>
-                                                                {data.lastOrdered && (
-                                                                    <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
-                                                                )}
+                                        {/* Category-grouped items (Sysco) or flat list (US Foods) */}
+                                        {isSysco && pData.byCategory ? (
+                                            SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
+                                                const catItems = pData.byCategory[cat];
+                                                const catEmoji = SYSCO_CATEGORY_EMOJI[cat] || "";
+                                                const catCollapsed = collapsedCats["sysco_" + cat];
+                                                const catSaleCount = catItems.filter(([,d]) => d.originalPrice && d.originalPrice !== d.price).length;
+                                                return (
+                                                    <div key={cat}>
+                                                        <button onClick={() => setCollapsedCats(prev => ({...prev, ["sysco_" + cat]: !prev["sysco_" + cat]}))}
+                                                            className="w-full flex items-center justify-between px-3 py-2 bg-gray-100 rounded-xl mt-2 hover:bg-gray-200 transition">
+                                                            <div className="flex items-center gap-2">
+                                                                <span>{catEmoji}</span>
+                                                                <span className="font-bold text-sm text-gray-700">{cat}</span>
+                                                                <span className="text-xs text-gray-400">({catItems.length})</span>
+                                                                {catSaleCount > 0 && <span className="text-xs text-red-500 font-bold">{catSaleCount} on sale</span>}
                                                             </div>
-                                                            <div className="text-right flex-shrink-0">
-                                                                {data.price != null ? (
-                                                                    <div className="font-bold text-lg text-blue-700">${data.price.toFixed(2)}</div>
-                                                                ) : (
-                                                                    <div className="text-sm text-gray-400">—</div>
-                                                                )}
-                                                                <div className="text-xs text-gray-500">/{data.unit || "CS"}</div>
+                                                            <span className="text-gray-400 text-xs">{catCollapsed ? "\u{25B6}" : "\u{25BC}"}</span>
+                                                        </button>
+                                                        {!catCollapsed && catItems.map(([key, data]) => {
+                                                            const invItem = data.invId ? invLookup[data.invId] : null;
+                                                            const isMatched = !!data.invId;
+                                                            return (
+                                                                <div key={key} className={`rounded-xl p-3 border mt-1 ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                                    <div className="flex items-start justify-between gap-2">
+                                                                        <div className="flex-1 min-w-0">
+                                                                            <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
+                                                                            {invItem && (
+                                                                                <div className="text-xs text-green-600 mt-0.5">
+                                                                                    {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
+                                                                                    {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                                </div>
+                                                                            )}
+                                                                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
+                                                                                {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
+                                                                                {data.brand && <span>{data.brand}</span>}
+                                                                                {key && <span className="text-gray-400">#{key}</span>}
+                                                                            </div>
+                                                                            {data.lastOrdered && (
+                                                                                <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="text-right flex-shrink-0">
+                                                                            {data.price != null ? (
+                                                                                <>
+                                                                                    {data.originalPrice && data.originalPrice !== data.price ? (
+                                                                                        <>
+                                                                                            <div className="text-sm text-gray-400 line-through">${typeof data.originalPrice === "number" ? data.originalPrice.toFixed(2) : data.originalPrice}</div>
+                                                                                            <div className="font-bold text-lg text-red-600">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                        </>
+                                                                                    ) : (
+                                                                                        <div className="font-bold text-lg text-blue-700">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                    )}
+                                                                                    <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
+                                                                                </>
+                                                                            ) : (
+                                                                                <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
+                                                                            )}
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                );
+                                            })
+                                        ) : (
+                                            (() => {
+                                                let unmatchedHeaderShown = false;
+                                                return sorted.map(([key, data]) => {
+                                                    const invItem = data.invId ? invLookup[data.invId] : null;
+                                                    const isMatched = !!data.invId;
+                                                    const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && matchedCount > 0;
+                                                    if (showUnmatchedHeader) unmatchedHeaderShown = true;
+                                                    return (
+                                                        <div key={key}>
+                                                            {showUnmatchedHeader && (
+                                                                <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en US Foods" : "US Foods Only"} ({sorted.length - matchedCount})</div>
+                                                            )}
+                                                            <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                                <div className="flex items-start justify-between gap-2">
+                                                                    <div className="flex-1 min-w-0">
+                                                                        <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Item ${key}`}</div>
+                                                                        {invItem && (
+                                                                            <div className="text-xs text-green-600 mt-0.5">
+                                                                                {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
+                                                                                {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                            </div>
+                                                                        )}
+                                                                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
+                                                                            {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
+                                                                            {data.brand && <span>{data.brand}</span>}
+                                                                            {key && <span className="text-gray-400">#{key}</span>}
+                                                                        </div>
+                                                                        {data.lastOrdered && (
+                                                                            <div className="text-xs text-gray-400 mt-0.5">{language === "es" ? "Ultimo pedido" : "Last ordered"}: {data.lastOrdered}</div>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="text-right flex-shrink-0">
+                                                                        {data.price != null ? (
+                                                                            <>
+                                                                                {data.originalPrice && data.originalPrice !== data.price ? (
+                                                                                    <>
+                                                                                        <div className="text-sm text-gray-400 line-through">${typeof data.originalPrice === "number" ? data.originalPrice.toFixed(2) : data.originalPrice}</div>
+                                                                                        <div className="font-bold text-lg text-red-600">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <div className="font-bold text-lg text-blue-700">${typeof data.price === "number" ? data.price.toFixed(2) : data.price}</div>
+                                                                                )}
+                                                                                <div className="text-xs text-gray-500">/{data.unit === "EA" ? "each" : data.unit === "CS" ? "case" : data.unit || "case"}</div>
+                                                                            </>
+                                                                        ) : (
+                                                                            <div className="text-xs text-gray-300 italic">{language === "es" ? "pendiente" : "pending"}</div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            );
-                                        });
-                                        })()}
+                                                    );
+                                                });
+                                            })()
+                                        )}
                                     </div>
                                 );
                             })()}
@@ -3316,6 +3716,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
+                                        if (!printWindow) {
+                                            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                                            return;
+                                        }
                                         printWindow.document.write(html);
                                         printWindow.document.close();
                                         printWindow.focus();
@@ -3341,493 +3745,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             );
         }
 
-        // Menu Reference Component
-        function MenuReference({ language }) {
-            const [expandedCategory, setExpandedCategory] = useState(null);
-
-            return (
-                <div className="p-4 pb-24">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F35C}"} {t("menuReference", language)}</h2>
-
-                    <div className="space-y-3">
-                        {MENU_DATA.map((category, idx) => (
-                            <div key={idx} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
-                                <button
-                                    onClick={() => setExpandedCategory(expandedCategory === idx ? null : idx)}
-                                    className="w-full p-4 text-left bg-gradient-to-r from-mint-50 to-white hover:bg-mint-50 border-b flex justify-between items-center"
-                                >
-                                    <h3 className="font-bold text-lg text-mint-700">{language === "es" ? category.categoryEs : category.category}</h3>
-                                    <span className="text-xl">{expandedCategory === idx ? "\u{25BC}" : "\u{25B6}"}</span>
-                                </button>
-
-                                {expandedCategory === idx && (
-                                    <div className="p-4 space-y-4">
-                                        {category.items.map((item, itemIdx) => (
-                                            <div key={itemIdx} className="pb-4 border-b last:border-b-0">
-                                                <div className="flex justify-between items-start mb-2">
-                                                    <div>
-                                                        <h4 className="font-bold text-gray-800">{language === "es" ? item.nameEn : item.nameEn}</h4>
-                                                        {item.nameVi && <p className="text-sm text-gray-600">{item.nameVi}</p>}
-                                                    </div>
-                                                    <p className="font-bold text-mint-700">{item.price}</p>
-                                                </div>
-                                                <p className="text-sm text-gray-700 mb-2">{language === "es" ? item.descEs : item.descEn}</p>
-                                                <div className="flex gap-2 flex-wrap text-xs">
-                                                    {item.popular && <span className="bg-mint-100 text-mint-700 px-2 py-1 rounded">{"\u{2B50}"} {t("popular", language)}</span>}
-                                                    {item.spicy && <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded">{"\u{1F336}"} {t("spicy", language)}</span>}
-                                                    {item.allergens && <span className="bg-yellow-100 text-yellow-700 px-2 py-1 rounded">{"\u{26A0}"} {item.allergens}</span>}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-        }
-
-        // Schedule Component
-        function Schedule({ staffName, language, storeLocation, staffList }) {
-            const getStaffLocation = (name) => {
-                const s = (staffList || []).find(st => st.name === name);
-                return s?.location || "webster";
-            };
-            const filterByLocation = (entries) => entries.filter(e => {
-                const loc = getStaffLocation(e.name);
-                return loc === storeLocation || loc === "both";
-            });
-
-            return (
-                <div className="p-4 pb-24">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-2">{"\u{1F4C5}"} {t("weeklySchedule", language)}</h2>
-                    <p className="text-gray-600 mb-4">{SCHEDULE_DATA.week} {"\u{2014}"} <span className="font-bold text-mint-700">{LOCATION_LABELS[storeLocation]}</span></p>
-
-                    <div className="space-y-4">
-                        {SCHEDULE_DATA.shifts.map((day, idx) => {
-                            const filteredSchedule = filterByLocation(day.schedule);
-                            return (
-                            <div key={idx} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
-                                <div className="p-4 bg-gradient-to-r from-mint-50 to-white border-b">
-                                    <h3 className="font-bold text-lg text-mint-700">{day.day}</h3>
-                                    {day.note && <p className="text-xs text-orange-600 mt-1">{"\u{1F4CC}"} {day.note}</p>}
-                                </div>
-
-                                <div className="p-4 space-y-2">
-                                    {filteredSchedule.length === 0 && <p className="text-gray-400 text-sm text-center py-2">{language === "es" ? "Sin turnos programados" : "No shifts scheduled"}</p>}
-                                    {filteredSchedule.map((entry, entryIdx) => {
-                                        const isCurrentStaff = entry.name === staffName;
-                                        return (
-                                            <div
-                                                key={entryIdx}
-                                                className={`p-3 rounded-lg ${isCurrentStaff ? "bg-green-50 border-2 border-green-700" : "bg-gray-50 border-2 border-gray-200"}`}
-                                            >
-                                                <p className={`font-bold ${isCurrentStaff ? "text-green-700" : "text-gray-800"}`}>
-                                                    {isCurrentStaff ? "\u{2713} " : ""}{entry.name}
-                                                </p>
-                                                <p className="text-sm text-gray-600">{entry.shift}</p>
-                                                <p className="text-xs text-gray-500">{entry.role}</p>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        );
-                        })}
-                    </div>
-                </div>
-            );
-        }
-
-        // DD Mau Location Coordinates
-        const DD_MAU_LOCATIONS = [
-            { name: "Maryland Heights", lat: 38.7138, lng: -90.4391 },
-            { name: "Webster Groves", lat: 38.5917, lng: -90.3389 }
-        ];
-        const GEOFENCE_RADIUS_FEET = 500;
-
-        // Haversine distance in feet
-        function getDistanceFeet(lat1, lng1, lat2, lng2) {
-            const R = 20902231; // Earth radius in feet
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLng = (lng2 - lng1) * Math.PI / 180;
-            const a = Math.sin(dLat / 2) ** 2 +
-                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-                Math.sin(dLng / 2) ** 2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-        }
-
-        function isWithinGeofence(lat, lng) {
-            return DD_MAU_LOCATIONS.some(loc =>
-                getDistanceFeet(lat, lng, loc.lat, loc.lng) <= GEOFENCE_RADIUS_FEET
-            );
-        }
-
-        // Geofence hook
-        function useGeofence() {
-            const [isAtDDMau, setIsAtDDMau] = useState(false);
-            const [checking, setChecking] = useState(true);
-            const [error, setError] = useState(null);
-
-            useEffect(() => {
-                if (!navigator.geolocation) {
-                    setError("noGeo");
-                    setChecking(false);
-                    return;
-                }
-
-                const watchId = navigator.geolocation.watchPosition(
-                    (pos) => {
-                        const inside = isWithinGeofence(pos.coords.latitude, pos.coords.longitude);
-                        setIsAtDDMau(inside);
-                        setChecking(false);
-                        setError(null);
-                    },
-                    (err) => {
-                        setError(err.code === 1 ? "denied" : "unavailable");
-                        setChecking(false);
-                    },
-                    { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
-                );
-
-                return () => navigator.geolocation.clearWatch(watchId);
-            }, []);
-
-            return { isAtDDMau, checking, error };
-        }
-
-        // Placeholder Recipe Data
-        const RECIPES = [
-            {
-                id: 1,
-                titleEn: "Pho Broth (Beef)",
-                titleEs: "Caldo de Pho (Res)",
-                emoji: "\u{1F372}",
-                category: "Soups",
-                prepTimeEn: "30 min", cookTimeEn: "12 hours",
-                yieldsEn: "5 gallons", yieldsEs: "19 litros",
-                ingredientsEn: [
-                    "10 lbs beef bones (knuckle & marrow)",
-                    "2 lbs beef chuck",
-                    "3 large onions, halved & charred",
-                    "6 inch ginger, halved & charred",
-                    "5 star anise pods",
-                    "6 whole cloves",
-                    "2 cinnamon sticks",
-                    "1 tbsp coriander seeds",
-                    "1/4 cup fish sauce",
-                    "2 tbsp sugar",
-                    "Salt to taste"
-                ],
-                ingredientsEs: [
-                    "10 lbs huesos de res (nudillo y tuétano)",
-                    "2 lbs chuck de res",
-                    "3 cebollas grandes, cortadas y asadas",
-                    "6 pulgadas de jengibre, cortado y asado",
-                    "5 vainas de anís estrella",
-                    "6 clavos enteros",
-                    "2 rajas de canela",
-                    "1 cucharada de semillas de cilantro",
-                    "1/4 taza de salsa de pescado",
-                    "2 cucharadas de azúcar",
-                    "Sal al gusto"
-                ],
-                instructionsEn: [
-                    "Blanch bones in boiling water 10 min, drain and rinse.",
-                    "Char onions and ginger under broiler until blackened.",
-                    "Toast star anise, cloves, cinnamon, coriander in dry pan until fragrant.",
-                    "Add bones and beef chuck to large stockpot, cover with 7 gallons cold water.",
-                    "Bring to boil, then reduce to gentle simmer. Skim scum frequently for first hour.",
-                    "Add charred onions, ginger, and toasted spices in cheesecloth bag.",
-                    "Simmer 12 hours minimum, skimming occasionally.",
-                    "Remove chuck after 1.5 hours (reserve for slicing).",
-                    "Strain broth through fine mesh. Season with fish sauce, sugar, salt.",
-                    "Cool properly: ice bath to 70°F within 2 hours, then refrigerate."
-                ],
-                instructionsEs: [
-                    "Blanquea los huesos en agua hirviendo 10 min, escurre y enjuaga.",
-                    "Asa las cebollas y el jengibre bajo el asador hasta que estén ennegrecidos.",
-                    "Tuesta anís estrella, clavos, canela, cilantro en sartén seco hasta que estén fragantes.",
-                    "Agrega huesos y chuck a una olla grande, cubre con 7 galones de agua fría.",
-                    "Lleva a hervor, luego reduce a fuego lento. Retira la espuma frecuentemente la primera hora.",
-                    "Agrega cebollas asadas, jengibre y especias tostadas en bolsa de manta.",
-                    "Cocina a fuego lento 12 horas mínimo, retirando espuma ocasionalmente.",
-                    "Retira el chuck después de 1.5 horas (reserva para rebanar).",
-                    "Cuela el caldo por malla fina. Sazona con salsa de pescado, azúcar, sal.",
-                    "Enfría correctamente: baño de hielo a 21°C en 2 horas, luego refrigera."
-                ]
-            },
-            {
-                id: 2,
-                titleEn: "Egg Rolls (Chả Giò)",
-                titleEs: "Rollitos Fritos (Chả Giò)",
-                emoji: "\u{1F95F}",
-                category: "Appetizers",
-                prepTimeEn: "45 min", cookTimeEn: "8 min per batch",
-                yieldsEn: "50 rolls", yieldsEs: "50 rollitos",
-                ingredientsEn: [
-                    "2 lbs ground pork",
-                    "1 lb shrimp, minced",
-                    "1 pack bean thread noodles, soaked & chopped",
-                    "1 cup wood ear mushrooms, soaked & minced",
-                    "2 cups shredded carrots",
-                    "1 cup shredded taro",
-                    "1 medium onion, finely diced",
-                    "4 eggs",
-                    "2 tbsp fish sauce",
-                    "1 tsp black pepper",
-                    "1 pack egg roll wrappers (wheat-based)"
-                ],
-                ingredientsEs: [
-                    "2 lbs carne molida de cerdo",
-                    "1 lb camarón, picado",
-                    "1 paquete de fideos de frijol, remojados y picados",
-                    "1 taza de hongos oreja de madera, remojados y picados",
-                    "2 tazas de zanahoria rallada",
-                    "1 taza de taro rallado",
-                    "1 cebolla mediana, finamente picada",
-                    "4 huevos",
-                    "2 cucharadas de salsa de pescado",
-                    "1 cucharadita de pimienta negra",
-                    "1 paquete de masa para rollitos (a base de trigo)"
-                ],
-                instructionsEn: [
-                    "Mix pork, shrimp, noodles, mushrooms, carrots, taro, onion in large bowl.",
-                    "Add eggs, fish sauce, and pepper. Mix thoroughly by hand.",
-                    "Place 2 tbsp filling on each wrapper. Roll tightly, sealing edge with egg wash.",
-                    "Heat oil to 325°F for first fry (5 min until light golden). Drain on rack.",
-                    "Increase oil to 350°F. Second fry 2-3 min until deep golden and crispy.",
-                    "Internal temp must reach 165°F. Check 3 rolls per batch.",
-                    "Serve with nước chấm dipping sauce and lettuce wraps."
-                ],
-                instructionsEs: [
-                    "Mezcla cerdo, camarón, fideos, hongos, zanahoria, taro, cebolla en un tazón grande.",
-                    "Agrega huevos, salsa de pescado y pimienta. Mezcla bien a mano.",
-                    "Coloca 2 cucharadas de relleno en cada masa. Enrolla firmemente, sella con huevo batido.",
-                    "Calienta aceite a 163°C para primera fritura (5 min hasta dorado claro). Escurre en rejilla.",
-                    "Sube aceite a 177°C. Segunda fritura 2-3 min hasta dorado profundo y crujiente.",
-                    "La temperatura interna debe alcanzar 74°C. Revisa 3 rollitos por lote.",
-                    "Sirve con salsa nước chấm y hojas de lechuga."
-                ]
-            },
-            {
-                id: 3,
-                titleEn: "Nước Chấm (Dipping Sauce)",
-                titleEs: "Nước Chấm (Salsa para Mojar)",
-                emoji: "\u{1FAD9}",
-                category: "Sauces",
-                prepTimeEn: "10 min", cookTimeEn: "None",
-                yieldsEn: "1 quart", yieldsEs: "1 litro",
-                ingredientsEn: [
-                    "1 cup fish sauce",
-                    "1 cup sugar",
-                    "2 cups warm water",
-                    "1/2 cup lime juice (fresh)",
-                    "4 cloves garlic, minced",
-                    "2 Thai chilies, minced",
-                    "2 tbsp shredded carrot (garnish)"
-                ],
-                ingredientsEs: [
-                    "1 taza de salsa de pescado",
-                    "1 taza de azúcar",
-                    "2 tazas de agua tibia",
-                    "1/2 taza de jugo de limón (fresco)",
-                    "4 dientes de ajo, picados",
-                    "2 chiles Thai, picados",
-                    "2 cucharadas de zanahoria rallada (guarnición)"
-                ],
-                instructionsEn: [
-                    "Dissolve sugar in warm water completely.",
-                    "Add fish sauce and lime juice. Stir to combine.",
-                    "Add minced garlic and Thai chilies.",
-                    "Taste and adjust: more sugar if too salty, more lime if too sweet.",
-                    "Garnish with shredded carrot. Refrigerate.",
-                    "Keeps 5 days refrigerated. Label with prep date."
-                ],
-                instructionsEs: [
-                    "Disuelve el azúcar en agua tibia completamente.",
-                    "Agrega salsa de pescado y jugo de limón. Mezcla para combinar.",
-                    "Agrega ajo picado y chiles Thai.",
-                    "Prueba y ajusta: más azúcar si está muy salado, más limón si está muy dulce.",
-                    "Decora con zanahoria rallada. Refrigera.",
-                    "Se conserva 5 días refrigerado. Etiqueta con fecha de preparación."
-                ]
-            },
-            {
-                id: 4,
-                titleEn: "Vietnamese Iced Coffee (Cà Phê Sữa Đá)",
-                titleEs: "Café Vietnamita Helado (Cà Phê Sữa Đá)",
-                emoji: "\u{2615}",
-                category: "Drinks",
-                prepTimeEn: "5 min", cookTimeEn: "4 min drip",
-                yieldsEn: "1 serving", yieldsEs: "1 porción",
-                ingredientsEn: [
-                    "2 tbsp Vietnamese ground coffee (Trung Nguyen or Café Du Monde)",
-                    "2-3 tbsp sweetened condensed milk",
-                    "6 oz boiling water",
-                    "Ice to fill glass",
-                    "Phin filter (Vietnamese drip filter)"
-                ],
-                ingredientsEs: [
-                    "2 cucharadas de café molido vietnamita (Trung Nguyen o Café Du Monde)",
-                    "2-3 cucharadas de leche condensada azucarada",
-                    "6 oz de agua hirviendo",
-                    "Hielo para llenar el vaso",
-                    "Filtro Phin (filtro de goteo vietnamita)"
-                ],
-                instructionsEn: [
-                    "Add condensed milk to the bottom of a glass.",
-                    "Place phin filter on top of glass. Add coffee grounds, press lightly with filter press.",
-                    "Pour a small amount of hot water to bloom (30 seconds).",
-                    "Fill phin with remaining hot water. Cover and let drip (4-5 min).",
-                    "Once dripped, stir coffee and condensed milk together.",
-                    "Pour over a full glass of ice. Serve immediately."
-                ],
-                instructionsEs: [
-                    "Agrega leche condensada al fondo de un vaso.",
-                    "Coloca el filtro phin encima del vaso. Agrega café molido, presiona ligeramente.",
-                    "Vierte una pequeña cantidad de agua caliente para florecer (30 segundos).",
-                    "Llena el phin con el agua caliente restante. Tapa y deja gotear (4-5 min).",
-                    "Una vez goteado, mezcla el café y la leche condensada.",
-                    "Vierte sobre un vaso lleno de hielo. Sirve inmediatamente."
-                ]
-            }
-        ];
-
-        // Recipe password for edit access (admin only)
-        const RECIPE_PASSWORD = "ZhongGuo87";
-
-        // Recipe Form Component
-        function RecipeForm({ language, recipe, onSave, onCancel }) {
-            const isEdit = !!recipe;
-            const [form, setForm] = useState(recipe || {
-                titleEn: "", titleEs: "", emoji: "\u{1F37D}\u{FE0F}", category: "",
-                prepTimeEn: "", cookTimeEn: "",
-                yieldsEn: "", yieldsEs: "",
-                ingredientsEn: [""], ingredientsEs: [""],
-                instructionsEn: [""], instructionsEs: [""]
-            });
-
-            const updateField = (field, val) => setForm(prev => ({ ...prev, [field]: val }));
-            const updateListItem = (field, idx, val) => {
-                const arr = [...form[field]];
-                arr[idx] = val;
-                setForm(prev => ({ ...prev, [field]: arr }));
-            };
-            const addListItem = (field) => setForm(prev => ({ ...prev, [field]: [...prev[field], ""] }));
-            const removeListItem = (field, idx) => {
-                if (form[field].length <= 1) return;
-                setForm(prev => ({ ...prev, [field]: prev[field].filter((_, i) => i !== idx) }));
-            };
-
-            const handleSave = () => {
-                if (!form.titleEn.trim()) { alert(language === "es" ? "Se requiere título en inglés" : "English title is required"); return; }
-                const cleaned = {
-                    ...form,
-                    ingredientsEn: form.ingredientsEn.filter(s => s.trim()),
-                    ingredientsEs: form.ingredientsEs.filter(s => s.trim()),
-                    instructionsEn: form.instructionsEn.filter(s => s.trim()),
-                    instructionsEs: form.instructionsEs.filter(s => s.trim()),
-                };
-                if (cleaned.ingredientsEn.length === 0) cleaned.ingredientsEn = [""];
-                if (cleaned.instructionsEn.length === 0) cleaned.instructionsEn = [""];
-                if (cleaned.ingredientsEs.length === 0) cleaned.ingredientsEs = [""];
-                if (cleaned.instructionsEs.length === 0) cleaned.instructionsEs = [""];
-                onSave(cleaned);
-            };
-
-            const renderListEditor = (field, label) => (
-                <div className="mb-4">
-                    <label className="block text-xs font-bold text-gray-600 mb-1">{label}</label>
-                    {form[field].map((item, i) => (
-                        <div key={i} className="flex gap-1 mb-1">
-                            <span className="text-xs text-gray-400 mt-2 w-5 text-right">{i + 1}.</span>
-                            <input
-                                className="flex-1 border border-gray-300 rounded px-2 py-1 text-sm"
-                                value={item}
-                                onChange={e => updateListItem(field, i, e.target.value)}
-                                placeholder={`${label} ${i + 1}`}
-                            />
-                            <button onClick={() => removeListItem(field, i)} className="text-red-400 text-sm px-1">{"\u{2715}"}</button>
-                        </div>
-                    ))}
-                    <button onClick={() => addListItem(field)} className="text-xs text-mint-700 font-bold mt-1">{language === "es" ? "+ Agregar" : "+ Add"}</button>
-                </div>
-            );
-
-            return (
-                <div className="p-4 pb-24">
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-xl font-bold text-mint-700">
-                            {isEdit ? (language === "es" ? "Editar Receta" : "Edit Recipe") : (language === "es" ? "Nueva Receta" : "New Recipe")}
-                        </h2>
-                        <button onClick={onCancel} className="text-gray-500 text-sm underline">{language === "es" ? "Cancelar" : "Cancel"}</button>
-                    </div>
-
-                    <div className="space-y-3">
-                        <div className="flex gap-2">
-                            <div className="w-16">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Ícono" : "Emoji"}</label>
-                                <input className="w-full border border-gray-300 rounded px-2 py-1 text-center text-xl" value={form.emoji} onChange={e => updateField("emoji", e.target.value)} />
-                            </div>
-                            <div className="flex-1">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Categoría" : "Category"}</label>
-                                <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.category} onChange={e => updateField("category", e.target.value)} placeholder={language === "es" ? "ej. Sopas, Aperitivos, Salsas" : "e.g. Soups, Appetizers, Sauces"} />
-                            </div>
-                        </div>
-
-                        <div>
-                            <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Título (Inglés) *" : "Title (English) *"}</label>
-                            <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.titleEn} onChange={e => updateField("titleEn", e.target.value)} placeholder={language === "es" ? "Nombre de la receta en inglés" : "Recipe name in English"} />
-                        </div>
-                        <div>
-                            <label className="block text-xs font-bold text-gray-600 mb-1">{language === "es" ? "Título (Español)" : "Title (Spanish)"}</label>
-                            <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.titleEs} onChange={e => updateField("titleEs", e.target.value)} placeholder={language === "es" ? "Nombre en español" : "Recipe name in Spanish"} />
-                        </div>
-
-                        <div className="flex gap-2">
-                            <div className="flex-1">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{t("prepTime", language)}</label>
-                                <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.prepTimeEn} onChange={e => updateField("prepTimeEn", e.target.value)} placeholder={language === "es" ? "ej. 30 min" : "e.g. 30 min"} />
-                            </div>
-                            <div className="flex-1">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{t("cookTime", language)}</label>
-                                <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.cookTimeEn} onChange={e => updateField("cookTimeEn", e.target.value)} placeholder={language === "es" ? "ej. 2 horas" : "e.g. 2 hours"} />
-                            </div>
-                        </div>
-
-                        <div className="flex gap-2">
-                            <div className="flex-1">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{t("yields", language)} (EN)</label>
-                                <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.yieldsEn} onChange={e => updateField("yieldsEn", e.target.value)} placeholder={language === "es" ? "ej. 5 galones" : "e.g. 5 gallons"} />
-                            </div>
-                            <div className="flex-1">
-                                <label className="block text-xs font-bold text-gray-600 mb-1">{t("yields", language)} (ES)</label>
-                                <input className="w-full border border-gray-300 rounded px-2 py-1 text-sm" value={form.yieldsEs} onChange={e => updateField("yieldsEs", e.target.value)} placeholder="e.g. 19 litros" />
-                            </div>
-                        </div>
-
-                        <div className="border-t pt-3 mt-3">
-                            <h3 className="font-bold text-sm text-amber-800 mb-2">{"\u{1F4DD}"} {t("ingredients", language)}</h3>
-                            {renderListEditor("ingredientsEn", language === "es" ? "Inglés" : "English")}
-                            {renderListEditor("ingredientsEs", language === "es" ? "Español" : "Spanish")}
-                        </div>
-
-                        <div className="border-t pt-3 mt-3">
-                            <h3 className="font-bold text-sm text-amber-800 mb-2">{"\u{1F468}"}{"\u{200D}"}{"\u{1F373}"} {t("instructions", language)}</h3>
-                            {renderListEditor("instructionsEn", language === "es" ? "Inglés" : "English")}
-                            {renderListEditor("instructionsEs", language === "es" ? "Español" : "Spanish")}
-                        </div>
-
-                        <button
-                            onClick={handleSave}
-                            className="w-full bg-mint-700 text-white font-bold py-3 rounded-lg text-lg mt-4"
-                        >
-                            {isEdit ? (language === "es" ? "Guardar Cambios" : "Save Changes") : (language === "es" ? "Agregar Receta" : "Add Recipe")}
-                        </button>
-                    </div>
-                </div>
-            );
-        }
+        // NOTE: MenuReference, Schedule, useGeofence, RecipeForm live in their own files
+        // (imported by App.jsx). Duplicate definitions removed to save ~490 lines.
 
