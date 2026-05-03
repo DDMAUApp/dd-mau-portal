@@ -92,6 +92,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
+            const [debouncedInvSearch, setDebouncedInvSearch] = useState("");
             const [writeInValues, setWriteInValues] = useState({});
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
@@ -366,6 +367,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 return map;
             }, [syscoPricingData, usfoodsPricingData]);
+
+            // Debounce inventory search to prevent UI freezing on every keystroke
+            useEffect(() => {
+                if (!invSearch) { setDebouncedInvSearch(""); return; }
+                const timer = setTimeout(() => setDebouncedInvSearch(invSearch), 250);
+                return () => clearTimeout(timer);
+            }, [invSearch]);
 
             // Load skills matrix from Firestore
             useEffect(() => {
@@ -2407,7 +2415,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                             {/* ── CATEGORY VIEW ── */}
                             {invViewMode === "category" && customInventory.map((category, catIdx) => {
-                                const searchLower = invSearch.toLowerCase().trim();
+                                const searchLower = debouncedInvSearch.toLowerCase().trim();
                                 let filteredItems = searchLower
                                     ? category.items.filter(item =>
                                         (item.name || "").toLowerCase().includes(searchLower) ||
@@ -2592,7 +2600,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     cat.items.forEach(item => {
                                         const v = item.vendor || item.supplier || "Other";
                                         if (!vendorGroups[v]) vendorGroups[v] = [];
-                                        const searchLower = invSearch.toLowerCase().trim();
+                                        const searchLower = debouncedInvSearch.toLowerCase().trim();
                                         const matchesSearch = !searchLower ||
                                             (item.name || "").toLowerCase().includes(searchLower) ||
                                             (item.nameEs || "").toLowerCase().includes(searchLower) ||
@@ -2607,7 +2615,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 return vendorNames.map(vendor => {
                                     const vItems = vendorGroups[vendor].sort((a, b) => a.name.localeCompare(b.name));
                                     const vKey = "ven-" + vendor;
-                                    const isCollapsed = collapsedCats[vKey] && !invSearch;
+                                    const isCollapsed = collapsedCats[vKey] && !debouncedInvSearch;
                                     const countedInV = vItems.filter(i => (inventory[i.id] || 0) > 0).length;
                                     return (
                                         <div key={vendor} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -2711,7 +2719,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     { name: "Yuly", nameEs: "Yuly", emoji: "\u{1F4E6}", color: "from-amber-600 to-amber-500", label: language === "es" ? "Seco, Papel y Salsas" : "Dry, Paper & Sauces", categories: ["Sauces & Seasonings", "Rice & Noodles", "Oils & Cooking", "Paper & Supplies", "Cleaning"] },
                                     { name: "Brandon", nameEs: "Brandon", emoji: "\u{1F964}", color: "from-green-700 to-green-600", label: language === "es" ? "Bebidas" : "Beverages", categories: ["Beverages"] }
                                 ];
-                                const searchLower = invSearch.toLowerCase().trim();
+                                const searchLower = debouncedInvSearch.toLowerCase().trim();
 
                                 // Build item assignments: default by category, then apply overrides
                                 const getPersonForItem = (item, defaultPerson) => {
