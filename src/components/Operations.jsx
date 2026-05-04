@@ -92,7 +92,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
             const [invSearch, setInvSearch] = useState("");
-            const [debouncedInvSearch, setDebouncedInvSearch] = useState("");
             const [writeInValues, setWriteInValues] = useState({});
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
@@ -369,11 +368,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return map;
             }, [syscoPricingData, usfoodsPricingData]);
 
-            // Debounce inventory search to prevent UI freezing on every keystroke
+            // Expand all categories when searching, collapse back when cleared
             useEffect(() => {
-                if (!invSearch) { setDebouncedInvSearch(""); setCollapsedCats({}); return; }
-                const timer = setTimeout(() => setDebouncedInvSearch(invSearch), 250);
-                return () => clearTimeout(timer);
+                if (!invSearch) { setCollapsedCats({}); }
             }, [invSearch]);
 
             // Load skills matrix from Firestore
@@ -2318,7 +2315,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         placeholder={language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items..."}
                                         className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
                                     {invSearch && (
-                                        <button type="button" onClick={() => { setInvSearch(""); setDebouncedInvSearch(""); setCollapsedCats({}); }}
+                                        <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats({}); }}
                                             className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
                                     )}
                                 </div>
@@ -2425,7 +2422,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                             {/* ── CATEGORY VIEW ── */}
                             {invViewMode === "category" && customInventory.map((category, catIdx) => {
-                                const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                const searchLower = invSearch.toLowerCase().trim();
                                 let filteredItems = searchLower
                                     ? category.items.filter(item =>
                                         (item.name || "").toLowerCase().includes(searchLower) ||
@@ -2609,7 +2606,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     cat.items.forEach(item => {
                                         const v = item.vendor || item.supplier || "Other";
                                         if (!vendorGroups[v]) vendorGroups[v] = [];
-                                        const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                        const searchLower = invSearch.toLowerCase().trim();
                                         const matchesSearch = !searchLower ||
                                             (item.name || "").toLowerCase().includes(searchLower) ||
                                             (item.nameEs || "").toLowerCase().includes(searchLower);
@@ -2623,7 +2620,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 return vendorNames.map(vendor => {
                                     const vItems = vendorGroups[vendor].sort((a, b) => a.name.localeCompare(b.name));
                                     const vKey = "ven-" + vendor;
-                                    const isCollapsed = collapsedCats[vKey] && !debouncedInvSearch;
+                                    const isCollapsed = collapsedCats[vKey] && !invSearch;
                                     const countedInV = vItems.filter(i => (inventory[i.id] || 0) > 0).length;
                                     return (
                                         <div key={vendor} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
@@ -2727,7 +2724,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     { name: "Yuly", nameEs: "Yuly", emoji: "\u{1F4E6}", color: "from-amber-600 to-amber-500", label: language === "es" ? "Seco, Papel y Salsas" : "Dry, Paper & Sauces", categories: ["Sauces & Seasonings", "Rice & Noodles", "Oils & Cooking", "Paper & Supplies", "Cleaning"] },
                                     { name: "Brandon", nameEs: "Brandon", emoji: "\u{1F964}", color: "from-green-700 to-green-600", label: language === "es" ? "Bebidas" : "Beverages", categories: ["Beverages"] }
                                 ];
-                                const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                const searchLower = invSearch.toLowerCase().trim();
 
                                 // Build item assignments: default by category, then apply overrides
                                 const getPersonForItem = (item, defaultPerson) => {
@@ -3073,7 +3070,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         {/* Category-grouped items (Sysco) or flat list (US Foods) */}
                                         {isSysco && pData.byCategory ? (
                                             SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
-                                                const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                                const searchLower = invSearch.toLowerCase().trim();
                                                 const allCatItems = pData.byCategory[cat];
                                                 const catItems = searchLower
                                                     ? allCatItems.filter(([key, data]) =>
@@ -3147,7 +3144,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         ) : (
                                             (() => {
                                                 let unmatchedHeaderShown = false;
-                                                const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                                const searchLower = invSearch.toLowerCase().trim();
                                                 const filteredSorted = searchLower
                                                     ? sorted.filter(([key, data]) =>
                                                         (data.name || "").toLowerCase().includes(searchLower) ||
@@ -3752,7 +3749,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         <PrepList
                             language={language}
                             staffName={staffName}
-                            storeLocation={storeLocation} 
+                            storeLocation={storeLocation}
                             staffList={staffList}
                         />
                     )}
