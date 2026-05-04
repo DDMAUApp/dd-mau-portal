@@ -3752,7 +3752,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         <PrepList
                             language={language}
                             staffName={staffName}
-                            storeLocation={storeLocation}
+                            storeLocation={storeLocation} 
                             staffList={staffList}
                         />
                     )}
