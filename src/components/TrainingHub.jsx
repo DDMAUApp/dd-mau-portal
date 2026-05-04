@@ -729,20 +729,24 @@ export default function TrainingHub({ staffName, language, staffList }) {
   // Load previous test result + lesson progress for this staff member
   useEffect(() => {
     if (!staffName) return;
+    let isMounted = true;
     const docId = staffName.toLowerCase().replace(/\s+/g, "_");
     // Load test result
     getDoc(doc(db, "training_results", docId))
       .then((snap) => {
-        if (snap.exists()) setPreviousResult(snap.data());
+        if (isMounted && snap.exists()) setPreviousResult(snap.data());
       })
-      .finally(() => setLoadingPrev(false));
+      .finally(() => {
+        if (isMounted) setLoadingPrev(false);
+      });
     // Load lesson progress
     getDoc(doc(db, "training_progress", docId))
       .then((snap) => {
-        if (snap.exists() && snap.data().completedLessons) {
+        if (isMounted && snap.exists() && snap.data().completedLessons) {
           setCompletedLessons(snap.data().completedLessons);
         }
       });
+    return () => { isMounted = false; };
   }, [staffName]);
 
   /* ─── LESSON COMPLETION ─── */

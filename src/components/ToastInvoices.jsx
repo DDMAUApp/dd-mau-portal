@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 
@@ -10,6 +10,8 @@ export default function ToastInvoices({ language }) {
     const [refreshing, setRefreshing] = useState(false);
 
     const isEn = language !== "es";
+    const refreshTimeoutRef = useRef(null);
+    const isMountedRef = useRef(true);
 
     const handlePrint = (inv) => {
         const locName = location === "webster" ? "Big Bend Blvd" : "Dorsett Rd";
@@ -112,6 +114,12 @@ export default function ToastInvoices({ language }) {
         </body></html>`;
 
         const printWindow = window.open("", "_blank", "width=700,height=900");
+        if (!printWindow) {
+            alert(isEn
+                ? "Please allow pop-ups to print invoices."
+                : "Por favor permita ventanas emergentes para imprimir facturas.");
+            return;
+        }
         printWindow.document.write(html);
         printWindow.document.close();
         printWindow.focus();
@@ -128,8 +136,20 @@ export default function ToastInvoices({ language }) {
         } catch (e) {
             console.error("Trigger refresh error:", e);
         }
-        setTimeout(() => setRefreshing(false), 3000);
+        if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = setTimeout(() => {
+            if (isMountedRef.current) setRefreshing(false);
+        }, 3000);
     };
+
+    // Cleanup timeout and track mount state
+    useEffect(() => {
+        isMountedRef.current = true;
+        return () => {
+            isMountedRef.current = false;
+            if (refreshTimeoutRef.current) clearTimeout(refreshTimeoutRef.current);
+        };
+    }, []);
 
     useEffect(() => {
         setLoading(true);
