@@ -371,7 +371,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Debounce inventory search to prevent UI freezing on every keystroke
             useEffect(() => {
-                if (!invSearch) { setDebouncedInvSearch(""); return; }
+                if (!invSearch) { setDebouncedInvSearch(""); setCollapsedCats({}); return; }
                 const timer = setTimeout(() => setDebouncedInvSearch(invSearch), 250);
                 return () => clearTimeout(timer);
             }, [invSearch]);
@@ -3073,9 +3073,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         {/* Category-grouped items (Sysco) or flat list (US Foods) */}
                                         {isSysco && pData.byCategory ? (
                                             SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
-                                                const catItems = pData.byCategory[cat];
+                                                const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                                const allCatItems = pData.byCategory[cat];
+                                                const catItems = searchLower
+                                                    ? allCatItems.filter(([key, data]) =>
+                                                        (data.name || "").toLowerCase().includes(searchLower) ||
+                                                        (key || "").toLowerCase().includes(searchLower) ||
+                                                        (data.brand || "").toLowerCase().includes(searchLower))
+                                                    : allCatItems;
+                                                if (catItems.length === 0) return null;
                                                 const catEmoji = SYSCO_CATEGORY_EMOJI[cat] || "";
-                                                const catCollapsed = collapsedCats["sysco_" + cat];
+                                                const catCollapsed = collapsedCats["sysco_" + cat] && !searchLower;
                                                 const catSaleCount = catItems.filter(([,d]) => d.originalPrice && d.originalPrice !== d.price).length;
                                                 return (
                                                     <div key={cat}>
@@ -3139,7 +3147,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         ) : (
                                             (() => {
                                                 let unmatchedHeaderShown = false;
-                                                return sorted.map(([key, data]) => {
+                                                const searchLower = debouncedInvSearch.toLowerCase().trim();
+                                                const filteredSorted = searchLower
+                                                    ? sorted.filter(([key, data]) =>
+                                                        (data.name || "").toLowerCase().includes(searchLower) ||
+                                                        (key || "").toLowerCase().includes(searchLower) ||
+                                                        (data.brand || "").toLowerCase().includes(searchLower))
+                                                    : sorted;
+                                                return filteredSorted.map(([key, data]) => {
                                                     const invItem = data.invId ? invLookup[data.invId] : null;
                                                     const isMatched = !!data.invId;
                                                     const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && matchedCount > 0;
