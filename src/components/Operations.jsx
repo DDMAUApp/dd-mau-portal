@@ -496,37 +496,58 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return () => unsub();
             }, []);
 
-            // Save / clear / category mutators — all write to Firestore via setDoc with merge,
-            // so concurrent edits from another admin tablet don't clobber unrelated entries.
-            const saveVendorMatch = async (vendor, vendorId, invId) => {
+            // ── Vendor match mutators ────────────────────────────────────────
+            // Uses updateDoc with dotted paths for ALL writes — this is the canonical way to
+            // set a single nested field in Firestore. setDoc with merge:true was unreliable
+            // for deeply-nested maps in some SDK versions (the previous bug where edits seemed
+            // to revert to the auto-match value).
+            // If the doc doesn't exist yet, falls back to setDoc with the full structure.
+            const [matchSaveError, setMatchSaveError] = useState(null);
+            const _writeMatch = async (vendor, vendorId, value) => {
+                const ref = doc(db, "config", "vendor_matches");
                 try {
-                    await setDoc(doc(db, "config", "vendor_matches"), {
-                        [vendor]: { [vendorId]: invId },
-                    }, { merge: true });
-                } catch (err) { console.error("saveVendorMatch error:", err); }
+                    await updateDoc(ref, { [`${vendor}.${vendorId}`]: value });
+                    setMatchSaveError(null);
+                } catch (err) {
+                    if (err?.code === "not-found") {
+                        try {
+                            await setDoc(ref, { [vendor]: { [vendorId]: value } }, { merge: true });
+                            setMatchSaveError(null);
+                        } catch (e2) {
+                            console.error("vendor match create error:", e2);
+                            setMatchSaveError(e2.message || String(e2));
+                        }
+                    } else {
+                        console.error("vendor match write error:", err);
+                        setMatchSaveError(err.message || String(err));
+                    }
+                }
             };
+            const saveVendorMatch = (vendor, vendorId, invId) => _writeMatch(vendor, vendorId, invId);
+            const lockVendorUnmatched = (vendor, vendorId) => _writeMatch(vendor, vendorId, "");
             const clearVendorMatch = async (vendor, vendorId) => {
-                // Use deleteField so the override is removed entirely (autoMatch falls through).
                 try {
                     await updateDoc(doc(db, "config", "vendor_matches"), {
                         [`${vendor}.${vendorId}`]: deleteField(),
                     });
-                } catch (err) { console.error("clearVendorMatch error:", err); }
-            };
-            const lockVendorUnmatched = async (vendor, vendorId) => {
-                // Empty string = explicitly unmatched. Prevents autoMatch from re-attaching it.
-                try {
-                    await setDoc(doc(db, "config", "vendor_matches"), {
-                        [vendor]: { [vendorId]: "" },
-                    }, { merge: true });
-                } catch (err) { console.error("lockVendorUnmatched error:", err); }
+                    setMatchSaveError(null);
+                } catch (err) {
+                    console.error("clearVendorMatch error:", err);
+                    setMatchSaveError(err.message || String(err));
+                }
             };
             const saveVendorCategory = async (vendor, vendorId, category) => {
                 try {
-                    await setDoc(doc(db, "config", "vendor_categories"), {
-                        [vendor]: { [vendorId]: category },
-                    }, { merge: true });
-                } catch (err) { console.error("saveVendorCategory error:", err); }
+                    await updateDoc(doc(db, "config", "vendor_categories"), {
+                        [`${vendor}.${vendorId}`]: category,
+                    });
+                } catch (err) {
+                    if (err?.code === "not-found") {
+                        await setDoc(doc(db, "config", "vendor_categories"), { [vendor]: { [vendorId]: category } }, { merge: true });
+                    } else {
+                        console.error("saveVendorCategory error:", err);
+                    }
+                }
             };
 
             // Listen to live labor data for current location
@@ -2472,6 +2493,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </div>
                                         ))}
                                     </div>
+                                    {/* Save error (Firestore permission issues, network, etc. — visible feedback so we can debug) */}
+                                    {matchSaveError && (
+                                        <div className="px-3 py-2 bg-red-100 border-t border-red-300 text-red-700 text-xs">
+                                            ⚠️ {language === "es" ? "Error al guardar:" : "Save error:"} {matchSaveError}
+                                        </div>
+                                    )}
                                     {/* Footer actions */}
                                     <div className="p-3 border-t border-gray-200 flex flex-wrap gap-2 bg-gray-50">
                                         <button onClick={async () => { await clearVendorMatch(vendor, vendorId); closeEditor(); }}
@@ -2499,7 +2526,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <div className="flex items-center gap-1.5">
                                     <button onClick={() => setInvViewMode("category")}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "category" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                                        {language === "es" ? "Categoría" : "Category"}
+                                        {language === "es" ? "📋 Lista Maestra" : "📋 Master List"}
                                     </button>
                                     <button onClick={() => setInvViewMode("vendor")}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "vendor" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
