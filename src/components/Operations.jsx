@@ -2883,7 +2883,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                 {language !== "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.nameEs}</span>}
                                                                             </div>
                                                                             <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                                                                {item.vendorOptions && item.vendorOptions.length > 1 ? (
+                                                                                {/* Vendor preference: read-only label by default; the dropdown only
+                                                                                    appears in inventory Edit mode (the ✏️ next to the print button).
+                                                                                    Keeps the daily ordering view clean and prevents accidental changes. */}
+                                                                                {item.vendorOptions && item.vendorOptions.length > 1 && invEditMode ? (
                                                                                     <select
                                                                                         value={item.preferredVendor || item.vendor || ""}
                                                                                         onChange={(e) => changePreferredVendor(catIdx, itemIdx, e.target.value)}
@@ -2896,7 +2899,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                         ))}
                                                                                     </select>
                                                                                 ) : (
-                                                                                    item.vendor && <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
+                                                                                    (item.preferredVendor || item.vendor) && (
+                                                                                        <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
+                                                                                    )
                                                                                 )}
                                                                                 {renderLivePriceBadge(item.id, item)}
                                                                                 {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
