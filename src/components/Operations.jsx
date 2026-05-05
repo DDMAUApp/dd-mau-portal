@@ -373,6 +373,24 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!invSearch) { setCollapsedCats({}); }
             }, [invSearch]);
 
+            // Pre-compute filtered inventory for search
+            const filteredCategoryInventory = useMemo(() => {
+                const searchLower = (invSearch || "").toLowerCase().trim();
+                return customInventory.map((category, catIdx) => {
+                    let filteredItems = category.items;
+                    if (searchLower) {
+                        filteredItems = category.items.filter(item =>
+                            (item.name || "").toLowerCase().includes(searchLower) ||
+                            (item.nameEs || "").toLowerCase().includes(searchLower)
+                        );
+                    }
+                    if (invShowOnlyCounted) {
+                        filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
+                    }
+                    return { ...category, filteredItems, catIdx, hidden: (searchLower || invShowOnlyCounted) && filteredItems.length === 0 };
+                });
+            }, [invSearch, customInventory, invShowOnlyCounted, inventory]);
+
             // Load skills matrix from Firestore
             useEffect(() => {
                 const unsubMatrix = onSnapshot(doc(db, "config", "skillsMatrix"), (docSnap) => {
@@ -2421,19 +2439,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             })()}
 
                             {/* ── CATEGORY VIEW ── */}
-                            {invViewMode === "category" && customInventory.map((category, catIdx) => {
-                                const searchLower = invSearch.toLowerCase().trim();
-                                let filteredItems = searchLower
-                                    ? category.items.filter(item =>
-                                        (item.name || "").toLowerCase().includes(searchLower) ||
-                                        (item.nameEs || "").toLowerCase().includes(searchLower)
-                                    )
-                                    : category.items;
-                                if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
-                                if ((searchLower || invShowOnlyCounted) && filteredItems.length === 0) return null;
+                            {invViewMode === "category" && filteredCategoryInventory.map((catData) => {
+                                if (catData.hidden) return null;
+                                const category = catData;
+                                const catIdx = catData.catIdx;
+                                const filteredItems = catData.filteredItems;
+                                const searchLower = (invSearch || "").toLowerCase().trim();
                                 const catKey = "cat-" + catIdx;
                                 const isCollapsed = collapsedCats[catKey] && !searchLower;
-                                const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
+                                const countedInCat = customInventory[catIdx].items.filter(i => (inventory[i.id] || 0) > 0).length;
 
                                 // Group by subcategory
                                 const subcats = [];
