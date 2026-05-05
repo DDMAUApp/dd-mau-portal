@@ -401,27 +401,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!invSearch) { setCollapsedCats({}); }
             }, [invSearch]);
 
-            // Pre-compute filtered inventory for search.
-            // Split into two memos so a count-only change (which fires on every keystroke into a count
-            // input) doesn't re-run the search filter — only the cheap counted-only pass.
-            const searchFilteredInventory = useMemo(() => {
-                const searchLower = (invSearch || "").toLowerCase().trim();
-                return customInventory.map((category, catIdx) => {
-                    const items = searchLower
-                        ? category.items.filter(item => itemMatchesSearch(item, searchLower))
-                        : category.items;
-                    return { category, items, catIdx, searchLower };
-                });
-            }, [invSearch, customInventory]);
-
-            const filteredCategoryInventory = useMemo(() => {
-                return searchFilteredInventory.map(({ category, items, catIdx, searchLower }) => {
-                    const filteredItems = invShowOnlyCounted
-                        ? items.filter(item => (inventory[item.id] || 0) > 0)
-                        : items;
-                    return { ...category, filteredItems, catIdx, hidden: (searchLower || invShowOnlyCounted) && filteredItems.length === 0 };
-                });
-            }, [searchFilteredInventory, invShowOnlyCounted, inventory]);
+            // Search/filter happens inline in each view (category, vendor, split, pricing) — same
+            // pattern across all four. We previously had a memo here for the category view but it
+            // diverged from how the other tabs work, made the category list "stick" on stale data
+            // when search was cleared, and obscured the simple flow. Inline filtering at render
+            // time is fast enough for the inventory size and matches the rest of the file.
 
             // Load skills matrix from Firestore
             useEffect(() => {
@@ -2511,15 +2495,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             })()}
 
                             {/* ── CATEGORY VIEW ── */}
-                            {invViewMode === "category" && filteredCategoryInventory.map((catData) => {
-                                if (catData.hidden) return null;
-                                const category = catData;
-                                const catIdx = catData.catIdx;
-                                const filteredItems = catData.filteredItems;
+                            {invViewMode === "category" && customInventory.map((category, catIdx) => {
+                                // Same filter pattern used by vendor / split / pricing views.
                                 const searchLower = (invSearch || "").toLowerCase().trim();
+                                let filteredItems = searchLower
+                                    ? category.items.filter(item => itemMatchesSearch(item, searchLower))
+                                    : category.items;
+                                if (invShowOnlyCounted) {
+                                    filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
+                                }
+                                // Hide the whole category card when a filter is active and nothing matches.
+                                if ((searchLower || invShowOnlyCounted) && filteredItems.length === 0) return null;
+
                                 const catKey = "cat-" + catIdx;
                                 const isCollapsed = collapsedCats[catKey] && !searchLower;
-                                const countedInCat = customInventory[catIdx].items.filter(i => (inventory[i.id] || 0) > 0).length;
+                                const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
 
                                 // Group by subcategory
                                 const subcats = [];
@@ -2534,7 +2524,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 });
 
                                 return (
-                                <div key={category.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
+                                <div key={catIdx} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
                                     {/* Category header — tap to collapse */}
                                     <button onClick={() => toggleCatCollapse(catKey)}
                                         className="w-full p-3 bg-gradient-to-r from-mint-700 to-mint-600 flex justify-between items-center">
