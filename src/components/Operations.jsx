@@ -12,6 +12,37 @@ import PrepList from './PrepList';
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
 const DEFAULT_CHECKLIST_TASKS = { FOH: { all: [] }, BOH: { all: [] } };
 const CHECKLIST_VERSION = 2;
+const BUSINESS_TZ = "America/Chicago";
+
+// Business-day date key (YYYY-MM-DD) anchored to America/Chicago, not the device's local zone.
+// All checklists, history docs, and break plans key off the business day, so a staff phone
+// in a different zone (or a UTC server) would otherwise roll over at the wrong wall-clock time
+// and could overwrite the prior day's history doc.
+const _todayKeyFmt = new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TZ, year: "numeric", month: "2-digit", day: "2-digit" });
+const getTodayKey = (d = new Date()) => _todayKeyFmt.format(d); // en-CA emits YYYY-MM-DD
+const addDaysKey = (key, n) => {
+    // key is YYYY-MM-DD; anchor at noon UTC to avoid DST/zone edges, then add n days.
+    const [y, m, day] = key.split("-").map(Number);
+    const t = new Date(Date.UTC(y, m - 1, day, 12, 0, 0));
+    t.setUTCDate(t.getUTCDate() + n);
+    return t.toISOString().slice(0, 10);
+};
+
+// Inventory search matcher. Returns true when the item should appear for this query.
+// Searches across English+Spanish name, vendor/supplier, brand, pack size, and the item id —
+// so a user can type a vendor name ("sysco"), a brand, an SKU, or part of a pack size and find it.
+const itemMatchesSearch = (item, searchLower) => {
+    if (!searchLower) return true;
+    const haystack = [
+        item.name, item.nameEs, item.vendor, item.supplier, item.preferredVendor,
+        item.brand, item.pack, item.id, item.syscoId, item.usfoodsId, item.subcat,
+    ];
+    for (let i = 0; i < haystack.length; i++) {
+        const v = haystack[i];
+        if (v && String(v).toLowerCase().includes(searchLower)) return true;
+    }
+    return false;
+};
 
 export default function Operations({ language, staffList, staffName, storeLocation }) {
 
@@ -57,9 +88,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [customTasks, setCustomTasksRaw] = useState(JSON.parse(JSON.stringify(DEFAULT_CHECKLIST_TASKS)));
             const customTasksRef = useRef(customTasks);
             const setCustomTasks = (val) => { customTasksRef.current = val; setCustomTasksRaw(val); };
-            const [checklistDate, setChecklistDate] = useState("");
+            const [checklistDate, setChecklistDateRaw] = useState("");
+            const checklistDateRef = useRef("");
+            const setChecklistDate = (val) => { checklistDateRef.current = val; setChecklistDateRaw(val); };
             // Assignments: { "FOH_morning": "Emma Liliana", "BOH_afternoon": "Jose Mendoza", ... }
-            const [checklistAssignments, setChecklistAssignments] = useState({});
+            const [checklistAssignments, setChecklistAssignmentsRaw] = useState({});
+            const checklistAssignmentsRef = useRef({});
+            const setChecklistAssignments = (val) => { checklistAssignmentsRef.current = val; setChecklistAssignmentsRaw(val); };
             // Multi-list: { FOH: [{id:"FOH_0", assignee:""}], BOH: [{id:"BOH_0", assignee:""}] }
             const DEFAULT_LISTS = { FOH: [{ id: "FOH_0", assignee: "" }], BOH: [{ id: "BOH_0", assignee: "" }] };
             const [checklistLists, setChecklistListsRaw] = useState(DEFAULT_LISTS);
@@ -99,7 +134,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
-            const invLocalWriteRef = useRef(false); // flag to skip onSnapshot echo after local writes
+            // (echo from local writes is now suppressed via snapshot.metadata.hasPendingWrites in the inventory listener)
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
             const [splitWriteIns, setSplitWriteIns] = useState({}); // {personName: [{id, name, count}]}
@@ -157,10 +192,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [breakPlan, setBreakPlan] = useState({ stations: {}, waves: {} });
             const [breakPlanSaved, setBreakPlanSaved] = useState(false);
             const [breakWaveTimes, setBreakWaveTimes] = useState(DEFAULT_BREAK_WAVES.map(w => w.time));
-            const [breakDate, setBreakDate] = useState(() => {
-                const d = new Date();
-                return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-            });
+            const [breakDate, setBreakDate] = useState(() => getTodayKey());
 
             // Build BREAK_WAVES dynamically from editable times
             const formatTime12 = (t24) => {
@@ -373,23 +405,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!invSearch) { setCollapsedCats({}); }
             }, [invSearch]);
 
-            // Pre-compute filtered inventory for search
-            const filteredCategoryInventory = useMemo(() => {
+            // Pre-compute filtered inventory for search.
+            // Split into two memos so a count-only change (which fires on every keystroke into a count
+            // input) doesn't re-run the search filter — only the cheap counted-only pass.
+            const searchFilteredInventory = useMemo(() => {
                 const searchLower = (invSearch || "").toLowerCase().trim();
                 return customInventory.map((category, catIdx) => {
-                    let filteredItems = category.items;
-                    if (searchLower) {
-                        filteredItems = category.items.filter(item =>
-                            (item.name || "").toLowerCase().includes(searchLower) ||
-                            (item.nameEs || "").toLowerCase().includes(searchLower)
-                        );
-                    }
-                    if (invShowOnlyCounted) {
-                        filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
-                    }
+                    const items = searchLower
+                        ? category.items.filter(item => itemMatchesSearch(item, searchLower))
+                        : category.items;
+                    return { category, items, catIdx, searchLower };
+                });
+            }, [invSearch, customInventory]);
+
+            const filteredCategoryInventory = useMemo(() => {
+                return searchFilteredInventory.map(({ category, items, catIdx, searchLower }) => {
+                    const filteredItems = invShowOnlyCounted
+                        ? items.filter(item => (inventory[item.id] || 0) > 0)
+                        : items;
                     return { ...category, filteredItems, catIdx, hidden: (searchLower || invShowOnlyCounted) && filteredItems.length === 0 };
                 });
-            }, [invSearch, customInventory, invShowOnlyCounted, inventory]);
+            }, [searchFilteredInventory, invShowOnlyCounted, inventory]);
 
             // Load skills matrix from Firestore
             useEffect(() => {
@@ -515,19 +551,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Reset plan while loading new date/location
                 setBreakPlan({ stations: {}, waves: {} });
                 setBreakWaveTimes(DEFAULT_BREAK_WAVES.map(w => w.time));
+                let cancelled = false;
                 const docId = "breakPlan_" + storeLocation + "_" + breakDate;
                 const unsubBreakPlan = onSnapshot(doc(db, "ops", docId), (docSnap) => {
+                    if (cancelled) return;
                     if (docSnap.exists()) {
                         setBreakPlan(docSnap.data().plan || { stations: {}, waves: {} });
                         if (docSnap.data().waveTimes) setBreakWaveTimes(docSnap.data().waveTimes);
                     }
                 });
-                // Also migrate old single-doc format for today if needed
+                // Also migrate old single-doc format for today if needed.
+                // Guard with `cancelled` so a date/location change mid-migration doesn't write
+                // the old date's plan to the old docId after the user has navigated away.
                 if (breakDate === getTodayKey()) {
                     const oldDocId = "breakPlan_" + breakDate;
                     getDoc(doc(db, "ops", oldDocId)).then(oldDocSnap => {
+                        if (cancelled) return;
                         if (oldDocSnap.exists() && oldDocSnap.data().date === breakDate && oldDocSnap.data().plan) {
                             getDoc(doc(db, "ops", docId)).then(newDocSnap => {
+                                if (cancelled) return;
                                 if (!newDocSnap.exists()) {
                                     setDoc(doc(db, "ops", docId), oldDocSnap.data()).catch(err => console.error("Migration error:", err));
                                 }
@@ -535,7 +577,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         }
                     }).catch(err => console.error("Migration read error:", err));
                 }
-                return () => unsubBreakPlan();
+                return () => { cancelled = true; unsubBreakPlan(); };
             }, [breakDate, storeLocation]);
 
             const saveBreakPlan = async (plan, times) => {
@@ -699,12 +741,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
 
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
-                const unsubInventorySnapshot = onSnapshot(inventoryDocRef, (docSnap) => {
-                    // Skip the echo from our own writes to avoid re-render thrashing
-                    if (invLocalWriteRef.current) {
-                        invLocalWriteRef.current = false;
-                        return;
-                    }
+                const unsubInventorySnapshot = onSnapshot(inventoryDocRef, { includeMetadataChanges: true }, (docSnap) => {
+                    // Skip our own optimistic local writes — wait for the server-confirmed snapshot.
+                    // This avoids the prior race where a remote write arriving in the same tick
+                    // as our local write got swallowed as if it were our own echo.
+                    if (docSnap.metadata.hasPendingWrites) return;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         setInventory(data.counts || {});
@@ -737,7 +778,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             });
                             setCustomInventory(merged);
                         }
-                        setLastUpdated(prev => ({ ...prev, inventory: new Date(data.date).toLocaleString() }));
+                        setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
                     }
                 });
 
@@ -828,34 +869,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus(); };
             }, [storeLocation]);
 
-            // Midnight auto-reset: check every 60s if the date has changed
+            // Midnight auto-reset: check every 60s if the business-day date has changed.
+            // All mutable state read here goes through refs so the interval is installed once
+            // per location and isn't torn down/recreated on every checklist edit (which would
+            // risk missing the rollover if recreation happened to land at exactly 11:59:xx).
             useEffect(() => {
                 let lastKnownDate = getTodayKey();
                 const midnightInterval = setInterval(async () => {
                     const now = getTodayKey();
-                    if (now !== lastKnownDate) {
-                        lastKnownDate = now;
-                        // Save current day's checklist to history before resetting
-                        const prevChecks = checksRef.current || {};
-                        const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
-                        const prevDate = checklistDate || new Date(Date.now() - 86400000).toISOString().split("T")[0];
-                        if (hasAnyChecks) {
-                            try {
-                                await setDoc(doc(db, "checklistHistory_" + storeLocation, prevDate + "_saved"), {
-                                    checks: cleanForFirestore(prevChecks), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: new Date().toISOString(), savedBy: "auto-midnight"
-                                });
-                            } catch (err) { console.error("Midnight save error:", err); }
-                        }
-                        // Reset for new day
-                        setChecks({});
-                        setChecklistDate(now);
+                    if (now === lastKnownDate) return;
+                    lastKnownDate = now;
+                    const prevChecks = checksRef.current || {};
+                    const hasAnyChecks = Object.keys(prevChecks).some(k => !k.includes("_by") && !k.includes("_at") && !k.includes("_photo") && !k.includes("_followUp") && prevChecks[k] === true);
+                    const prevDate = checklistDateRef.current || addDaysKey(now, -1);
+                    if (hasAnyChecks) {
                         try {
-                            await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() });
-                        } catch (err) { console.error("Midnight reset error:", err); }
+                            await setDoc(doc(db, "checklistHistory_" + storeLocation, prevDate + "_saved"), {
+                                checks: cleanForFirestore(prevChecks), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignmentsRef.current), lists: cleanForFirestore(checklistListsRef.current), date: new Date().toISOString(), savedBy: "auto-midnight"
+                            });
+                        } catch (err) { console.error("Midnight save error:", err); }
                     }
-                }, 60000); // Check every minute
+                    setChecks({});
+                    setChecklistDate(now);
+                    try {
+                        await updateDoc(doc(db, "ops", "checklists2_" + storeLocation), { checks: {}, date: now, updatedAt: new Date().toISOString() });
+                    } catch (err) { console.error("Midnight reset error:", err); }
+                }, 60000);
                 return () => clearInterval(midnightInterval);
-            }, [storeLocation, checklistDate, checklistAssignments]);
+            }, [storeLocation]);
 
             // {"\u{2500}"}{"\u{2500}"} PUSH NOTIFICATION SYSTEM {"\u{2500}"}{"\u{2500}"}
             // {"\u{2500}"}{"\u{2500}"} NOTIFICATION SYSTEM {"\u{2500}"}{"\u{2500}"}
@@ -937,11 +978,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const dismissAlert = (key) => {
                 dismissedAlertsRef.current.add(key);
                 setActiveAlerts(prev => prev.filter(a => a.key !== key));
-            };
-
-            const getTodayKey = () => {
-                const d = new Date();
-                return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
             };
 
             // Strip undefined values from nested objects before Firestore save
@@ -1083,7 +1119,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const addChecklistTask = async () => {
                 if (!newTask.trim()) return;
-                const item = { id: Date.now().toString(), task: newTask.trim() };
+                // Include the side in the ID so a FOH and BOH task created in the same millisecond
+                // don't share the same key in the `checks` map (list-0 has no prefix for backward compat).
+                const item = { id: checklistSide + "_" + Date.now().toString(), task: newTask.trim() };
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
                 const newAssignArr = Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : [];
@@ -1130,7 +1168,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Photo capture and upload
             const handlePhotoCapture = async (e, taskId) => {
                 const file = e.target.files?.[0];
+                // Reset the input so the same file can be reselected after a failed upload.
+                if (e.target) e.target.value = "";
                 if (!file) return;
+                // Re-entry guard: a rapid second tap (mobile Safari double-fire) must not start a parallel upload,
+                // because two parallel saveChecklistState writes both start from a stale checksRef snapshot
+                // and would clobber each other's unrelated checks.
+                if (capturingPhoto) return;
                 setCapturingPhoto(taskId);
                 try {
                     const todayKey = getTodayKey();
@@ -1200,10 +1244,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const newMeta = { ...invCountMeta, [itemId]: { by: staffName, at: timeStr } };
                 if (count === 0) delete newMeta[itemId];
                 setInvCountMeta(newMeta);
+                const ref = doc(db, "ops", "inventory_" + storeLocation);
+                // Targeted update via dotted paths so concurrent edits on other items aren't clobbered.
+                const update = {
+                    [`counts.${itemId}`]: count,
+                    [`countMeta.${itemId}`]: count === 0 ? deleteField() : { by: staffName, at: timeStr },
+                    date: new Date().toISOString(),
+                };
                 try {
-                    invLocalWriteRef.current = true; // skip the onSnapshot echo
-                    await setDoc(doc(db, "ops", "inventory_" + storeLocation), { counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
-                } catch (err) { console.error("Error updating inventory:", err); }
+                    await updateDoc(ref, update);
+                } catch (err) {
+                    // Doc may not exist yet on first write to a fresh location.
+                    if (err?.code === "not-found") {
+                        try {
+                            await setDoc(ref, { counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
+                        } catch (e) { console.error("Error creating inventory:", e); }
+                    } else {
+                        console.error("Error updating inventory:", err);
+                    }
+                }
             };
 
             const saveAndResetInventory = async () => {
@@ -1218,20 +1277,38 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     setInventory(resetCounts);
                     setInvCountMeta({});
-                    invLocalWriteRef.current = true;
-                    await setDoc(doc(db, "ops", "inventory_" + storeLocation), { counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
+                    const ref = doc(db, "ops", "inventory_" + storeLocation);
+                    // updateDoc replaces these top-level fields without touching customInventory or other fields,
+                    // so a concurrent schema edit (add item, change vendor) on another tablet isn't clobbered.
+                    try {
+                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, date: new Date().toISOString() });
+                    } catch (err) {
+                        if (err?.code === "not-found") {
+                            await setDoc(ref, { counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
+                        } else throw err;
+                    }
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
                 setShowSaveConfirm(false);
             };
 
-            const saveInventory = async (counts, items) => {
+            const saveInventory = async (_counts, items) => {
+                // Schema-only writer (called when items are added/edited). Counts and countMeta intentionally
+                // not written here so concurrent count edits on another tablet aren't clobbered.
                 try {
-                    invLocalWriteRef.current = true;
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                        counts, customInventory: items, countMeta: invCountMeta, date: new Date().toISOString()
-                    });
+                        customInventory: items, date: new Date().toISOString()
+                    }, { merge: true });
                 } catch (err) { console.error("Error updating inventory:", err); }
+            };
+
+            // Build a fresh ID that won't collide with anything currently in the category,
+            // even when existing items have malformed IDs (no "-", non-numeric suffix, etc.).
+            const nextItemId = (category, catIdx) => {
+                const taken = new Set(category.items.map(it => it.id));
+                let n = category.items.length;
+                while (taken.has(catIdx + "-" + n)) n++;
+                return catIdx + "-" + n;
             };
 
             // Quick write-in add (from the blank line at bottom of each category)
@@ -1240,8 +1317,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!input) return;
                 const translated = autoTranslateItem(input);
                 const category = customInventory[catIdx];
-                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
-                const newItem = { id: catIdx + "-" + (maxId + 1), name: translated.name, nameEs: translated.nameEs, vendor: "", supplier: "", orderDay: "", pack: "", price: null, subcat: "" };
+                const newItem = { id: nextItemId(category, catIdx), name: translated.name, nameEs: translated.nameEs, vendor: "", supplier: "", orderDay: "", pack: "", price: null, subcat: "" };
                 const updated = customInventory.map((cat, idx) =>
                     idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
                 );
@@ -1253,9 +1329,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const addInvItem = async (catIdx) => {
                 if (!invNewName.trim()) return;
                 const category = customInventory[catIdx];
-                const maxId = Math.max(...category.items.map(item => parseInt(item.id.split('-')[1]) || 0), -1);
                 const newItem = {
-                    id: catIdx + "-" + (maxId + 1),
+                    id: nextItemId(category, catIdx),
                     name: invNewName.trim(),
                     nameEs: invNewNameEs.trim(),
                     vendor: invNewSupplier.trim(),
@@ -1547,10 +1622,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const newLog = [logEntry, ...vendorChangeLog].slice(0, 50);
                 setVendorChangeLog(newLog);
                 try {
-                    invLocalWriteRef.current = true;
+                    // Only customInventory changed here. Skip writing counts/countMeta so concurrent
+                    // count edits on another tablet aren't clobbered.
                     await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                        counts: inventory, customInventory: updated, countMeta: invCountMeta, date: now.toISOString()
-                    });
+                        customInventory: updated, date: now.toISOString()
+                    }, { merge: true });
                     await setDoc(doc(db, "ops", "vendorLog_" + storeLocation), { log: newLog }, { merge: true });
                 } catch (err) { console.error("Error saving vendor change:", err); }
             };
@@ -2616,16 +2692,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             {/* ── VENDOR VIEW ── */}
                             {invViewMode === "vendor" && (() => {
                                 const vendorGroups = {};
+                                const searchLower = (invSearch || "").toLowerCase().trim();
                                 customInventory.forEach((cat, catIdx) => {
                                     cat.items.forEach(item => {
                                         const v = item.vendor || item.supplier || "Other";
                                         if (!vendorGroups[v]) vendorGroups[v] = [];
-                                        const searchLower = invSearch.toLowerCase().trim();
-                                        const matchesSearch = !searchLower ||
-                                            (item.name || "").toLowerCase().includes(searchLower) ||
-                                            (item.nameEs || "").toLowerCase().includes(searchLower);
                                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
-                                        if (matchesSearch && matchesCounted) {
+                                        if (itemMatchesSearch(item, searchLower) && matchesCounted) {
                                             vendorGroups[v].push({ ...item, catIdx, itemIdx: cat.items.indexOf(item), catName: cat.name, catNameEs: cat.nameEs });
                                         }
                                     });
@@ -2806,9 +2879,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             {!isCollapsed && (<>
                                                 {catList.map((category, catIdx) => {
                                                     let filteredItems = searchLower
-                                                        ? category.items.filter(item =>
-                                                            (item.name || "").toLowerCase().includes(searchLower) ||
-                                                            (item.nameEs || "").toLowerCase().includes(searchLower))
+                                                        ? category.items.filter(item => itemMatchesSearch(item, searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
                                                     if (filteredItems.length === 0) return null;
@@ -3084,13 +3155,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         {/* Category-grouped items (Sysco) or flat list (US Foods) */}
                                         {isSysco && pData.byCategory ? (
                                             SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
-                                                const searchLower = invSearch.toLowerCase().trim();
+                                                const searchLower = (invSearch || "").toLowerCase().trim();
                                                 const allCatItems = pData.byCategory[cat];
                                                 const catItems = searchLower
-                                                    ? allCatItems.filter(([key, data]) =>
-                                                        (data.name || "").toLowerCase().includes(searchLower) ||
-                                                        (key || "").toLowerCase().includes(searchLower) ||
-                                                        (data.brand || "").toLowerCase().includes(searchLower))
+                                                    ? allCatItems.filter(([key, data]) => itemMatchesSearch({ ...data, id: key }, searchLower))
                                                     : allCatItems;
                                                 if (catItems.length === 0) return null;
                                                 const catEmoji = SYSCO_CATEGORY_EMOJI[cat] || "";
@@ -3158,12 +3226,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         ) : (
                                             (() => {
                                                 let unmatchedHeaderShown = false;
-                                                const searchLower = invSearch.toLowerCase().trim();
+                                                const searchLower = (invSearch || "").toLowerCase().trim();
                                                 const filteredSorted = searchLower
-                                                    ? sorted.filter(([key, data]) =>
-                                                        (data.name || "").toLowerCase().includes(searchLower) ||
-                                                        (key || "").toLowerCase().includes(searchLower) ||
-                                                        (data.brand || "").toLowerCase().includes(searchLower))
+                                                    ? sorted.filter(([key, data]) => itemMatchesSearch({ ...data, id: key }, searchLower))
                                                     : sorted;
                                                 return filteredSorted.map(([key, data]) => {
                                                     const invItem = data.invId ? invLookup[data.invId] : null;
@@ -3292,30 +3357,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         <div className="space-y-4">
                             {/* Date picker */}
                             <div className="flex items-center gap-2">
-                                <button onClick={() => {
-                                    const d = new Date(breakDate + "T12:00:00");
-                                    d.setDate(d.getDate() - 1);
-                                    setBreakDate(d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"));
-                                }} className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">{"\u{2190}"}</button>
+                                <button onClick={() => setBreakDate(addDaysKey(breakDate, -1))}
+                                    className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">{"\u{2190}"}</button>
                                 <div className="flex-1 text-center">
                                     <input type="date" value={breakDate} onChange={e => setBreakDate(e.target.value)}
                                         className="bg-transparent text-center font-bold text-gray-800 border-none text-sm focus:outline-none" />
                                     <div className="text-xs text-gray-500">
                                         {(() => {
-                                            const d = new Date(breakDate + "T12:00:00");
                                             const today = getTodayKey();
-                                            const tomorrow = (() => { const t = new Date(); t.setDate(t.getDate()+1); return t.getFullYear()+"-"+String(t.getMonth()+1).padStart(2,"0")+"-"+String(t.getDate()).padStart(2,"0"); })();
                                             if (breakDate === today) return language === "es" ? "\u{1F4C5} Hoy" : "\u{1F4C5} Today";
-                                            if (breakDate === tomorrow) return language === "es" ? "\u{1F4C5} Mañana" : "\u{1F4C5} Tomorrow";
+                                            if (breakDate === addDaysKey(today, 1)) return language === "es" ? "\u{1F4C5} Mañana" : "\u{1F4C5} Tomorrow";
+                                            const d = new Date(breakDate + "T12:00:00");
                                             return d.toLocaleDateString(language === "es" ? "es-US" : "en-US", { weekday: "long" });
                                         })()}
                                     </div>
                                 </div>
-                                <button onClick={() => {
-                                    const d = new Date(breakDate + "T12:00:00");
-                                    d.setDate(d.getDate() + 1);
-                                    setBreakDate(d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"));
-                                }} className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">{"\u{2192}"}</button>
+                                <button onClick={() => setBreakDate(addDaysKey(breakDate, 1))}
+                                    className="w-9 h-9 rounded-lg bg-gray-200 text-gray-600 font-bold text-lg flex items-center justify-center hover:bg-gray-300">{"\u{2192}"}</button>
                                 {breakDate !== getTodayKey() && (
                                     <button onClick={() => setBreakDate(getTodayKey())}
                                         className="text-xs font-bold text-mint-700 bg-mint-50 border border-mint-200 px-2 py-1 rounded-lg">
