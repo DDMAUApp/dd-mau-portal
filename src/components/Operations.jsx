@@ -101,6 +101,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [password, setPassword] = useState("");
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
+            // Counts for vendor-only items that aren't matched to a master inventory item.
+            // Keyed as `${vendor}:${vendorId}` (e.g. "sysco:5106402") so it can't collide with
+            // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
+            const [vendorCounts, setVendorCounts] = useState({});
             const [activeTab, setActiveTab] = useState("checklist");
             const [lastUpdated, setLastUpdated] = useState({});
             const [editMode, setEditMode] = useState(false);
@@ -405,29 +409,78 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
             }, [livePrices.usfoods, USFOODS_OVERRIDES, autoMatch]);
 
-            // Reverse lookup: inventory item ID → best vendor price data (for inline price badges)
+            // Reverse lookup: inventory item ID → ALL vendor prices for that item.
+            // Returns { <invId>: [{vendor, vendorId, price, pack, brand, ...}, ...] }
+            // sorted by price ascending (so [0] is the cheapest). The single-best lookup
+            // and the cart's multi-vendor comparison both consume this.
+            const invToVendorPrices = useMemo(() => {
+                const map = {};
+                const push = (vendor, key, data) => {
+                    if (!data.invId || data.price == null) return;
+                    if (!map[data.invId]) map[data.invId] = [];
+                    map[data.invId].push({
+                        vendor,
+                        vendorId: key,
+                        price: data.price,
+                        originalPrice: data.originalPrice,
+                        pack: data.pack,
+                        brand: data.brand,
+                        unit: data.unit,
+                        name: data.name,
+                        lastOrdered: data.lastOrdered,
+                    });
+                };
+                if (syscoPricingData && syscoPricingData.sorted) {
+                    for (const [key, data] of syscoPricingData.sorted) push("Sysco", key, data);
+                }
+                if (usfoodsPricingData && usfoodsPricingData.sorted) {
+                    for (const [key, data] of usfoodsPricingData.sorted) push("US Foods", key, data);
+                }
+                // Sort each invId's list by price ascending — cheapest first
+                for (const id in map) map[id].sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+                return map;
+            }, [syscoPricingData, usfoodsPricingData]);
+
+            // Back-compat: existing call sites use invToSyscoPrice expecting the single
+            // cheapest entry. Provide it as a derived view of the multi-vendor map.
             const invToSyscoPrice = useMemo(() => {
                 const map = {};
-                // Add Sysco matches
-                if (syscoPricingData && syscoPricingData.sorted) {
-                    for (const [, data] of syscoPricingData.sorted) {
-                        if (data.invId && data.price != null) {
-                            map[data.invId] = { ...data, vendor: "Sysco" };
-                        }
-                    }
-                }
-                // Add US Foods matches (only if cheaper or no Sysco match)
-                if (usfoodsPricingData && usfoodsPricingData.sorted) {
-                    for (const [, data] of usfoodsPricingData.sorted) {
-                        if (data.invId && data.price != null) {
-                            const existing = map[data.invId];
-                            if (!existing || data.price < existing.price) {
-                                map[data.invId] = { ...data, vendor: "US Foods" };
-                            }
-                        }
-                    }
+                for (const id in invToVendorPrices) {
+                    const list = invToVendorPrices[id];
+                    if (list && list.length > 0) map[id] = list[0];
                 }
                 return map;
+            }, [invToVendorPrices]);
+
+            // Vendor items that are NOT matched to any master inventory item — these get
+            // shown at the bottom of the Master List view in a distinct section so the user
+            // can either match them in place (via the existing audit modal) or order them
+            // as standalone vendor items.
+            const unmatchedVendorItems = useMemo(() => {
+                const out = [];
+                if (syscoPricingData && syscoPricingData.sorted) {
+                    for (const [key, data] of syscoPricingData.sorted) {
+                        if (!data.invId && data.matchType !== "locked" && data.price != null) {
+                            out.push({ vendor: "Sysco", vendorId: key, ...data });
+                        }
+                    }
+                }
+                if (usfoodsPricingData && usfoodsPricingData.sorted) {
+                    for (const [key, data] of usfoodsPricingData.sorted) {
+                        if (!data.invId && data.matchType !== "locked" && data.price != null) {
+                            out.push({ vendor: "US Foods", vendorId: key, ...data });
+                        }
+                    }
+                }
+                // Sort: by vendor, then category (sysco only), then name
+                out.sort((a, b) => {
+                    if (a.vendor !== b.vendor) return a.vendor.localeCompare(b.vendor);
+                    const ac = a.category || "ZZZ";
+                    const bc = b.category || "ZZZ";
+                    if (ac !== bc) return ac.localeCompare(bc);
+                    return (a.name || "").localeCompare(b.name || "");
+                });
+                return out;
             }, [syscoPricingData, usfoodsPricingData]);
 
             // Expand all categories when searching, collapse back when cleared
@@ -853,6 +906,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         const data = docSnap.data();
                         setInventory(data.counts || {});
                         setInvCountMeta(data.countMeta || {});
+                        setVendorCounts(data.vendorCounts || {});
                         if (data.customInventory) {
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
                             // so new items from inventory.js always appear
@@ -1368,6 +1422,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
             };
 
+            // Count tracker for vendor-only items (those not matched to a master inventory item).
+            // Same dotted-path pattern as updateInventoryCount so concurrent edits on
+            // other items aren't clobbered.
+            const updateVendorCount = async (vendor, vendorId, newCount) => {
+                const count = parseInt(newCount) || 0;
+                const key = `${vendor}:${vendorId}`;
+                const next = { ...vendorCounts };
+                if (count === 0) delete next[key];
+                else next[key] = count;
+                setVendorCounts(next);
+                const ref = doc(db, "ops", "inventory_" + storeLocation);
+                try {
+                    await updateDoc(ref, {
+                        [`vendorCounts.${key}`]: count === 0 ? deleteField() : count,
+                        date: new Date().toISOString(),
+                    });
+                } catch (err) {
+                    if (err?.code === "not-found") {
+                        try {
+                            await setDoc(ref, { vendorCounts: next, customInventory, date: new Date().toISOString() }, { merge: true });
+                        } catch (e) { console.error("Error creating inventory (vendorCounts):", e); }
+                    } else {
+                        console.error("Error updating vendor count:", err);
+                    }
+                }
+            };
+
             const saveAndResetInventory = async () => {
                 setInventorySaving(true);
                 try {
@@ -1380,14 +1461,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                     setInventory(resetCounts);
                     setInvCountMeta({});
+                    setVendorCounts({});
                     const ref = doc(db, "ops", "inventory_" + storeLocation);
                     // updateDoc replaces these top-level fields without touching customInventory or other fields,
                     // so a concurrent schema edit (add item, change vendor) on another tablet isn't clobbered.
                     try {
-                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, date: new Date().toISOString() });
+                        await updateDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, date: new Date().toISOString() });
                     } catch (err) {
                         if (err?.code === "not-found") {
-                            await setDoc(ref, { counts: resetCounts, countMeta: {}, customInventory, date: new Date().toISOString() });
+                            await setDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, customInventory, date: new Date().toISOString() });
                         } else throw err;
                     }
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
@@ -1575,18 +1657,32 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return vo.vendor;
             };
 
-            // Render live price badge for an item
+            // Render live price badge for an item — now shows ALL matched vendors so the
+            // person placing the order can compare prices at a glance. The cheapest vendor
+            // is highlighted; ties or matched-but-pricier vendors render dimmer.
             const renderLivePriceBadge = (itemId, item) => {
-                const live = getLivePrice(itemId);
-                if (!live) return null;
-                const vendorLabel = live.vendor || item.preferredVendor || item.vendor || "Sysco";
-                const hasSalePrice = live.originalPrice && live.originalPrice !== live.price;
+                const list = invToVendorPrices[itemId];
+                if (!list || list.length === 0) return null;
+                const cheapest = list[0];  // already sorted ascending
                 return (
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${hasSalePrice ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`} title={`${vendorLabel} live: ${live.name || ""} | Pack: ${live.pack || "?"} | Updated: ${live.lastUpdated || "?"}`}>
-                        {"\u{1F4E1}"} <span className={hasSalePrice ? "text-red-800 font-semibold" : "text-green-800 font-semibold"}>{vendorLabel}</span>
-                        {hasSalePrice && <span className="line-through text-gray-400 ml-1">${live.originalPrice.toFixed(2)}</span>}
-                        <span className={hasSalePrice ? "text-red-700 font-bold ml-1" : ""}> ${live.price.toFixed(2)}</span>
-                        {live.pack ? ` / ${live.pack}` : ""}
+                    <span className="inline-flex items-center gap-1 flex-wrap">
+                        {list.map((p, i) => {
+                            const isCheapest = i === 0 && list.length > 1;
+                            const isOnly = list.length === 1;
+                            const hasSalePrice = p.originalPrice && p.originalPrice !== p.price;
+                            const cls = isCheapest ? "bg-green-200 text-green-900 border border-green-400 font-bold"
+                                       : isOnly ? "bg-green-100 text-green-700 font-bold"
+                                       : "bg-gray-100 text-gray-600";
+                            return (
+                                <span key={p.vendor + p.vendorId} className={`text-xs px-1.5 py-0.5 rounded ${cls}`}
+                                    title={`${p.vendor}: ${p.name || ""} | Pack: ${p.pack || "?"} | #${p.vendorId}`}>
+                                    {isCheapest && "🏆 "}{p.vendor}
+                                    {hasSalePrice && <span className="line-through text-gray-400 ml-1">${p.originalPrice.toFixed(2)}</span>}
+                                    <span className="ml-1">${p.price.toFixed(2)}</span>
+                                    {p.pack && <span className="opacity-75 ml-1">/{p.pack}</span>}
+                                </span>
+                            );
+                        })}
                     </span>
                 );
             };
@@ -2878,6 +2974,84 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     )}
                                 </div>
                             ); })}
+
+                            {/* ── UNMATCHED VENDOR ITEMS — Master List view only ──
+                                Shows Sysco/USFoods items that don't have a master inventory match
+                                yet. Each row gets a quantity counter (lets you order without first
+                                matching) and an inline "Match to master" pencil that opens the
+                                existing audit modal. */}
+                            {invViewMode === "category" && unmatchedVendorItems.length > 0 && !invEditMode && (() => {
+                                const searchLower = (invSearch || "").toLowerCase().trim();
+                                let visible = unmatchedVendorItems;
+                                if (searchLower) {
+                                    visible = visible.filter(it =>
+                                        (it.name || "").toLowerCase().includes(searchLower) ||
+                                        (it.brand || "").toLowerCase().includes(searchLower) ||
+                                        (it.vendorId || "").toLowerCase().includes(searchLower));
+                                }
+                                if (invShowOnlyCounted) {
+                                    visible = visible.filter(it => (vendorCounts[`${it.vendor === "Sysco" ? "sysco" : "usfoods"}:${it.vendorId}`] || 0) > 0);
+                                }
+                                if (visible.length === 0) return null;
+                                const collapseKey = "unmatched_vendor_items";
+                                const isCollapsed = collapsedCats[collapseKey] && !searchLower;
+                                const countedHere = unmatchedVendorItems.filter(it => (vendorCounts[`${it.vendor === "Sysco" ? "sysco" : "usfoods"}:${it.vendorId}`] || 0) > 0).length;
+                                return (
+                                    <div className="bg-white rounded-xl border-2 border-orange-200 overflow-hidden shadow-sm">
+                                        <button onClick={() => toggleCatCollapse(collapseKey)}
+                                            className="w-full p-3 bg-gradient-to-r from-orange-500 to-orange-400 flex justify-between items-center">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-white text-sm font-bold">⚠️ {language === "es" ? "Artículos de proveedor sin coincidencia" : "Vendor items not in master list"}</span>
+                                                <span className="bg-white/20 text-white text-xs px-2 py-0.5 rounded-full">{visible.length}</span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {countedHere > 0 && <span className="bg-white text-orange-700 text-xs font-bold px-2 py-0.5 rounded-full">{countedHere} ✓</span>}
+                                                <span className="text-white text-xs">{isCollapsed ? "▶" : "▼"}</span>
+                                            </div>
+                                        </button>
+                                        {!isCollapsed && (
+                                            <div className="divide-y divide-orange-100">
+                                                {visible.map((it) => {
+                                                    const vKey = `${it.vendor === "Sysco" ? "sysco" : "usfoods"}:${it.vendorId}`;
+                                                    const count = vendorCounts[vKey] || 0;
+                                                    const vendorBadgeClass = it.vendor === "Sysco" ? "bg-blue-100 text-blue-700 border-blue-300" : "bg-orange-100 text-orange-800 border-orange-300";
+                                                    return (
+                                                        <div key={vKey} className={`px-3 py-2 ${count > 0 ? "bg-orange-50/60" : "bg-orange-50/20"}`}>
+                                                            <div className="flex items-center justify-between gap-2">
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${vendorBadgeClass}`}>{it.vendor}</span>
+                                                                        <span className="text-sm font-semibold text-gray-800 truncate">{it.name}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                                                                        {it.price != null && <span className="text-xs font-bold text-gray-700">${typeof it.price === "number" ? it.price.toFixed(2) : it.price}{it.unit ? ` ${it.unit}` : ""}</span>}
+                                                                        {it.pack && <span className="text-[11px] text-gray-500">{it.pack}</span>}
+                                                                        {it.brand && <span className="text-[11px] text-gray-500 italic">{it.brand}</span>}
+                                                                        <span className="text-[11px] text-gray-400">#{it.vendorId}</span>
+                                                                    </div>
+                                                                </div>
+                                                                <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                                    <input type="number" inputMode="numeric" min="0" value={count || ""}
+                                                                        onChange={(e) => updateVendorCount(it.vendor === "Sysco" ? "sysco" : "usfoods", it.vendorId, e.target.value)}
+                                                                        placeholder="0"
+                                                                        className="w-12 px-2 py-1 border border-orange-300 rounded text-center text-sm font-bold focus:outline-none focus:border-orange-500" />
+                                                                    {currentIsAdmin && (
+                                                                        <button onClick={() => { setMatchEditor({ vendor: it.vendor === "Sysco" ? "sysco" : "usfoods", vendorId: it.vendorId, vendorName: it.name, currentInvId: null, matchType: it.matchType }); setMatchSearchQuery(""); }}
+                                                                            className="px-2 py-1 rounded-md bg-purple-600 text-white text-[10px] font-bold hover:bg-purple-700"
+                                                                            title={language === "es" ? "Vincular a artículo maestro" : "Match to master item"}>
+                                                                            ✏️
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
 
                             {/* ── VENDOR VIEW ── */}
                             {invViewMode === "vendor" && (() => {
