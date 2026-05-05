@@ -282,6 +282,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [matchEditor, setMatchEditor] = useState(null); // {vendor, vendorId, vendorName, currentInvId}
             const [matchSearchQuery, setMatchSearchQuery] = useState("");
             const [matchAuditFilter, setMatchAuditFilter] = useState("all"); // all | review | confirmed | unmatched
+            // "Add as new master item" form state — shown inside the match editor modal.
+            // When the vendor item has no good master match, the user can create a new master
+            // item from this form (with their own naming) and the vendor item gets linked to it.
+            const [addingToMaster, setAddingToMaster] = useState(false);
+            const [newMasterName, setNewMasterName] = useState("");
+            const [newMasterNameEs, setNewMasterNameEs] = useState("");
+            const [newMasterCatIdx, setNewMasterCatIdx] = useState(0);
+            const [newMasterSaving, setNewMasterSaving] = useState(false);
             const [matchAuditMode, setMatchAuditMode] = useState(false); // toggles the edit pencils per item
 
             // Convenience aliases used by the rest of the component (replaces the old hardcoded
@@ -2550,7 +2558,56 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 candidates.push({ catName: cat.name, catNameEs: cat.nameEs, catIdx: cIdx, items: matchedItems });
                             }
                         });
-                        const closeEditor = () => { setMatchEditor(null); setMatchSearchQuery(""); };
+                        const closeEditor = () => {
+                            setMatchEditor(null);
+                            setMatchSearchQuery("");
+                            setAddingToMaster(false);
+                            setNewMasterName("");
+                            setNewMasterNameEs("");
+                            setNewMasterCatIdx(0);
+                            setNewMasterSaving(false);
+                        };
+                        // Default the new-item name to a Title-Cased clean version of the vendor name
+                        // (vendor names often arrive in ALL CAPS from the scraper). User can edit.
+                        const cleanVendorName = (raw) => {
+                            if (!raw) return "";
+                            return raw.replace(/\s+/g, " ").trim()
+                                .toLowerCase()
+                                .replace(/\b\w/g, c => c.toUpperCase());
+                        };
+                        const handleCreateMasterItem = async () => {
+                            const trimmed = (newMasterName || "").trim();
+                            if (!trimmed) return;
+                            setNewMasterSaving(true);
+                            try {
+                                const cat = customInventory[newMasterCatIdx];
+                                const newId = nextItemId(cat, newMasterCatIdx);
+                                const newItem = {
+                                    id: newId,
+                                    name: trimmed,
+                                    nameEs: (newMasterNameEs || "").trim(),
+                                    vendor: vendor === "sysco" ? "Sysco" : "US Foods",
+                                    supplier: vendor === "sysco" ? "Sysco" : "US Foods",
+                                    preferredVendor: vendor === "sysco" ? "Sysco" : "US Foods",
+                                    orderDay: "",
+                                    pack: "",
+                                    price: null,
+                                    subcat: "",
+                                    addedFromVendor: vendor === "sysco" ? "Sysco" : "US Foods",
+                                };
+                                const updated = customInventory.map((c, i) =>
+                                    i === newMasterCatIdx ? { ...c, items: [...c.items, newItem] } : c
+                                );
+                                setCustomInventory(updated);
+                                await saveInventory(inventory, updated);
+                                await saveVendorMatch(vendor, vendorId, newId);
+                                closeEditor();
+                            } catch (e) {
+                                console.error("Create master item error:", e);
+                                setMatchSaveError(e.message || String(e));
+                                setNewMasterSaving(false);
+                            }
+                        };
                         return (
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2">
                                 <div className="bg-white rounded-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border-2 border-purple-300">
@@ -2589,6 +2646,57 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </div>
                                         ))}
                                     </div>
+                                    {/* ── Add as new master item ── */}
+                                    {!addingToMaster ? (
+                                        <div className="px-3 py-2 border-t border-gray-200 bg-gray-50">
+                                            <button onClick={() => {
+                                                setAddingToMaster(true);
+                                                setNewMasterName(cleanVendorName(vendorName));
+                                                setNewMasterNameEs("");
+                                                setNewMasterCatIdx(0);
+                                            }}
+                                                className="w-full py-2 rounded-lg bg-blue-50 border-2 border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-100">
+                                                + {language === "es" ? "Agregar como nuevo artículo maestro" : "Add as new master item"}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div className="px-3 py-3 border-t-2 border-blue-300 bg-blue-50 space-y-2">
+                                            <div className="text-xs font-bold text-blue-800">
+                                                {language === "es" ? "Nuevo artículo maestro" : "New master item"}
+                                            </div>
+                                            <input type="text" value={newMasterName}
+                                                onChange={e => setNewMasterName(e.target.value)}
+                                                placeholder={language === "es" ? "Nombre (en inglés)" : "Name (English)"}
+                                                className="w-full px-3 py-2 border-2 border-blue-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
+                                            <input type="text" value={newMasterNameEs}
+                                                onChange={e => setNewMasterNameEs(e.target.value)}
+                                                placeholder={language === "es" ? "Nombre en español (opcional)" : "Spanish name (optional)"}
+                                                className="w-full px-3 py-2 border-2 border-blue-200 rounded-lg text-sm focus:outline-none focus:border-blue-500" />
+                                            <select value={newMasterCatIdx}
+                                                onChange={e => setNewMasterCatIdx(parseInt(e.target.value))}
+                                                className="w-full px-3 py-2 border-2 border-blue-200 rounded-lg text-sm focus:outline-none focus:border-blue-500 bg-white">
+                                                {customInventory.map((c, i) => (
+                                                    <option key={i} value={i}>{language === "es" ? c.nameEs : c.name}</option>
+                                                ))}
+                                            </select>
+                                            <div className="text-[10px] text-blue-700 italic">
+                                                {language === "es"
+                                                    ? `Se vinculará automáticamente con ${vendor === "sysco" ? "Sysco" : "US Foods"} #${vendorId}.`
+                                                    : `Will auto-link to ${vendor === "sysco" ? "Sysco" : "US Foods"} #${vendorId}.`}
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={handleCreateMasterItem}
+                                                    disabled={!newMasterName.trim() || newMasterSaving}
+                                                    className={`flex-1 py-2 rounded-lg text-xs font-bold text-white transition ${!newMasterName.trim() || newMasterSaving ? "bg-gray-300 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"}`}>
+                                                    {newMasterSaving ? "…" : (language === "es" ? "Crear y vincular" : "Create + link")}
+                                                </button>
+                                                <button onClick={() => setAddingToMaster(false)}
+                                                    className="flex-1 py-2 rounded-lg text-xs font-bold bg-white border border-gray-300 text-gray-700 hover:bg-gray-100">
+                                                    {language === "es" ? "Cancelar" : "Cancel"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
                                     {/* Save error (Firestore permission issues, network, etc. — visible feedback so we can debug) */}
                                     {matchSaveError && (
                                         <div className="px-3 py-2 bg-red-100 border-t border-red-300 text-red-700 text-xs">
@@ -2853,8 +2961,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         const itemIdx = category.items.indexOf(item);
                                                         const count = inventory[item.id] || 0;
                                                         const isEditing = invEditMode && invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
+                                                        // Visual marker for items added via the "Add as new master item" flow
+                                                        // in the match audit modal — colored left border based on origin vendor.
+                                                        const fromVendor = item.addedFromVendor;
+                                                        const fromVendorBorder = fromVendor === "Sysco" ? "border-l-4 border-blue-400"
+                                                                                : fromVendor === "US Foods" ? "border-l-4 border-orange-400"
+                                                                                : "";
                                                         return (
-                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : ""}`}>
+                                                            <div key={item.id} className={`px-3 py-2 ${count > 0 ? "bg-green-50/50" : ""} ${isEditing ? "bg-blue-50 border-l-4 border-blue-500" : fromVendorBorder}`}>
                                                                 {isEditing ? (
                                                                     <div className="space-y-2">
                                                                         <input type="text" value={invEditName} onChange={(e) => setInvEditName(e.target.value)}
