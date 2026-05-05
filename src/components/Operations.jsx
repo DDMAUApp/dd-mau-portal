@@ -14,6 +14,61 @@ const DEFAULT_CHECKLIST_TASKS = { FOH: { all: [] }, BOH: { all: [] } };
 const CHECKLIST_VERSION = 2;
 const BUSINESS_TZ = "America/Chicago";
 
+// ── Vendor → inventory match seed data ───────────────────────────────────────
+// These were originally hardcoded inside the component (SYSCO_OVERRIDES,
+// SYSCO_ITEM_CATEGORIES). They now seed Firestore on first run; after that the
+// authoritative source is config/vendor_matches and config/vendor_categories.
+// The Match Audit UI in the Pricing tab edits those Firestore docs live.
+const HARDCODED_SYSCO_MATCH_SEED = {
+    "5106402": "0-26", "7952468": "0-27", "7411241": "0-28",
+    "7950306": "0-25", "2398519": "0-32", "7350788": "1-19",
+    "7078475": "1-12", "1008010": "1-5", "1491810": "1-4",
+    "1821529": "1-21", "4390807": "9-9", "0937631": "9-2",
+    "4671434": "4-12", "7257721": "3-54", "7011275": "3-54",
+    "7385215": "7-4", "6977799": "7-65", "2102038": "7-54",
+    "9904133": "7-74", "9903882": "7-74", "9904135": "7-74",
+    "9904127": "7-74", "9904138": "7-74", "0616526": "8-3",
+    "7670021": "8-4", "7260143": "8-1", "9901417": "8-2",
+    "5287489": "8-12", "5256670": "8-18", "8265625": "8-5",
+    "5061239": "8-13", "4278760": "8-8",
+};
+const HARDCODED_SYSCO_CATEGORY_SEED = {
+    // Proteins & Seafood
+    "6034780": "Proteins & Seafood", "7246665": "Proteins & Seafood",
+    "2398519": "Proteins & Seafood", "5636997": "Proteins & Seafood",
+    "7411241": "Proteins & Seafood", "5351494": "Proteins & Seafood",
+    // Produce
+    "5818259": "Produce", "1675859": "Produce", "1491810": "Produce",
+    "1008010": "Produce", "7078475": "Produce", "5179760": "Produce",
+    "5430934": "Produce", "1908318": "Produce", "5852689": "Produce",
+    "7759566": "Produce", "5893973": "Produce", "4678555": "Produce",
+    "7350788": "Produce", "5131753": "Produce", "1821529": "Produce",
+    // Dairy & Eggs
+    "4906361": "Dairy & Eggs", "6680073": "Dairy & Eggs", "3051695": "Dairy & Eggs",
+    // Beverages
+    "6236614": "Beverages", "4306627": "Beverages", "7101689": "Beverages",
+    // Supplies & Packaging
+    "7701311": "Supplies & Packaging", "7213296": "Supplies & Packaging",
+    "6155841": "Supplies & Packaging", "6138219": "Supplies & Packaging",
+    "3438292": "Supplies & Packaging", "4681957": "Supplies & Packaging",
+    "7385215": "Supplies & Packaging", "6669499": "Supplies & Packaging",
+    "6541129": "Supplies & Packaging", "9904133": "Supplies & Packaging",
+    "9903882": "Supplies & Packaging", "9904135": "Supplies & Packaging",
+    "9904127": "Supplies & Packaging", "9904138": "Supplies & Packaging",
+    "2102038": "Supplies & Packaging", "6855423": "Supplies & Packaging",
+    "6298877": "Supplies & Packaging", "5597443": "Supplies & Packaging",
+    // Cleaning & Chemicals
+    "9792611": "Cleaning & Chemicals", "7260143": "Cleaning & Chemicals",
+    "1293212": "Cleaning & Chemicals", "0616526": "Cleaning & Chemicals",
+    "4278760": "Cleaning & Chemicals", "6350461": "Cleaning & Chemicals",
+    "7670021": "Cleaning & Chemicals",
+    // Sauces & Condiments
+    "4136768": "Sauces & Condiments", "7257721": "Sauces & Condiments",
+    "7011275": "Sauces & Condiments", "4485085": "Sauces & Condiments",
+    // Other Food
+    "0937631": "Other Food", "4390807": "Other Food",
+};
+
 // Business-day date key (YYYY-MM-DD) anchored to America/Chicago, not the device's local zone.
 // All checklists, history docs, and break plans key off the business day, so a staff phone
 // in a different zone (or a UTC server) would otherwise roll over at the wrong wall-clock time
@@ -213,57 +268,24 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const fohStaff = useMemo(() => (staffList || []).filter(s => FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both")), [staffList, storeLocation, FOH_ROLES]);
 
             // ── Memoized inventory lookup + Sysco price matching ──
-            const SYSCO_OVERRIDES = useMemo(() => ({
-                "5106402": "0-26", "7952468": "0-27", "7411241": "0-28",
-                "7950306": "0-25", "2398519": "0-32", "7350788": "1-19",
-                "7078475": "1-12", "1008010": "1-5", "1491810": "1-4",
-                "1821529": "1-21", "4390807": "9-9", "0937631": "9-2",
-                "4671434": "4-12", "7257721": "3-54", "7011275": "3-54",
-                "7385215": "7-4", "6977799": "7-65", "2102038": "7-54",
-                "9904133": "7-74", "9903882": "7-74", "9904135": "7-74",
-                "9904127": "7-74", "9904138": "7-74", "0616526": "8-3",
-                "7670021": "8-4", "7260143": "8-1", "9901417": "8-2",
-                "5287489": "8-12", "5256670": "8-18", "8265625": "8-5",
-                "5061239": "8-13", "4278760": "8-8",
-            }), []);
+            // Vendor match overrides + categories (Firestore-backed, see useEffect below).
+            // Shape: vendorMatches = { sysco: {<vendorId>: <invId>}, usfoods: {...}, ... }
+            //        vendorCategories = { sysco: {<vendorId>: <category>}, usfoods: {...}, ... }
+            // An entry value of "" means "explicitly unmatched — do NOT auto-match"; absence
+            // means "fall through to autoMatch()".
+            const [vendorMatches, setVendorMatches] = useState(null);
+            const [vendorCategories, setVendorCategories] = useState(null);
+            const [matchEditor, setMatchEditor] = useState(null); // {vendor, vendorId, vendorName, currentInvId}
+            const [matchSearchQuery, setMatchSearchQuery] = useState("");
+            const [matchAuditFilter, setMatchAuditFilter] = useState("all"); // all | review | confirmed | unmatched
+            const [matchAuditMode, setMatchAuditMode] = useState(false); // toggles the edit pencils per item
 
-            // ── Sysco item → category mapping (from purchase history) ──
-            const SYSCO_ITEM_CATEGORIES = useMemo(() => ({
-                // Proteins & Seafood
-                "6034780": "Proteins & Seafood", "7246665": "Proteins & Seafood",
-                "2398519": "Proteins & Seafood", "5636997": "Proteins & Seafood",
-                "7411241": "Proteins & Seafood", "5351494": "Proteins & Seafood",
-                // Produce
-                "5818259": "Produce", "1675859": "Produce", "1491810": "Produce",
-                "1008010": "Produce", "7078475": "Produce", "5179760": "Produce",
-                "5430934": "Produce", "1908318": "Produce", "5852689": "Produce",
-                "7759566": "Produce", "5893973": "Produce", "4678555": "Produce",
-                "7350788": "Produce", "5131753": "Produce", "1821529": "Produce",
-                // Dairy & Eggs
-                "4906361": "Dairy & Eggs", "6680073": "Dairy & Eggs", "3051695": "Dairy & Eggs",
-                // Beverages
-                "6236614": "Beverages", "4306627": "Beverages", "7101689": "Beverages",
-                // Supplies & Packaging
-                "7701311": "Supplies & Packaging", "7213296": "Supplies & Packaging",
-                "6155841": "Supplies & Packaging", "6138219": "Supplies & Packaging",
-                "3438292": "Supplies & Packaging", "4681957": "Supplies & Packaging",
-                "7385215": "Supplies & Packaging", "6669499": "Supplies & Packaging",
-                "6541129": "Supplies & Packaging", "9904133": "Supplies & Packaging",
-                "9903882": "Supplies & Packaging", "9904135": "Supplies & Packaging",
-                "9904127": "Supplies & Packaging", "9904138": "Supplies & Packaging",
-                "2102038": "Supplies & Packaging", "6855423": "Supplies & Packaging",
-                "6298877": "Supplies & Packaging", "5597443": "Supplies & Packaging",
-                // Cleaning & Chemicals
-                "9792611": "Cleaning & Chemicals", "7260143": "Cleaning & Chemicals",
-                "1293212": "Cleaning & Chemicals", "0616526": "Cleaning & Chemicals",
-                "4278760": "Cleaning & Chemicals", "6350461": "Cleaning & Chemicals",
-                "7670021": "Cleaning & Chemicals",
-                // Sauces & Condiments
-                "4136768": "Sauces & Condiments", "7257721": "Sauces & Condiments",
-                "7011275": "Sauces & Condiments", "4485085": "Sauces & Condiments",
-                // Other Food
-                "0937631": "Other Food", "4390807": "Other Food",
-            }), []);
+            // Convenience aliases used by the rest of the component (replaces the old hardcoded
+            // useMemo objects). When Firestore hasn't loaded yet we fall back to the seed data
+            // so the Pricing view still renders something on cold start.
+            const SYSCO_OVERRIDES = (vendorMatches && vendorMatches.sysco) || HARDCODED_SYSCO_MATCH_SEED;
+            const USFOODS_OVERRIDES = (vendorMatches && vendorMatches.usfoods) || {};
+            const SYSCO_ITEM_CATEGORIES = (vendorCategories && vendorCategories.sysco) || HARDCODED_SYSCO_CATEGORY_SEED;
 
             const SYSCO_CATEGORY_ORDER = ["Proteins & Seafood", "Produce", "Dairy & Eggs", "Beverages", "Sauces & Condiments", "Other Food", "Supplies & Packaging", "Cleaning & Chemicals", "Uncategorized"];
             const SYSCO_CATEGORY_EMOJI = { "Proteins & Seafood": "\u{1F969}", "Produce": "\u{1F966}", "Dairy & Eggs": "\u{1F95A}", "Beverages": "\u{2615}", "Supplies & Packaging": "\u{1F4E6}", "Cleaning & Chemicals": "\u{1F9F9}", "Sauces & Condiments": "\u{1F336}\u{FE0F}", "Other Food": "\u{1F372}", "Uncategorized": "\u{2753}" };
@@ -310,15 +332,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const syscoData = livePrices.sysco || {};
                 const prices = syscoData.prices || {};
                 const allEntries = Object.entries(prices).map(([syscoId, data]) => {
-                    const overrideInvId = SYSCO_OVERRIDES[syscoId] || null;
-                    const autoInvId = !overrideInvId ? autoMatch(data.name) : null;
+                    // Three states for the override:
+                    //   - undefined / null  → no admin decision yet, fall through to autoMatch
+                    //   - "" (empty)        → admin explicitly cleared / locked-unmatched
+                    //   - "<invId>"         → admin-confirmed match
+                    const overrideRaw = SYSCO_OVERRIDES[syscoId];
+                    const hasOverride = overrideRaw !== undefined && overrideRaw !== null;
+                    const lockedUnmatched = hasOverride && overrideRaw === "";
+                    const overrideInvId = hasOverride && !lockedUnmatched ? overrideRaw : null;
+                    const autoInvId = !hasOverride ? autoMatch(data.name) : null;
                     const invId = overrideInvId || autoInvId;
                     const category = SYSCO_ITEM_CATEGORIES[syscoId] || "Uncategorized";
                     return [syscoId, {
                         ...data,
                         name: data.name || `Sysco Item ${syscoId}`,
                         invId,
-                        matchType: overrideInvId ? "known" : autoInvId ? "auto" : null,
+                        matchType: overrideInvId ? "confirmed" : autoInvId ? "auto" : lockedUnmatched ? "locked" : null,
                         category,
                     }];
                 });
@@ -344,17 +373,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
             }, [livePrices.sysco, SYSCO_OVERRIDES, SYSCO_ITEM_CATEGORIES, autoMatch]);
 
-            // US Foods pricing data (same pattern as Sysco)
+            // US Foods pricing data (same pattern as Sysco — Firestore overrides + autoMatch fallback)
             const usfoodsPricingData = useMemo(() => {
                 const ufData = livePrices.usfoods || {};
                 const prices = ufData.prices || {};
                 const allEntries = Object.entries(prices).map(([ufId, data]) => {
-                    const autoInvId = autoMatch(data.name);
+                    const overrideRaw = USFOODS_OVERRIDES[ufId];
+                    const hasOverride = overrideRaw !== undefined && overrideRaw !== null;
+                    const lockedUnmatched = hasOverride && overrideRaw === "";
+                    const overrideInvId = hasOverride && !lockedUnmatched ? overrideRaw : null;
+                    const autoInvId = !hasOverride ? autoMatch(data.name) : null;
+                    const invId = overrideInvId || autoInvId;
                     return [ufId, {
                         ...data,
                         name: data.name || `US Foods Item ${ufId}`,
-                        invId: autoInvId,
-                        matchType: autoInvId ? "auto" : null,
+                        invId,
+                        matchType: overrideInvId ? "confirmed" : autoInvId ? "auto" : lockedUnmatched ? "locked" : null,
                     }];
                 });
                 const sorted = [...allEntries].sort((a, b) => {
@@ -369,7 +403,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     matchedCount: sorted.filter(([,d]) => d.invId).length,
                     withPriceCount: sorted.filter(([,d]) => d.price != null).length,
                 };
-            }, [livePrices.usfoods, autoMatch]);
+            }, [livePrices.usfoods, USFOODS_OVERRIDES, autoMatch]);
 
             // Reverse lookup: inventory item ID → best vendor price data (for inline price badges)
             const invToSyscoPrice = useMemo(() => {
@@ -426,6 +460,74 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
                 return () => unsubStations();
             }, []);
+
+            // ── Vendor match overrides + categories (Firestore-backed) ──
+            // First-run migration: if the doc doesn't exist yet, seed it with the
+            // hardcoded values that used to live inline in this component. After
+            // that, the doc is the only source of truth — admins edit it via the
+            // Match Audit UI in the Pricing tab.
+            useEffect(() => {
+                const matchesRef = doc(db, "config", "vendor_matches");
+                const unsub = onSnapshot(matchesRef, (snap) => {
+                    if (snap.exists()) {
+                        setVendorMatches(snap.data());
+                    } else {
+                        const initial = { sysco: HARDCODED_SYSCO_MATCH_SEED, usfoods: {} };
+                        setDoc(matchesRef, initial)
+                            .catch(err => console.error("vendor_matches seed error:", err));
+                        setVendorMatches(initial);
+                    }
+                }, (err) => console.error("vendor_matches listener:", err));
+                return () => unsub();
+            }, []);
+
+            useEffect(() => {
+                const catsRef = doc(db, "config", "vendor_categories");
+                const unsub = onSnapshot(catsRef, (snap) => {
+                    if (snap.exists()) {
+                        setVendorCategories(snap.data());
+                    } else {
+                        const initial = { sysco: HARDCODED_SYSCO_CATEGORY_SEED, usfoods: {} };
+                        setDoc(catsRef, initial)
+                            .catch(err => console.error("vendor_categories seed error:", err));
+                        setVendorCategories(initial);
+                    }
+                }, (err) => console.error("vendor_categories listener:", err));
+                return () => unsub();
+            }, []);
+
+            // Save / clear / category mutators — all write to Firestore via setDoc with merge,
+            // so concurrent edits from another admin tablet don't clobber unrelated entries.
+            const saveVendorMatch = async (vendor, vendorId, invId) => {
+                try {
+                    await setDoc(doc(db, "config", "vendor_matches"), {
+                        [vendor]: { [vendorId]: invId },
+                    }, { merge: true });
+                } catch (err) { console.error("saveVendorMatch error:", err); }
+            };
+            const clearVendorMatch = async (vendor, vendorId) => {
+                // Use deleteField so the override is removed entirely (autoMatch falls through).
+                try {
+                    await updateDoc(doc(db, "config", "vendor_matches"), {
+                        [`${vendor}.${vendorId}`]: deleteField(),
+                    });
+                } catch (err) { console.error("clearVendorMatch error:", err); }
+            };
+            const lockVendorUnmatched = async (vendor, vendorId) => {
+                // Empty string = explicitly unmatched. Prevents autoMatch from re-attaching it.
+                try {
+                    await setDoc(doc(db, "config", "vendor_matches"), {
+                        [vendor]: { [vendorId]: "" },
+                    }, { merge: true });
+                } catch (err) { console.error("lockVendorUnmatched error:", err); }
+            };
+            const saveVendorCategory = async (vendor, vendorId, category) => {
+                try {
+                    await setDoc(doc(db, "config", "vendor_categories"), {
+                        [vendor]: { [vendorId]: category },
+                    }, { merge: true });
+                } catch (err) { console.error("saveVendorCategory error:", err); }
+            };
 
             // Listen to live labor data for current location
             useEffect(() => {
@@ -2315,6 +2417,81 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                     {activeTab === "checklist" && renderChecklist()}
 
+                    {/* ── Match Editor Modal (admin-only, shared across all vendors) ── */}
+                    {matchEditor && (() => {
+                        const { vendor, vendorId, vendorName, currentInvId } = matchEditor;
+                        const queryLower = (matchSearchQuery || "").toLowerCase().trim();
+                        // Build a flat list of inventory items grouped by category, filtered by search.
+                        const candidates = [];
+                        customInventory.forEach((cat, cIdx) => {
+                            const matchedItems = cat.items.filter(it => {
+                                if (!queryLower) return true;
+                                const hay = (it.name || "") + " " + (it.nameEs || "") + " " + (it.id || "");
+                                return hay.toLowerCase().includes(queryLower);
+                            });
+                            if (matchedItems.length > 0) {
+                                candidates.push({ catName: cat.name, catNameEs: cat.nameEs, catIdx: cIdx, items: matchedItems });
+                            }
+                        });
+                        const closeEditor = () => { setMatchEditor(null); setMatchSearchQuery(""); };
+                        return (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2">
+                                <div className="bg-white rounded-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border-2 border-purple-300">
+                                    {/* Header */}
+                                    <div className="px-4 py-3 bg-purple-700 text-white flex items-start justify-between gap-2">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-xs opacity-80 uppercase tracking-wide">{vendor === "sysco" ? "Sysco" : "US Foods"} #{vendorId}</div>
+                                            <div className="font-bold text-sm truncate">{vendorName || `Item ${vendorId}`}</div>
+                                            {currentInvId && (
+                                                <div className="text-xs opacity-90 mt-0.5">{language === "es" ? "Coincidencia actual:" : "Current match:"} {invLookup[currentInvId]?.name || `(${currentInvId})`}</div>
+                                            )}
+                                        </div>
+                                        <button onClick={closeEditor} className="text-white/80 hover:text-white text-xl leading-none px-1">✕</button>
+                                    </div>
+                                    {/* Search */}
+                                    <div className="p-3 border-b border-gray-200">
+                                        <input type="text" autoFocus value={matchSearchQuery} onChange={e => setMatchSearchQuery(e.target.value)}
+                                            placeholder={language === "es" ? "🔍 Buscar artículo de inventario..." : "🔍 Search inventory item..."}
+                                            className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-700" />
+                                    </div>
+                                    {/* Inventory list */}
+                                    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                                        {candidates.length === 0 ? (
+                                            <p className="text-center text-gray-400 text-sm py-6">{language === "es" ? "No se encontraron artículos" : "No items found"}</p>
+                                        ) : candidates.map(group => (
+                                            <div key={group.catIdx}>
+                                                <div className="text-[10px] font-bold uppercase text-gray-500 px-2 py-1 bg-gray-50 sticky top-0">{language === "es" ? group.catNameEs : group.catName}</div>
+                                                {group.items.map(it => (
+                                                    <button key={it.id}
+                                                        onClick={async () => { await saveVendorMatch(vendor, vendorId, it.id); closeEditor(); }}
+                                                        className={`w-full text-left px-3 py-2 rounded-lg border mt-1 transition ${currentInvId === it.id ? "bg-green-50 border-green-300" : "bg-white border-gray-200 hover:bg-purple-50 hover:border-purple-300"}`}>
+                                                        <div className="text-sm font-medium text-gray-800">{language === "es" && it.nameEs ? it.nameEs : it.name}</div>
+                                                        <div className="text-[11px] text-gray-500">#{it.id}{it.vendor || it.supplier ? ` • ${it.vendor || it.supplier}` : ""}</div>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {/* Footer actions */}
+                                    <div className="p-3 border-t border-gray-200 flex flex-wrap gap-2 bg-gray-50">
+                                        <button onClick={async () => { await clearVendorMatch(vendor, vendorId); closeEditor(); }}
+                                            className="flex-1 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 text-xs font-bold hover:bg-gray-100">
+                                            {language === "es" ? "🔄 Borrar (auto)" : "🔄 Clear (auto-match)"}
+                                        </button>
+                                        <button onClick={async () => { await lockVendorUnmatched(vendor, vendorId); closeEditor(); }}
+                                            className="flex-1 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
+                                            {language === "es" ? "🔒 Bloquear sin coincidencia" : "🔒 Lock unmatched"}
+                                        </button>
+                                        <button onClick={closeEditor}
+                                            className="flex-1 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
+                                            {language === "es" ? "Cerrar" : "Close"}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {activeTab === "inventory" && (
                         <div className="space-y-3">
                             {/* ── TOP TOOLBAR ── */}
@@ -3059,6 +3236,39 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </button>
                                         </div>
 
+                                        {/* ── Match Audit controls (admin only) ──
+                                            Lets the user go through every vendor item, confirm or fix the
+                                            inventory match, and lock items that should stay unmatched. */}
+                                        {currentIsAdmin && (
+                                            <div className="rounded-xl border-2 border-purple-200 bg-purple-50 p-2 space-y-2">
+                                                <div className="flex items-center justify-between gap-2">
+                                                    <div>
+                                                        <p className="text-xs font-bold text-purple-700">{language === "es" ? "Auditoría de Coincidencias" : "Match Audit"}</p>
+                                                        <p className="text-[10px] text-purple-500">{language === "es" ? "Vincula artículos del proveedor al inventario" : "Link vendor items to inventory"}</p>
+                                                    </div>
+                                                    <button onClick={() => setMatchAuditMode(!matchAuditMode)}
+                                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${matchAuditMode ? "bg-purple-700 text-white" : "bg-white text-purple-700 border border-purple-300 hover:bg-purple-100"}`}>
+                                                        {matchAuditMode ? (language === "es" ? "Salir" : "Exit") : (language === "es" ? "Editar" : "Edit")}
+                                                    </button>
+                                                </div>
+                                                {matchAuditMode && (
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {[
+                                                            { key: "all",        label: language === "es" ? "Todos"            : "All" },
+                                                            { key: "review",     label: language === "es" ? "🤖 Revisar"        : "🤖 Review" },
+                                                            { key: "confirmed",  label: language === "es" ? "✅ Confirmados"    : "✅ Confirmed" },
+                                                            { key: "unmatched",  label: language === "es" ? "⚠️ Sin coincidencia" : "⚠️ Unmatched" },
+                                                        ].map(f => (
+                                                            <button key={f.key} onClick={() => setMatchAuditFilter(f.key)}
+                                                                className={`px-2 py-1 rounded-full text-[10px] font-bold border transition ${matchAuditFilter === f.key ? "bg-purple-700 text-white border-purple-700" : "bg-white text-purple-600 border-purple-200 hover:bg-purple-100"}`}>
+                                                                {f.label}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {/* Scrape health alert */}
                                         {(hasFailed || isStale) && (
                                             <div className={`rounded-xl p-3 border text-sm ${hasFailed ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"}`}>
@@ -3145,12 +3355,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 const allCatItems = pData.byCategory[cat];
                                                 // Pricing view also matches brand + sysco/usfoods key — useful here because the
                                                 // user is shopping by SKU/brand rather than just by item name.
-                                                const catItems = searchLower
+                                                let catItems = searchLower
                                                     ? allCatItems.filter(([key, data]) =>
                                                         itemMatchesSearch(data, searchLower) ||
                                                         (data.brand || "").toLowerCase().includes(searchLower) ||
                                                         (key || "").toLowerCase().includes(searchLower))
                                                     : allCatItems;
+                                                // Audit-mode filter: review (auto), confirmed, unmatched
+                                                if (matchAuditMode && matchAuditFilter !== "all") {
+                                                    catItems = catItems.filter(([, d]) => {
+                                                        if (matchAuditFilter === "review") return d.matchType === "auto";
+                                                        if (matchAuditFilter === "confirmed") return d.matchType === "confirmed";
+                                                        if (matchAuditFilter === "unmatched") return !d.invId;
+                                                        return true;
+                                                    });
+                                                }
                                                 if (catItems.length === 0) return null;
                                                 const catEmoji = SYSCO_CATEGORY_EMOJI[cat] || "";
                                                 const catCollapsed = collapsedCats["sysco_" + cat] && !searchLower;
@@ -3170,16 +3389,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         {!catCollapsed && catItems.map(([key, data]) => {
                                                             const invItem = data.invId ? invLookup[data.invId] : null;
                                                             const isMatched = !!data.invId;
+                                                            const isLocked = data.matchType === "locked";
+                                                            const cardBg = isLocked ? "bg-gray-50 border-gray-300" :
+                                                                          data.matchType === "confirmed" ? "bg-green-50 border-green-300" :
+                                                                          data.matchType === "auto" ? "bg-yellow-50 border-yellow-200" :
+                                                                          isMatched ? "bg-green-50 border-green-200" :
+                                                                          "bg-white border-gray-200";
                                                             return (
-                                                                <div key={key} className={`rounded-xl p-3 border mt-1 ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                                <div key={key} className={`rounded-xl p-3 border mt-1 ${cardBg}`}>
                                                                     <div className="flex items-start justify-between gap-2">
                                                                         <div className="flex-1 min-w-0">
                                                                             <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Sysco Item ${key}`}</div>
-                                                                            {invItem && (
-                                                                                <div className="text-xs text-green-600 mt-0.5">
-                                                                                    {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
-                                                                                    {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                            {invItem ? (
+                                                                                <div className={`text-xs mt-0.5 ${data.matchType === "auto" ? "text-yellow-700" : "text-green-600"}`}>
+                                                                                    {data.matchType === "confirmed" ? "✅" : data.matchType === "auto" ? "🤖" : "↔️"} {invItem.name}
+                                                                                    {data.matchType === "auto" && <span className="ml-1 opacity-70">({language === "es" ? "automático — revisar" : "auto — review"})</span>}
                                                                                 </div>
+                                                                            ) : isLocked ? (
+                                                                                <div className="text-xs text-gray-500 mt-0.5">🔒 {language === "es" ? "Bloqueado sin coincidencia" : "Locked unmatched"}</div>
+                                                                            ) : (
+                                                                                <div className="text-xs text-gray-500 mt-0.5">⚠️ {language === "es" ? "Sin coincidencia" : "No match"}</div>
+                                                                            )}
+                                                                            {currentIsAdmin && matchAuditMode && (
+                                                                                <button
+                                                                                    onClick={() => { setMatchEditor({ vendor: "sysco", vendorId: key, vendorName: data.name, currentInvId: data.invId, matchType: data.matchType }); setMatchSearchQuery(""); }}
+                                                                                    className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-600 text-white text-[10px] font-bold hover:bg-purple-700">
+                                                                                    ✏️ {language === "es" ? "Editar coincidencia" : "Edit match"}
+                                                                                </button>
                                                                             )}
                                                                             <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
                                                                                 {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
@@ -3218,31 +3454,56 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             (() => {
                                                 let unmatchedHeaderShown = false;
                                                 const searchLower = (invSearch || "").toLowerCase().trim();
-                                                const filteredSorted = searchLower
+                                                let filteredSorted = searchLower
                                                     ? sorted.filter(([key, data]) =>
                                                         itemMatchesSearch(data, searchLower) ||
                                                         (data.brand || "").toLowerCase().includes(searchLower) ||
                                                         (key || "").toLowerCase().includes(searchLower))
                                                     : sorted;
+                                                if (matchAuditMode && matchAuditFilter !== "all") {
+                                                    filteredSorted = filteredSorted.filter(([, d]) => {
+                                                        if (matchAuditFilter === "review") return d.matchType === "auto";
+                                                        if (matchAuditFilter === "confirmed") return d.matchType === "confirmed";
+                                                        if (matchAuditFilter === "unmatched") return !d.invId;
+                                                        return true;
+                                                    });
+                                                }
                                                 return filteredSorted.map(([key, data]) => {
                                                     const invItem = data.invId ? invLookup[data.invId] : null;
                                                     const isMatched = !!data.invId;
+                                                    const isLocked = data.matchType === "locked";
                                                     const showUnmatchedHeader = !isMatched && !unmatchedHeaderShown && matchedCount > 0;
                                                     if (showUnmatchedHeader) unmatchedHeaderShown = true;
+                                                    const cardBg = isLocked ? "bg-gray-50 border-gray-300" :
+                                                                  data.matchType === "confirmed" ? "bg-green-50 border-green-300" :
+                                                                  data.matchType === "auto" ? "bg-yellow-50 border-yellow-200" :
+                                                                  isMatched ? "bg-green-50 border-green-200" :
+                                                                  "bg-white border-gray-200";
                                                     return (
                                                         <div key={key}>
                                                             {showUnmatchedHeader && (
                                                                 <div className="text-xs font-bold text-gray-500 px-1 pt-2 pb-1">{"\u{1F4E6}"} {language === "es" ? "Solo en US Foods" : "US Foods Only"} ({sorted.length - matchedCount})</div>
                                                             )}
-                                                            <div className={`rounded-xl p-3 border ${isMatched ? "bg-green-50 border-green-200" : "bg-white border-gray-200"}`}>
+                                                            <div className={`rounded-xl p-3 border ${cardBg}`}>
                                                                 <div className="flex items-start justify-between gap-2">
                                                                     <div className="flex-1 min-w-0">
                                                                         <div className="font-bold text-sm text-gray-800 truncate">{data.name || `Item ${key}`}</div>
-                                                                        {invItem && (
-                                                                            <div className="text-xs text-green-600 mt-0.5">
-                                                                                {data.matchType === "auto" ? "\u{1F916}" : "\u{2194}\u{FE0F}"} {invItem.name}
-                                                                                {data.matchType === "auto" && <span className="text-green-400 ml-1">(auto)</span>}
+                                                                        {invItem ? (
+                                                                            <div className={`text-xs mt-0.5 ${data.matchType === "auto" ? "text-yellow-700" : "text-green-600"}`}>
+                                                                                {data.matchType === "confirmed" ? "✅" : data.matchType === "auto" ? "🤖" : "↔️"} {invItem.name}
+                                                                                {data.matchType === "auto" && <span className="ml-1 opacity-70">({language === "es" ? "automático — revisar" : "auto — review"})</span>}
                                                                             </div>
+                                                                        ) : isLocked ? (
+                                                                            <div className="text-xs text-gray-500 mt-0.5">🔒 {language === "es" ? "Bloqueado sin coincidencia" : "Locked unmatched"}</div>
+                                                                        ) : (
+                                                                            <div className="text-xs text-gray-500 mt-0.5">⚠️ {language === "es" ? "Sin coincidencia" : "No match"}</div>
+                                                                        )}
+                                                                        {currentIsAdmin && matchAuditMode && (
+                                                                            <button
+                                                                                onClick={() => { setMatchEditor({ vendor: "usfoods", vendorId: key, vendorName: data.name, currentInvId: data.invId, matchType: data.matchType }); setMatchSearchQuery(""); }}
+                                                                                className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-600 text-white text-[10px] font-bold hover:bg-purple-700">
+                                                                                ✏️ {language === "es" ? "Editar coincidencia" : "Edit match"}
+                                                                            </button>
                                                                         )}
                                                                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1 text-xs text-gray-500">
                                                                             {data.pack && <span>{language === "es" ? "Paquete" : "Pack"}: {data.pack}</span>}
