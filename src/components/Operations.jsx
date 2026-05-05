@@ -28,19 +28,15 @@ const addDaysKey = (key, n) => {
     return t.toISOString().slice(0, 10);
 };
 
-// Inventory search matcher. Returns true when the item should appear for this query.
-// Searches across English+Spanish name, vendor/supplier, brand, pack size, and the item id —
-// so a user can type a vendor name ("sysco"), a brand, an SKU, or part of a pack size and find it.
+// Inventory search matcher. Narrow on purpose: only the English + Spanish item name.
+// Wider fields (vendor, brand, subcat, pack, IDs) cause flood matches — e.g. typing "garlic"
+// would surface every item in a "Garlic & Onions" subcategory, or every item from a vendor
+// whose name happens to contain the query. The vendor/pricing tabs already group by those
+// dimensions, so users who want vendor- or brand-scoped browsing use those tabs.
 const itemMatchesSearch = (item, searchLower) => {
     if (!searchLower) return true;
-    const haystack = [
-        item.name, item.nameEs, item.vendor, item.supplier, item.preferredVendor,
-        item.brand, item.pack, item.id, item.syscoId, item.usfoodsId, item.subcat,
-    ];
-    for (let i = 0; i < haystack.length; i++) {
-        const v = haystack[i];
-        if (v && String(v).toLowerCase().includes(searchLower)) return true;
-    }
+    if (item.name && String(item.name).toLowerCase().includes(searchLower)) return true;
+    if (item.nameEs && String(item.nameEs).toLowerCase().includes(searchLower)) return true;
     return false;
 };
 
@@ -3157,8 +3153,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
                                                 const searchLower = (invSearch || "").toLowerCase().trim();
                                                 const allCatItems = pData.byCategory[cat];
+                                                // Pricing view also matches brand + sysco/usfoods key — useful here because the
+                                                // user is shopping by SKU/brand rather than just by item name.
                                                 const catItems = searchLower
-                                                    ? allCatItems.filter(([key, data]) => itemMatchesSearch({ ...data, id: key }, searchLower))
+                                                    ? allCatItems.filter(([key, data]) =>
+                                                        itemMatchesSearch(data, searchLower) ||
+                                                        (data.brand || "").toLowerCase().includes(searchLower) ||
+                                                        (key || "").toLowerCase().includes(searchLower))
                                                     : allCatItems;
                                                 if (catItems.length === 0) return null;
                                                 const catEmoji = SYSCO_CATEGORY_EMOJI[cat] || "";
@@ -3228,7 +3229,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 let unmatchedHeaderShown = false;
                                                 const searchLower = (invSearch || "").toLowerCase().trim();
                                                 const filteredSorted = searchLower
-                                                    ? sorted.filter(([key, data]) => itemMatchesSearch({ ...data, id: key }, searchLower))
+                                                    ? sorted.filter(([key, data]) =>
+                                                        itemMatchesSearch(data, searchLower) ||
+                                                        (data.brand || "").toLowerCase().includes(searchLower) ||
+                                                        (key || "").toLowerCase().includes(searchLower))
                                                     : sorted;
                                                 return filteredSorted.map(([key, data]) => {
                                                     const invItem = data.invId ? invLookup[data.invId] : null;
