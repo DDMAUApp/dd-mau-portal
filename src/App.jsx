@@ -182,6 +182,10 @@ export default function App() {
     }, []);
     const staffIsAdmin = isAdmin(staffName);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
+    // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
+    // open the Recipes tab even when they're not at a DD Mau location.
+    const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
+    const hasRecipesAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
     const handleSelectStaff = (name) => {
         setStaffName(name);
         const staff = staffList.find(s => s.name === name);
@@ -263,12 +267,12 @@ export default function App() {
                                         <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{b.sub}</p>
                                     </button>
                                 ))}
-                                {(isAtDDMau || staffIsAdmin) ? (
+                                {(isAtDDMau || hasRecipesAccess) ? (
                                     <button onClick={() => setActiveTab("recipes")}
                                         style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
                                         <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🧑‍🍳</div>
                                         <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("recipesTitle", language)}</p>
-                                        <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{staffIsAdmin && !isAtDDMau ? (language === "es" ? "Admin" : "Admin access") : (language === "es" ? "En tienda" : "In-store")}</p>
+                                        <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{hasRecipesAccess && !isAtDDMau ? (language === "es" ? "Acceso" : "Access granted") : (language === "es" ? "En tienda" : "In-store")}</p>
                                     </button>
                                 ) : (
                                     <div style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", opacity: 0.4}}>
@@ -329,7 +333,7 @@ export default function App() {
                         {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} />}
-                        {activeTab === "recipes" && (isAtDDMau || staffIsAdmin) && <Recipes language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "recipes" && (isAtDDMau || hasRecipesAccess) && <Recipes language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
