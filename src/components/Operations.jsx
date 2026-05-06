@@ -323,8 +323,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const invLookup = useMemo(() => {
                 const lookup = {};
-                customInventory.forEach(cat => cat.items.forEach(item => { lookup[item.id] = item; }));
+                customInventory.forEach(cat => cat.items.forEach(item => {
+                    lookup[item.id] = item;
+                }));
                 return lookup;
+            }, [customInventory]);
+
+            // Detects ID collisions in customInventory. When two items share an ID,
+            // invLookup[id] silently returns the last one seen — the audit list then
+            // shows the wrong name under a vendor item even though the saved match is correct.
+            const invIdCollisions = useMemo(() => {
+                const seen = {};
+                const dupes = [];
+                customInventory.forEach((cat, cIdx) => cat.items.forEach((item, iIdx) => {
+                    if (seen[item.id]) {
+                        dupes.push({ id: item.id, name: item.name, prevName: seen[item.id].name, cat: cat.name, cIdx, iIdx });
+                    } else {
+                        seen[item.id] = { name: item.name, cat: cat.name, cIdx, iIdx };
+                    }
+                }));
+                if (dupes.length > 0) console.warn("[invIdCollisions]", dupes);
+                return dupes;
             }, [customInventory]);
 
             const autoMatch = useCallback((syscoName) => {
@@ -1049,21 +1068,24 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         setVendorCounts(data.vendorCounts || {});
                         if (data.customInventory) {
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
-                            // so new items from inventory.js always appear
+                            // so new items from inventory.js always appear.
+                            // Defensive dedup by id: if the saved doc somehow has duplicates
+                            // (race, partial merge), invLookup[id] would silently return whichever
+                            // was iterated last, breaking the audit-list "matched to..." display.
                             const merged = INVENTORY_CATEGORIES.map(masterCat => {
                                 const savedCat = data.customInventory.find(sc => sc.name === masterCat.name);
                                 if (!savedCat) return { ...masterCat, items: [...masterCat.items] };
-                                // Build a set of IDs from the master list
                                 const masterIds = new Set(masterCat.items.map(it => it.id));
-                                // Start with all master items (preserves new additions)
                                 const mergedItems = masterCat.items.map(mi => {
                                     const savedItem = savedCat.items.find(si => si.id === mi.id);
-                                    // Keep any custom fields from saved (like changed vendor) but use master name/data as base
                                     return savedItem ? { ...mi, ...savedItem, name: mi.name, nameEs: mi.nameEs } : { ...mi };
                                 });
-                                // Add any custom items the user added that aren't in master
+                                const seenIds = new Set(mergedItems.map(it => it.id));
                                 savedCat.items.forEach(si => {
-                                    if (!masterIds.has(si.id)) mergedItems.push(si);
+                                    if (masterIds.has(si.id)) return;
+                                    if (seenIds.has(si.id)) return;
+                                    seenIds.add(si.id);
+                                    mergedItems.push(si);
                                 });
                                 return { ...masterCat, items: mergedItems };
                             });
@@ -4077,6 +4099,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 US Foods
                                             </button>
                                         </div>
+
+                                        {/* Surfaces a known-bad data condition: two master items sharing
+                                            an ID would make the audit list show the wrong "matched to..."
+                                            name. Admin sees this and can merge the dupes via Master List. */}
+                                        {currentIsAdmin && invIdCollisions.length > 0 && (
+                                            <div className="rounded-xl border-2 border-red-300 bg-red-50 p-3 text-xs text-red-800 space-y-1">
+                                                <div className="font-bold">⚠️ {invIdCollisions.length} duplicate ID{invIdCollisions.length === 1 ? "" : "s"} in master list</div>
+                                                <div className="text-[10px]">Match-audit names will be wrong until these are resolved. Open Master List → Edit → use ↔️ Merge to combine duplicates:</div>
+                                                <ul className="text-[10px] list-disc list-inside space-y-0.5">
+                                                    {invIdCollisions.slice(0, 8).map((d, i) => (
+                                                        <li key={i}><b>#{d.id}</b> ({d.cat}): "{d.prevName}" + "{d.name}"</li>
+                                                    ))}
+                                                    {invIdCollisions.length > 8 && <li>…and {invIdCollisions.length - 8} more</li>}
+                                                </ul>
+                                            </div>
+                                        )}
 
                                         {/* ── Match Audit controls (admin only) ──
                                             Lets the user go through every vendor item, confirm or fix the
