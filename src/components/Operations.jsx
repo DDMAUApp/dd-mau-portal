@@ -290,6 +290,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [newMasterNameEs, setNewMasterNameEs] = useState("");
             const [newMasterCatIdx, setNewMasterCatIdx] = useState(0);
             const [newMasterSaving, setNewMasterSaving] = useState(false);
+            // Merge-items state. When the user picks a source item via the merge ↔ button in
+            // the master list edit mode, we open a target-picker modal (similar shape to the
+            // match editor). Picking a target executes the merge: vendor matches pointing at
+            // the source get redirected to the target, counts/meta are combined, and the source
+            // item is removed from customInventory.
+            const [mergeSource, setMergeSource] = useState(null); // { catIdx, itemIdx, item }
+            const [mergeSearchQuery, setMergeSearchQuery] = useState("");
+            const [mergeSaving, setMergeSaving] = useState(false);
+            const [mergeError, setMergeError] = useState(null);
             const [matchAuditMode, setMatchAuditMode] = useState(false); // toggles the edit pencils per item
 
             // Convenience aliases used by the rest of the component (replaces the old hardcoded
@@ -608,6 +617,129 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     } else {
                         console.error("saveVendorCategory error:", err);
                     }
+                }
+            };
+
+            // ── Merge two master items into one ──────────────────────────────
+            // Used to clean up duplicates in the master list. Operations performed:
+            //   1. Redirect every vendor_matches entry that points at sourceId → targetId.
+            //   2. Combine inventory counts (target += source) and clear source.
+            //   3. Preserve the addedFromVendor marker (target keeps its own; if absent,
+            //      inherits from source).
+            //   4. Remove the source item from customInventory.
+            // All Firestore writes are batched into a single updateDoc per doc so partial
+            // failures can't leave us in a half-merged state. Updates target by ID, not
+            // index, so source removal in the same category doesn't break the lookup.
+            const mergeMasterItems = async (sourceCatIdx, sourceItemIdx, targetCatIdx, targetItemIdx) => {
+                const sourceCat = customInventory[sourceCatIdx];
+                const targetCat = customInventory[targetCatIdx];
+                if (!sourceCat || !targetCat) {
+                    setMergeError("Invalid source or target category");
+                    return false;
+                }
+                const sourceItem = sourceCat.items[sourceItemIdx];
+                const targetItem = targetCat.items[targetItemIdx];
+                if (!sourceItem || !targetItem) {
+                    setMergeError("Invalid source or target item");
+                    return false;
+                }
+                if (sourceItem.id === targetItem.id) {
+                    setMergeError(language === "es" ? "No se puede fusionar un artículo consigo mismo" : "Can't merge an item into itself");
+                    return false;
+                }
+
+                setMergeSaving(true);
+                setMergeError(null);
+                try {
+                    const sourceId = sourceItem.id;
+                    const targetId = targetItem.id;
+
+                    // 1. Redirect any vendor matches pointing at the source.
+                    const vendorUpdates = {};
+                    for (const vendor of Object.keys(vendorMatches || {})) {
+                        for (const [vendorId, invId] of Object.entries(vendorMatches[vendor] || {})) {
+                            if (invId === sourceId) {
+                                vendorUpdates[`${vendor}.${vendorId}`] = targetId;
+                            }
+                        }
+                    }
+                    if (Object.keys(vendorUpdates).length > 0) {
+                        await updateDoc(doc(db, "config", "vendor_matches"), vendorUpdates);
+                    }
+
+                    // 2. Build new customInventory: update target by ID, then filter source out.
+                    //    Updating by ID (not index) so source removal in the same category
+                    //    can't shift the target's position out from under us.
+                    const updatedCustomInv = customInventory.map((cat, cIdx) => {
+                        let items = cat.items;
+                        if (cIdx === targetCatIdx) {
+                            items = items.map(it => {
+                                if (it.id === targetId) {
+                                    const merged = { ...it };
+                                    if (!merged.addedFromVendor && sourceItem.addedFromVendor) {
+                                        merged.addedFromVendor = sourceItem.addedFromVendor;
+                                    }
+                                    return merged;
+                                }
+                                return it;
+                            });
+                        }
+                        if (cIdx === sourceCatIdx) {
+                            items = items.filter(it => it.id !== sourceId);
+                        }
+                        return { ...cat, items };
+                    });
+
+                    // 3. Combine counts + meta.
+                    const sourceCount = inventory[sourceId] || 0;
+                    const targetCount = inventory[targetId] || 0;
+                    const mergedCount = sourceCount + targetCount;
+                    const sourceMeta = invCountMeta[sourceId];
+                    const targetMeta = invCountMeta[targetId];
+                    // Prefer target's meta if it had a count (likely more recent context),
+                    // fall back to source's meta otherwise.
+                    const mergedMeta = targetCount > 0 ? targetMeta : sourceMeta;
+
+                    // 4. One atomic write to the inventory doc.
+                    const ref = doc(db, "ops", "inventory_" + storeLocation);
+                    const update = {
+                        customInventory: updatedCustomInv,
+                        [`counts.${sourceId}`]: deleteField(),
+                        [`countMeta.${sourceId}`]: deleteField(),
+                        date: new Date().toISOString(),
+                    };
+                    if (mergedCount > 0) {
+                        update[`counts.${targetId}`] = mergedCount;
+                        if (mergedMeta) update[`countMeta.${targetId}`] = mergedMeta;
+                    }
+                    await updateDoc(ref, update);
+
+                    // 5. Mirror to local state (otherwise UI lags one tick behind Firestore).
+                    setCustomInventory(updatedCustomInv);
+                    setInventory(prev => {
+                        const next = { ...prev };
+                        delete next[sourceId];
+                        if (mergedCount > 0) next[targetId] = mergedCount;
+                        else delete next[targetId];
+                        return next;
+                    });
+                    setInvCountMeta(prev => {
+                        const next = { ...prev };
+                        delete next[sourceId];
+                        if (mergedMeta && mergedCount > 0) next[targetId] = mergedMeta;
+                        else if (mergedCount === 0) delete next[targetId];
+                        return next;
+                    });
+
+                    setMergeSaving(false);
+                    setMergeSource(null);
+                    setMergeSearchQuery("");
+                    return true;
+                } catch (err) {
+                    console.error("Merge error:", err);
+                    setMergeError(err.message || String(err));
+                    setMergeSaving(false);
+                    return false;
                 }
             };
 
@@ -2667,6 +2799,111 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                     {activeTab === "checklist" && renderChecklist()}
 
+                    {/* ── Merge Items Modal — pick a target master item to merge the source into ── */}
+                    {mergeSource && (() => {
+                        const src = mergeSource.item;
+                        const sourceCount = inventory[src.id] || 0;
+                        // Count vendor matches that point at the source — surfaces the impact of the merge.
+                        let pointingMatchCount = 0;
+                        for (const v of Object.keys(vendorMatches || {})) {
+                            for (const invId of Object.values(vendorMatches[v] || {})) {
+                                if (invId === src.id) pointingMatchCount += 1;
+                            }
+                        }
+                        const queryLower = (mergeSearchQuery || "").toLowerCase().trim();
+                        const candidates = [];
+                        customInventory.forEach((cat, cIdx) => {
+                            const items = cat.items.filter(it => {
+                                if (it.id === src.id) return false; // can't merge into self
+                                if (!queryLower) return true;
+                                const hay = (it.name || "") + " " + (it.nameEs || "") + " " + (it.id || "");
+                                return hay.toLowerCase().includes(queryLower);
+                            });
+                            if (items.length > 0) {
+                                candidates.push({ cIdx, catName: cat.name, catNameEs: cat.nameEs, items });
+                            }
+                        });
+                        const closeMerge = () => {
+                            setMergeSource(null);
+                            setMergeSearchQuery("");
+                            setMergeError(null);
+                            setMergeSaving(false);
+                        };
+                        const handleMergeClick = async (targetCatIdx, targetItem) => {
+                            const targetItemIdx = customInventory[targetCatIdx].items.findIndex(it => it.id === targetItem.id);
+                            const ok = window.confirm(
+                                language === "es"
+                                    ? `Fusionar "${src.name}" EN "${targetItem.name}"?\n\nEsta acción combinará los conteos, redirigirá las coincidencias de proveedor, y eliminará "${src.name}" de la lista maestra. No se puede deshacer.`
+                                    : `Merge "${src.name}" INTO "${targetItem.name}"?\n\nThis will combine counts, redirect ${pointingMatchCount} vendor match(es), and delete "${src.name}" from the master list. Cannot be undone.`
+                            );
+                            if (!ok) return;
+                            await mergeMasterItems(mergeSource.catIdx, mergeSource.itemIdx, targetCatIdx, targetItemIdx);
+                        };
+                        return (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2">
+                                <div className="bg-white rounded-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border-2 border-purple-300">
+                                    <div className="px-4 py-3 bg-purple-700 text-white flex items-start justify-between gap-2">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-xs opacity-80 uppercase tracking-wide">{language === "es" ? "Fusionar artículo" : "Merge item"}</div>
+                                            <div className="font-bold text-sm truncate">↔️ {src.name}</div>
+                                            <div className="text-xs opacity-80 mt-0.5">
+                                                {language === "es" ? "Fuente:" : "Source:"} #{src.id}
+                                                {sourceCount > 0 && ` · ${language === "es" ? "Conteo" : "count"}: ${sourceCount}`}
+                                                {pointingMatchCount > 0 && ` · ${pointingMatchCount} ${language === "es" ? "coincidencia(s)" : "match(es)"}`}
+                                            </div>
+                                        </div>
+                                        <button onClick={closeMerge} className="text-white/80 hover:text-white text-xl leading-none px-1">✕</button>
+                                    </div>
+                                    <div className="p-3 border-b border-gray-200">
+                                        <input type="text" autoFocus value={mergeSearchQuery} onChange={e => setMergeSearchQuery(e.target.value)}
+                                            placeholder={language === "es" ? "🔍 Buscar artículo destino..." : "🔍 Search target item..."}
+                                            className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-purple-700" />
+                                        <p className="text-[11px] text-gray-500 mt-1">
+                                            {language === "es"
+                                                ? `Toca un artículo para fusionar "${src.name}" EN él. La fuente se eliminará.`
+                                                : `Tap an item to merge "${src.name}" INTO it. The source will be deleted.`}
+                                        </p>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                                        {candidates.length === 0 ? (
+                                            <p className="text-center text-gray-400 text-sm py-6">{language === "es" ? "No se encontraron artículos" : "No items found"}</p>
+                                        ) : candidates.map(group => (
+                                            <div key={group.cIdx}>
+                                                <div className="text-[10px] font-bold uppercase text-gray-500 px-2 py-1 bg-gray-50 sticky top-0">{language === "es" ? group.catNameEs : group.catName}</div>
+                                                {group.items.map(it => {
+                                                    const tCount = inventory[it.id] || 0;
+                                                    return (
+                                                        <button key={it.id}
+                                                            disabled={mergeSaving}
+                                                            onClick={() => handleMergeClick(group.cIdx, it)}
+                                                            className={`w-full text-left px-3 py-2 rounded-lg border mt-1 transition ${mergeSaving ? "opacity-50 cursor-wait" : "bg-white border-gray-200 hover:bg-purple-50 hover:border-purple-300"}`}>
+                                                            <div className="text-sm font-medium text-gray-800">{language === "es" && it.nameEs ? it.nameEs : it.name}</div>
+                                                            <div className="text-[11px] text-gray-500">
+                                                                #{it.id}
+                                                                {tCount > 0 && ` · ${language === "es" ? "Conteo" : "count"} ${tCount} → ${tCount + sourceCount}`}
+                                                            </div>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {mergeError && (
+                                        <div className="px-3 py-2 bg-red-100 border-t border-red-300 text-red-700 text-xs">
+                                            ⚠️ {mergeError}
+                                        </div>
+                                    )}
+                                    <div className="p-3 border-t border-gray-200 bg-gray-50">
+                                        <button onClick={closeMerge} disabled={mergeSaving}
+                                            className="w-full py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800 disabled:opacity-50">
+                                            {language === "es" ? "Cancelar" : "Cancel"}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {/* ── Match Editor Modal (admin-only, shared across all vendors) ── */}
                     {matchEditor && (() => {
                         const { vendor, vendorId, vendorName, currentInvId } = matchEditor;
@@ -3302,6 +3539,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                     setInvEditSupplier(item.vendor || item.supplier || "");
                                                                                     setInvEditOrderDay(item.orderDay || "");
                                                                                 }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
+                                                                                {invEditMode && (
+                                                                                    <button onClick={() => {
+                                                                                        setMergeSource({ catIdx, itemIdx, item });
+                                                                                        setMergeSearchQuery("");
+                                                                                        setMergeError(null);
+                                                                                    }} className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-medium hover:bg-purple-100 transition"
+                                                                                        title={language === "es" ? "Fusionar con otro artículo" : "Merge into another item"}>
+                                                                                        ↔️ {language === "es" ? "Fusionar" : "Merge"}
+                                                                                    </button>
+                                                                                )}
                                                                             </div>
                                                                             {invCountMeta[item.id] && count > 0 && (
                                                                                 <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
