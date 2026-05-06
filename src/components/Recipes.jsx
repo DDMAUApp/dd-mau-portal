@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
+import { MASTER_RECIPES } from '../data/masterRecipes';
 
 const RECIPE_PASSWORD = "ZhongGuo87";
 
@@ -246,6 +247,32 @@ export default function Recipes({ language, staffName, staffList }) {
         } catch (err) { console.error("Error deleting recipe:", err); }
     };
 
+    // Bulk-import the Master Recipe Book (admin only). Skips any recipe whose
+    // English title already matches an existing one — safe to run multiple times.
+    const importMasterRecipes = async () => {
+        const have = new Set(recipes.map(r => (r.titleEn || "").trim().toLowerCase()));
+        const toAdd = MASTER_RECIPES.filter(r => !have.has((r.titleEn || "").trim().toLowerCase()));
+        if (toAdd.length === 0) {
+            alert(language === "es" ? "Todas las recetas maestras ya están importadas." : "All master recipes are already imported.");
+            return;
+        }
+        const ok = confirm(language === "es"
+            ? `Importar ${toAdd.length} receta(s) del libro maestro? Las recetas existentes se conservan.`
+            : `Import ${toAdd.length} recipe(s) from the master book? Existing recipes are kept.`);
+        if (!ok) return;
+        let nextId = recipes.length > 0 ? Math.max(...recipes.map(r => r.id || 0)) + 1 : 1;
+        const stamped = toAdd.map(r => ({ ...r, id: nextId++ }));
+        const updated = [...recipes, ...stamped];
+        setRecipes(updated);
+        try {
+            await setDoc(doc(db, "config", "recipes"), { list: updated, updatedAt: new Date().toISOString() });
+            alert(language === "es" ? `${toAdd.length} receta(s) importadas.` : `${toAdd.length} recipe(s) imported.`);
+        } catch (err) {
+            console.error("Error importing master recipes:", err);
+            alert(`Import failed: ${err.message || err}`);
+        }
+    };
+
     // Access gate — block staff without recipesAccess
     if (!hasRecipesAccess) {
         return (
@@ -328,12 +355,19 @@ export default function Recipes({ language, staffName, staffList }) {
             <div className="flex items-center justify-between mb-2">
                 <h2 className="text-2xl font-bold text-mint-700">🧑‍🍳 {t("recipesTitle", language)}</h2>
                 {adminUser && (
-                    <button
-                        onClick={() => requestEdit("add")}
-                        className="bg-mint-700 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1"
-                    >
-                        + {language === "es" ? "Agregar" : "Add"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={importMasterRecipes}
+                            className="bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
+                            title={language === "es" ? "Importar el libro maestro de recetas" : "Import the master recipe book"}>
+                            📚 {language === "es" ? "Importar maestro" : "Import master"}
+                        </button>
+                        <button
+                            onClick={() => requestEdit("add")}
+                            className="bg-mint-700 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1">
+                            + {language === "es" ? "Agregar" : "Add"}
+                        </button>
+                    </div>
                 )}
             </div>
             <p className="text-xs text-gray-500 mb-4 bg-red-50 border border-red-200 rounded-lg p-2">
