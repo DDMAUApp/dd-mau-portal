@@ -1980,6 +1980,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return vo.vendor;
             };
 
+            // Strip Sysco and US Foods out of the per-item vendorOptions list — those
+            // entries carried hardcoded prices from inventory.js that can drift out of
+            // sync with what the scrapers pull in. The live-price chips below already
+            // show the right Sysco/US Foods prices, so the dropdown only needs to
+            // surface the non-scraped vendors (Restaurant Depot, STL Wholesale, Pan
+            // Asia, Jays, etc.) that the user actually has to pick between.
+            const nonScrapedVendorOptions = (vendorOptions) => {
+                if (!Array.isArray(vendorOptions)) return [];
+                return vendorOptions.filter(vo => {
+                    const v = (vo?.vendor || "").toLowerCase().replace(/\s+/g, "");
+                    return v !== "sysco" && v !== "usfoods";
+                });
+            };
+
             // Render live price badge for an item — now shows ALL matched vendors so the
             // person placing the order can compare prices at a glance. The cheapest vendor
             // is highlighted; ties or matched-but-pricier vendors render dimmer.
@@ -3738,23 +3752,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                 {/* Vendor preference: read-only label by default; the dropdown only
                                                                                     appears in inventory Edit mode (the ✏️ next to the print button).
                                                                                     Keeps the daily ordering view clean and prevents accidental changes. */}
-                                                                                {item.vendorOptions && item.vendorOptions.length > 1 && invEditMode ? (
-                                                                                    <select
-                                                                                        value={item.preferredVendor || item.vendor || ""}
-                                                                                        onChange={(e) => changePreferredVendor(catIdx, itemIdx, e.target.value)}
-                                                                                        className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
-                                                                                        title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
-                                                                                        {item.vendorOptions.map(vo => (
-                                                                                            <option key={vo.vendor} value={vo.vendor}>
-                                                                                                {getVendorOptionLabel(vo, item.id)}
-                                                                                            </option>
-                                                                                        ))}
-                                                                                    </select>
-                                                                                ) : (
-                                                                                    (item.preferredVendor || item.vendor) && (
-                                                                                        <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
-                                                                                    )
-                                                                                )}
+                                                                                {(() => {
+                                                                                    const opts = nonScrapedVendorOptions(item.vendorOptions);
+                                                                                    if (opts.length > 1 && invEditMode) {
+                                                                                        return (
+                                                                                            <select
+                                                                                                value={item.preferredVendor || item.vendor || ""}
+                                                                                                onChange={(e) => changePreferredVendor(catIdx, itemIdx, e.target.value)}
+                                                                                                className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+                                                                                                title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
+                                                                                                {opts.map(vo => (
+                                                                                                    <option key={vo.vendor} value={vo.vendor}>
+                                                                                                        {getVendorOptionLabel(vo, item.id)}
+                                                                                                    </option>
+                                                                                                ))}
+                                                                                            </select>
+                                                                                        );
+                                                                                    }
+                                                                                    if (item.preferredVendor || item.vendor) {
+                                                                                        return <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>;
+                                                                                    }
+                                                                                    return null;
+                                                                                })()}
                                                                                 {renderLivePriceBadge(item.id, item)}
                                                                                 {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                 {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
@@ -4003,21 +4022,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                         </div>
                                                                         <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                                                             <span className="text-xs text-blue-600 font-medium">{language === "es" ? item.catNameEs : item.catName}</span>
-                                                                            {item.vendorOptions && item.vendorOptions.length > 1 ? (
-                                                                                <select
-                                                                                    value={item.preferredVendor || item.vendor || ""}
-                                                                                    onChange={(e) => changePreferredVendor(item.catIdx, item.itemIdx, e.target.value)}
-                                                                                    className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
-                                                                                    title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
-                                                                                    {item.vendorOptions.map(vo => (
-                                                                                        <option key={vo.vendor} value={vo.vendor}>
-                                                                                            {getVendorOptionLabel(vo, item.id)}
-                                                                                        </option>
-                                                                                    ))}
-                                                                                </select>
-                                                                            ) : (
-                                                                                (item.preferredVendor || item.vendor) && <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>
-                                                                            )}
+                                                                            {(() => {
+                                                                                const opts = nonScrapedVendorOptions(item.vendorOptions);
+                                                                                if (opts.length > 1) {
+                                                                                    return (
+                                                                                        <select
+                                                                                            value={item.preferredVendor || item.vendor || ""}
+                                                                                            onChange={(e) => changePreferredVendor(item.catIdx, item.itemIdx, e.target.value)}
+                                                                                            className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+                                                                                            title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
+                                                                                            {opts.map(vo => (
+                                                                                                <option key={vo.vendor} value={vo.vendor}>
+                                                                                                    {getVendorOptionLabel(vo, item.id)}
+                                                                                                </option>
+                                                                                            ))}
+                                                                                        </select>
+                                                                                    );
+                                                                                }
+                                                                                if (item.preferredVendor || item.vendor) {
+                                                                                    return <span className="text-xs text-gray-500">{item.preferredVendor || item.vendor}</span>;
+                                                                                }
+                                                                                return null;
+                                                                            })()}
                                                                             {renderLivePriceBadge(item.id, item)}
                                                                             {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                             {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
@@ -4170,21 +4196,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                         {wasMoved && <span className="text-xs bg-purple-100 text-purple-600 px-1 rounded">{"\u{21C4}"}</span>}
                                                                                     </div>
                                                                                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                                                                                        {item.vendorOptions && item.vendorOptions.length > 1 ? (
-                                                                                            <select
-                                                                                                value={item.preferredVendor || item.vendor || ""}
-                                                                                                onChange={(e) => changePreferredVendor(item.catIdx, item.itemIdx, e.target.value)}
-                                                                                                className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
-                                                                                                title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
-                                                                                                {item.vendorOptions.map(vo => (
-                                                                                                    <option key={vo.vendor} value={vo.vendor}>
-                                                                                                        {getVendorOptionLabel(vo, item.id)}
-                                                                                                    </option>
-                                                                                                ))}
-                                                                                            </select>
-                                                                                        ) : (
-                                                                                            (item.preferredVendor || item.vendor) && <span className="text-xs text-blue-600 font-medium">{item.preferredVendor || item.vendor}</span>
-                                                                                        )}
+                                                                                        {(() => {
+                                                                                            const opts = nonScrapedVendorOptions(item.vendorOptions);
+                                                                                            if (opts.length > 1) {
+                                                                                                return (
+                                                                                                    <select
+                                                                                                        value={item.preferredVendor || item.vendor || ""}
+                                                                                                        onChange={(e) => changePreferredVendor(item.catIdx, item.itemIdx, e.target.value)}
+                                                                                                        className="text-xs bg-amber-50 border border-amber-300 rounded px-1 py-0.5 text-amber-800 font-medium focus:outline-none focus:border-amber-500 cursor-pointer"
+                                                                                                        title={language === "es" ? "Proveedor preferido" : "Preferred vendor"}>
+                                                                                                        {opts.map(vo => (
+                                                                                                            <option key={vo.vendor} value={vo.vendor}>
+                                                                                                                {getVendorOptionLabel(vo, item.id)}
+                                                                                                            </option>
+                                                                                                        ))}
+                                                                                                    </select>
+                                                                                                );
+                                                                                            }
+                                                                                            if (item.preferredVendor || item.vendor) {
+                                                                                                return <span className="text-xs text-blue-600 font-medium">{item.preferredVendor || item.vendor}</span>;
+                                                                                            }
+                                                                                            return null;
+                                                                                        })()}
                                                                                         {renderLivePriceBadge(item.id, item)}
                                                                                         {item.pack && <span className="text-xs text-gray-400">| {item.pack}</span>}
                                                                                         {item.price != null && <span className="text-xs text-gray-400">| ${typeof item.price === 'number' ? item.price.toFixed(2) : item.price}</span>}
