@@ -809,6 +809,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
             };
 
+            // Move an item up or down within its category (direction = -1 for up, +1 for down).
+            // Reorders by swapping in customInventory.items, then persists. The order is what
+            // the master list (and the daily count view) renders, so this lets admin curate
+            // the on-screen layout without touching inventory.js.
+            const moveItem = async (catIdx, itemIdx, direction) => {
+                const cat = customInventory[catIdx];
+                if (!cat) return;
+                const targetIdx = itemIdx + direction;
+                if (targetIdx < 0 || targetIdx >= cat.items.length) return;
+                const updated = customInventory.map((c, cIdx) => {
+                    if (cIdx !== catIdx) return c;
+                    const items = [...c.items];
+                    [items[itemIdx], items[targetIdx]] = [items[targetIdx], items[itemIdx]];
+                    return { ...c, items };
+                });
+                setCustomInventory(updated);
+                await saveInventory(inventory, updated);
+            };
+
             // Listen to live labor data for current location
             useEffect(() => {
                 const unsubLabor = onSnapshot(doc(db, "ops", "labor_" + storeLocation), (docSnap) => {
@@ -1129,7 +1148,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const masterIds = new Set(liveMasterItems.map(it => it.id));
                                 const mergedItems = liveMasterItems.map(mi => {
                                     const savedItem = savedCat.items.find(si => si.id === mi.id);
-                                    return savedItem ? { ...mi, ...savedItem, name: mi.name, nameEs: mi.nameEs } : { ...mi };
+                                    if (!savedItem) return { ...mi };
+                                    // Saved fields win over master so edits to name / vendor /
+                                    // pack persist across reloads. Master is just the initial
+                                    // template (and the source of new items added in inventory.js).
+                                    // If saved cleared a field to empty, fall back to master so a
+                                    // brand-new field added in inventory.js still shows up.
+                                    const merged = { ...mi };
+                                    for (const k of Object.keys(savedItem)) {
+                                        const v = savedItem[k];
+                                        if (v !== "" && v !== null && v !== undefined) merged[k] = v;
+                                    }
+                                    return merged;
                                 });
                                 const seenIds = new Set(mergedItems.map(it => it.id));
                                 const expectedPrefix = `${masterIdx}-`;
@@ -3736,14 +3766,28 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                                                     setInvEditOrderDay(item.orderDay || "");
                                                                                 }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                 {invEditMode && (
-                                                                                    <button onClick={() => {
-                                                                                        setMergeSource({ catIdx, itemIdx, item });
-                                                                                        setMergeSearchQuery("");
-                                                                                        setMergeError(null);
-                                                                                    }} className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-medium hover:bg-purple-100 transition"
-                                                                                        title={language === "es" ? "Fusionar con otro artículo" : "Merge into another item"}>
-                                                                                        ↔️ {language === "es" ? "Fusionar" : "Merge"}
-                                                                                    </button>
+                                                                                    <>
+                                                                                        <button onClick={() => moveItem(catIdx, itemIdx, -1)}
+                                                                                            disabled={itemIdx === 0}
+                                                                                            className={`text-xs w-6 h-6 rounded font-bold transition flex items-center justify-center ${itemIdx === 0 ? "bg-gray-100 text-gray-300 cursor-not-allowed" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
+                                                                                            title={language === "es" ? "Mover arriba" : "Move up"}>
+                                                                                            ↑
+                                                                                        </button>
+                                                                                        <button onClick={() => moveItem(catIdx, itemIdx, 1)}
+                                                                                            disabled={itemIdx === category.items.length - 1}
+                                                                                            className={`text-xs w-6 h-6 rounded font-bold transition flex items-center justify-center ${itemIdx === category.items.length - 1 ? "bg-gray-100 text-gray-300 cursor-not-allowed" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
+                                                                                            title={language === "es" ? "Mover abajo" : "Move down"}>
+                                                                                            ↓
+                                                                                        </button>
+                                                                                        <button onClick={() => {
+                                                                                            setMergeSource({ catIdx, itemIdx, item });
+                                                                                            setMergeSearchQuery("");
+                                                                                            setMergeError(null);
+                                                                                        }} className="text-xs px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-medium hover:bg-purple-100 transition"
+                                                                                            title={language === "es" ? "Fusionar con otro artículo" : "Merge into another item"}>
+                                                                                            ↔️ {language === "es" ? "Fusionar" : "Merge"}
+                                                                                        </button>
+                                                                                    </>
                                                                                 )}
                                                                             </div>
                                                                             {invCountMeta[item.id] && count > 0 && (
