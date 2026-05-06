@@ -51,13 +51,11 @@ export const MODULES = [
                     "DD Mau was founded by Julie Truong. She opened our first location in Maryland Heights in 2018 with a simple dream — bring authentic, fast-casual Vietnamese food to St. Louis.",
                     "Today we run two locations: Maryland Heights (MH) and Webster Groves (WG). You're hired for one specific location — but it doesn't matter which store you work at, our standards are the same. The way you greet a guest, build a bowl, and close the kitchen should look identical at both stores.",
                     "Both locations are fast casual. Guests order at the counter. We run the food to the table. We don't serve at the table the way a sit-down spot does, and we don't have a drive-through window. We move like a counter-service spot but we treat guests like a sit-down spot.",
-                    "Webster Groves is generally busier and runs with more shift leads. Maryland Heights runs slightly leaner. The mechanics of every station are the same; the volume changes. Your shift lead at each store will tell you which version of the closing checklist you're using (3-team or 4-team).",
                 ],
                 contentEs: [
                     "DD Mau fue fundado por Julie Truong. Ella abrió nuestra primera ubicación en Maryland Heights en 2018 con un sueño simple — traer comida vietnamita auténtica y casual rápida a St. Louis.",
                     "Hoy operamos dos ubicaciones: Maryland Heights (MH) y Webster Groves (WG). Te contratamos para una ubicación específica — pero no importa en qué tienda trabajes, nuestros estándares son iguales. La forma de saludar al cliente, armar un bowl y cerrar la cocina debe verse igual en ambas tiendas.",
                     "Ambas son casual rápido. Los clientes ordenan en el mostrador. Nosotros llevamos la comida a la mesa. No servimos en la mesa como un restaurante de mesa, y no tenemos ventanilla drive-through. Nos movemos como un servicio de mostrador pero tratamos a los clientes como en un restaurante de mesa.",
-                    "Webster Groves generalmente está más ocupado y opera con más líderes de turno. Maryland Heights opera un poco más ligero. La mecánica de cada estación es igual; cambia el volumen. Tu líder de turno en cada tienda te dirá qué versión del checklist de cierre usas (3 personas o 4 personas).",
                 ],
             },
             {
