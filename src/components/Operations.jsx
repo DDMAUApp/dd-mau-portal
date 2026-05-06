@@ -2976,11 +2976,41 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         };
                         const handleMergeClick = async (targetCatIdx, targetItem) => {
                             const targetItemIdx = customInventory[targetCatIdx].items.findIndex(it => it.id === targetItem.id);
-                            const ok = window.confirm(
+                            // Compute the full set of vendor data that will follow the source
+                            // into the target — vendor_matches (Sysco/USFoods SKU links),
+                            // vendorOptions entries the target doesn't already have, and any
+                            // scalar vendor fields the target is missing. The plain count
+                            // from pointingMatchCount alone undersells the impact.
+                            const tOpts = Array.isArray(targetItem.vendorOptions) ? targetItem.vendorOptions : [];
+                            const sOpts = Array.isArray(src.vendorOptions) ? src.vendorOptions : [];
+                            const tVendors = new Set(tOpts.map(o => o && o.vendor).filter(Boolean));
+                            const newVendorOpts = sOpts.filter(o => o && o.vendor && !tVendors.has(o.vendor)).map(o => o.vendor);
+                            const inheritFields = [];
+                            for (const k of ["preferredVendor", "vendor", "supplier"]) {
+                                if ((!targetItem[k] || targetItem[k] === "") && src[k]) inheritFields.push(`${k}=${src[k]}`);
+                            }
+                            const lines = [
                                 language === "es"
-                                    ? `Fusionar "${src.name}" EN "${targetItem.name}"?\n\nEsta acción combinará los conteos, redirigirá las coincidencias de proveedor, y eliminará "${src.name}" de la lista maestra. No se puede deshacer.`
-                                    : `Merge "${src.name}" INTO "${targetItem.name}"?\n\nThis will combine counts, redirect ${pointingMatchCount} vendor match(es), and delete "${src.name}" from the master list. Cannot be undone.`
-                            );
+                                    ? `Fusionar "${src.name}" EN "${targetItem.name}"?`
+                                    : `Merge "${src.name}" INTO "${targetItem.name}"?`,
+                                "",
+                                language === "es" ? "El destino heredará:" : "Target will inherit:",
+                                pointingMatchCount > 0
+                                    ? `  • ${pointingMatchCount} Sysco/US Foods ${language === "es" ? "coincidencia(s) SKU redirigida(s)" : "SKU match(es) redirected"}`
+                                    : `  • ${language === "es" ? "0 coincidencias SKU directas a redirigir" : "0 direct SKU matches to redirect"}`,
+                                newVendorOpts.length > 0
+                                    ? `  • ${newVendorOpts.length} ${language === "es" ? "nueva(s) opción(es) de proveedor" : "new vendor option(s)"}: ${newVendorOpts.join(", ")}`
+                                    : `  • ${language === "es" ? "Sin opciones de proveedor nuevas" : "No new vendor options"}`,
+                                sourceCount > 0
+                                    ? `  • ${language === "es" ? "Conteo combinado" : "Combined count"}: ${sourceCount} + ${(inventory[targetItem.id] || 0)}`
+                                    : `  • ${language === "es" ? "Sin conteo de origen" : "No source count to combine"}`,
+                                inheritFields.length > 0 ? `  • ${language === "es" ? "Campos heredados" : "Inherited fields"}: ${inheritFields.join(", ")}` : null,
+                                "",
+                                language === "es"
+                                    ? `Luego "${src.name}" se eliminará. No se puede deshacer.`
+                                    : `Then "${src.name}" will be deleted. Cannot be undone.`,
+                            ].filter(Boolean);
+                            const ok = window.confirm(lines.join("\n"));
                             if (!ok) return;
                             await mergeMasterItems(mergeSource.catIdx, mergeSource.itemIdx, targetCatIdx, targetItemIdx);
                         };
