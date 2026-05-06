@@ -592,24 +592,30 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // to revert to the auto-match value).
             // If the doc doesn't exist yet, falls back to setDoc with the full structure.
             const [matchSaveError, setMatchSaveError] = useState(null);
+            // Returns true on success, false on failure. Callers use the return value
+            // to decide whether to close the modal — silent failures (e.g. Firestore
+            // rule denials) used to make the audit list look like the save reverted.
             const _writeMatch = async (vendor, vendorId, value) => {
                 const ref = doc(db, "config", "vendor_matches");
                 try {
                     await updateDoc(ref, { [`${vendor}.${vendorId}`]: value });
                     setMatchSaveError(null);
+                    return true;
                 } catch (err) {
                     if (err?.code === "not-found") {
                         try {
                             await setDoc(ref, { [vendor]: { [vendorId]: value } }, { merge: true });
                             setMatchSaveError(null);
+                            return true;
                         } catch (e2) {
                             console.error("vendor match create error:", e2);
-                            setMatchSaveError(e2.message || String(e2));
+                            setMatchSaveError(`[${vendor} #${vendorId}] ${e2.code || ""} ${e2.message || String(e2)}`);
+                            return false;
                         }
-                    } else {
-                        console.error("vendor match write error:", err);
-                        setMatchSaveError(err.message || String(err));
                     }
+                    console.error("vendor match write error:", err);
+                    setMatchSaveError(`[${vendor} #${vendorId}] ${err.code || ""} ${err.message || String(err)}`);
+                    return false;
                 }
             };
             const saveVendorMatch = (vendor, vendorId, invId) => _writeMatch(vendor, vendorId, invId);
@@ -620,9 +626,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         [`${vendor}.${vendorId}`]: deleteField(),
                     });
                     setMatchSaveError(null);
+                    return true;
                 } catch (err) {
                     console.error("clearVendorMatch error:", err);
-                    setMatchSaveError(err.message || String(err));
+                    setMatchSaveError(`[${vendor} #${vendorId}] ${err.code || ""} ${err.message || String(err)}`);
+                    return false;
                 }
             };
             const saveVendorCategory = async (vendor, vendorId, category) => {
@@ -2926,6 +2934,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         );
                     })()}
 
+                    {/* Global save-error toast — shows even after the match modal closes,
+                        so silent Firestore-rule denials surface to the user. */}
+                    {matchSaveError && (
+                        <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[60] max-w-md w-[95vw] rounded-xl border-2 border-red-400 bg-red-50 shadow-xl p-3 text-xs text-red-800 flex items-start gap-2">
+                            <span className="text-base">⚠️</span>
+                            <div className="flex-1 min-w-0">
+                                <div className="font-bold mb-0.5">{language === "es" ? "Error al guardar coincidencia" : "Match save failed"}</div>
+                                <div className="break-words">{matchSaveError}</div>
+                            </div>
+                            <button onClick={() => setMatchSaveError(null)} className="text-red-600 hover:text-red-800 text-lg leading-none">✕</button>
+                        </div>
+                    )}
+
                     {/* ── Match Editor Modal (admin-only, shared across all vendors) ── */}
                     {matchEditor && (() => {
                         const { vendor, vendorId, vendorName, currentInvId } = matchEditor;
@@ -3021,7 +3042,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 <div className="text-[10px] font-bold uppercase text-gray-500 px-2 py-1 bg-gray-50 sticky top-0">{language === "es" ? group.catNameEs : group.catName}</div>
                                                 {group.items.map(it => (
                                                     <button key={it.id}
-                                                        onClick={async () => { await saveVendorMatch(vendor, vendorId, it.id); closeEditor(); }}
+                                                        onClick={async () => { const ok = await saveVendorMatch(vendor, vendorId, it.id); if (ok) closeEditor(); }}
                                                         className={`w-full text-left px-3 py-2 rounded-lg border mt-1 transition ${currentInvId === it.id ? "bg-green-50 border-green-300" : "bg-white border-gray-200 hover:bg-purple-50 hover:border-purple-300"}`}>
                                                         <div className="text-sm font-medium text-gray-800">{language === "es" && it.nameEs ? it.nameEs : it.name}</div>
                                                         <div className="text-[11px] text-gray-500">#{it.id}{it.vendor || it.supplier ? ` • ${it.vendor || it.supplier}` : ""}</div>
@@ -3089,11 +3110,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     )}
                                     {/* Footer actions */}
                                     <div className="p-3 border-t border-gray-200 flex flex-wrap gap-2 bg-gray-50">
-                                        <button onClick={async () => { await clearVendorMatch(vendor, vendorId); closeEditor(); }}
+                                        <button onClick={async () => { const ok = await clearVendorMatch(vendor, vendorId); if (ok) closeEditor(); }}
                                             className="flex-1 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 text-xs font-bold hover:bg-gray-100">
                                             {language === "es" ? "🔄 Borrar (auto)" : "🔄 Clear (auto-match)"}
                                         </button>
-                                        <button onClick={async () => { await lockVendorUnmatched(vendor, vendorId); closeEditor(); }}
+                                        <button onClick={async () => { const ok = await lockVendorUnmatched(vendor, vendorId); if (ok) closeEditor(); }}
                                             className="flex-1 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
                                             {language === "es" ? "🔒 Bloquear sin coincidencia" : "🔒 Lock unmatched"}
                                         </button>
