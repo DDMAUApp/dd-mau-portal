@@ -1146,40 +1146,47 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 const liveMasterItems = masterCat.items.filter(it => !tombstones.has(it.id));
                                 if (!savedCat) return { ...masterCat, items: [...liveMasterItems] };
                                 const masterIds = new Set(liveMasterItems.map(it => it.id));
-                                const mergedItems = liveMasterItems.map(mi => {
-                                    const savedItem = savedCat.items.find(si => si.id === mi.id);
-                                    if (!savedItem) return { ...mi };
-                                    // Saved fields win over master so edits to name / vendor /
-                                    // pack persist across reloads. Master is just the initial
-                                    // template (and the source of new items added in inventory.js).
-                                    // If saved cleared a field to empty, fall back to master so a
-                                    // brand-new field added in inventory.js still shows up.
-                                    const merged = { ...mi };
-                                    for (const k of Object.keys(savedItem)) {
-                                        const v = savedItem[k];
-                                        if (v !== "" && v !== null && v !== undefined) merged[k] = v;
-                                    }
-                                    return merged;
-                                });
-                                const seenIds = new Set(mergedItems.map(it => it.id));
+                                const masterById = new Map(liveMasterItems.map(it => [it.id, it]));
                                 const expectedPrefix = `${masterIdx}-`;
+                                // Walk savedCat.items in saved order so user reorders persist.
+                                // Then append any master items the saved doc didn't have yet
+                                // (newly-added entries in inventory.js).
+                                const mergedItems = [];
+                                const seenIds = new Set();
                                 savedCat.items.forEach(si => {
-                                    if (masterIds.has(si.id)) return;
-                                    if (seenIds.has(si.id)) return;
                                     let newId = si.id;
-                                    // If the id's catIdx prefix doesn't match this category's
-                                    // current master position, the item is from when this category
-                                    // sat at a different index. Renumber it under the new prefix
-                                    // so it can't collide with a different category's master ids.
-                                    if (typeof si.id === "string" && !si.id.startsWith(expectedPrefix)) {
+                                    if (typeof si.id === "string" && !si.id.startsWith(expectedPrefix) && !masterIds.has(si.id)) {
+                                        // Item from a renamed/moved category. Renumber under
+                                        // the new prefix so it can't collide with another
+                                        // category's master ids.
                                         let n = mergedItems.length;
-                                        while (seenIds.has(`${masterIdx}-${n}`)) n++;
+                                        while (seenIds.has(`${masterIdx}-${n}`) || masterIds.has(`${masterIdx}-${n}`)) n++;
                                         newId = `${masterIdx}-${n}`;
                                         idMigration[si.id] = newId;
                                     }
                                     if (seenIds.has(newId)) return;
                                     seenIds.add(newId);
-                                    mergedItems.push({ ...si, id: newId });
+                                    // If a master twin exists, layer master fields under saved
+                                    // (saved wins on every non-empty field).
+                                    const mi = masterById.get(newId);
+                                    if (mi) {
+                                        const merged = { ...mi };
+                                        for (const k of Object.keys(si)) {
+                                            const v = si[k];
+                                            if (v !== "" && v !== null && v !== undefined) merged[k] = v;
+                                        }
+                                        merged.id = newId;
+                                        mergedItems.push(merged);
+                                    } else {
+                                        mergedItems.push({ ...si, id: newId });
+                                    }
+                                });
+                                // Append any master items the saved doc didn't have yet
+                                // (newly-added in inventory.js since the last save).
+                                liveMasterItems.forEach(mi => {
+                                    if (seenIds.has(mi.id)) return;
+                                    seenIds.add(mi.id);
+                                    mergedItems.push({ ...mi });
                                 });
                                 return { ...masterCat, items: mergedItems };
                             });
