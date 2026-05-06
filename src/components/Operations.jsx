@@ -1080,7 +1080,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // Defensive dedup by id: if the saved doc somehow has duplicates
                             // (race, partial merge), invLookup[id] would silently return whichever
                             // was iterated last, breaking the audit-list "matched to..." display.
-                            const merged = INVENTORY_CATEGORIES.map(masterCat => {
+                            // Tracks ids that get rewritten so we can update vendor_matches to follow.
+                            const idMigration = {};
+                            const merged = INVENTORY_CATEGORIES.map((masterCat, masterIdx) => {
                                 const savedCat = data.customInventory.find(sc => sc.name === masterCat.name);
                                 if (!savedCat) return { ...masterCat, items: [...masterCat.items] };
                                 const masterIds = new Set(masterCat.items.map(it => it.id));
@@ -1089,21 +1091,59 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     return savedItem ? { ...mi, ...savedItem, name: mi.name, nameEs: mi.nameEs } : { ...mi };
                                 });
                                 const seenIds = new Set(mergedItems.map(it => it.id));
+                                const expectedPrefix = `${masterIdx}-`;
                                 savedCat.items.forEach(si => {
                                     if (masterIds.has(si.id)) return;
                                     if (seenIds.has(si.id)) return;
-                                    seenIds.add(si.id);
-                                    mergedItems.push(si);
+                                    let newId = si.id;
+                                    // If the id's catIdx prefix doesn't match this category's
+                                    // current master position, the item is from when this category
+                                    // sat at a different index. Renumber it under the new prefix
+                                    // so it can't collide with a different category's master ids.
+                                    if (typeof si.id === "string" && !si.id.startsWith(expectedPrefix)) {
+                                        let n = mergedItems.length;
+                                        while (seenIds.has(`${masterIdx}-${n}`)) n++;
+                                        newId = `${masterIdx}-${n}`;
+                                        idMigration[si.id] = newId;
+                                    }
+                                    if (seenIds.has(newId)) return;
+                                    seenIds.add(newId);
+                                    mergedItems.push({ ...si, id: newId });
                                 });
                                 return { ...masterCat, items: mergedItems };
                             });
-                            // Add any custom categories from Firestore not in master
+                            // For saved categories that don't match a master by name (e.g. an
+                            // old name from before a rename), append them and renumber their
+                            // ids under the new merged index so they can't collide with master
+                            // items in another category.
                             data.customInventory.forEach(sc => {
-                                if (!INVENTORY_CATEGORIES.find(mc => mc.name === sc.name)) {
-                                    merged.push(sc);
-                                }
+                                if (INVENTORY_CATEGORIES.find(mc => mc.name === sc.name)) return;
+                                const newIdx = merged.length;
+                                const expectedPrefix = `${newIdx}-`;
+                                const seenIds = new Set();
+                                const renumbered = sc.items.map((si, n) => {
+                                    let newId = si.id;
+                                    if (typeof si.id !== "string" || !si.id.startsWith(expectedPrefix) || seenIds.has(si.id)) {
+                                        let j = n;
+                                        while (seenIds.has(`${newIdx}-${j}`)) j++;
+                                        newId = `${newIdx}-${j}`;
+                                        if (newId !== si.id) idMigration[si.id] = newId;
+                                    }
+                                    seenIds.add(newId);
+                                    return { ...si, id: newId };
+                                });
+                                merged.push({ ...sc, items: renumbered });
                             });
                             setCustomInventory(merged);
+
+                            // If the merge had to renumber any ids, persist the corrected
+                            // customInventory + counts + vendor_matches so the cleanup is durable.
+                            // Runs at most once per affected device on first load post-deploy.
+                            if (Object.keys(idMigration).length > 0) {
+                                migrateInventoryIds(merged, idMigration, data.counts || {}, data.countMeta || {}).catch(err => {
+                                    console.error("[idMigration] failed:", err);
+                                });
+                            }
                         }
                         setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
                     }
@@ -1645,6 +1685,48 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 } catch (err) { console.error("Error saving/resetting inventory:", err); }
                 setInventorySaving(false);
                 setShowSaveConfirm(false);
+            };
+
+            // One-shot data healer: when the load merge had to rewrite ids (because a
+            // category was renamed or moved between releases), persist the corrected
+            // shape — customInventory with new ids, counts/countMeta keyed off the new
+            // ids, and vendor_matches that pointed at the old ids redirected.
+            // The fact that idMigration was non-empty in the load means duplicates were
+            // forming on every render; saving is what actually breaks the cycle.
+            const migrateInventoryIds = async (correctedInventory, idMigration, oldCounts, oldMeta) => {
+                const newCounts = {};
+                Object.entries(oldCounts).forEach(([oldId, val]) => {
+                    newCounts[idMigration[oldId] || oldId] = val;
+                });
+                const newMeta = {};
+                Object.entries(oldMeta).forEach(([oldId, val]) => {
+                    newMeta[idMigration[oldId] || oldId] = val;
+                });
+                const ref = doc(db, "ops", "inventory_" + storeLocation);
+                await updateDoc(ref, {
+                    customInventory: correctedInventory,
+                    counts: newCounts,
+                    countMeta: newMeta,
+                    date: new Date().toISOString(),
+                });
+                // Redirect any vendor matches whose value points at an old id.
+                const vmRef = doc(db, "config", "vendor_matches");
+                const vmSnap = await getDoc(vmRef);
+                if (vmSnap.exists()) {
+                    const vm = vmSnap.data();
+                    const updates = {};
+                    for (const vendor of Object.keys(vm)) {
+                        for (const [vendorId, invId] of Object.entries(vm[vendor] || {})) {
+                            if (idMigration[invId]) {
+                                updates[`${vendor}.${vendorId}`] = idMigration[invId];
+                            }
+                        }
+                    }
+                    if (Object.keys(updates).length > 0) {
+                        await updateDoc(vmRef, updates);
+                    }
+                }
+                console.log(`[idMigration] healed ${Object.keys(idMigration).length} ids`);
             };
 
             const saveInventory = async (_counts, items) => {
