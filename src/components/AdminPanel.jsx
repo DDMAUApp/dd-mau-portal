@@ -12,6 +12,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [editRole, setEditRole] = useState("");
             const [editOpsAccess, setEditOpsAccess] = useState(false);
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
+            const [editShiftLead, setEditShiftLead] = useState(false);
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
@@ -19,6 +20,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [newLocation, setNewLocation] = useState(storeLocation || "webster");
             const [newOpsAccess, setNewOpsAccess] = useState(false);
             const [newRecipesAccess, setNewRecipesAccess] = useState(false);
+            const [newShiftLead, setNewShiftLead] = useState(false);
             const [editLocation, setEditLocation] = useState("");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
@@ -77,7 +79,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleSavePin = async (id) => {
                 if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
-                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess } : s);
+                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead } : s);
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
                 setEditingId(null);
@@ -86,13 +88,14 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setEditLocation("");
                 setEditOpsAccess(false);
                 setEditRecipesAccess(false);
+                setEditShiftLead(false);
                 showSaved();
             };
 
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
                 const maxId = Math.max(...staffList.map(s => s.id), 0);
-                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess };
+                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess, shiftLead: newShiftLead };
                 const updated = [...staffList, newStaff];
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
@@ -103,6 +106,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setNewLocation(storeLocation || "webster");
                 setNewOpsAccess(false);
                 setNewRecipesAccess(false);
+                setNewShiftLead(false);
                 showSaved();
             };
 
@@ -316,13 +320,23 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editRecipesAccess ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Líder de Turno" : "Shift Lead"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Acceso a entrenamientos y SOPs de líder" : "Access to Lead-tier training & SOPs"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditShiftLead(!editShiftLead)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editShiftLead ? "bg-green-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editShiftLead ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     <div className="flex gap-2">
                                                         <button onClick={() => handleSavePin(person.id)}
                                                             disabled={editPin.length !== 4}
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -332,10 +346,10 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); setEditShiftLead(!!person.shiftLead); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -413,13 +427,23 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${newRecipesAccess ? "translate-x-7" : "translate-x-1"}`} />
                                             </button>
                                         </div>
+                                        <div className="flex items-center justify-between bg-white rounded-lg p-3 border border-gray-200">
+                                            <div>
+                                                <p className="text-sm font-bold text-gray-700">{language === "es" ? "Líder de Turno" : "Shift Lead"}</p>
+                                                <p className="text-xs text-gray-500">{language === "es" ? "Acceso a entrenamientos y SOPs de líder" : "Access to Lead-tier training & SOPs"}</p>
+                                            </div>
+                                            <button onClick={() => setNewShiftLead(!newShiftLead)}
+                                                className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${newShiftLead ? "bg-green-600" : "bg-gray-300"}`}>
+                                                <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${newShiftLead ? "translate-x-7" : "translate-x-1"}`} />
+                                            </button>
+                                        </div>
                                         <div className="flex gap-2">
                                             <button onClick={handleAddStaff}
                                                 disabled={!newName.trim() || newPin.length !== 4}
                                                 className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                 {t("addStaff", language)}
                                             </button>
-                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(false); }}
+                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(false); setNewShiftLead(false); }}
                                                 className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                 {t("cancel", language)}
                                             </button>
