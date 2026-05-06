@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
@@ -760,7 +760,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // fall back to source's meta otherwise.
                     const mergedMeta = targetCount > 0 ? targetMeta : sourceMeta;
 
-                    // 4. One atomic write to the inventory doc.
+                    // 4. One atomic write to the inventory doc. If sourceId came from
+                    //    inventory.js (the static master list), tombstone it so the load
+                    //    merge doesn't reintroduce it on next reload.
                     const ref = doc(db, "ops", "inventory_" + storeLocation);
                     const update = {
                         customInventory: updatedCustomInv,
@@ -771,6 +773,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (mergedCount > 0) {
                         update[`counts.${targetId}`] = mergedCount;
                         if (mergedMeta) update[`countMeta.${targetId}`] = mergedMeta;
+                    }
+                    const sourceIsMaster = INVENTORY_CATEGORIES.some(cat => cat.items.some(it => it.id === sourceId));
+                    if (sourceIsMaster) {
+                        update.deletedMasterIds = arrayUnion(sourceId);
                     }
                     await updateDoc(ref, update);
 
@@ -1110,16 +1116,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (data.customInventory) {
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
                             // so new items from inventory.js always appear.
-                            // Defensive dedup by id: if the saved doc somehow has duplicates
-                            // (race, partial merge), invLookup[id] would silently return whichever
-                            // was iterated last, breaking the audit-list "matched to..." display.
-                            // Tracks ids that get rewritten so we can update vendor_matches to follow.
+                            // Tombstones (deletedMasterIds) record master items the user
+                            // intentionally removed via merge; without them, the load-merge
+                            // would re-include every master item every time, undoing the
+                            // delete on next reload.
+                            const tombstones = new Set(data.deletedMasterIds || []);
                             const idMigration = {};
                             const merged = INVENTORY_CATEGORIES.map((masterCat, masterIdx) => {
                                 const savedCat = data.customInventory.find(sc => sc.name === masterCat.name);
-                                if (!savedCat) return { ...masterCat, items: [...masterCat.items] };
-                                const masterIds = new Set(masterCat.items.map(it => it.id));
-                                const mergedItems = masterCat.items.map(mi => {
+                                const liveMasterItems = masterCat.items.filter(it => !tombstones.has(it.id));
+                                if (!savedCat) return { ...masterCat, items: [...liveMasterItems] };
+                                const masterIds = new Set(liveMasterItems.map(it => it.id));
+                                const mergedItems = liveMasterItems.map(mi => {
                                     const savedItem = savedCat.items.find(si => si.id === mi.id);
                                     return savedItem ? { ...mi, ...savedItem, name: mi.name, nameEs: mi.nameEs } : { ...mi };
                                 });
