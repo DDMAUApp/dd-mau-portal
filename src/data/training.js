@@ -234,7 +234,6 @@ export const MODULES = [
                     "Beards must be neat and short, or use a beard guard.",
                     "Trimmed nails. No nail polish, no acrylics — food safety rule. Polish chips off into food. Acrylics hide bacteria.",
                     "Minimal jewelry. A wedding band and small stud earrings are fine. Nothing dangling. Nothing that could fall into food.",
-                    "Name tag visible.",
                     "Light deodorant. Skip cologne or perfume — strong scents kill the food experience for guests, especially in a small dining room.",
                 ],
                 contentEs: [
@@ -246,7 +245,6 @@ export const MODULES = [
                     "Las barbas deben estar cortas y arregladas, o usar protector de barba.",
                     "Uñas cortas. Sin esmalte, sin acrílicos — regla de seguridad alimentaria. El esmalte se descascara y cae a la comida. Los acrílicos esconden bacterias.",
                     "Joyería mínima. Un anillo de matrimonio y aretes de botón pequeños están bien. Nada colgante. Nada que pueda caer a la comida.",
-                    "Gafete visible.",
                     "Desodorante ligero. Sin colonia ni perfume — los olores fuertes arruinan la experiencia para los clientes, sobre todo en un comedor pequeño.",
                 ],
             },
