@@ -649,10 +649,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // ── Merge two master items into one ──────────────────────────────
             // Used to clean up duplicates in the master list. Operations performed:
-            //   1. Redirect every vendor_matches entry that points at sourceId → targetId.
-            //   2. Combine inventory counts (target += source) and clear source.
-            //   3. Preserve the addedFromVendor marker (target keeps its own; if absent,
-            //      inherits from source).
+            //   1. Redirect every vendor_matches entry (Sysco/USFoods SKU links) that
+            //      points at sourceId → targetId.
+            //   2. Merge per-item vendor data into target: vendorOptions are union'd by
+            //      vendor name (target wins on price conflict), and the supplier /
+            //      preferredVendor / vendor / pack / addedFromVendor fields are inherited
+            //      from source whenever target's is empty.
+            //   3. Combine inventory counts (target += source) and clear source.
             //   4. Remove the source item from customInventory.
             // All Firestore writes are batched into a single updateDoc per doc so partial
             // failures can't leave us in a half-merged state. Updates target by ID, not
@@ -701,14 +704,44 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         let items = cat.items;
                         if (cIdx === targetCatIdx) {
                             items = items.map(it => {
-                                if (it.id === targetId) {
-                                    const merged = { ...it };
-                                    if (!merged.addedFromVendor && sourceItem.addedFromVendor) {
-                                        merged.addedFromVendor = sourceItem.addedFromVendor;
-                                    }
-                                    return merged;
+                                if (it.id !== targetId) return it;
+                                const merged = { ...it };
+                                // Union vendorOptions by vendor name. Target wins on
+                                // price/pack conflicts; source contributes vendors
+                                // target didn't have. Empty-vendor entries are dropped.
+                                const targetOpts = Array.isArray(it.vendorOptions) ? it.vendorOptions : [];
+                                const sourceOpts = Array.isArray(sourceItem.vendorOptions) ? sourceItem.vendorOptions : [];
+                                const seen = new Map();
+                                for (const opt of targetOpts) {
+                                    if (!opt || !opt.vendor) continue;
+                                    seen.set(opt.vendor, { ...opt });
                                 }
-                                return it;
+                                for (const opt of sourceOpts) {
+                                    if (!opt || !opt.vendor) continue;
+                                    if (seen.has(opt.vendor)) {
+                                        // Backfill missing fields on target's entry.
+                                        const t = seen.get(opt.vendor);
+                                        if (t.price == null && opt.price != null) t.price = opt.price;
+                                        if (!t.pack && opt.pack) t.pack = opt.pack;
+                                    } else {
+                                        seen.set(opt.vendor, { ...opt });
+                                    }
+                                }
+                                if (seen.size > 0) merged.vendorOptions = Array.from(seen.values());
+
+                                // Inherit scalar vendor fields from source whenever
+                                // target's is empty/missing.
+                                const inherit = ["preferredVendor", "vendor", "supplier", "pack", "addedFromVendor"];
+                                for (const k of inherit) {
+                                    if ((merged[k] == null || merged[k] === "") && sourceItem[k]) {
+                                        merged[k] = sourceItem[k];
+                                    }
+                                }
+                                // If target has no price but source does, take source's.
+                                if ((merged.price == null) && sourceItem.price != null) {
+                                    merged.price = sourceItem.price;
+                                }
+                                return merged;
                             });
                         }
                         if (cIdx === sourceCatIdx) {
