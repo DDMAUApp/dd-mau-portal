@@ -1732,66 +1732,191 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const printInventory = () => {
-                const counted = {};
-                customInventory.forEach(cat => {
+                // Build the same row structure the cart modal uses, then print it as a
+                // single comparison table with all vendor prices side-by-side. Matches
+                // what the user sees on screen so the printed sheet is unambiguous.
+                const findVendorEntry = (vendor, vendorId) => {
+                    const src = vendor === "sysco"
+                        ? (syscoPricingData?.sorted || [])
+                        : (usfoodsPricingData?.sorted || []);
+                    const found = src.find(([k]) => k === vendorId);
+                    return found ? found[1] : null;
+                };
+                const rows = [];
+                customInventory.forEach((cat) => {
                     cat.items.forEach(item => {
-                        if ((inventory[item.id] || 0) > 0) {
-                            const v = item.preferredVendor || item.vendor || "Other";
-                            if (!counted[v]) counted[v] = [];
-                            counted[v].push({ ...item, count: inventory[item.id] });
+                        const qty = inventory[item.id] || 0;
+                        if (qty <= 0) return;
+                        rows.push({
+                            kind: "master",
+                            name: item.name,
+                            category: cat.name,
+                            qty,
+                            vendorPrices: invToVendorPrices[item.id] || [],
+                            pack: item.pack,
+                        });
+                    });
+                });
+                Object.entries(vendorCounts).forEach(([key, qty]) => {
+                    if (qty <= 0) return;
+                    const [vendor, vendorId] = key.split(":");
+                    const data = findVendorEntry(vendor, vendorId);
+                    if (!data) return;
+                    const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
+                    rows.push({
+                        kind: "vendor-only",
+                        name: data.name || `${vendorName} #${vendorId}`,
+                        category: data.category || "Other",
+                        qty,
+                        vendorPrices: [{ vendor: vendorName, vendorId, price: data.price, pack: data.pack }],
+                        pack: data.pack,
+                        vendorOnlyOrigin: vendorName,
+                    });
+                });
+                rows.sort((a, b) =>
+                    (a.category || "").localeCompare(b.category || "") ||
+                    (a.name || "").localeCompare(b.name || ""));
+
+                if (rows.length === 0) {
+                    alert(language === "es" ? "El carrito está vacío." : "Cart is empty.");
+                    return;
+                }
+
+                // Distinct vendors with at least one price across all rows
+                const vendorSet = new Set();
+                rows.forEach(r => r.vendorPrices.forEach(p => p.price != null && vendorSet.add(p.vendor)));
+                const vendorList = Array.from(vendorSet).sort();
+
+                // Per-vendor totals (if all bought from this vendor)
+                const vendorTotals = {};
+                vendorList.forEach(v => vendorTotals[v] = { lineTotal: 0, items: 0, missing: 0 });
+                rows.forEach(r => {
+                    vendorList.forEach(v => {
+                        const p = r.vendorPrices.find(vp => vp.vendor === v);
+                        if (p && p.price) {
+                            vendorTotals[v].lineTotal += r.qty * p.price;
+                            vendorTotals[v].items += 1;
+                        } else {
+                            vendorTotals[v].missing += 1;
                         }
                     });
                 });
-                const vendors = Object.keys(counted).sort();
+
+                // Best mix: pick cheapest available vendor per row
+                let bestMixSum = 0;
+                let uncovered = 0;
+                const bestMixByVendor = {};
+                vendorList.forEach(v => bestMixByVendor[v] = { lineTotal: 0, items: 0 });
+                rows.forEach(r => {
+                    const cheapest = r.vendorPrices.find(p => p.price != null);
+                    if (cheapest) {
+                        bestMixSum += r.qty * cheapest.price;
+                        if (!bestMixByVendor[cheapest.vendor]) bestMixByVendor[cheapest.vendor] = { lineTotal: 0, items: 0 };
+                        bestMixByVendor[cheapest.vendor].lineTotal += r.qty * cheapest.price;
+                        bestMixByVendor[cheapest.vendor].items += 1;
+                    } else {
+                        uncovered += 1;
+                    }
+                });
+
+                const totalQty = rows.reduce((s, r) => s + r.qty, 0);
                 const now = new Date();
                 const dateStr = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+
                 let html = `<html><head><title>DD Mau Order - ${dateStr}</title><style>
-                    body{font-family:Arial,sans-serif;max-width:900px;margin:0 auto;padding:20px;color:#333}
+                    body{font-family:Arial,sans-serif;max-width:1100px;margin:0 auto;padding:20px;color:#333}
                     h1{font-size:20px;color:#2F5496;margin-bottom:4px}
-                    .date{font-size:12px;color:#888;margin-bottom:16px}
-                    .vendor{background:#2F5496;color:white;padding:8px 12px;font-weight:bold;font-size:14px;margin-top:16px;border-radius:6px 6px 0 0}
-                    table{width:100%;border-collapse:collapse;margin-bottom:12px}
-                    th{background:#D6E4F0;padding:6px 10px;text-align:left;font-size:11px;color:#2F5496;border:1px solid #ccc}
-                    td{padding:6px 10px;font-size:12px;border:1px solid #e0e0e0}
-                    tr:nth-child(even){background:#f9f9f9}
-                    .count{font-weight:bold;text-align:center;font-size:14px}
-                    .pack{color:#666;font-size:11px}
-                    .price{text-align:right;font-size:11px}
-                    .cheaper{background:#fff3cd;font-size:10px;color:#856404}
+                    .meta{font-size:12px;color:#888;margin-bottom:16px}
+                    table{width:100%;border-collapse:collapse;margin-bottom:16px}
+                    th{background:#D6E4F0;padding:6px 8px;text-align:left;font-size:11px;color:#2F5496;border:1px solid #999}
+                    th.num{text-align:right} th.qty{text-align:center}
+                    td{padding:6px 8px;font-size:12px;border:1px solid #ddd;vertical-align:top}
+                    td.qty{text-align:center;font-weight:bold;font-size:14px}
+                    td.num{text-align:right}
+                    td.cheap{background:#dcfce7;font-weight:bold;color:#15803d}
+                    td.miss{color:#bbb;text-align:right}
+                    .vendor-only{background:#fff7ed}
+                    .badge{display:inline-block;font-size:9px;font-weight:bold;padding:1px 4px;border-radius:3px;margin-right:4px;border:1px solid}
+                    .badge.sysco{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
+                    .badge.usfoods{background:#fed7aa;color:#9a3412;border-color:#fdba74}
+                    .cat{font-size:9px;color:#888;display:block}
+                    .totals-block{border:2px solid #2F5496;border-radius:6px;padding:12px;margin-top:16px;page-break-inside:avoid}
+                    .totals-title{font-size:11px;font-weight:bold;text-transform:uppercase;color:#666;margin-bottom:6px;letter-spacing:0.5px}
+                    .totals-row{display:flex;justify-content:space-between;padding:3px 0;font-size:13px}
+                    .totals-grand{border-top:2px solid #2F5496;margin-top:8px;padding-top:8px;font-size:16px;font-weight:bold;color:#15803d}
+                    .savings{color:#15803d;font-size:11px;margin-top:6px}
+                    .uncov{color:#a16207;font-size:11px;margin-top:6px}
                     .no-print{position:sticky;top:0;z-index:1000;background:#2F5496;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3)}
                     .no-print button{padding:12px 24px;font-size:16px;font-weight:bold;border:none;border-radius:8px;cursor:pointer;margin:0 6px}
                     .btn-print{background:white;color:#2F5496} .btn-close{background:#ff4444;color:white}
                     @media print{body{padding:10px}h1{font-size:16px}.no-print{display:none !important}}
                 </style></head><body>`;
                 html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
-                html += `<h1>DD Mau Order Sheet</h1><div class="date">${dateStr} at ${timeStr} — ${storeLocation}</div>`;
-                vendors.forEach(v => {
-                    html += `<div class="vendor">${v} (${counted[v].length} items)</div>`;
-                    html += `<table><tr><th>Item</th><th style="width:50px">Qty</th><th>Pack</th><th style="width:65px">Price</th><th style="width:65px">$/Unit</th><th>Cheaper Option</th><th style="width:30px">\u2713</th></tr>`;
-                    counted[v].sort((a,b) => a.name.localeCompare(b.name)).forEach(item => {
-                        const prefVendor = item.preferredVendor || item.vendor || "";
-                        const prefOption = (item.vendorOptions || []).find(vo => vo.vendor === prefVendor);
-                        const price = prefOption?.price || item.price;
-                        const pack = prefOption?.pack || item.pack || "";
-                        const parsed = parsePackToUnits(pack);
-                        const perUnit = (price && parsed && parsed.total > 0) ? (price / parsed.total) : null;
-                        const perUnitStr = perUnit !== null ? ("$" + perUnit.toFixed(2) + "/" + parsed.unit) : "";
-                        const priceStr = price ? "$" + price.toFixed(2) : "";
-                        const cheap = findCheapest(item);
-                        let cheapStr = "";
-                        if (cheap) {
-                            const cParsed = parsePackToUnits(cheap.pack);
-                            const cPerUnit = (cheap.price && cParsed && cParsed.total > 0) ? (cheap.price / cParsed.total) : null;
-                            cheapStr = cheap.vendor;
-                            if (cPerUnit !== null) cheapStr += " $" + cPerUnit.toFixed(2) + "/" + cParsed.unit;
-                            else if (cheap.price) cheapStr += " $" + cheap.price.toFixed(2);
-                            if (cheap.pack) cheapStr += " (" + cheap.pack + ")";
-                        }
-                        html += `<tr><td>${item.name}</td><td class="count">${item.count}</td><td class="pack">${pack}</td><td class="price">${priceStr}</td><td class="price">${perUnitStr}</td><td class="cheaper">${cheapStr}</td><td></td></tr>`;
-                    });
-                    html += `</table>`;
+                html += `<h1>DD Mau Order Sheet</h1>`;
+                html += `<div class="meta">${esc(dateStr)} at ${esc(timeStr)} &mdash; ${esc(storeLocation)} &mdash; ${rows.length} items, ${totalQty} total</div>`;
+
+                // Comparison table
+                html += `<table><thead><tr>`;
+                html += `<th>Item</th><th class="qty" style="width:50px">Qty</th>`;
+                vendorList.forEach(v => {
+                    html += `<th class="num" style="width:120px">${esc(v)}</th>`;
                 });
+                html += `<th class="qty" style="width:30px">✓</th></tr></thead><tbody>`;
+
+                rows.forEach(r => {
+                    const cheapestVendor = r.vendorPrices.find(p => p.price != null)?.vendor;
+                    const isVO = r.kind === "vendor-only";
+                    const trClass = isVO ? ' class="vendor-only"' : "";
+                    html += `<tr${trClass}><td>`;
+                    if (isVO && r.vendorOnlyOrigin) {
+                        const cls = r.vendorOnlyOrigin === "Sysco" ? "sysco" : "usfoods";
+                        html += `<span class="badge ${cls}">${esc(r.vendorOnlyOrigin)}</span>`;
+                    }
+                    html += esc(r.name);
+                    html += `<span class="cat">${esc(r.category)}${r.pack ? " · " + esc(r.pack) : ""}</span>`;
+                    html += `</td><td class="qty">${r.qty}</td>`;
+                    vendorList.forEach(v => {
+                        const p = r.vendorPrices.find(vp => vp.vendor === v);
+                        if (!p || p.price == null) {
+                            html += `<td class="miss">—</td>`;
+                        } else {
+                            const isCheapest = v === cheapestVendor && r.vendorPrices.filter(vp => vp.price != null).length > 1;
+                            const cls = isCheapest ? "cheap" : "num";
+                            const lineTotal = r.qty * p.price;
+                            html += `<td class="${cls}">$${p.price.toFixed(2)}<br><span style="font-size:10px;color:#666">= $${lineTotal.toFixed(2)}${p.pack ? " · " + esc(p.pack) : ""}</span></td>`;
+                        }
+                    });
+                    html += `<td></td></tr>`;
+                });
+                html += `</tbody></table>`;
+
+                // Totals block
+                html += `<div class="totals-block">`;
+                html += `<div class="totals-title">If you order all from one vendor</div>`;
+                vendorList.forEach(v => {
+                    html += `<div class="totals-row"><span><strong>${esc(v)}</strong></span><span><strong>$${vendorTotals[v].lineTotal.toFixed(2)}</strong> &middot; ${vendorTotals[v].items} items${vendorTotals[v].missing > 0 ? ` &middot; ${vendorTotals[v].missing} missing` : ""}</span></div>`;
+                });
+                html += `<div class="totals-title" style="margin-top:14px">Best mix (cheapest per item)</div>`;
+                Object.keys(bestMixByVendor).filter(v => bestMixByVendor[v].items > 0).forEach(v => {
+                    html += `<div class="totals-row"><span><strong>${esc(v)}</strong></span><span><strong>$${bestMixByVendor[v].lineTotal.toFixed(2)}</strong> &middot; ${bestMixByVendor[v].items} items</span></div>`;
+                });
+                html += `<div class="totals-row totals-grand"><span>Total</span><span>$${bestMixSum.toFixed(2)}</span></div>`;
+                if (uncovered > 0) {
+                    html += `<div class="uncov">⚠ ${uncovered} item(s) have no live vendor price</div>`;
+                }
+                const cheapestSingle = vendorList.reduce((min, v) => {
+                    if (vendorTotals[v].missing > 0) return min;
+                    if (min === null) return v;
+                    return vendorTotals[v].lineTotal < vendorTotals[min].lineTotal ? v : min;
+                }, null);
+                if (cheapestSingle && bestMixSum < vendorTotals[cheapestSingle].lineTotal) {
+                    const saved = vendorTotals[cheapestSingle].lineTotal - bestMixSum;
+                    html += `<div class="savings">💰 Saves $${saved.toFixed(2)} by splitting between vendors (vs all-${esc(cheapestSingle)})</div>`;
+                }
+                html += `</div>`;
+
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
                 if (!w) {
@@ -2805,8 +2930,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                             {/* ── CART SUMMARY ── */}
                             {!invEditMode && (() => {
-                                const itemCount = Object.values(inventory).filter(v => v > 0).length;
-                                const totalQty = Object.values(inventory).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
+                                // Master items + vendor-only items (counts come from two separate maps)
+                                const masterCount = Object.values(inventory).filter(v => v > 0).length;
+                                const masterQty = Object.values(inventory).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
+                                const vendorOnlyCount = Object.values(vendorCounts).filter(v => v > 0).length;
+                                const vendorOnlyQty = Object.values(vendorCounts).reduce((sum, v) => sum + (v > 0 ? v : 0), 0);
+                                const itemCount = masterCount + vendorOnlyCount;
+                                const totalQty = masterQty + vendorOnlyQty;
                                 if (itemCount === 0) return null;
                                 return (
                                     <div className="bg-mint-50 border border-mint-200 rounded-xl px-3 py-2 flex items-center justify-between">
@@ -2822,70 +2952,215 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 );
                             })()}
 
-                            {/* ── CART MODAL ── */}
+                            {/* ── CART MODAL ── multi-vendor comparison view ──
+                                One row per counted item with all vendor prices side-by-side.
+                                Cheapest vendor highlighted (🏆). Per-vendor totals + best-mix
+                                summary at the bottom so the orderer can decide if splitting
+                                between vendors is worth it. */}
                             {showCart && (() => {
-                                const cartVendors = {};
-                                customInventory.forEach(cat => {
+                                // Helper: find the live vendor entry for a given vendor:vendorId combo
+                                const findVendorEntry = (vendor, vendorId) => {
+                                    const src = vendor === "sysco"
+                                        ? (syscoPricingData?.sorted || [])
+                                        : (usfoodsPricingData?.sorted || []);
+                                    const found = src.find(([k]) => k === vendorId);
+                                    return found ? found[1] : null;
+                                };
+
+                                // 1. Build cart rows (master items with counts + vendor-only items with counts)
+                                const rows = [];
+                                customInventory.forEach((cat) => {
                                     cat.items.forEach(item => {
                                         const qty = inventory[item.id] || 0;
-                                        if (qty > 0) {
-                                            const v = item.preferredVendor || item.vendor || "Other";
-                                            if (!cartVendors[v]) cartVendors[v] = [];
-                                            cartVendors[v].push({ ...item, count: qty, categoryName: cat.name });
+                                        if (qty <= 0) return;
+                                        rows.push({
+                                            kind: "master",
+                                            id: item.id,
+                                            name: language === "es" && item.nameEs ? item.nameEs : item.name,
+                                            altName: item.name,
+                                            category: cat.name,
+                                            qty,
+                                            vendorPrices: invToVendorPrices[item.id] || [],
+                                            preferredVendor: item.preferredVendor || item.vendor || "",
+                                            pack: item.pack,
+                                            addedFromVendor: item.addedFromVendor,
+                                        });
+                                    });
+                                });
+                                Object.entries(vendorCounts).forEach(([key, qty]) => {
+                                    if (qty <= 0) return;
+                                    const [vendor, vendorId] = key.split(":");
+                                    const data = findVendorEntry(vendor, vendorId);
+                                    if (!data) return;
+                                    const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
+                                    rows.push({
+                                        kind: "vendor-only",
+                                        id: key,
+                                        name: data.name || `${vendorName} #${vendorId}`,
+                                        category: data.category || "Other",
+                                        qty,
+                                        vendorPrices: [{
+                                            vendor: vendorName, vendorId,
+                                            price: data.price, pack: data.pack,
+                                            brand: data.brand, unit: data.unit,
+                                        }],
+                                        preferredVendor: vendorName,
+                                        pack: data.pack,
+                                        vendorOnlyOrigin: vendorName,
+                                    });
+                                });
+                                rows.sort((a, b) =>
+                                    (a.category || "").localeCompare(b.category || "") ||
+                                    (a.name || "").localeCompare(b.name || ""));
+
+                                // 2. Find all distinct vendors that have at least one price across the cart
+                                const vendorSet = new Set();
+                                rows.forEach(r => r.vendorPrices.forEach(p => p.price != null && vendorSet.add(p.vendor)));
+                                const vendorList = Array.from(vendorSet).sort();
+                                const vendorColor = (v) => v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
+
+                                // 3. Per-vendor totals (if all items came from this vendor)
+                                const vendorTotals = {};
+                                vendorList.forEach(v => vendorTotals[v] = { lineTotal: 0, items: 0, missing: 0 });
+                                rows.forEach(r => {
+                                    vendorList.forEach(v => {
+                                        const p = r.vendorPrices.find(vp => vp.vendor === v);
+                                        if (p && p.price) {
+                                            vendorTotals[v].lineTotal += r.qty * p.price;
+                                            vendorTotals[v].items += 1;
+                                        } else {
+                                            vendorTotals[v].missing += 1;
                                         }
                                     });
                                 });
-                                const vendors = Object.keys(cartVendors).sort();
-                                const totalItems = vendors.reduce((s, v) => s + cartVendors[v].length, 0);
-                                const totalQty = vendors.reduce((s, v) => s + cartVendors[v].reduce((a, i) => a + i.count, 0), 0);
+
+                                // 4. Best mix: pick cheapest vendor available per item
+                                let bestMixSum = 0;
+                                let uncovered = 0;
+                                const bestMixByVendor = {};
+                                vendorList.forEach(v => bestMixByVendor[v] = { lineTotal: 0, items: 0 });
+                                rows.forEach(r => {
+                                    const cheapest = r.vendorPrices.find(p => p.price != null);
+                                    if (cheapest) {
+                                        bestMixSum += r.qty * cheapest.price;
+                                        if (!bestMixByVendor[cheapest.vendor]) bestMixByVendor[cheapest.vendor] = { lineTotal: 0, items: 0 };
+                                        bestMixByVendor[cheapest.vendor].lineTotal += r.qty * cheapest.price;
+                                        bestMixByVendor[cheapest.vendor].items += 1;
+                                    } else {
+                                        uncovered += 1;
+                                    }
+                                });
+
+                                const totalItems = rows.length;
+                                const totalQty = rows.reduce((s, r) => s + r.qty, 0);
 
                                 return (
-                                    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center" onClick={() => setShowCart(false)}>
-                                        <div className="bg-white w-full max-w-lg max-h-[85vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                                    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center p-2" onClick={() => setShowCart(false)}>
+                                        <div className="bg-white w-full max-w-3xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
                                             {/* Header */}
                                             <div className="bg-mint-700 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
-                                                <h3 className="font-bold text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"}, {totalQty} {language === "es" ? "total" : "total"}</h3>
-                                                <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white bg-opacity-20 flex items-center justify-center text-white font-bold hover:bg-opacity-30 transition">{"\u{2715}"}</button>
+                                                <h3 className="font-bold text-base sm:text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"} · {totalQty} {language === "es" ? "total" : "total"}</h3>
+                                                <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-bold hover:bg-white/30 transition">{"\u{2715}"}</button>
                                             </div>
-                                            {/* Cart items grouped by vendor */}
-                                            <div className="flex-1 overflow-y-auto">
-                                                {vendors.map(v => (
-                                                    <div key={v}>
-                                                        <div className="bg-blue-600 text-white px-4 py-2 font-bold text-sm flex justify-between items-center">
-                                                            <span>{v}</span>
-                                                            <span className="text-xs bg-white bg-opacity-20 px-2 py-0.5 rounded-full">{cartVendors[v].length} {language === "es" ? "artículos" : "items"}</span>
-                                                        </div>
-                                                        <div className="divide-y divide-gray-100">
-                                                            {cartVendors[v].sort((a, b) => a.name.localeCompare(b.name)).map(item => {
-                                                                const cheap = findCheapest(item);
-                                                                let cheapLabel = "";
-                                                                if (cheap) {
-                                                                    const cParsed = parsePackToUnits(cheap.pack);
-                                                                    const cPerUnit = (cheap.price && cParsed && cParsed.total > 0) ? (cheap.price / cParsed.total) : null;
-                                                                    cheapLabel = cheap.vendor;
-                                                                    if (cPerUnit !== null) cheapLabel += " $" + cPerUnit.toFixed(2) + "/" + cParsed.unit;
-                                                                    else if (cheap.price) cheapLabel += " $" + cheap.price.toFixed(2);
-                                                                    if (cheap.pack) cheapLabel += " (" + cheap.pack + ")";
-                                                                }
+                                            {/* Comparison table */}
+                                            <div className="flex-1 overflow-auto">
+                                                {rows.length === 0 ? (
+                                                    <div className="p-8 text-center text-gray-400">{language === "es" ? "El carrito está vacío" : "Cart is empty"}</div>
+                                                ) : (
+                                                    <table className="w-full text-sm">
+                                                        <thead className="sticky top-0 bg-gray-100 z-10">
+                                                            <tr>
+                                                                <th className="text-left px-3 py-2 text-xs font-bold text-gray-600">{language === "es" ? "Artículo" : "Item"}</th>
+                                                                <th className="text-center px-2 py-2 text-xs font-bold text-gray-600 w-14">{language === "es" ? "Cant." : "Qty"}</th>
+                                                                {vendorList.map(v => (
+                                                                    <th key={v} className={`text-right px-2 py-2 text-xs font-bold ${v === "Sysco" ? "text-blue-700 bg-blue-50" : v === "US Foods" ? "text-orange-700 bg-orange-50" : "text-gray-700"}`}>
+                                                                        {v}
+                                                                    </th>
+                                                                ))}
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {rows.map(r => {
+                                                                const cheapestVendor = r.vendorPrices.find(p => p.price != null)?.vendor;
+                                                                const isVendorOnly = r.kind === "vendor-only";
                                                                 return (
-                                                                <div key={item.id} className="px-4 py-2">
-                                                                    <div className="flex items-center justify-between">
-                                                                        <div className="flex-1 min-w-0">
-                                                                            <span className="text-sm text-gray-800">{language === "es" && item.nameEs ? item.nameEs : item.name}</span>
-                                                                            {item.pack && <span className="text-xs text-blue-400 ml-1">{item.pack}</span>}
-                                                                            <span className="text-xs text-gray-400 ml-1">({item.categoryName})</span>
-                                                                        </div>
-                                                                        <span className="font-bold text-mint-700 text-lg ml-3">{item.count}</span>
-                                                                    </div>
-                                                                    {cheapLabel && <div style={{fontSize: "10px", color: "#856404", background: "#fff3cd", padding: "2px 6px", borderRadius: "4px", marginTop: "2px"}}>{"\u{1F4B0}"} {language === "es" ? "Mas barato" : "Cheaper"}: {cheapLabel}</div>}
-                                                                </div>
+                                                                    <tr key={r.id} className={`border-t ${isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50"}`}>
+                                                                        <td className="px-3 py-2">
+                                                                            <div className="font-medium text-gray-800 flex items-center gap-1">
+                                                                                {isVendorOnly && <span className={`text-[9px] font-bold px-1 py-0.5 rounded border bg-${vendorColor(r.vendorOnlyOrigin)}-100 text-${vendorColor(r.vendorOnlyOrigin)}-700 border-${vendorColor(r.vendorOnlyOrigin)}-300`}>{r.vendorOnlyOrigin}</span>}
+                                                                                {r.addedFromVendor && <span className={`w-1.5 h-1.5 rounded-full bg-${vendorColor(r.addedFromVendor)}-500`} title={`Added from ${r.addedFromVendor}`} />}
+                                                                                <span>{r.name}</span>
+                                                                            </div>
+                                                                            <div className="text-[10px] text-gray-400">{r.category}{r.pack ? ` · ${r.pack}` : ""}</div>
+                                                                        </td>
+                                                                        <td className="text-center px-2 py-2 font-bold text-mint-700">{r.qty}</td>
+                                                                        {vendorList.map(v => {
+                                                                            const p = r.vendorPrices.find(vp => vp.vendor === v);
+                                                                            if (!p || p.price == null) return <td key={v} className="text-right px-2 py-2 text-gray-300 text-xs">—</td>;
+                                                                            const isCheapest = v === cheapestVendor && r.vendorPrices.filter(vp => vp.price != null).length > 1;
+                                                                            const lineTotal = r.qty * p.price;
+                                                                            return (
+                                                                                <td key={v} className={`text-right px-2 py-2 ${isCheapest ? "bg-green-50" : ""}`}>
+                                                                                    <div className={`text-sm ${isCheapest ? "font-bold text-green-700" : "text-gray-700"}`}>
+                                                                                        {isCheapest && "🏆 "}${p.price.toFixed(2)}
+                                                                                    </div>
+                                                                                    <div className="text-[10px] text-gray-500">= ${lineTotal.toFixed(2)}{p.pack ? ` · ${p.pack}` : ""}</div>
+                                                                                </td>
+                                                                            );
+                                                                        })}
+                                                                    </tr>
                                                                 );
                                                             })}
+                                                        </tbody>
+                                                    </table>
+                                                )}
+
+                                                {/* Totals block */}
+                                                {rows.length > 0 && vendorList.length > 0 && (
+                                                    <div className="border-t-2 border-gray-300 bg-gray-50 p-3 space-y-3">
+                                                        <div>
+                                                            <div className="text-xs font-bold uppercase text-gray-500 mb-1">{language === "es" ? "Si pides todo de un proveedor" : "If you order all from one vendor"}</div>
+                                                            {vendorList.map(v => (
+                                                                <div key={v} className="flex items-center justify-between py-1 text-sm">
+                                                                    <span className={`font-bold ${v === "Sysco" ? "text-blue-700" : v === "US Foods" ? "text-orange-700" : "text-gray-700"}`}>{v}</span>
+                                                                    <span>
+                                                                        <span className="font-bold text-gray-800">${vendorTotals[v].lineTotal.toFixed(2)}</span>
+                                                                        <span className="text-gray-500 text-xs ml-2">{vendorTotals[v].items} {language === "es" ? "artículos" : "items"}{vendorTotals[v].missing > 0 ? ` · ${vendorTotals[v].missing} ${language === "es" ? "no disponible" : "missing"}` : ""}</span>
+                                                                    </span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                        <div className="border-t border-gray-300 pt-3">
+                                                            <div className="text-xs font-bold uppercase text-gray-500 mb-1">{language === "es" ? "Mejor combinación (más barato por artículo)" : "Best mix (cheapest per item)"}</div>
+                                                            {Object.keys(bestMixByVendor).filter(v => bestMixByVendor[v].items > 0).map(v => (
+                                                                <div key={v} className="flex items-center justify-between py-1 text-sm">
+                                                                    <span className={`font-bold ${v === "Sysco" ? "text-blue-700" : v === "US Foods" ? "text-orange-700" : "text-gray-700"}`}>{v}</span>
+                                                                    <span>
+                                                                        <span className="font-bold text-gray-800">${bestMixByVendor[v].lineTotal.toFixed(2)}</span>
+                                                                        <span className="text-gray-500 text-xs ml-2">{bestMixByVendor[v].items} {language === "es" ? "artículos" : "items"}</span>
+                                                                    </span>
+                                                                </div>
+                                                            ))}
+                                                            <div className="flex items-center justify-between pt-2 mt-2 border-t border-gray-300 text-base font-bold">
+                                                                <span>{language === "es" ? "Total" : "Total"}</span>
+                                                                <span className="text-green-700">${bestMixSum.toFixed(2)}</span>
+                                                            </div>
+                                                            {uncovered > 0 && <div className="text-[11px] text-amber-700 mt-1">⚠️ {uncovered} {language === "es" ? "artículo(s) sin precio de proveedor" : "item(s) have no live vendor price"}</div>}
+                                                            {(() => {
+                                                                // Savings calculation
+                                                                const cheapest = vendorList.reduce((min, v) => {
+                                                                    if (vendorTotals[v].missing > 0) return min;
+                                                                    if (min === null) return v;
+                                                                    return vendorTotals[v].lineTotal < vendorTotals[min].lineTotal ? v : min;
+                                                                }, null);
+                                                                if (cheapest && bestMixSum < vendorTotals[cheapest].lineTotal) {
+                                                                    const saved = vendorTotals[cheapest].lineTotal - bestMixSum;
+                                                                    return <div className="text-[11px] text-green-700 mt-1 font-medium">💰 {language === "es" ? `Ahorras $${saved.toFixed(2)} dividiendo entre proveedores` : `Saves $${saved.toFixed(2)} by splitting between vendors`}</div>;
+                                                                }
+                                                                return null;
+                                                            })()}
                                                         </div>
                                                     </div>
-                                                ))}
-                                                {vendors.length === 0 && (
-                                                    <div className="p-8 text-center text-gray-400">{language === "es" ? "El carrito está vacío" : "Cart is empty"}</div>
                                                 )}
                                             </div>
                                             {/* Footer buttons */}
