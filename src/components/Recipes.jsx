@@ -145,6 +145,27 @@ export default function Recipes({ language, staffName, staffList }) {
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
     const [unlocked, setUnlocked] = useState(false);
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
+    // Screenshot protection — blur recipes when app loses focus.
+    // Hooks MUST be declared at the top, before any conditional returns
+    // (access-denied / password prompt) — otherwise React's hook order
+    // shifts on the render after unlock and the Edit/Add form never mounts.
+    const [screenBlurred, setScreenBlurred] = useState(false);
+    useEffect(() => {
+        const handleVisChange = () => {
+            if (document.hidden) setScreenBlurred(true);
+            else setTimeout(() => setScreenBlurred(false), 300);
+        };
+        const handleBlur = () => setScreenBlurred(true);
+        const handleFocus = () => setTimeout(() => setScreenBlurred(false), 300);
+        document.addEventListener('visibilitychange', handleVisChange);
+        window.addEventListener('blur', handleBlur);
+        window.addEventListener('focus', handleFocus);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisChange);
+            window.removeEventListener('blur', handleBlur);
+            window.removeEventListener('focus', handleFocus);
+        };
+    }, []);
 
     // Scale ingredient quantities
     const scaleIngredient = (text, multiplier) => {
@@ -333,26 +354,6 @@ export default function Recipes({ language, staffName, staffList }) {
             </div>
         );
     }
-
-    // Edit/Add form
-    // Screenshot protection — blur recipes when app loses focus
-    const [screenBlurred, setScreenBlurred] = useState(false);
-    useEffect(() => {
-        const handleVisChange = () => {
-            if (document.hidden) setScreenBlurred(true);
-            else setTimeout(() => setScreenBlurred(false), 300);
-        };
-        const handleBlur = () => setScreenBlurred(true);
-        const handleFocus = () => setTimeout(() => setScreenBlurred(false), 300);
-        document.addEventListener('visibilitychange', handleVisChange);
-        window.addEventListener('blur', handleBlur);
-        window.addEventListener('focus', handleFocus);
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisChange);
-            window.removeEventListener('blur', handleBlur);
-            window.removeEventListener('focus', handleFocus);
-        };
-    }, []);
 
     if (editMode) {
         return <RecipeForm
