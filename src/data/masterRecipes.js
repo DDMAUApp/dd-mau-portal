@@ -1042,10 +1042,10 @@ export const MASTER_RECIPES = [
         titleEs: "Crab Rangoons",
         prepTimeEn: "1 hour",
         cookTimeEn: "—",
-        yieldsEn: "1 case Raskas cream cheese",
-        yieldsEs: "1 caja de queso crema Raskas",
+        yieldsEn: "1 case (30 lb) Raskas cream cheese — seasoning is calibrated to this weight",
+        yieldsEs: "1 caja (30 lb) de queso crema Raskas — el sazón está calibrado a este peso",
         ingredientsEn: [
-            "1 case Raskas cream cheese",
+            "1 case (30 lb) Raskas cream cheese",
             "1 pack imitation crab",
             "1 TBSP salt",
             "¼ cup MSG",
@@ -1054,7 +1054,7 @@ export const MASTER_RECIPES = [
             "3 lb sugar",
         ],
         ingredientsEs: [
-            "1 caja de queso crema Raskas",
+            "1 caja (30 lb) de queso crema Raskas",
             "1 paquete de imitación de cangrejo",
             "1 cda de sal",
             "¼ taza de MSG",
@@ -1070,6 +1070,7 @@ export const MASTER_RECIPES = [
             "Stop the mixer and slowly add more cream cheese and seasoning.",
             "Repeat until all cream cheese and seasoning are incorporated.",
             "Fold in imitation crab.",
+            "Note: seasoning quantities are tuned to a full 30 lb case. If you make a half batch, halve every line — including the sugar and crab.",
         ],
         instructionsEs: [
             "Mezcla toda la sazón seca.",
@@ -1079,6 +1080,7 @@ export const MASTER_RECIPES = [
             "Detén la mezcladora y agrega más queso crema y sazón poco a poco.",
             "Repite hasta incorporar todo el queso crema y la sazón.",
             "Incorpora el cangrejo de imitación.",
+            "Nota: las cantidades de sazón están ajustadas a una caja completa de 30 lb. Si haces medio lote, reduce cada línea a la mitad — incluyendo el azúcar y el cangrejo.",
         ],
     },
     {
