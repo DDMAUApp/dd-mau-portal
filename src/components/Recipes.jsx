@@ -247,26 +247,39 @@ export default function Recipes({ language, staffName, staffList }) {
         } catch (err) { console.error("Error deleting recipe:", err); }
     };
 
-    // Bulk-import the Master Recipe Book (admin only). Skips any recipe whose
-    // English title already matches an existing one — safe to run multiple times.
+    // Bulk-import / refresh the Master Recipe Book (admin only). Existing
+    // recipes that share an English title with a master entry are *updated*
+    // (preserving their id) so corrections to the source data flow through;
+    // new master entries are appended with fresh ids; user-created recipes
+    // whose titles aren't in the master book are left alone.
     const importMasterRecipes = async () => {
-        const have = new Set(recipes.map(r => (r.titleEn || "").trim().toLowerCase()));
-        const toAdd = MASTER_RECIPES.filter(r => !have.has((r.titleEn || "").trim().toLowerCase()));
-        if (toAdd.length === 0) {
-            alert(language === "es" ? "Todas las recetas maestras ya están importadas." : "All master recipes are already imported.");
+        const norm = (s) => (s || "").trim().toLowerCase();
+        const masterByTitle = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
+        let updates = 0, adds = 0;
+        const updated = recipes.map(r => {
+            const m = masterByTitle.get(norm(r.titleEn));
+            if (!m) return r;
+            updates += 1;
+            masterByTitle.delete(norm(r.titleEn));
+            return { ...m, id: r.id };
+        });
+        let nextId = recipes.length > 0 ? Math.max(...recipes.map(r => r.id || 0)) + 1 : 1;
+        for (const m of masterByTitle.values()) {
+            updated.push({ ...m, id: nextId++ });
+            adds += 1;
+        }
+        if (updates === 0 && adds === 0) {
+            alert(language === "es" ? "Sin cambios." : "Nothing to do.");
             return;
         }
-        const ok = confirm(language === "es"
-            ? `Importar ${toAdd.length} receta(s) del libro maestro? Las recetas existentes se conservan.`
-            : `Import ${toAdd.length} recipe(s) from the master book? Existing recipes are kept.`);
-        if (!ok) return;
-        let nextId = recipes.length > 0 ? Math.max(...recipes.map(r => r.id || 0)) + 1 : 1;
-        const stamped = toAdd.map(r => ({ ...r, id: nextId++ }));
-        const updated = [...recipes, ...stamped];
+        const summary = language === "es"
+            ? `${adds} nueva(s), ${updates} actualizada(s). ¿Continuar?`
+            : `${adds} new, ${updates} to update. Proceed?`;
+        if (!confirm(summary)) return;
         setRecipes(updated);
         try {
             await setDoc(doc(db, "config", "recipes"), { list: updated, updatedAt: new Date().toISOString() });
-            alert(language === "es" ? `${toAdd.length} receta(s) importadas.` : `${toAdd.length} recipe(s) imported.`);
+            alert(language === "es" ? `${adds} agregadas, ${updates} actualizadas.` : `${adds} added, ${updates} updated.`);
         } catch (err) {
             console.error("Error importing master recipes:", err);
             alert(`Import failed: ${err.message || err}`);
