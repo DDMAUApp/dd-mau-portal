@@ -226,7 +226,7 @@ export const MODULES = [
                 titleEn: "Dress Code & Hygiene",
                 titleEs: "Código de Vestimenta e Higiene",
                 contentEn: [
-                    "Clean DD Mau shirt — tucked in, no stains. If your shirt has a stain that won't come out, talk to your manager about a replacement.",
+                    "Clean DD Mau shirt — no stains. If your shirt has a stain that won't come out, talk to your manager about a replacement.",
                     "Black or khaki pants — no rips, no shorts.",
                     "Non-slip, closed-toe shoes — REQUIRED, no exceptions. This is a safety rule, not a fashion rule. Wet kitchen floors are how people break wrists.",
                     "Apron clean before you hit the floor.",
@@ -238,7 +238,7 @@ export const MODULES = [
                     "Light deodorant. Skip cologne or perfume — strong scents kill the food experience for guests, especially in a small dining room.",
                 ],
                 contentEs: [
-                    "Camisa de DD Mau limpia — fajada, sin manchas. Si tu camisa tiene una mancha que no sale, habla con tu gerente sobre un reemplazo.",
+                    "Camisa de DD Mau limpia — sin manchas. Si tu camisa tiene una mancha que no sale, habla con tu gerente sobre un reemplazo.",
                     "Pantalones negros o caqui — sin rasgaduras, sin shorts.",
                     "Zapatos antideslizantes y cerrados — OBLIGATORIO, sin excepciones. Es una regla de seguridad, no de moda. Los pisos mojados de cocina son como la gente se rompe muñecas.",
                     "Delantal limpio antes de pisar el piso.",
