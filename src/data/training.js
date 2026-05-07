@@ -628,8 +628,8 @@ export const MODULES = [
                 titleEn: "Handoffs, Restocks, and Cash Rules",
                 titleEs: "Entregas, Reabastecimiento y Reglas de Efectivo",
                 contentEn: [
-                    "Voids, refunds, and comps go to the Shift Lead. Always. The Shift Lead has full authority on these — you do not. If a guest asks for a refund or comp, smile and say 'let me grab a Shift Lead for you.' Never process it yourself.",
-                    "Why: tracking voids is for accountability, not blame. Going through the Lead keeps the cash drawer clean and protects you.",
+                    "Voids, refunds, and comps go to the manager. Always. The manager has full authority on these — you do not. If a guest asks for a refund or comp, smile and say 'let me grab the manager for you.' Never process it yourself.",
+                    "Why: tracking voids is for accountability, not blame. Going through the manager keeps the cash drawer clean and protects you.",
                     "Cash handling at the register: never take a card out of a guest's hand. Direct them to insert/tap the reader themselves. (PCI security rule.)",
                     "Cash payment: enter the tendered amount in Toast, count the change in front of the guest, and hand it back with the receipt.",
                     "Restock between rushes — don't wait until you run out. Cups, lids, sauces, napkins, to-go bags. The line backing up because you ran out of forks is on you.",
@@ -639,8 +639,8 @@ export const MODULES = [
                     "If the line backs up, ring faster — be friendly AND fast. Don't stop ringing to chat. The next guest in line is also a guest.",
                 ],
                 contentEs: [
-                    "Voids, reembolsos, y comps van al líder. Siempre. El líder tiene autoridad completa en esto — tú no. Si un cliente pide un reembolso o comp, sonríe y dile 'déjame llamar al líder.' Nunca lo proceses tú.",
-                    "Por qué: rastrear voids es por responsabilidad, no por culpa. Ir a través del líder mantiene la caja limpia y te protege.",
+                    "Voids, reembolsos, y comps van al gerente. Siempre. El gerente tiene autoridad completa en esto — tú no. Si un cliente pide un reembolso o comp, sonríe y dile 'déjame llamar al gerente.' Nunca lo proceses tú.",
+                    "Por qué: rastrear voids es por responsabilidad, no por culpa. Ir a través del gerente mantiene la caja limpia y te protege.",
                     "Manejo de efectivo en la caja: nunca tomes la tarjeta de la mano del cliente. Indícale que la inserte/toque él mismo. (Regla de seguridad PCI.)",
                     "Pago en efectivo: ingresa la cantidad recibida en Toast, cuenta el cambio enfrente del cliente, y entrégaselo con el recibo.",
                     "Reabastece entre los rushes — no esperes a que se acabe. Vasos, tapas, salsas, servilletas, bolsas. Si la fila se atora porque te quedaste sin tenedores, es tu culpa.",
@@ -718,8 +718,8 @@ export const MODULES = [
                     options: [
                         { id: "a", textEn: "Process the refund yourself in Toast", textEs: "Procesa el reembolso tú mismo en Toast" },
                         { id: "b", textEn: "Tell the guest 'no refunds'", textEs: "Dile al cliente 'sin reembolsos'" },
-                        { id: "c", textEn: "Smile and say 'let me grab a Shift Lead for you'", textEs: "Sonríe y di 'déjame llamar al líder'" },
-                        { id: "d", textEn: "Call the General Manager directly", textEs: "Llama al Gerente General directamente" },
+                        { id: "c", textEn: "Smile and say 'let me grab the manager for you'", textEs: "Sonríe y di 'déjame llamar al gerente'" },
+                        { id: "d", textEn: "Call the General Manager directly on their cell", textEs: "Llama al Gerente General directamente al celular" },
                     ],
                     correct: "c",
                 },
