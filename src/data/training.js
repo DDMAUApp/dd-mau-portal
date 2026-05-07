@@ -579,7 +579,7 @@ export const MODULES = [
                     "• Stock 1oz sauce cups, lids, napkins, utensils, and to-go bags within reach.",
                     "• Stock extra bowls, plates, and to-go utensils.",
                     "• Stock the soda fridge so every drink has 2 rows facing forward.",
-                    "• Pull up the 86'd list in Toast. Memorize it — guests will ask.",
+                    "• Take note of any out-of-stock items and check with the Shift Lead that they're still out.",
                     "• Smile. Take a deep breath. Ready up.",
                 ],
                 contentEs: [
@@ -592,7 +592,7 @@ export const MODULES = [
                     "• Surte vasos de salsa de 1oz, tapas, servilletas, utensilios y bolsas para llevar al alcance.",
                     "• Surte bowls extra, platos y utensilios para llevar.",
                     "• Surte el refrigerador de sodas — cada bebida con 2 filas al frente.",
-                    "• Saca la lista de 86 en Toast. Memorízala — los clientes preguntarán.",
+                    "• Toma nota de los artículos agotados y confirma con el líder que siguen agotados.",
                     "• Sonríe. Respira. Listo.",
                 ],
             },
