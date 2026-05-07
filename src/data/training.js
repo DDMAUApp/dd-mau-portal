@@ -209,14 +209,14 @@ export const MODULES = [
                     "Show up 10 minutes early. Showing up 'on time' really means showing up 10 minutes early. That gives you time to put on your apron, wash hands, and get a quick read of the floor before you clock in.",
                     "Clock in on Toast at the start of your shift, AFTER you are in uniform and ready to work the floor — not before. Clocking in while changing or eating breakfast is wage theft.",
                     "Clock out at the end of your shift, AFTER all your closing duties are signed off by the Shift Lead. If you forgot to clock in or out, tell the Lead immediately so they can correct it.",
-                    "Breaks. If you work a double shift, you get one 1-hour unpaid break. That's it — no other scheduled break. Take your break in the back, not on the floor. Phones can be used during your break only — never during your shift. Always check with the Shift Lead BEFORE you take your break — they need to make sure the floor stays covered.",
+                    "Breaks. Every double shift gets a 1-hour unpaid break. Always check with the Shift Lead before you take your break.",
                 ],
                 contentEs: [
                     "Horario. Los turnos se publican semanalmente. Revisa Sling (o la app de horario que use tu gerente) al menos 48 horas antes de tu siguiente turno. Si detectas un conflicto, escríbele a tu gerente inmediatamente — no la noche anterior.",
                     "Llega 10 minutos temprano. Llegar 'a tiempo' realmente significa llegar 10 minutos temprano. Eso te da tiempo para ponerte el delantal, lavarte las manos, y leer el piso antes de marcar entrada.",
                     "Marca entrada en Toast al inicio de tu turno, DESPUÉS de estar en uniforme y listo para trabajar — no antes. Marcar entrada mientras te cambias o desayunas es robo de salario.",
                     "Marca salida al final de tu turno, DESPUÉS de que el líder firme tus deberes de cierre. Si olvidaste marcar entrada o salida, dile al líder inmediatamente para que lo corrija.",
-                    "Descansos. Si trabajas turno doble, recibes un descanso de 1 hora sin pagar. Eso es todo — no hay otro descanso programado. Toma tu descanso en la parte de atrás, no en el piso. Los teléfonos solo se usan durante tu descanso — nunca durante el turno. Siempre revisa con el líder ANTES de tomar tu descanso — necesita confirmar que el piso quede cubierto.",
+                    "Descansos. Cada turno doble recibe un descanso de 1 hora sin pagar. Siempre revisa con el líder antes de tomar tu descanso.",
                 ],
             },
             {
