@@ -31,7 +31,7 @@ const ALLERGEN_COLS = [
     { key: "milk", labelEn: "Milk", labelEs: "Leche" },
     { key: "eggs", labelEn: "Eggs", labelEs: "Huevos" },
     { key: "fish", labelEn: "Fish", labelEs: "Pescado" },
-    { key: "shell", labelEn: "Shell", labelEs: "Mariscos" },
+    { key: "shell", labelEn: "Shellfish", labelEs: "Mariscos" },
     { key: "treenut", labelEn: "Tree Nut", labelEs: "Fruto Seco" },
     { key: "peanut", labelEn: "Peanut", labelEs: "Cacahuate" },
     { key: "wheat", labelEn: "Wheat", labelEs: "Trigo" },
