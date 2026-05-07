@@ -635,7 +635,7 @@ export const MODULES = [
                     "Restock between rushes — don't wait until you run out. Cups, lids, sauces, napkins, to-go bags. The line backing up because you ran out of forks is on you.",
                     "Re-check the 86'd list in Toast whenever the Shift Lead updates it. If you're not sure whether something's still 86'd, check before you ring it.",
                     "Phone Policy at the register: phone stays in the back. No exceptions. Guests notice immediately.",
-                    "No eating, drinking, or gum chewing at the register. Water bottle in the back.",
+                    "No eating or gum chewing at the register. Drinks stay out of sight — under the counter, in the back, never on top where guests can see.",
                     "If the line backs up, ring faster — be friendly AND fast. Don't stop ringing to chat. The next guest in line is also a guest.",
                 ],
                 contentEs: [
@@ -646,7 +646,7 @@ export const MODULES = [
                     "Reabastece entre los rushes — no esperes a que se acabe. Vasos, tapas, salsas, servilletas, bolsas. Si la fila se atora porque te quedaste sin tenedores, es tu culpa.",
                     "Vuelve a revisar la lista de 86 en Toast cuando el líder la actualice. Si no estás seguro si algo sigue en 86, revisa antes de cobrar.",
                     "Política de teléfonos en la caja: el teléfono se queda atrás. Sin excepciones. Los clientes notan al instante.",
-                    "Sin comer, beber, ni mascar chicle en la caja. La botella de agua se queda atrás.",
+                    "Sin comer ni mascar chicle en la caja. Las bebidas se quedan fuera de la vista — debajo del mostrador, en la parte de atrás, nunca arriba donde los clientes puedan verlas.",
                     "Si la fila se atora, cobra más rápido — sé amable Y rápido. No pares de cobrar para platicar. El siguiente en la fila también es cliente.",
                 ],
             },
