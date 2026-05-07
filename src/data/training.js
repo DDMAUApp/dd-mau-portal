@@ -190,16 +190,14 @@ export const MODULES = [
                     "What you'll fill out: W-4 (federal + state tax), I-9 (work eligibility), direct deposit form. Your manager will hand you these on Day 1.",
                     "Bring two forms of ID to your first shift: passport OR driver's license + Social Security card or birth certificate. Without ID we cannot put you on the schedule.",
                     "You'll get a 4-digit Toast POS PIN from your manager. This PIN is yours alone. Do NOT share it with anyone — not a teammate, not a shift lead. Voids and time clock punches are tied to your PIN.",
-                    "You'll get a copy of this manual and the FOH Customer Service module. Read both before your first solo shift.",
-                    "Sign the New Hire Acknowledgment at the back of this manual once you finish reading. Your manager keeps the signed copy in your file.",
+                    "Sign the New Hire Acknowledgment with your manager once you finish your training. Your manager keeps the signed copy in your file.",
                 ],
                 contentEs: [
                     "Antes de tocar comida, dinero o clientes, esto es el papeleo.",
                     "Lo que vas a llenar: W-4 (impuesto federal + estatal), I-9 (elegibilidad de trabajo), formulario de depósito directo. Tu gerente te los dará el Día 1.",
                     "Trae dos formas de identificación a tu primer turno: pasaporte O licencia de manejar + tarjeta de Seguro Social o acta de nacimiento. Sin ID no podemos ponerte en el horario.",
                     "Vas a recibir un PIN de 4 dígitos de Toast POS de tu gerente. Este PIN es solo tuyo. NO lo compartas con nadie — ni con un compañero, ni con un líder de turno. Los voids y registro de horas están atados a tu PIN.",
-                    "Vas a recibir una copia de este manual y del módulo de Servicio al Cliente FOH. Lee ambos antes de tu primer turno solo.",
-                    "Firma el Acuerdo de Nuevo Empleado al final de este manual cuando termines de leer. Tu gerente guarda la copia firmada en tu archivo.",
+                    "Firma el Acuerdo de Nuevo Empleado con tu gerente cuando termines tu capacitación. Tu gerente guarda la copia firmada en tu archivo.",
                 ],
             },
             {
