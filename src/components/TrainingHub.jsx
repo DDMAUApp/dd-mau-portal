@@ -25,6 +25,78 @@ const TRACK_ICONS = {
     "manager-ops": "👔",
 };
 
+// Allergen matrix table — renders a structured, color-coded chart inside a lesson.
+// Mirrors the official DD Mau Allergen Matrix doc.
+const ALLERGEN_COLS = [
+    { key: "milk", labelEn: "Milk", labelEs: "Leche" },
+    { key: "eggs", labelEn: "Eggs", labelEs: "Huevos" },
+    { key: "fish", labelEn: "Fish", labelEs: "Pescado" },
+    { key: "shell", labelEn: "Shell", labelEs: "Mariscos" },
+    { key: "treenut", labelEn: "Tree Nut", labelEs: "Fruto Seco" },
+    { key: "peanut", labelEn: "Peanut", labelEs: "Cacahuate" },
+    { key: "wheat", labelEn: "Wheat", labelEs: "Trigo" },
+    { key: "soy", labelEn: "Soy", labelEs: "Soya" },
+    { key: "sesame", labelEn: "Sesame", labelEs: "Ajonjolí" },
+];
+
+function AllergenCell({ mark }) {
+    if (!mark) return <td className="border border-gray-300 px-1 py-1 text-center bg-white">&nbsp;</td>;
+    if (mark === "●") return <td className="border border-gray-300 px-1 py-1 text-center bg-red-600 text-white font-bold">●</td>;
+    if (mark === "◐") return <td className="border border-gray-300 px-1 py-1 text-center bg-amber-300 text-amber-900 font-bold">◐</td>;
+    return <td className="border border-gray-300 px-1 py-1 text-center bg-white">{mark}</td>;
+}
+
+function VeganCell({ v }) {
+    if (v === "✓") return <td className="border border-gray-300 px-1 py-1 text-center bg-green-600 text-white font-bold">✓</td>;
+    if (v === "✓*") return <td className="border border-gray-300 px-1 py-1 text-center bg-green-100 text-green-800 font-bold">✓*</td>;
+    return <td className="border border-gray-300 px-1 py-1 text-center bg-gray-100 text-gray-500">—</td>;
+}
+
+function AllergenMatrix({ matrix, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    return (
+        <div className="mt-4 space-y-5">
+            <div className="text-xs bg-amber-50 border border-amber-300 rounded-lg p-2 text-amber-900">
+                <span className="inline-block mr-2"><span className="inline-block bg-red-600 text-white rounded px-1 mr-1">●</span>{tx("Contains", "Contiene")}</span>
+                <span className="inline-block mr-2"><span className="inline-block bg-amber-300 text-amber-900 rounded px-1 mr-1">◐</span>{tx("May contain", "Puede contener")}</span>
+                <span className="inline-block mr-2"><span className="inline-block bg-green-600 text-white rounded px-1 mr-1">✓</span>{tx("Vegan", "Vegano")}</span>
+                <span className="inline-block"><span className="inline-block bg-green-100 text-green-800 rounded px-1 mr-1">✓*</span>{tx("Can be made vegan", "Se puede hacer vegano")}</span>
+            </div>
+            {matrix.sections.map((sec, si) => (
+                <div key={si}>
+                    <div className="text-sm font-bold text-mint-800 mb-1">{tx(sec.titleEn, sec.titleEs)}</div>
+                    <div className="overflow-x-auto -mx-4 px-4">
+                        <table className="text-[11px] border-collapse min-w-max">
+                            <thead>
+                                <tr className="bg-mint-700 text-white">
+                                    <th className="border border-gray-300 px-2 py-1 text-left sticky left-0 bg-mint-700 z-10 min-w-[140px]">{tx("Item", "Artículo")}</th>
+                                    {ALLERGEN_COLS.map(c => (
+                                        <th key={c.key} className="border border-gray-300 px-1 py-1 font-semibold whitespace-nowrap">{tx(c.labelEn, c.labelEs)}</th>
+                                    ))}
+                                    <th className="border border-gray-300 px-1 py-1 font-semibold">{tx("Vegan", "Vegano")}</th>
+                                    <th className="border border-gray-300 px-2 py-1 text-left font-semibold min-w-[200px]">{tx("Notes", "Notas")}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {sec.rows.map((row, ri) => (
+                                    <tr key={ri} className={ri % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                                        <td className={"border border-gray-300 px-2 py-1 font-semibold sticky left-0 z-10 " + (ri % 2 === 0 ? "bg-white" : "bg-gray-50")}>{tx(row.itemEn, row.itemEs)}</td>
+                                        {ALLERGEN_COLS.map(c => (
+                                            <AllergenCell key={c.key} mark={row.v?.[c.key]} />
+                                        ))}
+                                        <VeganCell v={row.vegan} />
+                                        <td className="border border-gray-300 px-2 py-1 text-gray-700">{tx(row.notesEn, row.notesEs)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
 export default function TrainingHub({ staffName, language, staffList }) {
     const isEn = language !== "es";
     const tx = (en, es) => (isEn ? en : es);
@@ -245,6 +317,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                         <p key={i} className={para.startsWith("•") || para.startsWith("—") || /^\d+\./.test(para) ? "ml-2" : ""}>{para}</p>
                     ))}
                 </div>
+                {activeLesson.matrix && <AllergenMatrix matrix={activeLesson.matrix} isEn={isEn} />}
                 <div className="mt-6 flex gap-2">
                     {lIdx > 0 && (
                         <button onClick={() => setActiveLessonId(m.lessons[lIdx - 1].id)}
