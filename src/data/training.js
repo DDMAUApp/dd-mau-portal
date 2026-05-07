@@ -2132,7 +2132,7 @@ export const MODULES = [
                 titleEn: "Big 9 + DD Mau Critical Facts",
                 titleEs: "9 Grandes + Datos Críticos de DD Mau",
                 contentEn: [
-                    "Federal law lists 9 Major Food Allergens: Milk, Eggs, Fish, Shellfish, Tree Nuts, Peanuts, Wheat, Soy, Sesame. We track all 9 plus MSG sensitivity (technically not an allergen, but guests ask about it constantly).",
+                    "The 9 Major Food Allergens: Milk, Eggs, Fish, Shellfish, Tree Nuts, Peanuts, Wheat, Soy, Sesame. We track all 9 plus MSG sensitivity (technically not an allergen, but guests ask about it constantly).",
                     "STOP — if a guest has an allergy, get the Shift Lead. Profile = BASE + PROTEIN + SAUCE. You cannot answer an allergy question correctly without knowing all three pieces.",
                     "DD Mau-specific facts you MUST know cold:",
                     "• Our oyster sauce IS gluten-free. Many oyster sauces aren't — ours is. This matters for anything that uses oyster sauce in the marinade or the lo mein sauce.",
@@ -2145,7 +2145,7 @@ export const MODULES = [
                     "When in doubt: GET THE SHIFT LEAD. Allergen calls are above your pay grade and that's by design.",
                 ],
                 contentEs: [
-                    "La ley federal lista 9 Alérgenos Alimentarios Mayores: Leche, Huevos, Pescado, Mariscos, Frutos Secos, Cacahuates, Trigo, Soya, Ajonjolí. Rastreamos los 9 más sensibilidad al MSG (técnicamente no es alérgeno, pero los clientes preguntan constantemente).",
+                    "Los 9 Alérgenos Alimentarios Mayores: Leche, Huevos, Pescado, Mariscos, Frutos Secos, Cacahuates, Trigo, Soya, Ajonjolí. Rastreamos los 9 más sensibilidad al MSG (técnicamente no es alérgeno, pero los clientes preguntan constantemente).",
                     "PARA — si un cliente tiene alergia, llama al líder. Perfil = BASE + PROTEÍNA + SALSA. No puedes responder una pregunta de alergia correctamente sin saber las tres piezas.",
                     "Datos específicos de DD Mau que DEBES saber al pie de la letra:",
                     "• Nuestra salsa de ostión ES sin gluten. Muchas salsas de ostión no lo son — la nuestra sí. Esto importa para cualquier cosa con salsa de ostión en marinado o salsa lo mein.",
