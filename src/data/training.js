@@ -397,7 +397,7 @@ export const MODULES = [
                 contentEn: [
                     "Wash your hands for at least 20 seconds with hot water and soap. Twenty seconds is roughly 'Happy Birthday' twice. Less than that is performance, not hygiene.",
                     "When you must wash your hands:",
-                    "• When you arrive at work, before clocking in.",
+                    "• When you arrive at work, right after clocking in — first thing, before you touch anything else.",
                     "• After every break.",
                     "• After eating, drinking, or using your phone.",
                     "• After using the restroom (always — no exceptions).",
@@ -410,7 +410,7 @@ export const MODULES = [
                 contentEs: [
                     "Lávate las manos al menos 20 segundos con agua caliente y jabón. Veinte segundos es aproximadamente 'Feliz Cumpleaños' dos veces. Menos que eso es performance, no higiene.",
                     "Cuándo lavarte las manos:",
-                    "• Cuando llegues al trabajo, antes de marcar entrada.",
+                    "• Cuando llegues al trabajo, justo después de marcar entrada — lo primero, antes de tocar cualquier otra cosa.",
                     "• Después de cada descanso.",
                     "• Después de comer, beber o usar el teléfono.",
                     "• Después de usar el baño (siempre — sin excepciones).",
