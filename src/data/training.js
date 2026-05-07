@@ -476,7 +476,7 @@ export const MODULES = [
                     "If a guest mentions ANY of these, take it seriously. Stop. Get the Shift Lead. Don't guess. The full Allergen Matrix is in M17.",
                     "When YOU are sick. Stay home if you have any of these symptoms: vomiting or diarrhea (within the last 24 hours), fever, sore throat with fever, jaundice (yellow skin or eyes), an infected cut or wound on your hand. Call the Shift Lead. We would rather be short-staffed for one shift than send a foodborne illness home with our guests.",
                     "Cut on your hand. Stop. Wash. Bandage with a blue food-safety bandage (we keep them by the first-aid kit — blue so it shows up if it falls into food). Put on a glove over the bandage. Tell the Shift Lead.",
-                    "Burn. Cool water for 10 minutes. Tell the Shift Lead. Do NOT apply ice — ice can damage the burned skin further.",
+                    "Burn. Run it under cool water until it stops hurting. Tell the Shift Lead. Do NOT apply ice — ice can damage the burned skin further.",
                     "Anything more serious — bleeding that won't stop, a deep cut, a head injury — stop work, get the Shift Lead, fill out an injury report. Do not 'tough it out.'",
                 ],
                 contentEs: [
@@ -484,7 +484,7 @@ export const MODULES = [
                     "Si un cliente menciona CUALQUIERA de estos, tómalo en serio. Para. Llama al líder. No adivines. La Matriz de Alérgenos completa está en M17.",
                     "Cuando TÚ estás enfermo. Quédate en casa si tienes cualquiera de estos síntomas: vómito o diarrea (en las últimas 24 horas), fiebre, dolor de garganta con fiebre, ictericia (piel u ojos amarillos), corte infectado en la mano. Llama al líder. Preferimos estar corto un turno que mandar una enfermedad transmitida por alimentos a casa de nuestros clientes.",
                     "Corte en la mano. Para. Lava. Venda con una bandita azul de seguridad alimentaria (las tenemos junto al botiquín — azul para que se vea si cae en la comida). Pon un guante sobre la bandita. Dile al líder.",
-                    "Quemadura. Agua fría 10 minutos. Dile al líder. NO apliques hielo — el hielo puede dañar más la piel quemada.",
+                    "Quemadura. Pásala bajo agua fría hasta que deje de doler. Dile al líder. NO apliques hielo — el hielo puede dañar más la piel quemada.",
                     "Algo más serio — sangrado que no para, corte profundo, golpe en la cabeza — para de trabajar, llama al líder, llena un reporte de lesión. No 'aguantes'.",
                 ],
             },
