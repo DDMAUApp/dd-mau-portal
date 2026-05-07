@@ -572,7 +572,7 @@ export const MODULES = [
                 contentEn: [
                     "You are the face of DD Mau. Every guest's first impression starts with you. Your job: greet them, take their order on Toast, ring them up, answer menu questions, and set the energy for their visit. The 10-Second Rule starts with you.",
                     "OPENING SETUP — first 30 minutes of your shift:",
-                    "• Clock in. Wash hands. Tie on your apron.",
+                    "• Clock in. Wash hands.",
                     "• Log into Toast with your PIN. Confirm the printer at the kitchen line is printing.",
                     "• Open the cash drawer. Verify the $300 starting bank with the Shift Lead and sign the cash sheet.",
                     "• Wipe down the register, card reader, phone, and counter — top to bottom.",
@@ -584,7 +584,7 @@ export const MODULES = [
                 contentEs: [
                     "Eres la cara de DD Mau. La primera impresión de cada cliente empieza contigo. Tu trabajo: saludarlos, tomar su orden en Toast, cobrarles, contestar preguntas del menú, y poner la energía de su visita. La Regla de los 10 Segundos empieza contigo.",
                     "INICIO DE TURNO — primeros 30 minutos:",
-                    "• Marca entrada. Lávate las manos. Ponte el delantal.",
+                    "• Marca entrada. Lávate las manos.",
                     "• Entra a Toast con tu PIN. Confirma que la impresora de la línea de cocina está imprimiendo.",
                     "• Abre la caja registradora. Verifica el banco inicial de $300 con el líder y firma la hoja de caja.",
                     "• Limpia la registradora, el lector de tarjetas, el teléfono y el mostrador — de arriba hacia abajo.",
