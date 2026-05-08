@@ -26,19 +26,20 @@ export default defineConfig({
         //      ~400KB cached across releases.
         manualChunks: (id) => {
           if (id.includes('node_modules')) {
-            // React core — app-wide, stable, ~140KB.
+            // React core — app-wide, stable, ~140KB. Safe to split because
+            // react packages don't share internals with anything else we use.
             if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
               return 'vendor-react';
             }
-            // Firebase — large, modular. Split into core (firestore+auth+app,
-            // needed everywhere) vs aux (storage + messaging, used only on
-            // some flows). Lets staff who never use FCM/photos avoid those
-            // bytes entirely if Vite doesn't pre-fetch them.
-            if (id.includes('@firebase/firestore') || id.includes('@firebase/auth') || id.includes('@firebase/app')) {
-              return 'vendor-firebase-core';
-            }
-            if (id.includes('@firebase/storage') || id.includes('@firebase/messaging')) {
-              return 'vendor-firebase-aux';
+            // Firebase — keep ALL of it in one chunk. Splitting firestore
+            // from storage/messaging into separate chunks (the previous
+            // attempt) caused circular-import "Cannot access 'X' before
+            // initialization" runtime errors because @firebase/util and
+            // @firebase/component (shared by every firebase package) ended
+            // up in a third chunk that loaded AFTER firestore tried to use
+            // it. One firebase chunk = guaranteed-correct load order.
+            if (id.includes('@firebase/') || id.includes('firebase/')) {
+              return 'vendor-firebase';
             }
             // Everything else from node_modules → generic vendor chunk.
             return 'vendor-misc';
