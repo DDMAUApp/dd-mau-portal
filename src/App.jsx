@@ -132,13 +132,29 @@ async function runMigrations() {
 }
 let migrationRan = false;
 
+// Session persistence — pulls down/refreshing the page should keep the user
+// signed in on the same tab instead of bouncing them to the staff picker.
+// All saved keys live under "ddmau:*". Logout clears them.
+const SS = {
+    get: (k, d = null) => { try { return localStorage.getItem("ddmau:" + k) ?? d; } catch { return d; } },
+    set: (k, v) => { try { v == null ? localStorage.removeItem("ddmau:" + k) : localStorage.setItem("ddmau:" + k, v); } catch {} },
+};
+
 export default function App() {
-    const [staffName, setStaffName] = useState(null);
-    const [staffLocation, setStaffLocation] = useState("webster");
-    const [activeLocation, setActiveLocation] = useState("webster");
-    const [language, setLanguage] = useState("en");
-    const [activeTab, setActiveTab] = useState("home");
+    // Lazy-init from localStorage so the user stays on the same screen across reloads.
+    const [staffName, setStaffName] = useState(() => SS.get("staffName"));
+    const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
+    const [activeLocation, setActiveLocation] = useState(() => SS.get("activeLocation", "webster"));
+    const [language, setLanguage] = useState(() => SS.get("language", "en"));
+    const [activeTab, setActiveTab] = useState(() => SS.get("activeTab", "home"));
     const [staffList, setStaffList] = useState(DEFAULT_STAFF);
+    // Persist session-level state on every change. Logout (setStaffName(null))
+    // also clears the stored value via SS.set's null branch.
+    useEffect(() => { SS.set("staffName", staffName); }, [staffName]);
+    useEffect(() => { SS.set("staffLocation", staffLocation); }, [staffLocation]);
+    useEffect(() => { SS.set("activeLocation", activeLocation); }, [activeLocation]);
+    useEffect(() => { SS.set("language", language); }, [language]);
+    useEffect(() => { SS.set("activeTab", activeTab); }, [activeTab]);
     const { isAtDDMau, checking: geoChecking, error: geoError } = useGeofence();
     const updateAvailable = useVersionCheck();
     // Run migrations once on first mount
