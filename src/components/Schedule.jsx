@@ -349,7 +349,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // foreground browser notification so they're alerted even if they're
     // looking at another tab. True closed-app push (FCM via Cloud Functions)
     // is a follow-up; this covers app-open + PWA-backgrounded cases.
-    const seenNotifIds = useState(() => new Set())[0];
+    // Re-create the de-dup Set whenever staffName changes — otherwise IDs
+    // from a previous user persist and we either silently swallow new notifs
+    // or worse, re-fire alien IDs that weren't ours. useMemo([staffName]) is
+    // the right scope: stable across re-renders for one user, fresh on switch.
+    const seenNotifIds = useMemo(() => new Set(), [staffName]);
     useEffect(() => {
         if (!staffName) return;
         const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
@@ -881,10 +885,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const idx = (need.filledStaff || []).indexOf(staffMemberName);
         if (idx < 0) return;
         const shiftId = (need.filledShiftIds || [])[idx];
-        try {
-            if (shiftId) {
-                try { await deleteDoc(doc(db, 'shifts', shiftId)); } catch {}
+        // Step 1: delete the underlying shift. If this fails, ABORT — pruning
+        // the need without removing the shift would orphan the shift in the
+        // db with a stale fromNeedId pointing at a slot that no longer
+        // tracks it. (Old behavior swallowed the failure silently.)
+        if (shiftId) {
+            try {
+                await deleteDoc(doc(db, 'shifts', shiftId));
+            } catch (e) {
+                console.error('Unfill: shift delete failed, aborting prune', e);
+                alert(tx(
+                    'Could not delete the underlying shift. The slot was NOT updated. Try again or refresh.',
+                    'No se pudo borrar el turno. El espacio NO se actualizó. Intenta de nuevo.'
+                ));
+                return;
             }
+        }
+        // Step 2: prune the need now that the shift is gone.
+        try {
             const newFilled = (need.filledStaff || []).filter((_, i) => i !== idx);
             const newIds = (need.filledShiftIds || []).filter((_, i) => i !== idx);
             await updateDoc(doc(db, 'staffing_needs', need.id), {
@@ -892,7 +910,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 filledShiftIds: newIds,
             });
         } catch (e) {
-            console.error('Unfill need slot failed:', e);
+            console.error('Unfill: prune failed (shift already deleted)', e);
+            alert(tx(
+                'Shift was deleted but the slot count did not refresh. Try refreshing the page.',
+                'El turno fue borrado pero el contador no se actualizó. Refresca la página.'
+            ));
         }
     };
 
@@ -1012,16 +1034,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (!rule.staffName || !rule.startTime || !rule.endTime) continue;
             // Bi-weekly cadence: anchor off the rule's validFrom week. The rule
             // is active only on weeks where (weeksSinceAnchor % 2) === 0.
+            // If validFrom is empty, REJECT — without an anchor the rule
+            // would silently fire every week (the old bug). Skip these and
+            // surface a message asking the manager to set validFrom.
             if (rule.cadence === 'biweekly') {
                 const anchorDate = parseLocalDate(rule.validFrom);
-                if (anchorDate) {
-                    const anchorWeek = startOfWeek(anchorDate);
-                    const diffMs = weekStart.getTime() - anchorWeek.getTime();
-                    const weeksSince = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
-                    if (weeksSince < 0 || (weeksSince % 2) !== 0) {
-                        skipped.push(`${rule.staffName}: bi-weekly off-week`);
-                        continue;
-                    }
+                if (!anchorDate) {
+                    skipped.push(`${rule.staffName}: bi-weekly rule has no Valid From date — set one to anchor`);
+                    continue;
+                }
+                const anchorWeek = startOfWeek(anchorDate);
+                const diffMs = weekStart.getTime() - anchorWeek.getTime();
+                const weeksSince = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
+                if (weeksSince < 0 || (weeksSince % 2) !== 0) {
+                    skipped.push(`${rule.staffName}: bi-weekly off-week`);
+                    continue;
                 }
             }
             const days = rule.daysOfWeek || [];
@@ -1133,8 +1160,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const startD = parseLocalDate(start);
         const endD = parseLocalDate(end);
         if (startD && endD) {
-            for (let d = new Date(startD); d <= endD; d.setDate(d.getDate() + 1)) {
+            // Iterate by day-count using addDays() rather than mutating a
+            // Date in-place. d.setDate() across DST transitions can either
+            // skip a day (spring forward) or get stuck (fall back), and the
+            // mutation interacts badly with parseLocalDate's noon anchor.
+            const startStr = toDateStr(startD);
+            const endStr = toDateStr(endD);
+            // Cap at ~120 iterations to defend against absurd ranges /
+            // misformatted inputs causing an unbounded loop.
+            for (let i = 0; i < 120; i++) {
+                const d = addDays(startD, i);
                 const dStr = toDateStr(d);
+                if (dStr > endStr) break;
+                if (dStr < startStr) continue;
                 const dayBlocks = (blocksByDate.get(dStr) || []);
                 if (dayBlocks.some(b => b.type === 'no_timeoff' || b.type === 'closed')) {
                     blockedDates.push(`${dStr} (${dayBlocks.find(b => b.type === 'no_timeoff' || b.type === 'closed').reason || 'blocked'})`);
@@ -1477,6 +1515,17 @@ ${dayBlocks}
             const [h, mi] = (timeStr || '09:00').split(':').map(Number);
             return `${y}${pad(m)}${pad(d)}T${pad(h)}${pad(mi)}00`;
         };
+        // Roll DTEND forward one calendar day if endTime <= startTime.
+        // Without this, an overnight shift (e.g. 22:00–02:00) writes
+        // DTEND <= DTSTART, which calendars reject or render as
+        // negative-duration. parseLocalDate handles the +1 day rollover
+        // correctly across month/year/DST boundaries.
+        const fmtEnd = (dateStr, startTime, endTime) => {
+            const sameOrLater = (endTime || '') > (startTime || '');
+            if (sameOrLater) return fmt(dateStr, endTime);
+            const next = addDays(parseLocalDate(dateStr), 1);
+            return fmt(toDateStr(next), endTime);
+        };
         const escape = (s) => (s || '').replace(/[\\;,]/g, c => '\\' + c).replace(/\n/g, '\\n');
         const dtstamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
         const lines = [
@@ -1494,7 +1543,7 @@ ${dayBlocks}
                 `UID:${sh.id}@ddmau`,
                 `DTSTAMP:${dtstamp}`,
                 `DTSTART:${fmt(sh.date, sh.startTime)}`,
-                `DTEND:${fmt(sh.date, sh.endTime)}`,
+                `DTEND:${fmtEnd(sh.date, sh.startTime, sh.endTime)}`,
                 `SUMMARY:${escape(summary)}`,
                 sh.notes ? `DESCRIPTION:${escape(sh.notes)}` : 'DESCRIPTION:',
                 `LOCATION:${escape(LOCATION_LABELS[sh.location] || sh.location || '')}`,
@@ -1628,6 +1677,11 @@ ${dayBlocks}
                     startTime: sh.startTime,
                     endTime: sh.endTime,
                     location: sh.location,
+                    // Preserve the per-shift side override on copy. Without
+                    // this, a cross-side shift (FOH cook covering BOH)
+                    // would revert to the staff's home side on the new
+                    // week's draft, silently breaking the assignment.
+                    side: sh.side || null,
                     isShiftLead: !!sh.isShiftLead,
                     isDouble: !!sh.isDouble,
                     notes: sh.notes || '',
@@ -1666,7 +1720,13 @@ ${dayBlocks}
             if (target <= 0) { skipped.push(`${s.name}: ${tx('no target hours', 'sin horas objetivo')}`); continue; }
             const avail = s.availability || {};
             // Already-scheduled hours for this person this week (don't double-book).
-            const myExisting = visibleShifts.filter(sh => sh.staffName === s.name);
+            // IMPORTANT: must use `shifts` (location-filtered), NOT visibleShifts —
+            // visibleShifts is side-filtered, so a FOH cook with a Tuesday BOH
+            // shift would be considered "free" by FOH auto-fill and end up
+            // double-booked against themselves.
+            const myExisting = shifts.filter(sh =>
+                sh.staffName === s.name &&
+                (storeLocation === 'both' || sh.location === storeLocation));
             // Group by date so the auto-double break gets deducted once per day
             // (e.g. existing 10–3 + 4–8 same day → 8h paid, not 9h).
             const myByDate = new Map();
@@ -2105,7 +2165,15 @@ ${dayBlocks}
                                     <PtoView
                                         weekStart={weekStart}
                                         timeOff={timeOff}
-                                        sideStaffNames={sideStaffNames}
+                                        // Use the full location-eligible staff
+                                        // list, NOT sideStaffNames — PTO is
+                                        // person-scoped, not side-scoped.
+                                        // Filtering by sideStaffNames hid
+                                        // pending PTO from staff with no
+                                        // shifts this week.
+                                        locationStaffNames={new Set((staffList || [])
+                                            .filter(s => storeLocation === 'both' || s.location === storeLocation || s.location === 'both')
+                                            .map(s => s.name))}
                                         isEn={isEn}
                                         currentStaffName={staffName}
                                         canEdit={canEdit}
@@ -3760,18 +3828,23 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
 // ── PtoView ────────────────────────────────────────────────────────────────
 // 4th view mode (next to Grid/Day/List). Calendar of all time-off entries
 // for the current week + side, color-coded by status.
-function PtoView({ weekStart, timeOff, sideStaffNames, isEn, currentStaffName, canEdit, onApprove, onDeny, onRemove }) {
+function PtoView({ weekStart, timeOff, locationStaffNames, sideStaffNames, isEn, currentStaffName, canEdit, onApprove, onDeny, onRemove }) {
     const tx = (en, es) => (isEn ? en : es);
     const days = [0,1,2,3,4,5,6].map(i => addDays(weekStart, i));
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
     const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
     const today = toDateStr(new Date());
 
-    // Filter time-off to entries whose range overlaps this week + side.
+    // Filter time-off to entries whose range overlaps this week + location.
+    // We use locationStaffNames (NOT sideStaffNames) so PTO from staff who
+    // happen to not have a shift this week, or who work the other side,
+    // still appears in the PTO view. Falls back to sideStaffNames only when
+    // locationStaffNames isn't passed (legacy callsites).
+    const filterSet = locationStaffNames || sideStaffNames;
     const weekStartStr = toDateStr(weekStart);
     const weekEndStr = toDateStr(addDays(weekStart, 7));
     const weekTimeOff = (timeOff || []).filter(t => {
-        if (!sideStaffNames.has(t.staffName)) return false;
+        if (filterSet && !filterSet.has(t.staffName)) return false;
         const start = t.startDate || t.date;
         const end = t.endDate || t.date;
         // Overlap test
