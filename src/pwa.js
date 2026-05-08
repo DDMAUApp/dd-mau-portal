@@ -23,35 +23,21 @@ export function setupPWA() {
     manifestLink.href = manifestURL;
     document.head.appendChild(manifestLink);
 
-    // Inline service worker — install-claim-pass-through, no cache.
+    // Service worker registered from a STATIC URL (/sw.js). The previous
+    // implementation used a Blob URL generated fresh on every page load,
+    // which the browser treats as a different SW each time — so no auto-
+    // update channel existed and stuck devices had to be manually rescued.
     //
-    // Why this minimalist version:
-    //   • The PWA installability requirement only needs an SW to exist; it
-    //     doesn't need to cache anything.
-    //   • The previous SW's fetch handler returned `caches.match(req)` on
-    //     network failure, which evaluates to undefined when there's no
-    //     cache (we never .put()). Browsers treat undefined-respondWith
-    //     as a network error, breaking the page on any transient blip
-    //     after a deploy. The current handler simply does NOT call
-    //     respondWith — the browser handles the request normally.
-    //   • clients.claim() in activate makes a freshly-installed SW take
-    //     over without needing a refresh, so deploys propagate cleanly.
-    //   • skipWaiting() in install means the new SW activates immediately
-    //     instead of waiting for the old one to be unloaded.
-    //
-    // To force-update a stuck device: the in-app "↻ Refresh" button or
-    // the mobile pull-down gesture both call forceRefresh() which runs
-    // registration.update() + caches.delete() + cache-busting reload.
-    const swCode = `
-        self.addEventListener('install', () => self.skipWaiting());
-        self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
-        // No fetch handler — let the browser handle requests normally.
-        // We only need the SW registered for PWA installability.
-    `;
+    // Static URL → browsers fetch /sw.js periodically (~24h max, plus on
+    // navigation/interaction) and update automatically when the byte
+    // content changes. After this transition, future SW updates land on
+    // every device without any user action.
     if ('serviceWorker' in navigator) {
-        const swBlob = new Blob([swCode], { type: 'application/javascript' });
-        const swURL = URL.createObjectURL(swBlob);
-        navigator.serviceWorker.register(swURL, { scope: '/' }).catch(() => {});
+        // base from vite.config.js — '/dd-mau-portal/' on Pages, '/' in dev.
+        // Resolve against the page's BASE_URL so we hit the right path.
+        const swURL = (import.meta.env.BASE_URL || '/') + 'sw.js';
+        navigator.serviceWorker.register(swURL, { scope: import.meta.env.BASE_URL || '/' })
+            .catch((e) => console.warn('SW register failed:', e));
     }
 }
 
