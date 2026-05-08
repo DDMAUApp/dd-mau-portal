@@ -27,7 +27,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
-    serverTimestamp,
+    setDoc, serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
 
@@ -172,7 +172,7 @@ const minorShiftWarnings = (shift, isEn) => {
 
 // ── Component ──────────────────────────────────────────────────────────────
 
-export default function Schedule({ staffName, language, storeLocation, staffList }) {
+export default function Schedule({ staffName, language, storeLocation, staffList, setStaffList }) {
     const isEn = language !== 'es';
     const tx = (en, es) => (isEn ? en : es);
     const canEdit = canEditSchedule(staffName, staffList);
@@ -196,6 +196,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [showTimeOffModal, setShowTimeOffModal] = useState(false);
     // Auto-populate modal
     const [showAutoFillModal, setShowAutoFillModal] = useState(false);
+    // Phase 3: staff self-serve PTO request modal + my-availability modal
+    const [showPtoRequestModal, setShowPtoRequestModal] = useState(false);
+    const [showMyAvailModal, setShowMyAvailModal] = useState(false);
 
     // ── Data load ──
     useEffect(() => {
@@ -507,6 +510,180 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Phase 3: staff submits a PTO request (status='pending') ──
+    // Validates against no-PTO blackout dates before submitting.
+    const handleSubmitPtoRequest = async (entry) => {
+        // Check every date in range against no_timeoff blackouts
+        const start = entry.startDate;
+        const end = entry.endDate || entry.startDate;
+        const blockedDates = [];
+        const startD = parseLocalDate(start);
+        const endD = parseLocalDate(end);
+        if (startD && endD) {
+            for (let d = new Date(startD); d <= endD; d.setDate(d.getDate() + 1)) {
+                const dStr = toDateStr(d);
+                const dayBlocks = (blocksByDate.get(dStr) || []);
+                if (dayBlocks.some(b => b.type === 'no_timeoff' || b.type === 'closed')) {
+                    blockedDates.push(`${dStr} (${dayBlocks.find(b => b.type === 'no_timeoff' || b.type === 'closed').reason || 'blocked'})`);
+                }
+            }
+        }
+        if (blockedDates.length > 0) {
+            alert(tx(
+                `🛑 Time-off cannot be requested for these dates:\n${blockedDates.join('\n')}\n\nPlease pick different dates.`,
+                `🛑 No se puede pedir tiempo libre para estas fechas:\n${blockedDates.join('\n')}\n\nPor favor elige otras fechas.`,
+            ));
+            return;
+        }
+        try {
+            await addDoc(collection(db, 'time_off'), {
+                ...entry,
+                staffName, // always the submitter for self-serve
+                status: 'pending',
+                submittedBy: staffName,
+                submittedAt: serverTimestamp(),
+                createdAt: serverTimestamp(),
+            });
+            setShowPtoRequestModal(false);
+            alert(tx('✅ Request submitted. A manager will review it.', '✅ Solicitud enviada. Un gerente la revisará.'));
+        } catch (e) {
+            console.error('Submit PTO failed:', e);
+            alert(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);
+        }
+    };
+
+    // Manager approves / denies a pending PTO request
+    const handleApprovePto = async (entry) => {
+        if (!canEdit) return;
+        try {
+            await updateDoc(doc(db, 'time_off', entry.id), {
+                status: 'approved',
+                reviewedBy: staffName,
+                reviewedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Approve PTO failed:', e);
+        }
+    };
+    const handleDenyPto = async (entry) => {
+        if (!canEdit) return;
+        try {
+            await updateDoc(doc(db, 'time_off', entry.id), {
+                status: 'denied',
+                reviewedBy: staffName,
+                reviewedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Deny PTO failed:', e);
+        }
+    };
+
+    // ── Phase 3: staff self-serve availability ──
+    // Lifts the same pattern from AdminPanel: read-modify-write the staff list.
+    const handleSaveMyAvailability = async (newAvailability) => {
+        if (!staffList || !setStaffList) return;
+        const updated = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
+        setStaffList(updated);
+        try {
+            await setDoc(doc(db, 'config', 'staff'), { list: updated });
+        } catch (e) {
+            console.error('Save availability failed:', e);
+            alert(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message);
+        }
+    };
+
+    // ── Phase 3: bulk publish drafts in current week + side ──
+    const handlePublishDrafts = async () => {
+        if (!canEdit) return;
+        const drafts = visibleShifts.filter(s => s.published === false);
+        if (drafts.length === 0) {
+            alert(tx('No drafts to publish.', 'Sin borradores para publicar.'));
+            return;
+        }
+        if (!confirm(tx(
+            `Publish ${drafts.length} draft shift(s) for ${side === 'foh' ? 'FOH' : 'BOH'} this week?`,
+            `¿Publicar ${drafts.length} turno(s) borrador para ${side === 'foh' ? 'FOH' : 'BOH'} esta semana?`,
+        ))) return;
+        try {
+            const batch = writeBatch(db);
+            for (const s of drafts) {
+                batch.update(doc(db, 'shifts', s.id), {
+                    published: true,
+                    publishedBy: staffName,
+                    publishedAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                });
+            }
+            await batch.commit();
+            alert(tx(`✅ Published ${drafts.length} shifts.`, `✅ Se publicaron ${drafts.length} turnos.`));
+        } catch (e) {
+            console.error('Publish failed:', e);
+            alert(tx('Publish error: ', 'Error al publicar: ') + e.message);
+        }
+    };
+
+    // ── Phase 3: copy last week's shifts into this week ──
+    const handleCopyLastWeek = async () => {
+        if (!canEdit) return;
+        const lastWeekStart = addDays(weekStart, -7);
+        const lastWeekStartStr = toDateStr(lastWeekStart);
+        const lastWeekEndStr = toDateStr(weekStart);
+        try {
+            // Read last week directly with a one-shot query (no listener needed).
+            const q = query(
+                collection(db, 'shifts'),
+                where('date', '>=', lastWeekStartStr),
+                where('date', '<', lastWeekEndStr),
+            );
+            const snap = await new Promise((resolve, reject) => {
+                const unsub = onSnapshot(q, (s) => { unsub(); resolve(s); }, reject);
+            });
+            const sourceShifts = [];
+            snap.forEach(d => sourceShifts.push({ id: d.id, ...d.data() }));
+            // Filter to side + location
+            const filtered = sourceShifts.filter(sh => {
+                if (storeLocation !== 'both' && sh.location !== storeLocation) return false;
+                return sideStaffNames.has(sh.staffName);
+            });
+            if (filtered.length === 0) {
+                alert(tx('No shifts found in last week.', 'No hay turnos en la semana anterior.'));
+                return;
+            }
+            if (!confirm(tx(
+                `Copy ${filtered.length} shift(s) from last week into this week (${toDateStr(weekStart)})? They'll be created as DRAFTS.`,
+                `¿Copiar ${filtered.length} turno(s) de la semana anterior a esta semana (${toDateStr(weekStart)})? Se crearán como BORRADORES.`,
+            ))) return;
+            // Create new docs with date shifted +7
+            for (const sh of filtered) {
+                const oldDate = parseLocalDate(sh.date);
+                if (!oldDate) continue;
+                const newDate = new Date(oldDate);
+                newDate.setDate(newDate.getDate() + 7);
+                const newDateStr = toDateStr(newDate);
+                if (dateClosed(newDateStr)) continue;
+                if (isStaffOffOn(sh.staffName, newDateStr)) continue;
+                await addDoc(collection(db, 'shifts'), {
+                    staffName: sh.staffName,
+                    date: newDateStr,
+                    startTime: sh.startTime,
+                    endTime: sh.endTime,
+                    location: sh.location,
+                    isShiftLead: !!sh.isShiftLead,
+                    isDouble: !!sh.isDouble,
+                    notes: sh.notes || '',
+                    published: false, // DRAFT
+                    createdBy: staffName,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                });
+            }
+            alert(tx(`✅ Copied ${filtered.length} shifts as drafts.`, `✅ Se copiaron ${filtered.length} turnos como borradores.`));
+        } catch (e) {
+            console.error('Copy week failed:', e);
+            alert(tx('Copy error: ', 'Error al copiar: ') + e.message);
+        }
+    };
+
     // ── Auto-populate engine ──
     // For each side-staff with availability + targetHours, distribute their target
     // hours across the week's available days (skipping closed dates and approved
@@ -677,17 +854,38 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
                     🖨 {tx('Print', 'Imprimir')}
                 </button>
+                {/* Self-serve buttons (visible to ALL staff) */}
+                <button onClick={() => setShowPtoRequestModal(true)}
+                    title={tx('Request time off', 'Pedir tiempo libre')}
+                    className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
+                    🌴 {tx('Request Off', 'Pedir Off')}
+                </button>
+                <button onClick={() => setShowMyAvailModal(true)}
+                    title={tx('Set your availability', 'Configura tu disponibilidad')}
+                    className="px-3 py-2 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold hover:bg-purple-200 border border-purple-300">
+                    🗓 {tx('My Avail', 'Mi Dispon.')}
+                </button>
                 {canEdit && (
                     <>
+                        <button onClick={handlePublishDrafts}
+                            title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores de esta semana')}
+                            className="px-3 py-2 rounded-lg bg-green-600 text-white text-xs font-bold hover:bg-green-700">
+                            📢 {tx('Publish', 'Publicar')}
+                        </button>
                         <button onClick={handleAutoPopulate}
                             title={tx('Auto-fill this week from availability + targets', 'Auto-rellenar esta semana')}
                             className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700">
                             ✨ {tx('Auto-fill', 'Auto-rellenar')}
                         </button>
+                        <button onClick={handleCopyLastWeek}
+                            title={tx('Copy last week into this week as drafts', 'Copiar semana pasada como borradores')}
+                            className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
+                            📋 {tx('Copy ⏪', 'Copiar ⏪')}
+                        </button>
                         <button onClick={() => setShowTimeOffModal(true)}
-                            title={tx('Time-off requests', 'Tiempo libre')}
+                            title={tx('Time-off list', 'Lista de tiempo libre')}
                             className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700">
-                            🌴 {tx('PTO', 'PTO')}
+                            🌴 {tx('PTO List', 'Lista PTO')}
                         </button>
                         <button onClick={() => setShowBlockModal(true)}
                             title={tx('Manage closed dates / no-time-off dates', 'Gestionar fechas cerradas / sin tiempo libre')}
@@ -724,6 +922,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 onApprove={handleApproveSwap}
                 onDeny={handleDenySwap}
                 storeLocation={storeLocation}
+                timeOff={timeOff}
+                onApprovePto={handleApprovePto}
+                onDenyPto={handleDenyPto}
             />
 
             {loading ? (
@@ -820,6 +1021,23 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     onRemove={handleRemoveTimeOff}
                     entries={timeOff}
                     staffList={staffList}
+                    isEn={isEn}
+                />
+            )}
+            {showPtoRequestModal && (
+                <PtoRequestModal
+                    onClose={() => setShowPtoRequestModal(false)}
+                    onSubmit={handleSubmitPtoRequest}
+                    staffName={staffName}
+                    isEn={isEn}
+                />
+            )}
+            {showMyAvailModal && (
+                <MyAvailabilityModal
+                    onClose={() => setShowMyAvailModal(false)}
+                    staffList={staffList}
+                    staffName={staffName}
+                    onSave={handleSaveMyAvailability}
                     isEn={isEn}
                 />
             )}
@@ -1221,8 +1439,8 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
     );
 }
 
-// ── SwapPanels: open offers + pending approval queue ───────────────────────
-function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation }) {
+// ── SwapPanels: open offers + pending swap approval + pending PTO queue ────
+function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation, timeOff, onApprovePto, onDenyPto }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
 
@@ -1236,16 +1454,21 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     // My open offers — quick reminder this is on me until taken.
     const myOpenOffers = shifts.filter(s => s.offerStatus === 'open' && s.staffName === staffName);
 
-    // Pending approvals — managers/admin only.
+    // Pending swap approvals — managers/admin only.
     const pending = canEdit
         ? shifts.filter(s => s.offerStatus === 'pending' && s.date >= today)
             .filter(s => storeLocation === 'both' || s.location === storeLocation)
             .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
         : [];
 
-    if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0) return null;
+    // Pending PTO requests — managers/admin only see queue. Staff see their own status.
+    const pendingPto = (timeOff || []).filter(t => t.status === 'pending');
+    const myPto = (timeOff || []).filter(t => t.staffName === staffName && (t.endDate || t.startDate) >= today);
+
+    if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0 && pendingPto.length === 0 && myPto.length === 0) return null;
 
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
+    const renderPtoLine = (t) => t.startDate + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '') + (t.reason ? ` · ${t.reason}` : '');
 
     return (
         <div className="mb-3 space-y-2 print:hidden">
@@ -1294,6 +1517,48 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                                 <button onClick={() => onApprove(sh)}
                                     className="flex-1 px-2 py-1 rounded bg-green-600 text-white font-bold">✓ {tx('Approve', 'Aprobar')}</button>
                                 <button onClick={() => onDeny(sh)}
+                                    className="flex-1 px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold">✕ {tx('Deny', 'Negar')}</button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* My PTO requests (status visible to me) */}
+            {myPto.length > 0 && (
+                <div className="rounded-lg p-2 bg-amber-50 border border-amber-300 text-xs">
+                    <div className="font-bold text-amber-800 mb-1">🌴 {tx('My time-off requests', 'Mis solicitudes de tiempo libre')}</div>
+                    {myPto.map(t => (
+                        <div key={t.id} className="flex items-center justify-between gap-2 mt-1 bg-white rounded p-1.5 border border-amber-200">
+                            <div className="min-w-0">
+                                <div className="text-gray-700">{renderPtoLine(t)}</div>
+                            </div>
+                            <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${
+                                t.status === 'approved' ? 'bg-green-200 text-green-900' :
+                                t.status === 'denied' ? 'bg-red-200 text-red-900' :
+                                'bg-yellow-200 text-yellow-900'
+                            }`}>
+                                {t.status === 'approved' ? '✅ ' + tx('Approved', 'Aprobado') :
+                                 t.status === 'denied'   ? '❌ ' + tx('Denied', 'Negado') :
+                                                           '⏳ ' + tx('Pending', 'Pendiente')}
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Manager / admin pending PTO queue */}
+            {canEdit && pendingPto.length > 0 && (
+                <div className="rounded-lg p-2 bg-amber-50 border-2 border-amber-500 text-xs">
+                    <div className="font-bold text-amber-900 mb-1">🌴 {tx('Pending time-off requests', 'Solicitudes de tiempo libre pendientes')} ({pendingPto.length})</div>
+                    {pendingPto.map(t => (
+                        <div key={t.id} className="bg-white rounded p-1.5 border border-amber-300 mt-1">
+                            <div className="font-bold text-gray-800">{t.staffName}</div>
+                            <div className="text-gray-600">{renderPtoLine(t)}</div>
+                            <div className="flex gap-1 mt-1">
+                                <button onClick={() => onApprovePto(t)}
+                                    className="flex-1 px-2 py-1 rounded bg-green-600 text-white font-bold">✓ {tx('Approve', 'Aprobar')}</button>
+                                <button onClick={() => onDenyPto(t)}
                                     className="flex-1 px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold">✕ {tx('Deny', 'Negar')}</button>
                             </div>
                         </div>
@@ -1705,6 +1970,142 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn }) {
                 </div>
                 <div className="border-t border-gray-200 p-3">
                     <button onClick={onClose} className="w-full py-2 rounded-lg bg-amber-600 text-white font-bold">{tx("Done", "Listo")}</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+// ── PtoRequestModal ────────────────────────────────────────────────────────
+// Phase 3: any staff member can submit a time-off request. Goes to status='pending'
+// and shows up in the manager's approval queue.
+function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const today = toDateStr(new Date());
+    const [form, setForm] = useState({
+        startDate: today,
+        endDate: today,
+        reason: '',
+    });
+    const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const canSubmit = form.startDate && form.endDate && form.startDate <= form.endDate;
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-amber-700">🌴 {tx('Request Time Off', 'Pedir Tiempo Libre')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                </div>
+                <div className="p-4 space-y-3">
+                    <div className="text-xs text-gray-600 bg-amber-50 rounded-lg p-2 border border-amber-200">
+                        {tx('Submitting as:', 'Enviando como:')} <b>{staffName}</b>. {tx('Your manager will approve or deny.', 'Tu gerente aprobará o negará.')}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('From', 'Desde')}</label>
+                            <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
+                                min={today}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('To', 'Hasta')}</label>
+                            <input type="date" value={form.endDate} onChange={e => update('endDate', e.target.value)}
+                                min={form.startDate}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Reason', 'Razón')}</label>
+                        <input type="text" value={form.reason} onChange={e => update('reason', e.target.value)}
+                            placeholder={tx('e.g. vacation, family, doctor', 'p.ej. vacaciones, familia, doctor')}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                </div>
+                <div className="border-t border-gray-200 p-4 flex gap-2">
+                    <button onClick={onClose}
+                        className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                    <button onClick={() => canSubmit && onSubmit(form)} disabled={!canSubmit}
+                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300'}`}>
+                        {tx('Submit Request', 'Enviar Solicitud')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── MyAvailabilityModal ────────────────────────────────────────────────────
+// Phase 3: staff can edit their OWN availability. Same shape as the AdminPanel
+// version, but scoped to the current user. Manager can still override via Admin.
+function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const me = (staffList || []).find(s => s.name === staffName);
+    const initialAvail = (me && me.availability) || {};
+    const DAYS = [
+        { k: 'sun', en: 'Sunday',    es: 'Domingo' },
+        { k: 'mon', en: 'Monday',    es: 'Lunes' },
+        { k: 'tue', en: 'Tuesday',   es: 'Martes' },
+        { k: 'wed', en: 'Wednesday', es: 'Miércoles' },
+        { k: 'thu', en: 'Thursday',  es: 'Jueves' },
+        { k: 'fri', en: 'Friday',    es: 'Viernes' },
+        { k: 'sat', en: 'Saturday',  es: 'Sábado' },
+    ];
+    const [avail, setAvail] = useState(initialAvail);
+    const updateDay = (dayKey, patch) => {
+        setAvail(a => ({ ...a, [dayKey]: { ...(a[dayKey] || { available: true, from: '09:00', to: '21:00' }), ...patch } }));
+    };
+    const handleSave = async () => {
+        await onSave(avail);
+        onClose();
+    };
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-bold text-purple-700">🗓 {tx('My Availability', 'Mi Disponibilidad')}</h3>
+                        <p className="text-xs text-gray-500">{staffName}</p>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    <p className="text-xs text-gray-500 mb-1">{tx("This is when you're available to work each week. Auto-fill uses this.", 'Cuándo estás disponible para trabajar cada semana. Auto-rellenar lo usa.')}</p>
+                    {DAYS.map(d => {
+                        const dayData = avail[d.k] || { available: true, from: '09:00', to: '21:00' };
+                        const available = dayData.available !== false;
+                        return (
+                            <div key={d.k} className="bg-gray-50 rounded-lg p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                    <span className="font-bold text-sm text-gray-800">{tx(d.en, d.es)}</span>
+                                    <button onClick={() => updateDay(d.k, { available: !available })}
+                                        className={`px-3 py-1 rounded-full text-xs font-bold ${available ? 'bg-green-600 text-white' : 'bg-gray-300 text-gray-600'}`}>
+                                        {available ? tx('Available', 'Disponible') : tx('Off', 'No disponible')}
+                                    </button>
+                                </div>
+                                {available && (
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                            <label className="text-[10px] text-gray-500 block">{tx('From', 'Desde')}</label>
+                                            <input type="time" value={dayData.from || '09:00'}
+                                                onChange={e => updateDay(d.k, { from: e.target.value })}
+                                                className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] text-gray-500 block">{tx('To', 'Hasta')}</label>
+                                            <input type="time" value={dayData.to || '21:00'}
+                                                onChange={e => updateDay(d.k, { to: e.target.value })}
+                                                className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+                <div className="border-t border-gray-200 p-3 flex gap-2">
+                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                    <button onClick={handleSave} className="flex-1 py-2 rounded-lg bg-purple-700 text-white font-bold">{tx('Save', 'Guardar')}</button>
                 </div>
             </div>
         </div>

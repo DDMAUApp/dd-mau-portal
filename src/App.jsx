@@ -332,7 +332,7 @@ export default function App() {
                         {activeTab === "training" && <TrainingHub staffName={staffName} language={language} staffList={staffList} />}
                         {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
-                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} />}
+                        {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />}
                         {activeTab === "recipes" && (isAtDDMau || hasRecipesAccess) && <Recipes language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
