@@ -7,6 +7,7 @@ import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/st
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import InventoryHistory from './InventoryHistory';
 import PrepList from './PrepList';
+import SauceLog from './SauceLog';
 
 // Constants
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
@@ -3605,21 +3606,25 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         );
                     })()}
 
-                    <div className="flex gap-2 mb-6">
+                    <div className="flex gap-2 mb-6 flex-wrap">
                         <button onClick={() => { setActiveTab("checklist"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
-                            className={`flex-1 py-2 rounded-lg font-bold transition ${activeTab === "checklist" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "checklist" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
                             {language === "es" ? "Tareas" : "Tasks"}
                         </button>
+                        <button onClick={() => { setActiveTab("saucelog"); setEditMode(false); }}
+                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "saucelog" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            🥢 {language === "es" ? "Salsas" : "Sauce Log"}
+                        </button>
                         <button onClick={() => { setActiveTab("inventory"); setEditMode(false); }}
-                            className={`flex-1 py-2 rounded-lg font-bold transition ${activeTab === "inventory" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "inventory" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
                             {t("inventory", language)}
                         </button>
                         <button onClick={() => { setActiveTab("breaks"); setEditMode(false); }}
-                            className={`flex-1 py-2 rounded-lg font-bold transition ${activeTab === "breaks" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "breaks" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
                             Breaks
                         </button>
                         <button onClick={() => { setActiveTab("prep"); setEditMode(false); }}
-                            className={`flex-1 py-2 rounded-lg font-bold transition ${activeTab === "prep" ? "bg-orange-600 text-white" : "bg-gray-200 text-gray-700"}`}>
+                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "prep" ? "bg-orange-600 text-white" : "bg-gray-200 text-gray-700"}`}>
                             {language === "es" ? "Prep" : "Prep"}
                         </button>
                     </div>
@@ -3653,6 +3658,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     )}
 
                     {activeTab === "checklist" && renderChecklist()}
+
+                    {activeTab === "saucelog" && (
+                        <SauceLog
+                            language={language}
+                            staffName={staffName}
+                            staffList={staffList}
+                            storeLocation={storeLocation}
+                        />
+                    )}
 
                     {/* ── Merge Items Modal — pick a target master item to merge the source into ── */}
                     {mergeSource && (() => {
