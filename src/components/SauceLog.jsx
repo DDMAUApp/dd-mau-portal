@@ -143,22 +143,32 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
         return targets.map(s => s.name);
     }, [staffList, staffName, storeLocation]);
 
-    // Write notification doc for each target. The Cloud Function
+    // Write notification docs for each target. The Cloud Function
     // (dispatchNotification) listens on notifications/{id} create and
-    // delivers via FCM to each target's saved tokens — so an urgent
-    // sauce request rings the BOH manager's phone even if the app is
-    // closed. Also surfaces in the in-app bell drawer.
-    const notifyManagersUrgent = async (sauce, batches) => {
+    // delivers via FCM to each target's saved tokens — so the BOH
+    // manager's phone rings even if the app is closed. Urgent and
+    // non-urgent get different titles + emoji so the manager can
+    // triage from the lock screen.
+    const notifyManagers = async (sauce, batches, urgency) => {
         const sauceName = isEs ? sauce.nameEs : sauce.nameEn;
-        const title = isEs ? `🚨 Salsa urgente: ${sauceName}` : `🚨 Urgent sauce: ${sauceName}`;
-        const body = isEs
-            ? `${staffName} pide ${batches} ${batches === 1 ? 'lote' : 'lotes'} para HOY.`
-            : `${staffName} needs ${batches} ${batches === 1 ? 'batch' : 'batches'} TODAY.`;
+        const isUrgent = urgency === 'today';
+        const urgencyLabel = SAUCE_URGENCY_BY_ID[urgency];
+        const urgencyText = isEs ? urgencyLabel?.labelEs : urgencyLabel?.labelEn;
+        const title = isUrgent
+            ? (isEs ? `🚨 Salsa urgente: ${sauceName}` : `🚨 Urgent sauce: ${sauceName}`)
+            : (isEs ? `🥢 Nueva salsa: ${sauceName}` : `🥢 New sauce request: ${sauceName}`);
+        const body = isUrgent
+            ? (isEs
+                ? `${staffName} pide ${batches} ${batches === 1 ? 'lote' : 'lotes'} para HOY.`
+                : `${staffName} needs ${batches} ${batches === 1 ? 'batch' : 'batches'} TODAY.`)
+            : (isEs
+                ? `${staffName} pide ${batches} ${batches === 1 ? 'lote' : 'lotes'} para ${urgencyText || 'pronto'}.`
+                : `${staffName} needs ${batches} ${batches === 1 ? 'batch' : 'batches'} for ${urgencyText || 'soon'}.`);
         const link = '/operations/sauce';
         await Promise.all(urgentNotifyTargets.map(forStaff =>
             addDoc(collection(db, 'notifications'), {
                 forStaff,
-                type: 'sauce_urgent',
+                type: isUrgent ? 'sauce_urgent' : 'sauce_request',
                 title,
                 body,
                 link,
@@ -180,12 +190,20 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
             requestedAt: now.toISOString(),
             status: 'pending',
         };
-        // Detect "newly urgent" — either this is a brand-new request with
-        // urgency=today, OR an existing non-today request was bumped to today.
-        // (Don't re-ping if a today request was edited but stayed today.)
+        // Notification fan-out triggers when the request is "new" to BOH:
+        //   • brand-new request for this sauce, OR
+        //   • re-opened from a 'made' state (FOH needs more), OR
+        //   • urgency was bumped UP (next/tomorrow → today, or next → tomorrow).
+        // We don't ping for harmless edits like raising the batch count or
+        // editing on the same urgency level — that would be noise.
         const prev = doc_data.requests?.[sauce.id];
-        const wasUrgent = prev && prev.status === 'pending' && prev.urgency === 'today';
-        const isNewlyUrgent = urgency === 'today' && !wasUrgent;
+        const isBrandNew = !prev || prev.status === 'made';
+        const prevRank = prev && prev.status === 'pending'
+            ? (SAUCE_URGENCY_BY_ID[prev.urgency]?.rank ?? 99)
+            : 99;
+        const newRank = SAUCE_URGENCY_BY_ID[urgency]?.rank ?? 99;
+        const wasBumpedUp = !isBrandNew && newRank < prevRank;
+        const shouldNotify = isBrandNew || wasBumpedUp;
         try {
             await updateDoc(docRef, {
                 [`requests.${sauce.id}`]: request,
@@ -202,9 +220,9 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
                 version: SAUCELOG_VERSION,
             }, { merge: true });
         }
-        if (isNewlyUrgent && urgentNotifyTargets.length > 0) {
+        if (shouldNotify && urgentNotifyTargets.length > 0) {
             // Fire-and-forget — don't block the modal close on notification.
-            notifyManagersUrgent(sauce, batches);
+            notifyManagers(sauce, batches, urgency);
         }
         setRequestModal(null);
     };

@@ -8,6 +8,7 @@ import { INVENTORY_CATEGORIES } from '../data/inventory';
 import InventoryHistory from './InventoryHistory';
 import PrepList from './PrepList';
 import SauceLog from './SauceLog';
+import SauceLogBohBanner from './SauceLogBohBanner';
 
 // Constants
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
@@ -2874,6 +2875,17 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 );
                             })}
                         </div>
+
+                        {/* BOH-only: pending sauce requests from FOH. Hidden when no requests. */}
+                        {checklistSide === "BOH" && (
+                            <SauceLogBohBanner
+                                language={language}
+                                staffName={staffName}
+                                staffList={staffList}
+                                storeLocation={storeLocation}
+                                onOpenSauceLog={() => setActiveTab("saucelog")}
+                            />
+                        )}
 
                         {/* Admin: filter by staff member */}
                         {currentIsAdmin && (
