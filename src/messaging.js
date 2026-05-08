@@ -19,7 +19,7 @@ import app, { db } from "./firebase";
 // Firebase Console → ⚙️ Project Settings → Cloud Messaging tab →
 //   "Web configuration" section → Web Push certificates → "Generate key pair"
 // Copy the PUBLIC key (starts with B...) and paste it below.
-export const VAPID_KEY = "REPLACE_WITH_VAPID_PUBLIC_KEY";
+export const VAPID_KEY = "BH2Mtj6Dgfw2X_Mu7e9OzOTVOqx_l6KjgDgc6v98Cq_4ngWZnz3NPYP81mw88_zEY_4tOnKBW2XTScLOrFfNpoQ";
 
 const MAX_TOKENS_PER_STAFF = 5;
 
