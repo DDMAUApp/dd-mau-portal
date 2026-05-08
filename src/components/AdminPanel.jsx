@@ -86,11 +86,17 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             };
 
             // Tap-to-flip bulk tag handler — used by the Bulk Tag modal.
-            // Optimistic update: state changes immediately, Firestore catches up.
+            // BUG FIX: rapid taps were clobbering each other because the closed-over
+            // `staffList` could be stale between renders. Use the functional setter
+            // form so we always merge into the latest list, then persist outside the
+            // setter (idempotent — last save wins, matches the displayed state).
             const handleBulkUpdate = async (id, patch) => {
-                const updated = staffList.map(s => s.id === id ? { ...s, ...patch } : s);
-                setStaffList(updated);
-                await saveStaffToFirestore(updated);
+                let latest = null;
+                setStaffList(prev => {
+                    latest = prev.map(s => s.id === id ? { ...s, ...patch } : s);
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
             };
 
             const handleSavePin = async (id) => {

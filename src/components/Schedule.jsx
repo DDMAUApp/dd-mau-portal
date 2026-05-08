@@ -1525,83 +1525,102 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 <p className="text-center text-gray-400 mt-8">{tx('Loading…', 'Cargando…')}</p>
             ) : (
                 <>
+                    {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
                     {viewMode === 'grid' && (
-                        <WeeklyGrid
-                            weekStart={weekStart}
-                            staffSummary={staffSummary}
-                            shifts={visibleShifts}
-                            isEn={isEn}
-                            currentStaffName={staffName}
-                            canEdit={canEdit}
-                            onCellClick={(staff, dateStr) => {
-                                if (!canEdit) return;
-                                if (dateClosed(dateStr)) {
-                                    alert(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
-                                    return;
-                                }
-                                if (isStaffOffOn(staff.name, dateStr)) {
-                                    alert(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
-                                    return;
-                                }
-                                openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
-                            }}
-                            onDeleteShift={handleDeleteShift}
-                            onStaffClick={(name) => setPersonFilter(name)}
-                            onOfferShift={handleOfferShift}
-                            onTakeShift={handleTakeShift}
-                            onCancelOffer={handleCancelOffer}
-                            blocksByDate={blocksByDate}
-                            onDropShift={handleDropShift}
-                            isStaffOffOn={isStaffOffOn}
-                            timeOff={timeOff}
-                            onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
-                        />
-                    )}
-                    {viewMode === 'day' && (
-                        <DailyView
-                            weekStart={weekStart}
-                            selectedDayIdx={selectedDayIdx}
-                            setSelectedDayIdx={setSelectedDayIdx}
-                            shifts={visibleShifts}
-                            staffSummary={staffSummary}
-                            isEn={isEn}
-                            currentStaffName={staffName}
-                            canEdit={canEdit}
-                            onDeleteShift={handleDeleteShift}
-                            onOfferShift={handleOfferShift}
-                            onTakeShift={handleTakeShift}
-                            onCancelOffer={handleCancelOffer}
-                        />
-                    )}
-                    {viewMode === 'list' && (
-                        <ListView
-                            shifts={visibleShifts}
-                            isEn={isEn}
-                            currentStaffName={staffName}
-                            canEdit={canEdit}
-                            onDeleteShift={handleDeleteShift}
-                            staffSummary={staffSummary}
-                            onOfferShift={handleOfferShift}
-                            onTakeShift={handleTakeShift}
-                            onCancelOffer={handleCancelOffer}
-                        />
-                    )}
-                    {viewMode === 'pto' && (
-                        <PtoView
-                            weekStart={weekStart}
-                            timeOff={timeOff}
-                            sideStaffNames={sideStaffNames}
-                            isEn={isEn}
-                            currentStaffName={staffName}
-                            canEdit={canEdit}
-                            onApprove={handleApprovePto}
-                            onDeny={handleDenyPto}
-                            onRemove={handleRemoveTimeOff}
-                        />
+                        <>
+                            <WeeklyGrid
+                                weekStart={weekStart}
+                                staffSummary={staffSummary}
+                                shifts={visibleShifts}
+                                isEn={isEn}
+                                currentStaffName={staffName}
+                                canEdit={canEdit}
+                                onCellClick={(staff, dateStr) => {
+                                    if (!canEdit) return;
+                                    if (dateClosed(dateStr)) {
+                                        alert(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
+                                        return;
+                                    }
+                                    if (isStaffOffOn(staff.name, dateStr)) {
+                                        alert(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
+                                        return;
+                                    }
+                                    openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                                }}
+                                onDeleteShift={handleDeleteShift}
+                                onStaffClick={(name) => setPersonFilter(name)}
+                                onOfferShift={handleOfferShift}
+                                onTakeShift={handleTakeShift}
+                                onCancelOffer={handleCancelOffer}
+                                blocksByDate={blocksByDate}
+                                onDropShift={handleDropShift}
+                                isStaffOffOn={isStaffOffOn}
+                                timeOff={timeOff}
+                                onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
+                            />
+                            <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                        </>
                     )}
 
-                    {/* Hours summary always visible at bottom */}
-                    <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                    {/* Day / List / PTO views — at lg+, main content + sticky HoursSummary sidebar.
+                        On smaller screens they stack as before. */}
+                    {['day', 'list', 'pto'].includes(viewMode) && (
+                        <div className="lg:flex lg:gap-4">
+                            <div className="lg:flex-1 min-w-0">
+                                {viewMode === 'day' && (
+                                    <DailyView
+                                        weekStart={weekStart}
+                                        selectedDayIdx={selectedDayIdx}
+                                        setSelectedDayIdx={setSelectedDayIdx}
+                                        shifts={visibleShifts}
+                                        staffSummary={staffSummary}
+                                        isEn={isEn}
+                                        currentStaffName={staffName}
+                                        canEdit={canEdit}
+                                        onDeleteShift={handleDeleteShift}
+                                        onOfferShift={handleOfferShift}
+                                        onTakeShift={handleTakeShift}
+                                        onCancelOffer={handleCancelOffer}
+                                    />
+                                )}
+                                {viewMode === 'list' && (
+                                    <ListView
+                                        shifts={visibleShifts}
+                                        isEn={isEn}
+                                        currentStaffName={staffName}
+                                        canEdit={canEdit}
+                                        onDeleteShift={handleDeleteShift}
+                                        staffSummary={staffSummary}
+                                        onOfferShift={handleOfferShift}
+                                        onTakeShift={handleTakeShift}
+                                        onCancelOffer={handleCancelOffer}
+                                    />
+                                )}
+                                {viewMode === 'pto' && (
+                                    <PtoView
+                                        weekStart={weekStart}
+                                        timeOff={timeOff}
+                                        sideStaffNames={sideStaffNames}
+                                        isEn={isEn}
+                                        currentStaffName={staffName}
+                                        canEdit={canEdit}
+                                        onApprove={handleApprovePto}
+                                        onDeny={handleDenyPto}
+                                        onRemove={handleRemoveTimeOff}
+                                    />
+                                )}
+                            </div>
+                            {/* Desktop: sticky right sidebar with hours summary */}
+                            <aside className="hidden lg:block lg:w-72 lg:flex-shrink-0 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+                                <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                            </aside>
+                            {/* Mobile + tablet: hours summary at bottom (sidebar hidden). lg:hidden ensures
+                                we don't render twice. */}
+                            <div className="lg:hidden">
+                                <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                            </div>
+                        </div>
+                    )}
                 </>
             )}
 
