@@ -29,12 +29,17 @@ const QUICK_ACTIONS = {
     ],
 };
 
-const HISTORY_KEY = "ddmau:aiChatHistory";
+// Chat history is keyed BY STAFF NAME so two people sharing a tablet don't
+// see each other's chats. Old global key is migrated/cleared the first time
+// we run.
+const HISTORY_KEY_BASE = "ddmau:aiChatHistory";
 const MAX_HISTORY_MESSAGES = 50; // hard cap so localStorage doesn't bloat
+const historyKeyFor = (staffName) =>
+    staffName ? `${HISTORY_KEY_BASE}:${staffName}` : HISTORY_KEY_BASE;
 
-function loadHistory() {
+function loadHistory(staffName) {
     try {
-        const raw = localStorage.getItem(HISTORY_KEY);
+        const raw = localStorage.getItem(historyKeyFor(staffName));
         if (!raw) return [];
         const parsed = JSON.parse(raw);
         return Array.isArray(parsed) ? parsed.slice(-MAX_HISTORY_MESSAGES) : [];
@@ -43,15 +48,24 @@ function loadHistory() {
     }
 }
 
-function saveHistory(messages) {
+function saveHistory(staffName, messages) {
     try {
         const trimmed = messages.slice(-MAX_HISTORY_MESSAGES);
-        localStorage.setItem(HISTORY_KEY, JSON.stringify(trimmed));
+        localStorage.setItem(historyKeyFor(staffName), JSON.stringify(trimmed));
     } catch {}
 }
 
+// One-time migration: if the legacy un-keyed history exists, drop it so we
+// don't leak chat between users. (Don't try to "give" it to the current
+// staff — we don't know who originally typed those messages.)
+try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem(HISTORY_KEY_BASE)) {
+        localStorage.removeItem(HISTORY_KEY_BASE);
+    }
+} catch {}
+
 export default function AiAssistant({ language, staffName, storeLocation }) {
-    const [messages, setMessages] = useState(() => loadHistory());
+    const [messages, setMessages] = useState(() => loadHistory(staffName));
     const [input, setInput] = useState("");
     const [loading, setLoading] = useState(false);
     const [routerStatus, setRouterStatus] = useState(null); // null | "ok" | "down"
@@ -66,7 +80,17 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
     const knowledgeStats = useMemo(() => getKnowledgeStats(), []);
 
     // Persist chat history to localStorage so a refresh doesn't lose context.
-    useEffect(() => { saveHistory(messages); }, [messages]);
+    useEffect(() => { saveHistory(staffName, messages); }, [staffName, messages]);
+    // If the user changes (logout + log in as someone else on same device),
+    // load the new user's chat. Otherwise the previous user's messages stay
+    // on screen until the page reloads.
+    const lastStaffRef = useRef(staffName);
+    useEffect(() => {
+        if (lastStaffRef.current !== staffName) {
+            lastStaffRef.current = staffName;
+            setMessages(loadHistory(staffName));
+        }
+    }, [staffName]);
 
     // Auto-scroll to bottom when new messages arrive
     useEffect(() => {
@@ -180,7 +204,7 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
         setMessages([]);
         setError(null);
         setLastModel(null);
-        try { localStorage.removeItem(HISTORY_KEY); } catch {}
+        try { localStorage.removeItem(historyKeyFor(staffName)); } catch {}
     };
 
     const quickActions = QUICK_ACTIONS[isEs ? "es" : "en"];

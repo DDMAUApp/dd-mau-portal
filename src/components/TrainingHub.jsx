@@ -154,19 +154,48 @@ export default function TrainingHub({ staffName, language, staffList }) {
         }, { merge: true });
     };
 
+    // Granular per-module updater that uses dotted-path updateDoc instead
+    // of the whole-modules-map merge above. Avoids the race where another
+    // tab (or a manager unlock) lands between our local read and our write
+    // and gets clobbered by a stale snapshot. Falls back to the whole-doc
+    // setDoc when the doc doesn't exist yet (first save for this staff).
+    const persistModulePatch = async (mId, patch) => {
+        const dotted = { updatedAt: new Date().toISOString() };
+        for (const k in patch) {
+            const v = patch[k];
+            dotted[`modules.${mId}.${k}`] = v === undefined ? deleteField() : v;
+        }
+        const ref = doc(db, "training_v2", staffDocId(staffName));
+        try {
+            await updateDoc(ref, dotted);
+        } catch (e) {
+            // Doc doesn't exist — seed it.
+            const seedMod = {};
+            for (const k in patch) if (patch[k] !== undefined) seedMod[k] = patch[k];
+            await setDoc(ref, {
+                staffName,
+                modules: { [mId]: seedMod },
+                updatedAt: new Date().toISOString(),
+            }, { merge: true });
+        }
+    };
+
     const moduleState = (mId) => progress?.modules?.[mId] || { lessonsCompleted: [], attempts: [], passed: false, locked: false };
 
     const markLessonComplete = async (mId, lId) => {
         const cur = moduleState(mId);
         if (cur.lessonsCompleted.includes(lId)) return;
-        const next = {
-            ...progress,
+        // Optimistic local update.
+        const newLessons = [...cur.lessonsCompleted, lId];
+        setProgress(prev => ({
+            ...(prev || {}),
             modules: {
-                ...(progress?.modules || {}),
-                [mId]: { ...cur, lessonsCompleted: [...cur.lessonsCompleted, lId] },
+                ...(prev?.modules || {}),
+                [mId]: { ...cur, lessonsCompleted: newLessons },
             },
-        };
-        await persistProgress(next);
+        }));
+        // Granular write — only mutates `modules.${mId}.lessonsCompleted`.
+        await persistModulePatch(mId, { lessonsCompleted: newLessons });
     };
 
     const submitQuiz = async () => {
@@ -184,21 +213,23 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const lastTwoFailed = attempts.length >= 2 && !attempts[attempts.length - 1].passed && !attempts[attempts.length - 2].passed;
         const locked = passed ? false : lastTwoFailed;
 
-        const next = {
-            ...progress,
-            modules: {
-                ...(progress?.modules || {}),
-                [m.id]: {
-                    ...cur,
-                    attempts,
-                    passed: cur.passed || passed,
-                    passedAt: passed && !cur.passed ? new Date().toISOString() : cur.passedAt,
-                    locked,
-                    lockedAt: locked && !cur.locked ? new Date().toISOString() : cur.lockedAt || null,
-                },
-            },
+        const patch = {
+            attempts,
+            passed: cur.passed || passed,
+            locked,
         };
-        await persistProgress(next);
+        if (passed && !cur.passed) patch.passedAt = new Date().toISOString();
+        if (locked && !cur.locked) patch.lockedAt = new Date().toISOString();
+
+        // Optimistic local update.
+        setProgress(prev => ({
+            ...(prev || {}),
+            modules: {
+                ...(prev?.modules || {}),
+                [m.id]: { ...cur, ...patch, lockedAt: patch.lockedAt ?? cur.lockedAt ?? null, passedAt: patch.passedAt ?? cur.passedAt },
+            },
+        }));
+        await persistModulePatch(m.id, patch);
         setLastResult({ score, correct, total: m.quiz.questions.length, passed, locked });
         setView("quiz-result");
     };
@@ -216,11 +247,16 @@ export default function TrainingHub({ staffName, language, staffList }) {
     };
 
     const clearLock = async (staffDocId, moduleId) => {
+        // Keep the attempts history for audit — repeat failers are valuable
+        // information for managers to identify training gaps. Just unlock
+        // and clear the lockedAt timestamp; the staff can retake the quiz
+        // and a fresh attempt gets appended.
         const ref = doc(db, "training_v2", staffDocId);
         await updateDoc(ref, {
             [`modules.${moduleId}.locked`]: false,
-            [`modules.${moduleId}.attempts`]: [],
             [`modules.${moduleId}.lockedAt`]: deleteField(),
+            [`modules.${moduleId}.unlockedAt`]: new Date().toISOString(),
+            [`modules.${moduleId}.unlockedBy`]: staffName,
         });
         loadTracker();
     };

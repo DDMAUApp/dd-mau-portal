@@ -234,7 +234,32 @@ export default function App() {
         });
         return () => unsubscribe();
     }, []);
+    // Validate the persisted staffName against the live staffList. If admin
+    // deleted the staff member while their device still had the localStorage
+    // entry, force a clean logout instead of silently leaving them "signed
+    // in" as a name that no longer exists (no shifts, no permissions, no
+    // way to detect the orphan from the UI).
+    useEffect(() => {
+        if (!staffName) return;
+        if (!Array.isArray(staffList) || staffList.length === 0) return;
+        const exists = staffList.some(s => s.name === staffName);
+        if (!exists) {
+            console.warn(`[session] staffName "${staffName}" not in staffList — forcing logout`);
+            setStaffName(null);
+            setActiveTab("home");
+        }
+    }, [staffName, staffList]);
     const staffIsAdmin = isAdmin(staffName, staffList);
+    // Guard: if a non-admin restored a session that landed on admin/labor,
+    // bounce them back to Home. Otherwise the tab gate hides the content
+    // and they see a blank screen + a sidebar item highlighted that they
+    // don't have permission for.
+    useEffect(() => {
+        if (!staffName) return;
+        if ((activeTab === "admin" || activeTab === "labor") && !staffIsAdmin) {
+            setActiveTab("home");
+        }
+    }, [staffName, staffIsAdmin, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
     // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
     // open the Recipes tab even when they're not at a DD Mau location.
@@ -246,6 +271,11 @@ export default function App() {
         const loc = staff?.location || "webster";
         setStaffLocation(loc);
         setActiveLocation(loc === "both" ? "webster" : loc);
+        // Reset to Home on every fresh login. Without this, a previous user's
+        // last tab — even "admin" — would persist across sign-ins on a shared
+        // device. The render gate hides admin/labor for non-admins, but they
+        // see a blank screen until they tap Home. Cleaner to start at Home.
+        setActiveTab("home");
     };
     if (!staffName) {
         return <HomePage onSelectStaff={handleSelectStaff} language={language} staffList={staffList} />;
