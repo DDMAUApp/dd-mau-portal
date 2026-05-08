@@ -78,6 +78,24 @@ const resolveStaffSide = (staff) => {
 
 const isOnSide = (staff, side) => resolveStaffSide(staff) === side;
 
+// Role groups — used by staffing-need slots and day templates to scope which
+// staff can fill a given slot. "any" = no role filter (legacy / catch-all).
+const SLOT_ROLE_GROUPS = [
+    { id: "any",             labelEn: "Any",              labelEs: "Cualquiera",       emoji: "👥", roles: null },
+    { id: "foh-staff",       labelEn: "FOH",              labelEs: "FOH",              emoji: "🧑‍💼", roles: ["FOH"] },
+    { id: "shift-lead",      labelEn: "Shift Lead",       labelEs: "Líder de Turno",   emoji: "🛡️", roles: ["Shift Lead"] },
+    { id: "manager",         labelEn: "Manager",          labelEs: "Gerente",          emoji: "👔", roles: ["Manager", "Asst Manager", "Owner"] },
+    { id: "kitchen-manager", labelEn: "Kitchen Manager",  labelEs: "Gerente Cocina",   emoji: "🧑‍🍳", roles: ["Kitchen Manager", "Asst Kitchen Manager"] },
+    { id: "boh-staff",       labelEn: "BOH",              labelEs: "BOH",              emoji: "🔥", roles: ["BOH", "Pho", "Pho Station", "Grill", "Fryer", "Fried Rice", "Dish", "Bao/Tacos/Banh Mi", "Spring Rolls/Prep", "Prep"] },
+];
+const SLOT_ROLE_BY_ID = Object.fromEntries(SLOT_ROLE_GROUPS.map(g => [g.id, g]));
+const isRoleEligible = (staffRole, roleGroupId) => {
+    if (!roleGroupId || roleGroupId === "any") return true;
+    const group = SLOT_ROLE_BY_ID[roleGroupId];
+    if (!group || !group.roles) return true;
+    return group.roles.includes(staffRole);
+};
+
 // Role-family color tokens for shift cubes.
 const roleColors = (role) => {
     if (!role) return { bg: 'bg-gray-100', border: 'border-gray-300', text: 'text-gray-800' };
@@ -207,6 +225,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [staffingNeeds, setStaffingNeeds] = useState([]);
     const [showNeedModal, setShowNeedModal] = useState(false);
     const [fillingNeed, setFillingNeed] = useState(null); // need being filled when AvailableStaffModal is open
+    // Day templates (reusable patterns: morning needs 3 FOH + 1 Lead + 1 Manager, etc.)
+    const [scheduleTemplates, setScheduleTemplates] = useState([]);
+    const [showTemplateEditor, setShowTemplateEditor] = useState(false);
+    const [editingTemplate, setEditingTemplate] = useState(null); // template being edited / null = creating
+    const [showApplyTemplate, setShowApplyTemplate] = useState(false);
     // In-app notifications (bell drawer)
     const [notifications, setNotifications] = useState([]);
     const [showNotifDrawer, setShowNotifDrawer] = useState(false);
@@ -263,6 +286,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setStaffingNeeds(items);
         }, (err) => console.error('staffing_needs snapshot error:', err));
+        return unsub;
+    }, []);
+
+    // ── Listen for day templates ──
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'schedule_templates'), (snap) => {
+            const items = [];
+            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+            setScheduleTemplates(items);
+        }, (err) => console.error('schedule_templates snapshot error:', err));
         return unsub;
     }, []);
 
@@ -756,6 +789,80 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Day templates ──────────────────────────────────────────────────────
+    // A template defines a named shape for a typical day, e.g.:
+    //   "Friday FOH" → Morning block 9-3 (3 FOH + 1 Lead + 1 Mgr) + Night block 4-10 (5 FOH + 2 Lead + 1 Mgr)
+    // Applying the template to a date creates one staffing_need per slot
+    // (so each role gets its own fillable slot). Apply is non-destructive —
+    // existing needs/shifts on that date are NOT touched.
+    const handleSaveTemplate = async (tpl) => {
+        if (!canEdit) return;
+        try {
+            if (tpl.id) {
+                const { id, ...data } = tpl;
+                await updateDoc(doc(db, 'schedule_templates', id), {
+                    ...data,
+                    updatedAt: serverTimestamp(),
+                    updatedBy: staffName,
+                });
+            } else {
+                await addDoc(collection(db, 'schedule_templates'), {
+                    ...tpl,
+                    createdAt: serverTimestamp(),
+                    createdBy: staffName,
+                });
+            }
+            setShowTemplateEditor(false);
+            setEditingTemplate(null);
+        } catch (e) {
+            console.error('Save template failed:', e);
+            alert(tx('Could not save template: ', 'No se pudo guardar la plantilla: ') + e.message);
+        }
+    };
+
+    const handleDeleteTemplate = async (id) => {
+        if (!canEdit) return;
+        if (!confirm(tx('Delete this template? Already-applied needs will NOT be removed.', '¿Eliminar esta plantilla? Las necesidades ya aplicadas NO se quitarán.'))) return;
+        try {
+            await deleteDoc(doc(db, 'schedule_templates', id));
+        } catch (e) {
+            console.error('Delete template failed:', e);
+        }
+    };
+
+    const handleApplyTemplate = async (tpl, dateStr) => {
+        if (!canEdit) return;
+        if (!tpl || !dateStr) return;
+        try {
+            // Each block × slot becomes one staffing_need.
+            for (const block of (tpl.blocks || [])) {
+                for (const slot of (block.slots || [])) {
+                    if (!slot.count || slot.count <= 0) continue;
+                    await addDoc(collection(db, 'staffing_needs'), {
+                        date: dateStr,
+                        side: tpl.side || 'foh',
+                        location: tpl.location || (storeLocation !== 'both' ? storeLocation : 'webster'),
+                        startTime: block.startTime,
+                        endTime: block.endTime,
+                        count: slot.count,
+                        roleGroup: slot.roleGroup || 'any',
+                        notes: block.label ? `${tpl.name} · ${block.label}` : tpl.name,
+                        filledStaff: [],
+                        filledShiftIds: [],
+                        fromTemplateId: tpl.id,
+                        createdBy: staffName,
+                        createdAt: serverTimestamp(),
+                    });
+                }
+            }
+            setShowApplyTemplate(false);
+            alert(tx(`✅ Applied "${tpl.name}" to ${dateStr}.`, `✅ "${tpl.name}" aplicada a ${dateStr}.`));
+        } catch (e) {
+            console.error('Apply template failed:', e);
+            alert(tx('Apply error: ', 'Error al aplicar: ') + e.message);
+        }
+    };
+
     // ── Date blocks (closed days / no-time-off days) ───────────────────────
     const handleAddBlock = async (block) => {
         if (!canEdit) return;
@@ -1097,9 +1204,34 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             alert(tx('No drafts to publish.', 'Sin borradores para publicar.'));
             return;
         }
+        // Audit any open / over-filled staffing needs for this week + side and surface
+        // them in the confirm dialog. The user can still publish — it's a warning,
+        // not a block — but they're aware of gaps before staff get notified.
+        const weekStartStr = toDateStr(weekStart);
+        const weekEndStr = toDateStr(addDays(weekStart, 7));
+        const relevantNeeds = staffingNeeds.filter(n =>
+            n.date >= weekStartStr && n.date < weekEndStr && n.side === side &&
+            (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation)
+        );
+        const underFilled = relevantNeeds.filter(n => (n.filledStaff || []).length < (n.count || 0));
+        const overFilled = relevantNeeds.filter(n => (n.filledStaff || []).length > (n.count || 0));
+        let warningMsg = '';
+        if (underFilled.length > 0) {
+            warningMsg += '\n\n⚠️ ' + tx(`${underFilled.length} need(s) UNDER-FILLED:`, `${underFilled.length} necesidad(es) SIN COMPLETAR:`);
+            for (const n of underFilled.slice(0, 5)) {
+                warningMsg += `\n  · ${n.date} ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}: ${(n.filledStaff || []).length}/${n.count}`;
+            }
+            if (underFilled.length > 5) warningMsg += `\n  · ${tx(`...and ${underFilled.length - 5} more`, `...y ${underFilled.length - 5} más`)}`;
+        }
+        if (overFilled.length > 0) {
+            warningMsg += '\n\n⚠️ ' + tx(`${overFilled.length} need(s) OVER-FILLED:`, `${overFilled.length} necesidad(es) EXCEDIDAS:`);
+            for (const n of overFilled.slice(0, 5)) {
+                warningMsg += `\n  · ${n.date} ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}: ${(n.filledStaff || []).length}/${n.count}`;
+            }
+        }
         if (!confirm(tx(
-            `Publish ${drafts.length} draft shift(s) for ${side === 'foh' ? 'FOH' : 'BOH'} this week?`,
-            `¿Publicar ${drafts.length} turno(s) borrador para ${side === 'foh' ? 'FOH' : 'BOH'} esta semana?`,
+            `Publish ${drafts.length} draft shift(s) for ${side === 'foh' ? 'FOH' : 'BOH'} this week?${warningMsg}`,
+            `¿Publicar ${drafts.length} turno(s) borrador para ${side === 'foh' ? 'FOH' : 'BOH'} esta semana?${warningMsg}`,
         ))) return;
         try {
             const batch = writeBatch(db);
@@ -1418,8 +1550,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             className="px-3 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
                             🚫 {tx('Blackouts', 'Bloqueos')}
                         </button>
+                        <button onClick={() => setShowApplyTemplate(true)}
+                            title={tx('Apply a day template to a date', 'Aplicar plantilla a una fecha')}
+                            className="px-3 py-2 rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-300 text-xs font-bold hover:bg-indigo-200">
+                            📋 {tx('Templates', 'Plantillas')}
+                        </button>
                         <button onClick={() => setShowNeedModal(true)}
-                            title={tx('Define staffing need (e.g. need 5 morning, 7 night)', 'Define necesidad de personal (ej. 5 mañana, 7 noche)')}
+                            title={tx('Define a single staffing need', 'Define una necesidad individual')}
                             className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">
                             👥 {tx('+ Slot', '+ Slot')}
                         </button>
@@ -1460,19 +1597,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             {weekNeeds.map(n => {
                                 const filled = (n.filledStaff || []).length;
                                 const open = Math.max(0, (n.count || 0) - filled);
-                                const fullyStaffed = open === 0;
+                                const overFilled = filled > (n.count || 0);
+                                const fullyStaffed = open === 0 && !overFilled;
                                 const date = parseLocalDate(n.date);
                                 const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
+                                const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
                                 return (
-                                    <div key={n.id} className={`p-2 rounded border ${fullyStaffed ? 'bg-green-50 border-green-300' : 'bg-white border-blue-200'}`}>
+                                    <div key={n.id} className={`p-2 rounded border ${overFilled ? 'bg-red-50 border-red-400' : fullyStaffed ? 'bg-green-50 border-green-300' : 'bg-white border-blue-200'}`}>
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="min-w-0 flex-1">
-                                                <div className="font-bold text-gray-800">
-                                                    {fullyStaffed ? '✅ ' : ''}{dayLabel} {n.date} · {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}
-                                                    {n.notes && <span className="ml-2 italic text-gray-500 font-normal">({n.notes})</span>}
+                                                <div className="font-bold text-gray-800 flex items-center gap-1.5 flex-wrap">
+                                                    {overFilled ? '⚠️ ' : fullyStaffed ? '✅ ' : ''}{dayLabel} {n.date} · {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}
+                                                    {roleGroup && roleGroup.id !== 'any' && (
+                                                        <span className="inline-block px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                                                            {roleGroup.emoji} {tx(roleGroup.labelEn, roleGroup.labelEs)}
+                                                        </span>
+                                                    )}
+                                                    {n.notes && <span className="italic text-gray-500 font-normal text-xs">({n.notes})</span>}
                                                 </div>
-                                                <div className="text-[10px] text-gray-600">
-                                                    {filled} {tx('of', 'de')} {n.count} {tx('filled', 'asignados')} · {LOCATION_LABELS[n.location] || n.location}
+                                                <div className={`text-[10px] ${overFilled ? 'text-red-700 font-bold' : 'text-gray-600'}`}>
+                                                    {filled} {tx('of', 'de')} {n.count} {tx('filled', 'asignados')}
+                                                    {overFilled && ` · ${tx('OVER by', 'EXCESO de')} ${filled - n.count}`}
+                                                    · {LOCATION_LABELS[n.location] || n.location}
                                                 </div>
                                                 {filled > 0 && (
                                                     <div className="flex flex-wrap gap-1 mt-1">
@@ -1683,6 +1829,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     storeLocation={storeLocation}
                     isStaffOffOn={isStaffOffOn}
                     isEn={isEn}
+                    requiredRoleGroup={fillingNeed?.roleGroup || null}
                     onSchedule={(staff) => {
                         // If we're filling a staffing need, create the shift via the
                         // need handler (so the slot is marked filled). Otherwise it's
@@ -1703,6 +1850,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     storeLocation={storeLocation}
                     side={side}
                     weekStart={weekStart}
+                    isEn={isEn}
+                />
+            )}
+            {showTemplateEditor && canEdit && (
+                <TemplateEditorModal
+                    initial={editingTemplate}
+                    onClose={() => { setShowTemplateEditor(false); setEditingTemplate(null); }}
+                    onSave={handleSaveTemplate}
+                    storeLocation={storeLocation}
+                    side={side}
+                    isEn={isEn}
+                />
+            )}
+            {showApplyTemplate && canEdit && (
+                <ApplyTemplateModal
+                    templates={scheduleTemplates}
+                    onClose={() => setShowApplyTemplate(false)}
+                    onApply={handleApplyTemplate}
+                    onEdit={(tpl) => { setEditingTemplate(tpl); setShowTemplateEditor(true); setShowApplyTemplate(false); }}
+                    onCreate={() => { setEditingTemplate(null); setShowTemplateEditor(true); setShowApplyTemplate(false); }}
+                    onDelete={handleDeleteTemplate}
+                    weekStart={weekStart}
+                    side={side}
                     isEn={isEn}
                 />
             )}
@@ -2824,17 +2994,22 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
 // by current weekly hours so the manager can pick the lowest-hours person to
 // avoid pushing anyone into OT. Tap any name to jump straight into the
 // Add Shift modal pre-filled for that staff + date.
-function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule }) {
+function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup }) {
     const tx = (en, es) => (isEn ? en : es);
     const date = parseLocalDate(dateStr);
     const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
     const dayKey = date ? dayKeys[date.getDay()] : null;
     const dayName = date ? (isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[date.getDay()] : '';
+    // Apply role filter when filling a slot that wants a specific role group.
+    const roleFilteredStaff = requiredRoleGroup && requiredRoleGroup !== 'any'
+        ? sideStaff.filter(s => isRoleEligible(s.role, requiredRoleGroup))
+        : sideStaff;
+    const requiredGroup = requiredRoleGroup ? SLOT_ROLE_BY_ID[requiredRoleGroup] : null;
 
     // Compute each staff's weekly hours (across the FLSA week containing dateStr)
     // and their availability state for this specific day.
     const weekStartLocal = date ? startOfWeek(date) : null;
-    const rows = sideStaff.map(s => {
+    const rows = roleFilteredStaff.map(s => {
         // Total this week's hours
         let weeklyHours = 0;
         if (weekStartLocal) {
@@ -2880,7 +3055,14 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-mint-700">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
-                        <p className="text-xs text-gray-500">{dayName} · {dateStr}</p>
+                        <p className="text-xs text-gray-500">
+                            {dayName} · {dateStr}
+                            {requiredGroup && requiredGroup.id !== 'any' && (
+                                <span className="ml-2 inline-block px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                                    {requiredGroup.emoji} {tx(requiredGroup.labelEn, requiredGroup.labelEs)} {tx('only', 'solo')}
+                                </span>
+                            )}
+                        </p>
                     </div>
                     <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
                 </div>
@@ -3224,6 +3406,229 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
                         {tx('Save Need', 'Guardar Necesidad')}
                     </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+// ── TemplateEditorModal ───────────────────────────────────────────────────
+// Manager creates a named template: side + location + N blocks. Each block has
+// a label ("Morning") + start/end + role-slot rows (FOH / Lead / Manager etc.
+// with a count). Saved to schedule_templates.
+function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const [tpl, setTpl] = useState(() => initial || {
+        name: "",
+        side: side,
+        location: storeLocation && storeLocation !== "both" ? storeLocation : "webster",
+        blocks: [
+            { label: tx("Morning", "Mañana"), startTime: "09:00", endTime: "15:00", slots: [{ roleGroup: "foh-staff", count: 3 }] },
+        ],
+    });
+    const update = (k, v) => setTpl(t => ({ ...t, [k]: v }));
+    const updateBlock = (bi, k, v) => setTpl(t => ({
+        ...t,
+        blocks: t.blocks.map((b, i) => i === bi ? { ...b, [k]: v } : b),
+    }));
+    const updateSlot = (bi, si, k, v) => setTpl(t => ({
+        ...t,
+        blocks: t.blocks.map((b, i) => i === bi ? {
+            ...b,
+            slots: b.slots.map((s, j) => j === si ? { ...s, [k]: v } : s),
+        } : b),
+    }));
+    const addBlock = () => setTpl(t => ({
+        ...t,
+        blocks: [...t.blocks, { label: "", startTime: "16:00", endTime: "22:00", slots: [{ roleGroup: "foh-staff", count: 1 }] }],
+    }));
+    const removeBlock = (bi) => setTpl(t => ({ ...t, blocks: t.blocks.filter((_, i) => i !== bi) }));
+    const addSlot = (bi) => setTpl(t => ({
+        ...t,
+        blocks: t.blocks.map((b, i) => i === bi ? { ...b, slots: [...b.slots, { roleGroup: "any", count: 1 }] } : b),
+    }));
+    const removeSlot = (bi, si) => setTpl(t => ({
+        ...t,
+        blocks: t.blocks.map((b, i) => i === bi ? { ...b, slots: b.slots.filter((_, j) => j !== si) } : b),
+    }));
+
+    const canSave = tpl.name.trim() && tpl.blocks.length > 0 && tpl.blocks.every(b => b.startTime && b.endTime && b.startTime < b.endTime && b.slots.length > 0);
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-indigo-700">📋 {initial ? tx("Edit Template", "Editar Plantilla") : tx("New Template", "Nueva Plantilla")}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {/* Name + Side + Location */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Template name", "Nombre")}</label>
+                        <input type="text" value={tpl.name} onChange={e => update("name", e.target.value)}
+                            placeholder={tx("e.g. Friday FOH, Sunday Brunch", "ej. Viernes FOH")}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Side", "Lado")}</label>
+                            <div className="grid grid-cols-2 gap-1">
+                                <button onClick={() => update("side", "foh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "foh" ? "bg-teal-600 text-white border-teal-600" : "bg-white text-gray-600 border-gray-300"}`}>FOH</button>
+                                <button onClick={() => update("side", "boh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "boh" ? "bg-orange-600 text-white border-orange-600" : "bg-white text-gray-600 border-gray-300"}`}>BOH</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Location", "Ubicación")}</label>
+                            <select value={tpl.location} onChange={e => update("location", e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
+                                <option value="webster">{LOCATION_LABELS.webster}</option>
+                                <option value="maryland">{LOCATION_LABELS.maryland}</option>
+                                <option value="both">{LOCATION_LABELS.both}</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    {/* Blocks */}
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-gray-700">{tx("Time blocks", "Bloques de tiempo")} ({tpl.blocks.length})</span>
+                            <button onClick={addBlock} className="text-xs px-2 py-1 rounded bg-indigo-100 text-indigo-700 font-bold">+ {tx("Block", "Bloque")}</button>
+                        </div>
+                        {tpl.blocks.map((b, bi) => (
+                            <div key={bi} className="border border-gray-200 rounded-lg p-2 space-y-2 bg-gray-50">
+                                <div className="flex items-center gap-1">
+                                    <input type="text" value={b.label} onChange={e => updateBlock(bi, "label", e.target.value)}
+                                        placeholder={tx("Label (e.g. Morning)", "Etiqueta (ej. Mañana)")}
+                                        className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs" />
+                                    {tpl.blocks.length > 1 && (
+                                        <button onClick={() => removeBlock(bi)} className="px-2 py-1 rounded bg-red-100 text-red-700 text-xs">×</button>
+                                    )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="text-[10px] text-gray-500 block">{tx("From", "Desde")}</label>
+                                        <input type="time" value={b.startTime} onChange={e => updateBlock(bi, "startTime", e.target.value)}
+                                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs" />
+                                    </div>
+                                    <div>
+                                        <label className="text-[10px] text-gray-500 block">{tx("To", "Hasta")}</label>
+                                        <input type="time" value={b.endTime} onChange={e => updateBlock(bi, "endTime", e.target.value)}
+                                            className="w-full border border-gray-300 rounded px-2 py-1 text-xs" />
+                                    </div>
+                                </div>
+                                <div className="space-y-1">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[10px] font-bold text-gray-600">{tx("Role slots", "Slots por rol")}</span>
+                                        <button onClick={() => addSlot(bi)} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-bold">+ {tx("Slot", "Slot")}</button>
+                                    </div>
+                                    {b.slots.map((slot, si) => (
+                                        <div key={si} className="flex items-center gap-1">
+                                            <select value={slot.roleGroup || "any"} onChange={e => updateSlot(bi, si, "roleGroup", e.target.value)}
+                                                className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs bg-white">
+                                                {SLOT_ROLE_GROUPS.map(g => (
+                                                    <option key={g.id} value={g.id}>{g.emoji} {tx(g.labelEn, g.labelEs)}</option>
+                                                ))}
+                                            </select>
+                                            <input type="number" min="1" max="20" value={slot.count}
+                                                onChange={e => updateSlot(bi, si, "count", Math.max(1, parseInt(e.target.value) || 1))}
+                                                className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-center" />
+                                            {b.slots.length > 1 && (
+                                                <button onClick={() => removeSlot(bi, si)} className="px-1.5 py-1 rounded bg-red-100 text-red-700 text-xs">×</button>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+                <div className="border-t border-gray-200 p-3 flex gap-2">
+                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Cancel", "Cancelar")}</button>
+                    <button onClick={() => canSave && onSave(tpl)} disabled={!canSave}
+                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSave ? "bg-indigo-600 hover:bg-indigo-700" : "bg-gray-300"}`}>
+                        {tx("Save Template", "Guardar Plantilla")}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── ApplyTemplateModal ────────────────────────────────────────────────────
+// Pick a template + a date → bulk-creates all the staffing_needs at once.
+// Also lets manager edit/delete an existing template, or create a new one.
+function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onDelete, weekStart, side, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const [pickedTemplate, setPickedTemplate] = useState(null);
+    const [dateStr, setDateStr] = useState(toDateStr(weekStart));
+    const filtered = templates.filter(t => t.side === side);
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-bold text-indigo-700">📋 {tx("Day Templates", "Plantillas del Día")}</h3>
+                        <p className="text-xs text-gray-500">{side === "foh" ? "FOH" : "BOH"}</p>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <button onClick={onCreate}
+                        className="w-full py-2 rounded-lg bg-indigo-600 text-white font-bold text-sm">+ {tx("New template", "Nueva plantilla")}</button>
+                    {filtered.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-6">{tx("No templates yet for this side. Create one above.", "Aún no hay plantillas para este lado. Crea una arriba.")}</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {filtered.map(t => {
+                                const totalSlots = (t.blocks || []).reduce((sum, b) => sum + (b.slots || []).reduce((s, sl) => s + (sl.count || 0), 0), 0);
+                                const isPicked = pickedTemplate && pickedTemplate.id === t.id;
+                                return (
+                                    <div key={t.id} className={`p-2 rounded-lg border-2 ${isPicked ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <button onClick={() => setPickedTemplate(t)} className="flex-1 text-left">
+                                                <div className="font-bold text-sm text-gray-800">{t.name}</div>
+                                                <div className="text-[10px] text-gray-500">
+                                                    {(t.blocks || []).length} {tx("block(s)", "bloque(s)")} · {totalSlots} {tx("total slots", "slots totales")} · {LOCATION_LABELS[t.location] || t.location}
+                                                </div>
+                                                {(t.blocks || []).map((b, bi) => (
+                                                    <div key={bi} className="text-[10px] text-gray-600 mt-0.5">
+                                                        {b.label && <b>{b.label}: </b>}
+                                                        {formatTime12h(b.startTime)}–{formatTime12h(b.endTime)} ·{" "}
+                                                        {(b.slots || []).map((s, si) => {
+                                                            const g = SLOT_ROLE_BY_ID[s.roleGroup || "any"];
+                                                            return (
+                                                                <span key={si}>
+                                                                    {si > 0 && ", "}
+                                                                    {s.count} {g ? (isEn ? g.labelEn : g.labelEs) : (s.roleGroup || "?")}
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ))}
+                                            </button>
+                                            <div className="flex flex-col gap-1">
+                                                <button onClick={() => onEdit(t)} className="px-2 py-0.5 rounded bg-gray-100 text-gray-700 text-[10px] font-bold hover:bg-gray-200">✏️</button>
+                                                <button onClick={() => onDelete(t.id)} className="px-2 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold hover:bg-red-200">×</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                    {pickedTemplate && (
+                        <div className="border-t border-gray-200 pt-3 space-y-2">
+                            <div className="text-xs font-bold text-gray-700">{tx("Apply", "Aplicar")} "{pickedTemplate.name}" {tx("to date:", "a fecha:")}</div>
+                            <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            <button onClick={() => onApply(pickedTemplate, dateStr)}
+                                className="w-full py-2 rounded-lg bg-green-600 text-white font-bold text-sm hover:bg-green-700">
+                                ✓ {tx("Apply Template", "Aplicar Plantilla")}
+                            </button>
+                            <p className="text-[10px] text-gray-500 text-center">{tx("Creates one staffing need per role slot. You fill them next.", "Crea una necesidad por slot. Las llenas luego.")}</p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
