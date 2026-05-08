@@ -24,6 +24,7 @@ const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'));
 const AiAssistant = lazy(() => import('./components/AiAssistant'));
 const TardinessTracker = lazy(() => import('./components/TardinessTracker'));
+const ShiftHandoff = lazy(() => import('./components/ShiftHandoff'));
 
 // Error boundary — catches render errors in child components
 class ErrorBoundary extends Component {
@@ -265,8 +266,8 @@ export default function App() {
         if ((activeTab === "admin" || activeTab === "labor") && !staffIsAdmin) {
             setActiveTab("home");
         }
-        // tardies tab is manager-or-admin only — same defensive bounce.
-        if (activeTab === "tardies" && !isManager) {
+        // tardies + handoff are manager-or-admin only — same defensive bounce.
+        if ((activeTab === "tardies" || activeTab === "handoff") && !isManager) {
             setActiveTab("home");
         }
     }, [staffName, staffIsAdmin, isManager, activeTab]);
@@ -415,6 +416,7 @@ export default function App() {
                         group because managers see it but staff don't. */}
                     {isManager && (
                         <div className="pt-3 mt-2 border-t border-white/10 space-y-0.5">
+                            {renderSidebarBtn({ tab: "handoff", icon: "🤝", labelEn: "Handoff", labelEs: "Entrega" })}
                             {renderSidebarBtn({ tab: "tardies", icon: "⏰", labelEn: "Tardies", labelEs: "Tardanzas" })}
                         </div>
                     )}
@@ -583,6 +585,7 @@ export default function App() {
                         {activeTab === "insurance" && <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "ai" && <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "tardies" && isManager && <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />}
+                        {activeTab === "handoff" && isManager && <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
                     </ErrorBoundary>
                 </Suspense>
