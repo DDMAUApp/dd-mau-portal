@@ -15,6 +15,8 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
+            const [showBulkTag, setShowBulkTag] = useState(false);
+            const [bulkSearch, setBulkSearch] = useState("");
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
@@ -79,6 +81,14 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 try {
                     await setDoc(doc(db, "config", "staff"), { list: updatedList });
                 } catch (err) { console.error("Error saving staff:", err); }
+            };
+
+            // Tap-to-flip bulk tag handler — used by the Bulk Tag modal.
+            // Optimistic update: state changes immediately, Firestore catches up.
+            const handleBulkUpdate = async (id, patch) => {
+                const updated = staffList.map(s => s.id === id ? { ...s, ...patch } : s);
+                setStaffList(updated);
+                await saveStaffToFirestore(updated);
             };
 
             const handleSavePin = async (id) => {
@@ -270,7 +280,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
                         {staffExpanded && (
                             <div className="mt-2">
-                                <div className="flex gap-1 justify-center mb-3">
+                                <div className="flex gap-1 justify-center mb-3 flex-wrap">
                                     {[{k:"all",en:"All",es:"Todos"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
                                         <button key={f.k} onClick={() => setStaffFilter(f.k)}
                                             className={`px-3 py-1 rounded-full text-xs font-bold border transition ${staffFilter === f.k ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-600 border-blue-300 hover:bg-blue-50"}`}>
@@ -278,6 +288,10 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                             {f.k !== "all" && <span className="ml-1 opacity-70">({staffList.filter(s => s.location === f.k || s.location === "both").length})</span>}
                                         </button>
                                     ))}
+                                    <button onClick={() => setShowBulkTag(true)}
+                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-purple-600 text-white border-purple-600 hover:bg-purple-700 transition ml-2">
+                                        🏷 {language === "es" ? "Etiquetar en lote" : "Bulk Tag"}
+                                    </button>
                                 </div>
                                 <div className="space-y-2 mb-4">
                                     {filteredStaff.map(person => (
@@ -531,6 +545,87 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                             : "Review inventory counts from previous days. Changes vs the prior day are shown in green/red."}</p>
                         <InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} />
                     </div>
+
+                    {/* ── Bulk Tag Modal — fast scheduleSide / isMinor tagging ── */}
+                    {showBulkTag && (() => {
+                        const search = bulkSearch.toLowerCase().trim();
+                        const visible = staffList
+                            .filter(s => staffFilter === "all" || s.location === staffFilter || s.location === "both")
+                            .filter(s => !search || (s.name || "").toLowerCase().includes(search) || (s.role || "").toLowerCase().includes(search))
+                            .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+                        const fohCount = staffList.filter(s => (s.scheduleSide || "foh") === "foh").length;
+                        const bohCount = staffList.filter(s => s.scheduleSide === "boh").length;
+                        const minorCount = staffList.filter(s => s.isMinor).length;
+                        const untagged = staffList.filter(s => !s.scheduleSide).length;
+                        return (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                                <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                                    <div className="border-b border-gray-200 p-4">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h3 className="text-lg font-bold text-purple-700">🏷 {language === "es" ? "Etiquetar Personal en Lote" : "Bulk Tag Staff"}</h3>
+                                            <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
+                                                className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                                        </div>
+                                        <p className="text-xs text-gray-500 mb-2">
+                                            {language === "es"
+                                                ? "Toca para alternar. Los cambios se guardan al instante."
+                                                : "Tap to flip. Changes save instantly."}
+                                        </p>
+                                        <div className="flex flex-wrap gap-2 text-[10px] mb-2">
+                                            <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-bold">FOH: {fohCount}</span>
+                                            <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 font-bold">BOH: {bohCount}</span>
+                                            <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">🔑 {language === "es" ? "Menores" : "Minors"}: {minorCount}</span>
+                                            {untagged > 0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-bold">⚠ {language === "es" ? "Sin etiqueta" : "Untagged"}: {untagged}</span>}
+                                        </div>
+                                        <input type="text" value={bulkSearch} onChange={e => setBulkSearch(e.target.value)}
+                                            placeholder={language === "es" ? "Buscar nombre o rol…" : "Search name or role…"}
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                    </div>
+
+                                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                        {visible.length === 0 && (
+                                            <p className="text-center text-gray-400 text-sm py-8">{language === "es" ? "Sin resultados." : "No results."}</p>
+                                        )}
+                                        {visible.map(s => {
+                                            const side = s.scheduleSide || (s.role && ["BOH","Pho","Pho Station","Grill","Fryer","Fried Rice","Dish","Bao/Tacos/Banh Mi","Spring Rolls/Prep","Prep","Kitchen Manager","Asst Kitchen Manager"].includes(s.role) ? "boh" : "foh");
+                                            const explicitTagged = !!s.scheduleSide;
+                                            return (
+                                                <div key={s.id} className={`flex items-center gap-2 p-2 rounded-lg border ${explicitTagged ? "bg-white border-gray-200" : "bg-red-50 border-red-200"}`}>
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="font-bold text-sm text-gray-800 truncate flex items-center gap-1">
+                                                            {s.name}
+                                                            {!explicitTagged && <span className="text-[9px] text-red-600 font-bold">⚠ {language === "es" ? "inferido" : "inferred"}</span>}
+                                                        </div>
+                                                        <div className="text-[10px] text-gray-500 truncate">{s.role} · {LOCATION_LABELS[s.location] || s.location}</div>
+                                                    </div>
+                                                    <div className="flex gap-0.5">
+                                                        <button onClick={() => handleBulkUpdate(s.id, { scheduleSide: "foh" })}
+                                                            className={`px-2 py-1 rounded-l text-[10px] font-bold border ${side === "foh" && explicitTagged ? "bg-teal-600 text-white border-teal-600" : side === "foh" ? "bg-teal-100 text-teal-800 border-teal-300" : "bg-white text-gray-500 border-gray-300"}`}>
+                                                            FOH
+                                                        </button>
+                                                        <button onClick={() => handleBulkUpdate(s.id, { scheduleSide: "boh" })}
+                                                            className={`px-2 py-1 rounded-r text-[10px] font-bold border-t border-r border-b ${side === "boh" && explicitTagged ? "bg-orange-600 text-white border-orange-600" : side === "boh" ? "bg-orange-100 text-orange-800 border-orange-300" : "bg-white text-gray-500 border-gray-300"}`}>
+                                                            BOH
+                                                        </button>
+                                                    </div>
+                                                    <button onClick={() => handleBulkUpdate(s.id, { isMinor: !s.isMinor })}
+                                                        title={language === "es" ? "Menor de edad" : "Minor"}
+                                                        className={`w-8 h-8 rounded text-sm font-bold border ${s.isMinor ? "bg-amber-500 text-white border-amber-600" : "bg-white text-gray-300 border-gray-300"}`}>
+                                                        🔑
+                                                    </button>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+
+                                    <div className="border-t border-gray-200 p-3">
+                                        <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
+                                            className="w-full py-2 rounded-lg bg-purple-700 text-white font-bold">{language === "es" ? "Listo" : "Done"}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                 </div>
             );
         }
