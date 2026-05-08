@@ -202,6 +202,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [showMyAvailModal, setShowMyAvailModal] = useState(false);
     // Click-a-day-header → "who's available?" picker
     const [availableForDate, setAvailableForDate] = useState(null);
+    // Staffing-needs (a.k.a. shift slots) — manager-defined "we need N people in this time block"
+    // Each filled slot becomes a real shift.
+    const [staffingNeeds, setStaffingNeeds] = useState([]);
+    const [showNeedModal, setShowNeedModal] = useState(false);
+    const [fillingNeed, setFillingNeed] = useState(null); // need being filled when AvailableStaffModal is open
     // In-app notifications (bell drawer)
     const [notifications, setNotifications] = useState([]);
     const [showNotifDrawer, setShowNotifDrawer] = useState(false);
@@ -248,6 +253,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setTimeOff(items);
         }, (err) => console.error('time_off snapshot error:', err));
+        return unsub;
+    }, []);
+
+    // ── Listen for staffing-needs / shift slots ──
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'staffing_needs'), (snap) => {
+            const items = [];
+            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+            setStaffingNeeds(items);
+        }, (err) => console.error('staffing_needs snapshot error:', err));
         return unsub;
     }, []);
 
@@ -652,6 +667,92 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 tx(`Manager denied your takeover of the ${detail} shift.`, `Gerente negó tu toma del turno ${detail}.`));
         } catch (e) {
             console.error('Deny failed:', e);
+        }
+    };
+
+    // ── Staffing needs (shift slots) ───────────────────────────────────────
+    // Workflow: manager defines a slot ("Friday morning FOH: 5 people 9–3").
+    // The slot stores a count plus a list of filledStaff names. Each fill
+    // creates a real shift in the `shifts` collection so the rest of the app
+    // (auto-fill, hours, swap, ICS export, etc.) treats it like any shift.
+    const handleAddNeed = async (need) => {
+        if (!canEdit) return;
+        try {
+            await addDoc(collection(db, 'staffing_needs'), {
+                ...need,
+                filledStaff: [],
+                filledShiftIds: [],
+                createdBy: staffName,
+                createdAt: serverTimestamp(),
+            });
+            setShowNeedModal(false);
+        } catch (e) {
+            console.error('Add need failed:', e);
+            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        }
+    };
+
+    const handleRemoveNeed = async (needId) => {
+        if (!canEdit) return;
+        if (!confirm(tx('Remove this staffing need? Shifts already filled will NOT be deleted.', '¿Quitar esta necesidad? Los turnos ya asignados NO se eliminarán.'))) return;
+        try {
+            await deleteDoc(doc(db, 'staffing_needs', needId));
+        } catch (e) {
+            console.error('Remove need failed:', e);
+        }
+    };
+
+    // Fill one slot of a need: create a real shift for that staff member, then
+    // append to the need's filledStaff[] + filledShiftIds[]. Used by the
+    // AvailableStaffModal flow when fillingNeed is set.
+    const fillNeedWithStaff = async (need, staffMember) => {
+        if (!canEdit) return;
+        try {
+            const shiftRef = await addDoc(collection(db, 'shifts'), {
+                staffName: staffMember.name,
+                date: need.date,
+                startTime: need.startTime,
+                endTime: need.endTime,
+                location: need.location,
+                isShiftLead: false,
+                isDouble: false,
+                notes: need.notes || tx('From staffing need', 'De necesidad de personal'),
+                published: true,
+                createdBy: staffName,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+                fromNeedId: need.id,
+            });
+            await updateDoc(doc(db, 'staffing_needs', need.id), {
+                filledStaff: [...(need.filledStaff || []), staffMember.name],
+                filledShiftIds: [...(need.filledShiftIds || []), shiftRef.id],
+            });
+            setFillingNeed(null);
+            setAvailableForDate(null);
+        } catch (e) {
+            console.error('Fill need failed:', e);
+            alert(tx('Could not fill: ', 'No se pudo asignar: ') + e.message);
+        }
+    };
+
+    const unfillNeedSlot = async (need, staffMemberName) => {
+        if (!canEdit) return;
+        // Find the matching shift and delete it, then prune the need.
+        const idx = (need.filledStaff || []).indexOf(staffMemberName);
+        if (idx < 0) return;
+        const shiftId = (need.filledShiftIds || [])[idx];
+        try {
+            if (shiftId) {
+                try { await deleteDoc(doc(db, 'shifts', shiftId)); } catch {}
+            }
+            const newFilled = (need.filledStaff || []).filter((_, i) => i !== idx);
+            const newIds = (need.filledShiftIds || []).filter((_, i) => i !== idx);
+            await updateDoc(doc(db, 'staffing_needs', need.id), {
+                filledStaff: newFilled,
+                filledShiftIds: newIds,
+            });
+        } catch (e) {
+            console.error('Unfill need slot failed:', e);
         }
     };
 
@@ -1317,6 +1418,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             className="px-3 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
                             🚫 {tx('Blackouts', 'Bloqueos')}
                         </button>
+                        <button onClick={() => setShowNeedModal(true)}
+                            title={tx('Define staffing need (e.g. need 5 morning, 7 night)', 'Define necesidad de personal (ej. 5 mañana, 7 noche)')}
+                            className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">
+                            👥 {tx('+ Slot', '+ Slot')}
+                        </button>
                         <button onClick={() => openAddModal()}
                             className="px-3 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
                             + {tx('Shift', 'Turno')}
@@ -1335,6 +1441,69 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 <div className="font-bold text-lg">DD Mau Schedule — {side === 'foh' ? 'Front of House' : 'Back of House'} — {LOCATION_LABELS[storeLocation] || storeLocation}</div>
                 <div className="text-sm">{personFilter ? `For: ${personFilter}` : 'All staff'}</div>
             </div>
+
+            {/* Staffing-needs banner — open slots for the current week, side-filtered.
+                Visible to managers/admin only. Tap 'Fill 1' to open the available-staff picker. */}
+            {canEdit && (() => {
+                const weekStartStr = toDateStr(weekStart);
+                const weekEndStr = toDateStr(addDays(weekStart, 7));
+                const weekNeeds = staffingNeeds.filter(n =>
+                    n.date >= weekStartStr && n.date < weekEndStr &&
+                    (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
+                    (n.side === side)
+                ).sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
+                if (weekNeeds.length === 0) return null;
+                return (
+                    <div className="mb-3 rounded-lg p-2 bg-blue-50 border-2 border-blue-300 text-xs">
+                        <div className="font-bold text-blue-900 mb-1">👥 {tx('Staffing needs this week', 'Necesidades de personal esta semana')} — {side === 'foh' ? 'FOH' : 'BOH'}</div>
+                        <div className="space-y-1">
+                            {weekNeeds.map(n => {
+                                const filled = (n.filledStaff || []).length;
+                                const open = Math.max(0, (n.count || 0) - filled);
+                                const fullyStaffed = open === 0;
+                                const date = parseLocalDate(n.date);
+                                const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
+                                return (
+                                    <div key={n.id} className={`p-2 rounded border ${fullyStaffed ? 'bg-green-50 border-green-300' : 'bg-white border-blue-200'}`}>
+                                        <div className="flex items-center justify-between gap-2">
+                                            <div className="min-w-0 flex-1">
+                                                <div className="font-bold text-gray-800">
+                                                    {fullyStaffed ? '✅ ' : ''}{dayLabel} {n.date} · {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}
+                                                    {n.notes && <span className="ml-2 italic text-gray-500 font-normal">({n.notes})</span>}
+                                                </div>
+                                                <div className="text-[10px] text-gray-600">
+                                                    {filled} {tx('of', 'de')} {n.count} {tx('filled', 'asignados')} · {LOCATION_LABELS[n.location] || n.location}
+                                                </div>
+                                                {filled > 0 && (
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {(n.filledStaff || []).map((name, i) => (
+                                                            <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-800 rounded-full text-[10px] font-bold">
+                                                                ✓ {name.split(' ')[0]}
+                                                                <button onClick={() => unfillNeedSlot(n, name)}
+                                                                    className="text-green-600 hover:text-red-600 ml-0.5">×</button>
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="flex flex-col gap-1 flex-shrink-0">
+                                                {!fullyStaffed && (
+                                                    <button onClick={() => { setFillingNeed(n); setAvailableForDate(n.date); }}
+                                                        className="px-2 py-1 rounded bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-700">
+                                                        {tx('Fill 1', 'Asignar 1')}
+                                                    </button>
+                                                )}
+                                                <button onClick={() => handleRemoveNeed(n.id)}
+                                                    className="px-2 py-1 rounded bg-red-100 text-red-700 text-[10px] font-bold hover:bg-red-200">×</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            })()}
 
             {/* Open offers + pending approvals (drawn from ALL visible shifts, both sides) */}
             <SwapPanels
@@ -1489,16 +1658,33 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             {availableForDate && (
                 <AvailableStaffModal
                     dateStr={availableForDate}
-                    onClose={() => setAvailableForDate(null)}
+                    onClose={() => { setAvailableForDate(null); setFillingNeed(null); }}
                     sideStaff={sideStaff}
                     shifts={shifts}
                     storeLocation={storeLocation}
                     isStaffOffOn={isStaffOffOn}
                     isEn={isEn}
                     onSchedule={(staff) => {
+                        // If we're filling a staffing need, create the shift via the
+                        // need handler (so the slot is marked filled). Otherwise it's
+                        // a free-form schedule action — open the Add Shift modal.
+                        if (fillingNeed) {
+                            fillNeedWithStaff(fillingNeed, staff);
+                            return;
+                        }
                         setAvailableForDate(null);
                         openAddModal({ staffName: staff.name, date: availableForDate, location: staff.location });
                     }}
+                />
+            )}
+            {showNeedModal && canEdit && (
+                <StaffingNeedModal
+                    onClose={() => setShowNeedModal(false)}
+                    onSave={handleAddNeed}
+                    storeLocation={storeLocation}
+                    side={side}
+                    weekStart={weekStart}
+                    isEn={isEn}
                 />
             )}
             {showNotifDrawer && (
@@ -2928,6 +3114,97 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
                             </div>
                         </div>
                     ))}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+// ── StaffingNeedModal ─────────────────────────────────────────────────────
+// Manager defines a "we need N people in this time block" slot. Each slot can
+// be filled later via the AvailableStaffModal flow — picking a person creates
+// a real shift and ticks one of the slot's openings down.
+function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const [form, setForm] = useState({
+        date: toDateStr(weekStart),
+        side: side,
+        location: storeLocation && storeLocation !== 'both' ? storeLocation : 'webster',
+        startTime: '09:00',
+        endTime: '15:00',
+        count: 5,
+        notes: '',
+    });
+    const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const canSubmit = form.date && form.startTime && form.endTime && form.count >= 1 && form.startTime < form.endTime;
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-blue-700">👥 {tx('Add Staffing Need', 'Agregar Necesidad de Personal')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                </div>
+                <div className="p-4 space-y-3">
+                    <div className="text-xs text-gray-600 bg-blue-50 rounded-lg p-2 border border-blue-200">
+                        {tx('Define a time block — e.g. "morning needs 5, evening needs 7." Then assign staff one slot at a time. Each fill creates a real shift.', 'Define un bloque de tiempo — ej. "mañana 5, noche 7." Luego asigna personal un espacio a la vez. Cada asignación crea un turno real.')}
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Date', 'Fecha')}</label>
+                        <input type="date" value={form.date} onChange={e => update('date', e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Side', 'Lado')}</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => update('side', 'foh')}
+                                className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'foh' ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-700 border-gray-300'}`}>FOH</button>
+                            <button onClick={() => update('side', 'boh')}
+                                className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'boh' ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-gray-700 border-gray-300'}`}>BOH</button>
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Start', 'Inicio')}</label>
+                            <input type="time" value={form.startTime} onChange={e => update('startTime', e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('End', 'Fin')}</label>
+                            <input type="time" value={form.endTime} onChange={e => update('endTime', e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('How many people?', '¿Cuántas personas?')}</label>
+                        <input type="number" min="1" max="20" value={form.count}
+                            onChange={e => update('count', Math.max(1, parseInt(e.target.value) || 1))}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Location', 'Ubicación')}</label>
+                        <div className="grid grid-cols-2 gap-2">
+                            {['webster', 'maryland'].map(loc => (
+                                <button key={loc} onClick={() => update('location', loc)}
+                                    className={`py-2 rounded-lg text-sm font-bold border ${form.location === loc ? 'bg-mint-700 text-white border-mint-700' : 'bg-white text-gray-700 border-gray-300'}`}>
+                                    {LOCATION_LABELS[loc]}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Notes (e.g. "morning crew")', 'Notas (ej. "equipo de mañana")')}</label>
+                        <input type="text" value={form.notes} onChange={e => update('notes', e.target.value)}
+                            placeholder={tx('Optional label', 'Etiqueta opcional')}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                </div>
+                <div className="border-t border-gray-200 p-4 flex gap-2">
+                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                    <button onClick={() => canSubmit && onSave(form)} disabled={!canSubmit}
+                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
+                        {tx('Save Need', 'Guardar Necesidad')}
+                    </button>
                 </div>
             </div>
         </div>

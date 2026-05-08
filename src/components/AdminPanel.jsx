@@ -190,7 +190,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                 </div>
                                 {filteredMaintenance.length === 0 ? (
                                     <p className="text-center text-gray-400 text-sm py-4">{language === "es" ? "No hay solicitudes" : "No requests yet"}</p>
-                                ) : filteredMaintenance.map(req => {
+                                ) : <div className="md:grid md:grid-cols-2 md:gap-2 space-y-2 md:space-y-0">{filteredMaintenance.map(req => {
                                     const isExpanded = selectedRequest === req.id;
                                     const statusColors = { open: "bg-yellow-100 text-yellow-700 border-yellow-300", "in-progress": "bg-blue-100 text-blue-700 border-blue-300", completed: "bg-green-100 text-green-700 border-green-300", declined: "bg-red-100 text-red-700 border-red-300" };
                                     const urgencyDot = { low: "🟢", normal: "🟡", high: "🟠", urgent: "🔴" };
@@ -262,7 +262,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                             )}
                                         </div>
                                     );
-                                })}
+                                })}</div>}
                             </div>
                         )}
                     </div>
@@ -296,7 +296,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                         🏷 {language === "es" ? "Etiquetar en lote" : "Bulk Tag"}
                                     </button>
                                 </div>
-                                <div className="space-y-2 mb-4">
+                                <div className="space-y-2 mb-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
                                     {filteredStaff.map(person => (
                                         <div key={person.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                                             {editingId === person.id ? (
