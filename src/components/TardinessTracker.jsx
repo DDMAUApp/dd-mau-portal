@@ -20,7 +20,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where, orderBy } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
 import {
     TARDY_TIERS, TARDY_REASONS, TARDY_REASON_BY_ID, TARDY_MINUTES_PRESETS,
@@ -41,28 +41,36 @@ export default function TardinessTracker({ language, staffName, staffList, store
 
     const [tardies, setTardies] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(null);
     const [showLogModal, setShowLogModal] = useState(false);
     const [drillStaff, setDrillStaff] = useState(null); // staff member being viewed in detail
     const [tierFilter, setTierFilter] = useState('all'); // all | clear | verbal | written | final | term
 
     // Subscribe to all tardies for this location. Filtering happens client
     // side so we can switch between roster + drill-down without re-querying.
+    //
+    // No server-side orderBy: combining where('storeBranch', ...) with
+    // orderBy('date', ...) requires a composite Firestore index. When that
+    // index isn't deployed, the listener errors silently — tardies stay []
+    // and new writes never appear in the UI. We sort client-side instead
+    // (countingTardies and StaffDrillDown both already re-sort), and the
+    // dataset (rolling 60-day window per location) is small enough that it
+    // doesn't matter.
     useEffect(() => {
-        let q;
-        if (storeLocation === 'both') {
-            q = query(collection(db, 'tardies'), orderBy('date', 'desc'));
-        } else {
-            q = query(collection(db, 'tardies'),
-                where('storeBranch', '==', storeLocation),
-                orderBy('date', 'desc'));
-        }
+        const q = storeLocation === 'both'
+            ? query(collection(db, 'tardies'))
+            : query(collection(db, 'tardies'), where('storeBranch', '==', storeLocation));
         const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+            // Client-side sort, most-recent date first.
+            items.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
             setTardies(items);
+            setLoadError(null);
             setLoading(false);
         }, (err) => {
             console.error('Tardies snapshot error:', err);
+            setLoadError(err?.message || String(err));
             setLoading(false);
         });
         return unsub;
@@ -245,6 +253,12 @@ export default function TardinessTracker({ language, staffName, staffList, store
                 ))}
             </div>
 
+            {loadError && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-2.5 mb-3 text-xs text-red-800">
+                    <strong>{tx('Could not load tardies.', 'No se pudo cargar tardanzas.')}</strong>
+                    <div className="text-[11px] mt-0.5 break-words">{loadError}</div>
+                </div>
+            )}
             {loading ? (
                 <p className="text-center text-gray-400 mt-8 text-sm">{tx('Loading…', 'Cargando…')}</p>
             ) : roster.length === 0 ? (
