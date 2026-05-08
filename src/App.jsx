@@ -22,6 +22,7 @@ const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest'))
 const AdminPanel = lazy(() => import('./components/AdminPanel'));
 const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'));
 const AiAssistant = lazy(() => import('./components/AiAssistant'));
+const TardinessTracker = lazy(() => import('./components/TardinessTracker'));
 
 // Error boundary — catches render errors in child components
 class ErrorBoundary extends Component {
@@ -259,12 +260,21 @@ export default function App() {
         if ((activeTab === "admin" || activeTab === "labor") && !staffIsAdmin) {
             setActiveTab("home");
         }
-    }, [staffName, staffIsAdmin, activeTab]);
+        // tardies tab is manager-or-admin only — same defensive bounce.
+        if (activeTab === "tardies" && !isManager) {
+            setActiveTab("home");
+        }
+    }, [staffName, staffIsAdmin, isManager, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
     // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
     // open the Recipes tab even when they're not at a DD Mau location.
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
     const hasRecipesAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
+    // Manager-or-admin gate for HR-style features (tardiness, shift handoff).
+    // "Manager" in role title catches Manager / Asst Manager / Kitchen Manager
+    // / Asst Kitchen Manager. Shift Lead is intentionally NOT included —
+    // those are leads, not managers, and tardy authority sits with managers.
+    const isManager = staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || ''));
     const handleSelectStaff = (name) => {
         setStaffName(name);
         const staff = staffList.find(s => s.name === name);
@@ -365,6 +375,14 @@ export default function App() {
                     <div className="pt-3 mt-2 border-t border-white/10">
                         {sidebarSecondary.map(b => renderSidebarBtn(b))}
                     </div>
+                    {/* Manager-or-admin section: HR / discipline tools.
+                        Sits between the secondary group and the admin-only
+                        group because managers see it but staff don't. */}
+                    {isManager && (
+                        <div className="pt-3 mt-2 border-t border-white/10 space-y-0.5">
+                            {renderSidebarBtn({ tab: "tardies", icon: "⏰", labelEn: "Tardies", labelEs: "Tardanzas" })}
+                        </div>
+                    )}
                     {staffIsAdmin && (
                         <div className="pt-3 mt-2 border-t border-white/10 space-y-0.5">
                             {renderSidebarBtn({ tab: "labor",  icon: "📊", labelEn: "Labor",  labelEs: "Mano Obra" })}
@@ -529,6 +547,7 @@ export default function App() {
                         {activeTab === "maintenance" && <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "insurance" && <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "ai" && <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />}
+                        {activeTab === "tardies" && isManager && <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />}
                         {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
                     </ErrorBoundary>
                 </Suspense>
