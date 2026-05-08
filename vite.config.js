@@ -9,24 +9,36 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    // Bumped to silence the size warning while we let Rollup do its own
-    // automatic chunking. We previously had a hand-rolled manualChunks
-    // splitter (vendor-react / vendor-firebase / vendor-misc) — it broke
-    // production with "Cannot access 'X' before initialization" runtime
-    // errors. The crash class is well-documented for manualChunks: when
-    // a lazy-imported chunk references vendor code, Rollup's chunking
-    // assumes a certain init order that the runtime then violates because
-    // ESM hoisting + circular imports interact poorly with hand splits.
-    //
-    // Default chunking (no manualChunks) lets Rollup analyze the entire
-    // dep graph and emit chunks with provably-correct load order. We pay
-    // a slightly larger main bundle (~600KB) for guaranteed correctness.
-    // If we want vendor-cache wins later, the SAFE path is dynamic
-    // import() inside specific code, not vite manualChunks.
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {
         entryFileNames: `assets/[name]-${buildId}-[hash].js`,
+        // Vendor chunk splitting — drops the main bundle from ~600KB
+        // to ~50KB and lets browsers cache the big rarely-changing libs
+        // (react + firebase) across deploys.
+        //
+        // History note: the May 2026 outage was NOT caused by this split,
+        // it was a TDZ bug in App.jsx (const referenced in useEffect
+        // deps before declaration). Re-enabled here with one important
+        // safety lesson: keep ALL of @firebase/* together. Splitting
+        // firestore from storage/messaging causes "Cannot access X
+        // before initialization" because @firebase/util and
+        // @firebase/component are shared by every firebase package and
+        // must initialize before any individual firebase package uses
+        // them. One firebase chunk = guaranteed-correct load order.
+        manualChunks: (id) => {
+          if (!id.includes('node_modules')) return;
+          // React + scheduler — app-wide, stable.
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+            return 'vendor-react';
+          }
+          // ALL of firebase in one chunk. Do NOT split into sub-chunks.
+          if (id.includes('@firebase/') || id.includes('firebase/')) {
+            return 'vendor-firebase';
+          }
+          // Everything else from node_modules → generic vendor chunk.
+          return 'vendor-misc';
+        },
       }
     }
   },
