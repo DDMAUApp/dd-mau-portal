@@ -30,6 +30,7 @@ import {
     setDoc, serverTimestamp, writeBatch,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
+import { enableFcmPush } from '../messaging';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -298,10 +299,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const requestNotifPermission = async () => {
         if (typeof Notification === 'undefined') return;
         try {
-            const result = await Notification.requestPermission();
-            setNotifPermission(result);
+            // enableFcmPush runs the permission prompt AND fetches the FCM token
+            // AND persists it on the staff record. If FCM is not configured (no
+            // VAPID key yet), it still leaves the in-page permission flow intact
+            // — we fall back to plain Notification.requestPermission() so
+            // foreground notifications keep working.
+            const result = await enableFcmPush(staffName, staffList, setStaffList);
+            if (!result.ok && result.reason === 'no-vapid-key') {
+                // FCM not set up yet — just request permission for foreground
+                await Notification.requestPermission();
+            }
+            setNotifPermission(Notification.permission);
         } catch (e) {
             console.warn('Notification permission failed:', e);
+            setNotifPermission(Notification.permission);
         }
     };
 
