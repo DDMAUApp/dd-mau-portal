@@ -390,8 +390,11 @@ export default function App() {
                  column past the sidebar. overflow-x-hidden on md+ pins the body
                  width so internal wide tables scroll within their own container. */}
             <div className="flex-1 md:ml-56 min-h-screen min-w-0 md:overflow-x-hidden">
-            {/* Mobile-only header (hidden on md+) — sidebar replaces it on desktop */}
-            <div className="md:hidden bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 sticky top-0 z-40 shadow-lg" style={updateAvailable ? {marginTop: "40px"} : {}}>
+            {/* Mobile-only header (hidden on md+) — sidebar replaces it on desktop.
+                px-4 + pb-4 + pt-safe-banner = base 1rem padding all around, with
+                top padding bumped by safe-area-inset-top so iPhone notches don't
+                cover the language toggle / logout buttons. */}
+            <div className="md:hidden bg-gradient-to-r from-mint-700 to-mint-600 text-white px-4 pb-4 pt-safe-banner sticky top-0 z-40 shadow-lg" style={updateAvailable ? {marginTop: "40px"} : {}}>
                 <div className="flex justify-between items-center">
                     <div>
                         <h1 className="text-2xl font-bold">🍜 DD Mau</h1>

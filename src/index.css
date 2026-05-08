@@ -19,6 +19,16 @@ body {
     padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* Top banner sits below iPhone notch / Dynamic Island. With viewport-fit=cover
+   (added so safe-area envs work for the bottom nav), the viewport extends
+   into the notch area — `sticky top-0` puts the banner BEHIND the notch
+   without this padding. p-4 sets 1rem all around; we add safe-area-inset-top
+   on top of that so visible content stays below the notch. Used in place of
+   `p-4` (combine with `px-4 pb-4`). */
+.pt-safe-banner {
+    padding-top: calc(1rem + env(safe-area-inset-top));
+}
+
 /* Bottom padding for scrollable views so their last row clears the fixed
    bottom nav AND the iPhone home indicator. The nav is h-20 = 5rem (80px),
    plus visual breathing room, plus the home-indicator safe area. Drop-in

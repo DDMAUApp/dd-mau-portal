@@ -18,6 +18,52 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [editTargetHours, setEditTargetHours] = useState(0);
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [bulkSearch, setBulkSearch] = useState("");
+            const [bulkFilter, setBulkFilter] = useState("all"); // all | untagged | foh | boh
+
+            // Centralized BOH role inference — same vocabulary as Schedule.jsx,
+            // duplicated here so AdminPanel doesn't take a Schedule import.
+            const BULK_BOH_ROLES = ["BOH", "Pho", "Pho Station", "Grill", "Fryer", "Fried Rice", "Dish", "Bao/Tacos/Banh Mi", "Spring Rolls/Prep", "Prep", "Kitchen Manager", "Asst Kitchen Manager"];
+            const inferSide = (role) => BULK_BOH_ROLES.includes(role) ? "boh" : "foh";
+
+            // One-shot auto-tag — fills in scheduleSide for every staff that
+            // currently has no explicit value. Saves a single Firestore write
+            // (whole-list setDoc) instead of N separate ones, so 60+ staff
+            // get tagged in a fraction of a second.
+            const autoTagUntagged = async () => {
+                let touched = 0;
+                let latest = null;
+                setStaffList(prev => {
+                    const next = prev.map(s => {
+                        if (s.scheduleSide === "foh" || s.scheduleSide === "boh") return s;
+                        touched += 1;
+                        return { ...s, scheduleSide: inferSide(s.role) };
+                    });
+                    latest = next;
+                    return next;
+                });
+                if (touched > 0 && latest) {
+                    await saveStaffToFirestore(latest);
+                    showSaved();
+                }
+                alert(language === "es"
+                    ? `✓ Etiquetados automáticamente: ${touched}.`
+                    : `✓ Auto-tagged ${touched} staff from role.`);
+            };
+
+            // Sweep a filtered subset to one side. Used by the "Tag all
+            // visible as FOH/BOH" action — one batched write instead of
+            // dozens of taps.
+            const bulkSetSide = async (ids, side) => {
+                if (ids.length === 0) return;
+                const idSet = new Set(ids);
+                let latest = null;
+                setStaffList(prev => {
+                    latest = prev.map(s => idSet.has(s.id) ? { ...s, scheduleSide: side } : s);
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
+                showSaved();
+            };
             const [availabilityForId, setAvailabilityForId] = useState(null); // staff id whose availability we're editing
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
@@ -675,11 +721,22 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                         const visible = staffList
                             .filter(s => staffFilter === "all" || s.location === staffFilter || s.location === "both")
                             .filter(s => !search || (s.name || "").toLowerCase().includes(search) || (s.role || "").toLowerCase().includes(search))
+                            // Tagging-state filter (all / untagged / foh / boh)
+                            .filter(s => {
+                                if (bulkFilter === "all") return true;
+                                if (bulkFilter === "untagged") return !s.scheduleSide;
+                                if (bulkFilter === "foh") return s.scheduleSide === "foh";
+                                if (bulkFilter === "boh") return s.scheduleSide === "boh";
+                                return true;
+                            })
                             .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-                        const fohCount = staffList.filter(s => (s.scheduleSide || "foh") === "foh").length;
-                        const bohCount = staffList.filter(s => s.scheduleSide === "boh").length;
+                        // Counts use the EXPLICIT field (no role inference) so the
+                        // "Untagged" pill reflects the real state we're trying to fix.
+                        const fohExplicit = staffList.filter(s => s.scheduleSide === "foh").length;
+                        const bohExplicit = staffList.filter(s => s.scheduleSide === "boh").length;
                         const minorCount = staffList.filter(s => s.isMinor).length;
                         const untagged = staffList.filter(s => !s.scheduleSide).length;
+                        const visibleIds = visible.map(s => s.id);
                         return (
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
                                 <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
@@ -695,14 +752,58 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 : "Tap to flip. Changes save instantly."}
                                         </p>
                                         <div className="flex flex-wrap gap-2 text-[10px] mb-2">
-                                            <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-bold">FOH: {fohCount}</span>
-                                            <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 font-bold">BOH: {bohCount}</span>
+                                            <span className="px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 font-bold">FOH: {fohExplicit}</span>
+                                            <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 font-bold">BOH: {bohExplicit}</span>
                                             <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-bold">🔑 {language === "es" ? "Menores" : "Minors"}: {minorCount}</span>
                                             {untagged > 0 && <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-bold">⚠ {language === "es" ? "Sin etiqueta" : "Untagged"}: {untagged}</span>}
                                         </div>
+
+                                        {/* Auto-tag — one-shot fill of every untagged staff using role inference. */}
+                                        {untagged > 0 && (
+                                            <button onClick={autoTagUntagged}
+                                                className="w-full mb-2 py-2 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700">
+                                                ✨ {language === "es" ? `Auto-etiquetar ${untagged} pendientes (por rol)` : `Auto-tag ${untagged} untagged (from role)`}
+                                            </button>
+                                        )}
+
+                                        {/* Filter chips — narrow the list quickly */}
+                                        <div className="flex gap-1 mb-2">
+                                            {[
+                                                { id: "all",      labelEn: `All (${staffList.length})`, labelEs: `Todos (${staffList.length})` },
+                                                { id: "untagged", labelEn: `Untagged (${untagged})`,    labelEs: `Sin etiq. (${untagged})` },
+                                                { id: "foh",      labelEn: `FOH (${fohExplicit})`,      labelEs: `FOH (${fohExplicit})` },
+                                                { id: "boh",      labelEn: `BOH (${bohExplicit})`,      labelEs: `BOH (${bohExplicit})` },
+                                            ].map(f => (
+                                                <button key={f.id} onClick={() => setBulkFilter(f.id)}
+                                                    className={`flex-1 py-1.5 rounded-md text-[10px] font-bold border ${
+                                                        bulkFilter === f.id
+                                                            ? "bg-purple-600 text-white border-purple-600"
+                                                            : "bg-white text-gray-600 border-gray-300"
+                                                    }`}>
+                                                    {language === "es" ? f.labelEs : f.labelEn}
+                                                </button>
+                                            ))}
+                                        </div>
+
                                         <input type="text" value={bulkSearch} onChange={e => setBulkSearch(e.target.value)}
                                             placeholder={language === "es" ? "Buscar nombre o rol…" : "Search name or role…"}
-                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mb-2" />
+
+                                        {/* Sweep-visible buttons — flip every visible staff to FOH or BOH at once.
+                                            Useful after filtering: "show me all the prep staff who got tagged FOH by
+                                            mistake → bulk flip them to BOH." */}
+                                        {visible.length > 0 && bulkFilter !== "all" && (
+                                            <div className="flex gap-1 text-[10px]">
+                                                <button onClick={() => bulkSetSide(visibleIds, "foh")}
+                                                    className="flex-1 py-1.5 rounded-md bg-teal-100 text-teal-800 font-bold border border-teal-300 hover:bg-teal-200">
+                                                    → {language === "es" ? `Marcar ${visible.length} como FOH` : `Tag ${visible.length} as FOH`}
+                                                </button>
+                                                <button onClick={() => bulkSetSide(visibleIds, "boh")}
+                                                    className="flex-1 py-1.5 rounded-md bg-orange-100 text-orange-800 font-bold border border-orange-300 hover:bg-orange-200">
+                                                    → {language === "es" ? `Marcar ${visible.length} como BOH` : `Tag ${visible.length} as BOH`}
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
 
                                     <div className="flex-1 overflow-y-auto p-2 space-y-1">
