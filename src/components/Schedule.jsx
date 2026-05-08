@@ -220,6 +220,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [showMyAvailModal, setShowMyAvailModal] = useState(false);
     // Click-a-day-header → "who's available?" picker
     const [availableForDate, setAvailableForDate] = useState(null);
+    // Mobile-only: collapse the secondary action buttons behind a ⋯ menu.
+    const [showMoreActions, setShowMoreActions] = useState(false);
     // Staffing-needs (a.k.a. shift slots) — manager-defined "we need N people in this time block"
     // Each filled slot becomes a real shift.
     const [staffingNeeds, setStaffingNeeds] = useState([]);
@@ -1687,78 +1689,24 @@ ${dayBlocks}
                 ))}
             </div>
 
-            {/* Person filter + Print + Add Shift action bar */}
-            <div className="flex gap-2 mb-3 print:hidden">
+            {/* Action bar — mobile collapses secondary buttons behind a ⋯ toggle.
+                Tablet+ shows everything inline (more horizontal real estate). */}
+            <div className="flex flex-wrap gap-2 mb-3 print:hidden">
                 <select value={personFilter || ''}
                     onChange={(e) => setPersonFilter(e.target.value || null)}
-                    className="flex-1 border border-gray-300 rounded-lg px-2 py-2 text-xs">
+                    className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-2 text-xs">
                     <option value="">{tx('👥 Everyone', '👥 Todos')}</option>
                     {sideStaff.map(s => (
                         <option key={s.id || s.name} value={s.name}>{s.name}</option>
                     ))}
                 </select>
-                <button onClick={handlePrintWeek}
-                    title={tx('Print full week as one-page calendar', 'Imprimir semana completa en una página')}
-                    className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
-                    🖨 {tx('Print Week', 'Imprimir Semana')}
-                </button>
-                <button onClick={handleExportIcs}
-                    title={tx('Download .ics — import into Apple/Google/Outlook calendar', 'Descargar .ics — importar a calendario')}
-                    className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
-                    📅 {tx('iCal', 'iCal')}
-                </button>
-                {/* Self-serve buttons (visible to ALL staff) */}
-                <button onClick={() => setShowPtoRequestModal(true)}
-                    title={tx('Request time off', 'Pedir tiempo libre')}
-                    className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
-                    🌴 {tx('Request Off', 'Pedir Off')}
-                </button>
-                <button onClick={() => setShowMyAvailModal(true)}
-                    title={tx('Set your availability', 'Configura tu disponibilidad')}
-                    className="px-3 py-2 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold hover:bg-purple-200 border border-purple-300">
-                    🗓 {tx('My Avail', 'Mi Dispon.')}
-                </button>
-                <button onClick={() => setShowTimeOffModal(true)}
-                    title={tx('See all time-off requests', 'Ver todas las solicitudes de tiempo libre')}
-                    className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
-                    🌴 {tx('All PTO', 'Todo PTO')}
-                </button>
+                {/* PRIMARY (always inline, mobile + desktop) */}
                 {canEdit && (
                     <>
                         <button onClick={handlePublishDrafts}
-                            title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores de esta semana')}
+                            title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores')}
                             className="px-3 py-2 rounded-lg bg-green-600 text-white text-xs font-bold hover:bg-green-700">
                             📢 {tx('Publish', 'Publicar')}
-                        </button>
-                        <button onClick={handleAutoPopulate}
-                            title={tx('Auto-fill this week from availability + targets', 'Auto-rellenar esta semana')}
-                            className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700">
-                            ✨ {tx('Auto-fill', 'Auto-rellenar')}
-                        </button>
-                        <button onClick={() => setShowRecurringModal(true)}
-                            title={tx('Manage recurring shift rules ("Maria works Mon/Wed 9-3 every week")', 'Reglas recurrentes')}
-                            className="px-3 py-2 rounded-lg bg-cyan-100 text-cyan-800 border border-cyan-300 text-xs font-bold hover:bg-cyan-200">
-                            🔁 {tx('Recurring', 'Recurrentes')}
-                        </button>
-                        <button onClick={handleCopyLastWeek}
-                            title={tx('Copy last week into this week as drafts', 'Copiar semana pasada como borradores')}
-                            className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
-                            📋 {tx('Copy ⏪', 'Copiar ⏪')}
-                        </button>
-                        <button onClick={() => setShowBlockModal(true)}
-                            title={tx('Manage closed dates / no-time-off dates', 'Gestionar fechas cerradas / sin tiempo libre')}
-                            className="px-3 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
-                            🚫 {tx('Blackouts', 'Bloqueos')}
-                        </button>
-                        <button onClick={() => setShowApplyTemplate(true)}
-                            title={tx('Apply a day template to a date', 'Aplicar plantilla a una fecha')}
-                            className="px-3 py-2 rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-300 text-xs font-bold hover:bg-indigo-200">
-                            📋 {tx('Templates', 'Plantillas')}
-                        </button>
-                        <button onClick={() => setShowNeedModal(true)}
-                            title={tx('Define a single staffing need', 'Define una necesidad individual')}
-                            className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">
-                            👥 {tx('+ Slot', '+ Slot')}
                         </button>
                         <button onClick={() => openAddModal()}
                             className="px-3 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
@@ -1766,6 +1714,64 @@ ${dayBlocks}
                         </button>
                     </>
                 )}
+                <button onClick={handlePrintWeek}
+                    title={tx('Print full week as one-page calendar', 'Imprimir semana')}
+                    className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                    🖨 {personFilter ? tx('Print', 'Imprimir') : tx('Print Week', 'Imprimir Semana')}
+                </button>
+                {/* Mobile-only "more" toggle. Hidden on md+. */}
+                <button onClick={() => setShowMoreActions(s => !s)}
+                    className="md:hidden px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                    {showMoreActions ? `× ${tx('Less', 'Menos')}` : `⋯ ${tx('More', 'Más')}`}
+                </button>
+
+                {/* SECONDARY — wrapped in a section that's collapsed on mobile, always visible on md+ */}
+                <div className={`${showMoreActions ? 'flex' : 'hidden'} md:flex flex-wrap gap-2 w-full md:w-auto md:contents`}>
+                    <button onClick={handleExportIcs}
+                        className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                        📅 {tx('iCal', 'iCal')}
+                    </button>
+                    <button onClick={() => setShowPtoRequestModal(true)}
+                        className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
+                        🌴 {tx('Request Off', 'Pedir Off')}
+                    </button>
+                    <button onClick={() => setShowMyAvailModal(true)}
+                        className="px-3 py-2 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold hover:bg-purple-200 border border-purple-300">
+                        🗓 {tx('My Avail', 'Mi Dispon.')}
+                    </button>
+                    <button onClick={() => setShowTimeOffModal(true)}
+                        className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
+                        🌴 {tx('All PTO', 'Todo PTO')}
+                    </button>
+                    {canEdit && (
+                        <>
+                            <button onClick={handleAutoPopulate}
+                                className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700">
+                                ✨ {tx('Auto-fill', 'Auto-rellenar')}
+                            </button>
+                            <button onClick={() => setShowRecurringModal(true)}
+                                className="px-3 py-2 rounded-lg bg-cyan-100 text-cyan-800 border border-cyan-300 text-xs font-bold hover:bg-cyan-200">
+                                🔁 {tx('Recurring', 'Recurrentes')}
+                            </button>
+                            <button onClick={handleCopyLastWeek}
+                                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
+                                📋 {tx('Copy ⏪', 'Copiar ⏪')}
+                            </button>
+                            <button onClick={() => setShowBlockModal(true)}
+                                className="px-3 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
+                                🚫 {tx('Blackouts', 'Bloqueos')}
+                            </button>
+                            <button onClick={() => setShowApplyTemplate(true)}
+                                className="px-3 py-2 rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-300 text-xs font-bold hover:bg-indigo-200">
+                                📋 {tx('Templates', 'Plantillas')}
+                            </button>
+                            <button onClick={() => setShowNeedModal(true)}
+                                className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">
+                                👥 {tx('+ Slot', '+ Slot')}
+                            </button>
+                        </>
+                    )}
+                </div>
             </div>
             {personFilter && (
                 <div className="mb-3 p-2 rounded bg-green-50 border border-green-300 text-xs text-green-800 flex items-center justify-between print:hidden">
