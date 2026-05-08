@@ -15,8 +15,10 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
+            const [editTargetHours, setEditTargetHours] = useState(0);
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [bulkSearch, setBulkSearch] = useState("");
+            const [availabilityForId, setAvailabilityForId] = useState(null); // staff id whose availability we're editing
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
@@ -93,7 +95,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleSavePin = async (id) => {
                 if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
-                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide } : s);
+                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0 } : s);
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
                 setEditingId(null);
@@ -105,6 +107,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setEditShiftLead(false);
                 setEditIsMinor(false);
                 setEditScheduleSide("foh");
+                setEditTargetHours(0);
                 showSaved();
             };
 
@@ -376,13 +379,24 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                             </button>
                                                         </div>
                                                     </div>
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horas semanales objetivo" : "Target Hours / Week"}</p>
+                                                        <p className="text-xs text-gray-500 mb-2">{language === "es" ? "Usado por el auto-populador. 0 = sin objetivo." : "Used by auto-fill. 0 = no target."}</p>
+                                                        <input type="number" min="0" max="80" step="1"
+                                                            value={editTargetHours} onChange={e => setEditTargetHours(e.target.value)}
+                                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                                    </div>
+                                                    <button onClick={() => setAvailabilityForId(person.id)}
+                                                        className="w-full py-2 rounded-lg bg-purple-100 text-purple-700 text-xs font-bold hover:bg-purple-200">
+                                                        🗓 {language === "es" ? "Editar disponibilidad" : "Edit Availability"}
+                                                    </button>
                                                     <div className="flex gap-2">
                                                         <button onClick={() => handleSavePin(person.id)}
                                                             disabled={editPin.length !== 4}
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -392,10 +406,10 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -546,6 +560,83 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                         <InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} />
                     </div>
 
+                    {/* ── Availability Editor Modal ── */}
+                    {availabilityForId !== null && (() => {
+                        const person = staffList.find(p => p.id === availabilityForId);
+                        if (!person) return null;
+                        const DAYS = [
+                            { k: "sun", en: "Sunday",    es: "Domingo" },
+                            { k: "mon", en: "Monday",    es: "Lunes" },
+                            { k: "tue", en: "Tuesday",   es: "Martes" },
+                            { k: "wed", en: "Wednesday", es: "Miércoles" },
+                            { k: "thu", en: "Thursday",  es: "Jueves" },
+                            { k: "fri", en: "Friday",    es: "Viernes" },
+                            { k: "sat", en: "Saturday",  es: "Sábado" },
+                        ];
+                        // availability stored as: { mon: { available: true, from: "09:00", to: "17:00" } | { available: false }, ... }
+                        const avail = person.availability || {};
+                        const updateDay = async (dayKey, patch) => {
+                            const cur = avail[dayKey] || { available: true, from: "09:00", to: "21:00" };
+                            const nextDay = { ...cur, ...patch };
+                            const nextAvail = { ...avail, [dayKey]: nextDay };
+                            const updated = staffList.map(s => s.id === person.id ? { ...s, availability: nextAvail } : s);
+                            setStaffList(updated);
+                            await saveStaffToFirestore(updated);
+                        };
+                        return (
+                            <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                                <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                                    <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-bold text-purple-700">🗓 {language === "es" ? "Disponibilidad" : "Availability"}</h3>
+                                            <p className="text-xs text-gray-500">{person.name}</p>
+                                        </div>
+                                        <button onClick={() => setAvailabilityForId(null)}
+                                            className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                                        <p className="text-xs text-gray-500 mb-1">{language === "es" ? "Auto-popular usa esto para asignar turnos." : "Auto-fill uses this to assign shifts."}</p>
+                                        {DAYS.map(d => {
+                                            const dayData = avail[d.k] || { available: true, from: "09:00", to: "21:00" };
+                                            const available = dayData.available !== false;
+                                            return (
+                                                <div key={d.k} className="bg-gray-50 rounded-lg p-2">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                        <span className="font-bold text-sm text-gray-800">{language === "es" ? d.es : d.en}</span>
+                                                        <button onClick={() => updateDay(d.k, { available: !available })}
+                                                            className={`px-3 py-1 rounded-full text-xs font-bold ${available ? "bg-green-600 text-white" : "bg-gray-300 text-gray-600"}`}>
+                                                            {available ? (language === "es" ? "Disponible" : "Available") : (language === "es" ? "No disponible" : "Off")}
+                                                        </button>
+                                                    </div>
+                                                    {available && (
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div>
+                                                                <label className="text-[10px] text-gray-500 block">{language === "es" ? "Desde" : "From"}</label>
+                                                                <input type="time" value={dayData.from || "09:00"}
+                                                                    onChange={e => updateDay(d.k, { from: e.target.value })}
+                                                                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                                            </div>
+                                                            <div>
+                                                                <label className="text-[10px] text-gray-500 block">{language === "es" ? "Hasta" : "To"}</label>
+                                                                <input type="time" value={dayData.to || "21:00"}
+                                                                    onChange={e => updateDay(d.k, { to: e.target.value })}
+                                                                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="border-t border-gray-200 p-3">
+                                        <button onClick={() => setAvailabilityForId(null)}
+                                            className="w-full py-2 rounded-lg bg-purple-700 text-white font-bold">{language === "es" ? "Listo" : "Done"}</button>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {/* ── Bulk Tag Modal — fast scheduleSide / isMinor tagging ── */}
                     {showBulkTag && (() => {
                         const search = bulkSearch.toLowerCase().trim();
@@ -612,6 +703,16 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                         title={language === "es" ? "Menor de edad" : "Minor"}
                                                         className={`w-8 h-8 rounded text-sm font-bold border ${s.isMinor ? "bg-amber-500 text-white border-amber-600" : "bg-white text-gray-300 border-gray-300"}`}>
                                                         🔑
+                                                    </button>
+                                                    <input type="number" min="0" max="80" step="1"
+                                                        value={s.targetHours || 0}
+                                                        onChange={e => handleBulkUpdate(s.id, { targetHours: Number(e.target.value) || 0 })}
+                                                        title={language === "es" ? "Horas/sem objetivo" : "Target hrs/week"}
+                                                        className="w-12 text-center text-xs border border-gray-300 rounded py-1" />
+                                                    <button onClick={() => { setShowBulkTag(false); setAvailabilityForId(s.id); }}
+                                                        title={language === "es" ? "Disponibilidad" : "Availability"}
+                                                        className="w-8 h-8 rounded text-sm border bg-white text-purple-600 border-purple-300 hover:bg-purple-50">
+                                                        🗓
                                                     </button>
                                                 </div>
                                             );
