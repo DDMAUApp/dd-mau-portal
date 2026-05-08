@@ -201,6 +201,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [showMyAvailModal, setShowMyAvailModal] = useState(false);
     // Click-a-day-header → "who's available?" picker
     const [availableForDate, setAvailableForDate] = useState(null);
+    // In-app notifications (bell drawer)
+    const [notifications, setNotifications] = useState([]);
+    const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
     // ── Data load ──
     useEffect(() => {
@@ -246,6 +249,100 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }, (err) => console.error('time_off snapshot error:', err));
         return unsub;
     }, []);
+
+    // ── Listen for in-app notifications addressed to me ──
+    // Side-effect: when a NEW notification arrives (created in the last 30s)
+    // AND the user has granted browser-notification permission, fire a
+    // foreground browser notification so they're alerted even if they're
+    // looking at another tab. True closed-app push (FCM via Cloud Functions)
+    // is a follow-up; this covers app-open + PWA-backgrounded cases.
+    const seenNotifIds = useState(() => new Set())[0];
+    useEffect(() => {
+        if (!staffName) return;
+        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
+        const unsub = onSnapshot(q, (snap) => {
+            const items = [];
+            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+            items.sort((a, b) => {
+                const at = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+                const bt = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+                return bt - at;
+            });
+            setNotifications(items);
+            // Foreground browser-notification fire for fresh unread items
+            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                const cutoff = Date.now() - 30 * 1000;
+                for (const n of items) {
+                    if (n.read) continue;
+                    if (seenNotifIds.has(n.id)) continue;
+                    const ts = n.createdAt?.toMillis ? n.createdAt.toMillis() : 0;
+                    if (ts < cutoff) { seenNotifIds.add(n.id); continue; }
+                    try {
+                        new Notification(n.title || 'DD Mau', {
+                            body: n.body || '',
+                            icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                            tag: n.id,
+                        });
+                        seenNotifIds.add(n.id);
+                    } catch {}
+                }
+            }
+        }, (err) => console.error('notifications snapshot error:', err));
+        return unsub;
+    }, [staffName, seenNotifIds]);
+
+    // Browser notification permission state, requested on demand from drawer.
+    const [notifPermission, setNotifPermission] = useState(
+        typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
+    );
+    const requestNotifPermission = async () => {
+        if (typeof Notification === 'undefined') return;
+        try {
+            const result = await Notification.requestPermission();
+            setNotifPermission(result);
+        } catch (e) {
+            console.warn('Notification permission failed:', e);
+        }
+    };
+
+    // Helper — write a notification doc. Silently swallows errors so a notify
+    // failure never blocks the underlying action. Multiple recipients = multiple
+    // calls (caller maps).
+    const notify = async (forStaff, type, title, body, link = null) => {
+        if (!forStaff || forStaff === staffName) return; // don't notify yourself
+        try {
+            await addDoc(collection(db, 'notifications'), {
+                forStaff, type, title, body, link,
+                createdAt: serverTimestamp(),
+                read: false,
+                createdBy: staffName,
+            });
+        } catch (e) {
+            console.warn('notify failed (non-fatal):', e);
+        }
+    };
+
+    const markNotifRead = async (id) => {
+        try {
+            await updateDoc(doc(db, 'notifications', id), { read: true });
+        } catch (e) {
+            console.warn('mark read failed:', e);
+        }
+    };
+
+    const markAllNotifsRead = async () => {
+        const unread = notifications.filter(n => !n.read);
+        if (unread.length === 0) return;
+        try {
+            const batch = writeBatch(db);
+            for (const n of unread) batch.update(doc(db, 'notifications', n.id), { read: true });
+            await batch.commit();
+        } catch (e) {
+            console.warn('mark all read failed:', e);
+        }
+    };
+
+    const unreadCount = notifications.filter(n => !n.read).length;
 
     // Helper: is a staff member off on a given date (any APPROVED time-off covers it)?
     const isStaffOffOn = (staffName, dateStr) => {
@@ -432,9 +529,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const handleApproveSwap = async (shift) => {
         if (!canEdit) return;
+        const oldOwner = shift.staffName;
+        const newOwner = shift.pendingClaimBy;
         try {
             await updateDoc(doc(db, 'shifts', shift.id), {
-                staffName: shift.pendingClaimBy,
+                staffName: newOwner,
                 offerStatus: null,
                 offeredBy: null,
                 offeredAt: null,
@@ -444,6 +543,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 approvedAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
             });
+            const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+            await notify(oldOwner, 'swap_approved', tx('Swap approved', 'Cambio aprobado'),
+                tx(`Your shift on ${detail} is now ${newOwner}'s.`, `Tu turno del ${detail} ahora es de ${newOwner}.`));
+            await notify(newOwner, 'swap_approved', tx('Shift assigned', 'Turno asignado'),
+                tx(`The shift on ${detail} is now yours.`, `El turno del ${detail} ahora es tuyo.`));
         } catch (e) {
             console.error('Approve failed:', e);
             alert(tx('Could not approve: ', 'No se pudo aprobar: ') + e.message);
@@ -459,6 +563,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 claimedAt: null,
                 updatedAt: serverTimestamp(),
             });
+            const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+            await notify(shift.pendingClaimBy, 'swap_denied', tx('Swap denied', 'Cambio negado'),
+                tx(`Manager denied your takeover of the ${detail} shift.`, `Gerente negó tu toma del turno ${detail}.`));
         } catch (e) {
             console.error('Deny failed:', e);
         }
@@ -568,6 +675,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 reviewedBy: staffName,
                 reviewedAt: serverTimestamp(),
             });
+            const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+            await notify(entry.staffName, 'pto_approved', tx('Time-off approved', 'Tiempo libre aprobado'),
+                tx(`Your time-off for ${range} was approved.`, `Tu tiempo libre del ${range} fue aprobado.`));
         } catch (e) {
             console.error('Approve PTO failed:', e);
         }
@@ -580,6 +690,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 reviewedBy: staffName,
                 reviewedAt: serverTimestamp(),
             });
+            const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+            await notify(entry.staffName, 'pto_denied', tx('Time-off denied', 'Tiempo libre negado'),
+                tx(`Your time-off for ${range} was denied.`, `Tu tiempo libre del ${range} fue negado.`));
         } catch (e) {
             console.error('Deny PTO failed:', e);
         }
@@ -597,6 +710,63 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             console.error('Save availability failed:', e);
             alert(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message);
         }
+    };
+
+    // ── ICS calendar export (current view's shifts → .ics file) ──
+    // Phase 4: each scheduled shift becomes a VEVENT. Filtered same as the view
+    // (location + side + person filter). Imports cleanly into Apple Calendar,
+    // Google Calendar, Outlook. No server needed.
+    const handleExportIcs = () => {
+        const events = visibleShifts.filter(s => s.published !== false); // skip drafts
+        if (events.length === 0) {
+            alert(tx('No published shifts to export.', 'Sin turnos publicados para exportar.'));
+            return;
+        }
+        const pad = (n) => String(n).padStart(2, '0');
+        // Format date+time for ICS as floating local time (no Z, no TZID).
+        // Floating = whatever local TZ the calendar user is in. For staff who
+        // open this on their phone, that's the same time DD Mau means.
+        const fmt = (dateStr, timeStr) => {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            const [h, mi] = (timeStr || '09:00').split(':').map(Number);
+            return `${y}${pad(m)}${pad(d)}T${pad(h)}${pad(mi)}00`;
+        };
+        const escape = (s) => (s || '').replace(/[\\;,]/g, c => '\\' + c).replace(/\n/g, '\\n');
+        const dtstamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+        const lines = [
+            'BEGIN:VCALENDAR',
+            'VERSION:2.0',
+            'PRODID:-//DD Mau//Schedule//EN',
+            'CALSCALE:GREGORIAN',
+            'METHOD:PUBLISH',
+            `X-WR-CALNAME:DD Mau ${side === 'foh' ? 'FOH' : 'BOH'} ${LOCATION_LABELS[storeLocation] || storeLocation}${personFilter ? ' — ' + personFilter : ''}`,
+        ];
+        for (const sh of events) {
+            const summary = `${sh.staffName} (${sh.location || ''})${sh.isShiftLead ? ' 🛡️' : ''}${sh.isDouble ? ' ⏱' : ''}`;
+            lines.push(
+                'BEGIN:VEVENT',
+                `UID:${sh.id}@ddmau`,
+                `DTSTAMP:${dtstamp}`,
+                `DTSTART:${fmt(sh.date, sh.startTime)}`,
+                `DTEND:${fmt(sh.date, sh.endTime)}`,
+                `SUMMARY:${escape(summary)}`,
+                sh.notes ? `DESCRIPTION:${escape(sh.notes)}` : 'DESCRIPTION:',
+                `LOCATION:${escape(LOCATION_LABELS[sh.location] || sh.location || '')}`,
+                'END:VEVENT',
+            );
+        }
+        lines.push('END:VCALENDAR');
+        const ics = lines.join('\r\n');
+        const blob = new Blob([ics], { type: 'text/calendar' });
+        const url = URL.createObjectURL(blob);
+        const filename = `dd-mau-${side}-${toDateStr(weekStart)}${personFilter ? '-' + personFilter.replace(/\s+/g, '_') : ''}.ics`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     };
 
     // ── Phase 3: bulk publish drafts in current week + side ──
@@ -623,6 +793,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
             await batch.commit();
             alert(tx(`✅ Published ${drafts.length} shifts.`, `✅ Se publicaron ${drafts.length} turnos.`));
+            // Notify each staffer whose shifts were published — one notification per person.
+            const byStaff = new Map();
+            for (const s of drafts) {
+                const list = byStaff.get(s.staffName) || [];
+                list.push(s);
+                byStaff.set(s.staffName, list);
+            }
+            for (const [name, list] of byStaff) {
+                await notify(name, 'week_published', tx('Schedule published', 'Horario publicado'),
+                    tx(`${list.length} new shift${list.length === 1 ? '' : 's'} for the week of ${toDateStr(weekStart)}.`,
+                       `${list.length} turno${list.length === 1 ? '' : 's'} nuevo${list.length === 1 ? '' : 's'} para la semana del ${toDateStr(weekStart)}.`));
+            }
         } catch (e) {
             console.error('Publish failed:', e);
             alert(tx('Publish error: ', 'Error al publicar: ') + e.message);
@@ -812,9 +994,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }
             `}</style>
 
-            <div className="flex items-baseline justify-between mb-1 print:hidden">
+            <div className="flex items-center justify-between mb-1 print:hidden">
                 <h2 className="text-2xl font-bold text-mint-700">📅 {tx('Schedule', 'Horario')}</h2>
-                <span className="text-xs text-gray-500">{LOCATION_LABELS[storeLocation] || storeLocation}</span>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => setShowNotifDrawer(true)}
+                        className="relative p-1.5 rounded-full bg-gray-100 hover:bg-gray-200">
+                        <span className="text-lg">🔔</span>
+                        {unreadCount > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                                {unreadCount > 9 ? '9+' : unreadCount}
+                            </span>
+                        )}
+                    </button>
+                    <span className="text-xs text-gray-500">{LOCATION_LABELS[storeLocation] || storeLocation}</span>
+                </div>
             </div>
 
             {/* FOH / BOH side toggle — two separate schedules, managers & leads in both */}
@@ -861,6 +1054,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     title={tx('Print this view', 'Imprimir esta vista')}
                     className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
                     🖨 {tx('Print', 'Imprimir')}
+                </button>
+                <button onClick={handleExportIcs}
+                    title={tx('Download .ics — import into Apple/Google/Outlook calendar', 'Descargar .ics — importar a calendario')}
+                    className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                    📅 {tx('iCal', 'iCal')}
                 </button>
                 {/* Self-serve buttons (visible to ALL staff) */}
                 <button onClick={() => setShowPtoRequestModal(true)}
@@ -1081,6 +1279,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         setAvailableForDate(null);
                         openAddModal({ staffName: staff.name, date: availableForDate, location: staff.location });
                     }}
+                />
+            )}
+            {showNotifDrawer && (
+                <NotificationsDrawer
+                    notifications={notifications}
+                    onClose={() => setShowNotifDrawer(false)}
+                    onMarkRead={markNotifRead}
+                    onMarkAllRead={markAllNotifsRead}
+                    isEn={isEn}
+                    notifPermission={notifPermission}
+                    onRequestPermission={requestNotifPermission}
                 />
             )}
         </div>
@@ -2410,6 +2619,83 @@ function PtoView({ weekStart, timeOff, sideStaffNames, isEn, currentStaffName, c
                         </div>
                     );
                 })}
+            </div>
+        </div>
+    );
+}
+
+
+// ── NotificationsDrawer ────────────────────────────────────────────────────
+// In-app notification list. OS-level push will be added in a follow-up (needs
+// a service worker + Cloud Function to fire pushes from Firestore writes).
+function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead, isEn, notifPermission, onRequestPermission }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const fmtTime = (ts) => {
+        if (!ts || !ts.toMillis) return '';
+        const d = new Date(ts.toMillis());
+        const now = new Date();
+        const diffMin = Math.floor((now - d) / 60000);
+        if (diffMin < 1) return tx('just now', 'ahora');
+        if (diffMin < 60) return tx(`${diffMin}m ago`, `hace ${diffMin}m`);
+        if (diffMin < 60 * 24) return tx(`${Math.floor(diffMin/60)}h ago`, `hace ${Math.floor(diffMin/60)}h`);
+        return d.toLocaleDateString();
+    };
+    const iconFor = (type) => {
+        if (type?.startsWith('swap')) return '🔄';
+        if (type?.startsWith('pto')) return '🌴';
+        if (type === 'week_published') return '📢';
+        return '📬';
+    };
+    return (
+        <div className="fixed inset-0 bg-black/40 z-50 flex justify-end" onClick={onClose}>
+            <div className="bg-white w-full max-w-sm h-full overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-mint-700">🔔 {tx('Notifications', 'Notificaciones')}</h3>
+                    <div className="flex items-center gap-2">
+                        {notifications.some(n => !n.read) && (
+                            <button onClick={onMarkAllRead}
+                                className="text-xs text-mint-700 underline">{tx('Mark all read', 'Marcar todo')}</button>
+                        )}
+                        <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                    </div>
+                </div>
+                <div className="p-3 space-y-2">
+                    {/* Permission prompt */}
+                    {notifPermission === 'default' && (
+                        <button onClick={onRequestPermission}
+                            className="w-full p-3 rounded-lg bg-mint-50 border-2 border-mint-300 text-left">
+                            <div className="font-bold text-sm text-mint-800">🔔 {tx('Enable browser notifications', 'Activar notificaciones del navegador')}</div>
+                            <div className="text-xs text-mint-700 mt-0.5">{tx('Get pinged when a swap is approved, your time-off is decided, or a new schedule is published.', 'Recibe avisos cuando se aprueben cambios, decidan tu tiempo libre o publiquen nuevo horario.')}</div>
+                        </button>
+                    )}
+                    {notifPermission === 'denied' && (
+                        <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800">
+                            ⚠ {tx('Browser notifications are blocked. Re-enable in your browser settings if you want to be pinged.', 'Las notificaciones están bloqueadas. Habilítalas en la configuración del navegador.')}
+                        </div>
+                    )}
+                    {notifPermission === 'granted' && (
+                        <div className="p-2 rounded-lg bg-green-50 border border-green-200 text-xs text-green-800">
+                            ✓ {tx('Browser notifications enabled.', 'Notificaciones activadas.')}
+                        </div>
+                    )}
+                    {notifications.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-12">{tx('Nothing here yet.', 'Aún no hay nada.')}</p>
+                    ) : notifications.map(n => (
+                        <div key={n.id}
+                            onClick={() => !n.read && onMarkRead(n.id)}
+                            className={`p-3 rounded-lg border cursor-pointer ${n.read ? 'bg-white border-gray-200' : 'bg-mint-50 border-mint-300'}`}>
+                            <div className="flex items-start gap-2">
+                                <span className="text-xl flex-shrink-0">{iconFor(n.type)}</span>
+                                <div className="min-w-0 flex-1">
+                                    <div className={`font-bold text-sm ${n.read ? 'text-gray-700' : 'text-mint-800'}`}>{n.title}</div>
+                                    <div className="text-xs text-gray-600 mt-0.5">{n.body}</div>
+                                    <div className="text-[10px] text-gray-400 mt-1">{fmtTime(n.createdAt)}</div>
+                                </div>
+                                {!n.read && <span className="w-2 h-2 rounded-full bg-mint-600 flex-shrink-0 mt-1"></span>}
+                            </div>
+                        </div>
+                    ))}
+                </div>
             </div>
         </div>
     );
