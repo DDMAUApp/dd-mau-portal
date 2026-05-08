@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } fr
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS } from './data/staff';
+import { enableFcmPush, onForegroundMessage } from './messaging';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
@@ -164,6 +165,43 @@ export default function App() {
             runMigrations();
         }
     }, []);
+    // FCM push init — wire AFTER staff is logged in AND staffList is loaded.
+    // The runbook says push is deployed; before this, enableFcmPush was
+    // exported from messaging.js but never called, so tokens were never saved
+    // and Cloud Function reminders never reached devices.
+    // Foreground message handler shows an in-app toast/console log.
+    useEffect(() => {
+        if (!staffName || !Array.isArray(staffList) || staffList.length === 0) return;
+        let unsubForeground = null;
+        let cancelled = false;
+        (async () => {
+            try {
+                const result = await enableFcmPush(staffName, staffList, setStaffList);
+                if (cancelled) return;
+                if (result.ok) {
+                    console.log("[FCM] push enabled for", staffName);
+                    unsubForeground = await onForegroundMessage((payload) => {
+                        // Minimal foreground handler — log + browser-native banner.
+                        // Schedule.jsx already owns its own in-app notifications drawer.
+                        const title = payload?.notification?.title || payload?.data?.title || "DD Mau";
+                        const body = payload?.notification?.body || payload?.data?.body || "";
+                        console.log("[FCM foreground]", title, body, payload);
+                        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+                            try { new Notification(title, { body, icon: "/icon-192.png" }); } catch {}
+                        }
+                    });
+                } else {
+                    console.log("[FCM] not enabled:", result.reason);
+                }
+            } catch (e) {
+                console.warn("[FCM] init failed:", e);
+            }
+        })();
+        return () => {
+            cancelled = true;
+            if (typeof unsubForeground === "function") unsubForeground();
+        };
+    }, [staffName, staffList?.length]);
     // Load staff list from Firestore
     useEffect(() => {
         const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {

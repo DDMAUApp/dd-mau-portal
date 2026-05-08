@@ -101,9 +101,14 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleSavePin = async (id) => {
                 if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
-                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0 } : s);
-                setStaffList(updated);
-                await saveStaffToFirestore(updated);
+                // Functional setState avoids stale-closure clobber when a
+                // concurrent admin edit is in flight (same fix as bulk-tag).
+                let latest = null;
+                setStaffList(prev => {
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0 } : s);
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
                 setEditingId(null);
                 setEditPin("");
                 setEditRole("");
@@ -119,11 +124,18 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
-                const maxId = Math.max(...staffList.map(s => s.id), 0);
-                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess, shiftLead: newShiftLead, isMinor: newIsMinor, scheduleSide: newScheduleSide };
-                const updated = [...staffList, newStaff];
-                setStaffList(updated);
-                await saveStaffToFirestore(updated);
+                // Functional setState — read latest list from React state
+                // instead of closing over a stale snapshot. Otherwise two
+                // admins adding back-to-back can silently lose one entry
+                // (and the new id is computed off the stale max).
+                let latest = null;
+                setStaffList(prev => {
+                    const maxId = Math.max(...prev.map(s => s.id), 0);
+                    const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess, shiftLead: newShiftLead, isMinor: newIsMinor, scheduleSide: newScheduleSide };
+                    latest = [...prev, newStaff];
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
                 setShowAdd(false);
                 setNewName("");
                 setNewRole("FOH");
@@ -138,13 +150,16 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             };
 
             const handleRemoveStaff = async (id) => {
-                const person = staffList.find(s => s.id === id);
                 // Block removal by ADMIN_ID (not name) so renaming an admin
                 // doesn't bypass this guard.
-                if (person && ADMIN_IDS.includes(person.id)) return;
-                const updated = staffList.filter(s => s.id !== id);
-                setStaffList(updated);
-                await saveStaffToFirestore(updated);
+                if (ADMIN_IDS.includes(id)) return;
+                // Functional setState avoids stale-closure clobber.
+                let latest = null;
+                setStaffList(prev => {
+                    latest = prev.filter(s => s.id !== id);
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
                 setConfirmRemoveId(null);
                 showSaved();
             };
@@ -584,12 +599,21 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                         // availability stored as: { mon: { available: true, from: "09:00", to: "17:00" } | { available: false }, ... }
                         const avail = person.availability || {};
                         const updateDay = async (dayKey, patch) => {
-                            const cur = avail[dayKey] || { available: true, from: "09:00", to: "21:00" };
-                            const nextDay = { ...cur, ...patch };
-                            const nextAvail = { ...avail, [dayKey]: nextDay };
-                            const updated = staffList.map(s => s.id === person.id ? { ...s, availability: nextAvail } : s);
-                            setStaffList(updated);
-                            await saveStaffToFirestore(updated);
+                            // Functional setState — avoids clobbering a sibling
+                            // edit that might land between snapshot and save.
+                            // Read fresh availability from `prev` rather than
+                            // closing over `avail` from the parent scope.
+                            let latest = null;
+                            setStaffList(prev => {
+                                const me = prev.find(s => s.id === person.id);
+                                const curAvail = (me && me.availability) || {};
+                                const cur = curAvail[dayKey] || { available: true, from: "09:00", to: "21:00" };
+                                const nextDay = { ...cur, ...patch };
+                                const nextAvail = { ...curAvail, [dayKey]: nextDay };
+                                latest = prev.map(s => s.id === person.id ? { ...s, availability: nextAvail } : s);
+                                return latest;
+                            });
+                            if (latest) await saveStaffToFirestore(latest);
                         };
                         return (
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">

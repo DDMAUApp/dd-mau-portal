@@ -91,19 +91,27 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     }
     if (!token) return { ok: false, reason: "no-token" };
 
-    // Persist token on staff record
-    if (staffName && Array.isArray(staffList) && setStaffList) {
-        const me = staffList.find((s) => s.name === staffName);
-        if (me) {
+    // Persist token on staff record. Use the FUNCTIONAL form of setStaffList
+    // so we read the *latest* staffList from React state instead of the
+    // closed-over snapshot — otherwise concurrent admin edits get clobbered.
+    if (staffName && setStaffList) {
+        let savedSnapshot = null;
+        setStaffList((prev) => {
+            if (!Array.isArray(prev)) return prev;
+            const me = prev.find((s) => s.name === staffName);
+            if (!me) return prev;
             const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
             const dedup = existing.filter((t) => t && t.token && t.token !== token);
             const next = [{ token, lastSeen: Date.now() }, ...dedup].slice(0, MAX_TOKENS_PER_STAFF);
-            const updated = staffList.map((s) =>
+            const updated = prev.map((s) =>
                 s.name === staffName ? { ...s, fcmTokens: next } : s
             );
-            setStaffList(updated);
+            savedSnapshot = updated;
+            return updated;
+        });
+        if (savedSnapshot) {
             try {
-                await setDoc(doc(db, "config", "staff"), { list: updated });
+                await setDoc(doc(db, "config", "staff"), { list: savedSnapshot });
             } catch (e) {
                 console.warn("Save FCM token to staff doc failed:", e);
             }

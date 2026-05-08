@@ -5,7 +5,11 @@ import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { MASTER_RECIPES } from '../data/masterRecipes';
 
-const RECIPE_PASSWORD = "ZhongGuo87";
+// Editing is gated on isAdmin (Andrew/Julie) — no shared password.
+// Previously a hardcoded RECIPE_PASSWORD was checked client-side, which
+// meant the password was visible to anyone who opened devtools. Removed.
+// If you need to grant edit access to a non-admin, promote them to an
+// ADMIN_ID in src/data/staff.js or add a per-staff "canEditRecipes" flag.
 
 function RecipeForm({ language, recipe, onSave, onCancel }) {
     const isEdit = !!recipe;
@@ -143,7 +147,6 @@ export default function Recipes({ language, staffName, staffList }) {
     const [expandedRecipe, setExpandedRecipe] = useState(null);
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
-    const [unlocked, setUnlocked] = useState(false);
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
     // Screenshot protection — blur recipes when app loses focus.
     // Hooks MUST be declared at the top, before any conditional returns
@@ -199,10 +202,6 @@ export default function Recipes({ language, staffName, staffList }) {
             return scaled % 1 === 0 ? scaled.toString() : scaled.toFixed(1);
         });
     };
-    const [showPasswordPrompt, setShowPasswordPrompt] = useState(false);
-    const [pendingAction, setPendingAction] = useState(null); // "add" | recipe object
-    const [passwordInput, setPasswordInput] = useState("");
-    const [passwordError, setPasswordError] = useState(false);
     const adminUser = isAdmin(staffName, staffList);
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
     const hasRecipesAccess = adminUser || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
@@ -217,31 +216,26 @@ export default function Recipes({ language, staffName, staffList }) {
         return () => unsubscribe();
     }, []);
 
+    // Edit/delete is admin-only. The previous flow had a shared hardcoded
+    // password client-side which is unsafe; admins now don't need any
+    // password (their PIN already authenticated them on the home screen).
     const requestEdit = (action) => {
-        if (unlocked) {
-            setEditMode(action);
-        } else {
-            setPendingAction(action);
-            setShowPasswordPrompt(true);
-            setPasswordInput("");
-            setPasswordError(false);
+        if (!adminUser) {
+            alert(language === "es"
+                ? "Sólo los administradores pueden editar recetas. Pídele al gerente."
+                : "Only admins can edit recipes. Ask a manager.");
+            return;
         }
+        setEditMode(action);
     };
-
-    const checkPassword = () => {
-        if (passwordInput === RECIPE_PASSWORD) {
-            setUnlocked(true);
-            setShowPasswordPrompt(false);
-            setPasswordError(false);
-            if (pendingAction && pendingAction.action === "delete") {
-                deleteRecipe(pendingAction.id);
-            } else {
-                setEditMode(pendingAction);
-            }
-            setPendingAction(null);
-        } else {
-            setPasswordError(true);
+    const requestDelete = (recipeId) => {
+        if (!adminUser) {
+            alert(language === "es"
+                ? "Sólo los administradores pueden borrar recetas."
+                : "Only admins can delete recipes.");
+            return;
         }
+        deleteRecipe(recipeId);
     };
 
     const saveRecipe = async (recipeData) => {
@@ -326,35 +320,6 @@ export default function Recipes({ language, staffName, staffList }) {
         );
     }
 
-    // Password prompt modal
-    if (showPasswordPrompt) {
-        return (
-            <div className="p-4 pb-24">
-                <div className="max-w-sm mx-auto mt-12 bg-white border-2 border-amber-300 rounded-xl p-6 shadow-lg">
-                    <div className="text-center mb-4">
-                        <span className="text-4xl">🔐</span>
-                        <h3 className="font-bold text-lg text-gray-800 mt-2">{language === "es" ? "Contraseña de Recetas" : "Recipe Password"}</h3>
-                        <p className="text-xs text-gray-500 mt-1">{language === "es" ? "Ingrese la contraseña para editar recetas" : "Enter password to edit recipes"}</p>
-                    </div>
-                    <input
-                        type="password"
-                        className={`w-full border-2 ${passwordError ? "border-red-400" : "border-gray-300"} rounded-lg px-4 py-3 text-center text-lg mb-2`}
-                        value={passwordInput}
-                        onChange={e => { setPasswordInput(e.target.value); setPasswordError(false); }}
-                        onKeyDown={e => e.key === "Enter" && checkPassword()}
-                        placeholder="••••••••"
-                        autoFocus
-                    />
-                    {passwordError && <p className="text-red-500 text-xs text-center mb-2">{language === "es" ? "Contraseña incorrecta" : "Incorrect password"}</p>}
-                    <div className="flex gap-2 mt-3">
-                        <button onClick={() => { setShowPasswordPrompt(false); setPendingAction(null); }} className="flex-1 border border-gray-300 rounded-lg py-2 text-sm text-gray-600">{language === "es" ? "Cancelar" : "Cancel"}</button>
-                        <button onClick={checkPassword} className="flex-1 bg-mint-700 text-white rounded-lg py-2 text-sm font-bold">{language === "es" ? "Entrar" : "Enter"}</button>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
     if (editMode) {
         return <RecipeForm
             language={language}
@@ -419,7 +384,7 @@ export default function Recipes({ language, staffName, staffList }) {
                                         <button onClick={(e) => { e.stopPropagation(); requestEdit(recipe); }} className="text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-full font-bold border border-amber-300">
                                             ✏️ {language === "es" ? "Editar" : "Edit"}
                                         </button>
-                                        <button onClick={(e) => { e.stopPropagation(); if(unlocked) deleteRecipe(recipe.id); else { setPendingAction({action:"delete", id: recipe.id}); setShowPasswordPrompt(true); setPasswordInput(""); setPasswordError(false); }}} className="text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full font-bold border border-red-200">
+                                        <button onClick={(e) => { e.stopPropagation(); requestDelete(recipe.id); }} className="text-xs bg-red-50 text-red-600 px-3 py-1 rounded-full font-bold border border-red-200">
                                             🗑️ {language === "es" ? "Eliminar" : "Delete"}
                                         </button>
                                     </div>
