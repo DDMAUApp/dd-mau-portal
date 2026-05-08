@@ -196,17 +196,116 @@ export default function App() {
     if (!staffName) {
         return <HomePage onSelectStaff={handleSelectStaff} language={language} staffList={staffList} />;
     }
+    // Sidebar nav items — all tabs accessible at desktop. Conditional ones gated.
+    const sidebarPrimary = [
+        { tab: "home",       icon: "🏠", labelEn: "Home",       labelEs: "Inicio" },
+        { tab: "training",   icon: "📚", labelEn: "Training",   labelEs: "Capacitación" },
+        { tab: "operations", icon: "📋", labelEn: "Operations", labelEs: "Operaciones" },
+        { tab: "menu",       icon: "🍜", labelEn: "Menu",       labelEs: "Menú" },
+        { tab: "schedule",   icon: "📅", labelEn: "Schedule",   labelEs: "Horario" },
+    ];
+    const sidebarSecondary = [
+        { tab: "catering",   icon: "🍽️", labelEn: "Orders",      labelEs: "Pedidos" },
+        { tab: "maintenance",icon: "🔧", labelEn: "Maintenance", labelEs: "Mantenimiento" },
+        { tab: "insurance",  icon: "🏥", labelEn: "Insurance",   labelEs: "Seguro" },
+        { tab: "eighty6",    icon: "🚫", labelEn: "86",          labelEs: "86" },
+    ];
+    const renderSidebarBtn = (b, accentClass = "") => {
+        const isActive = activeTab === b.tab;
+        const label = language === "es" ? b.labelEs : b.labelEn;
+        return (
+            <button key={b.tab} onClick={() => setActiveTab(b.tab)}
+                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition ${
+                    isActive
+                        ? "bg-white/15 text-white"
+                        : "text-mint-100 hover:bg-white/10 hover:text-white"
+                } ${accentClass}`}>
+                <span className="text-lg">{b.icon}</span>
+                <span>{label}</span>
+            </button>
+        );
+    };
+
     return (
-        <div className="bg-white min-h-screen">
+        <div className="bg-white min-h-screen md:flex">
             {/* Update banner */}
             {updateAvailable && (
                 <div onClick={() => window.location.reload()} style={{position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999, background: "#2563eb", color: "white", textAlign: "center", padding: "10px 16px", fontSize: "14px", fontWeight: 600, cursor: "pointer"}}>
                     {language === "es" ? "Nueva actualizacion disponible — toca para refrescar" : "New update available — tap to refresh"}
                 </div>
             )}
-            {/* Header */}
-            <div className="bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 sticky top-0 z-40 shadow-lg" style={updateAvailable ? {marginTop: "40px"} : {}}>
-                <div className="max-w-lg mx-auto flex justify-between items-center">
+
+            {/* ─── DESKTOP SIDEBAR (md and up) ─── */}
+            <aside className="hidden md:flex md:flex-col md:fixed md:inset-y-0 md:left-0 md:w-56 bg-gradient-to-b from-mint-800 to-mint-700 text-white z-30 overflow-y-auto"
+                style={updateAvailable ? { paddingTop: "40px" } : {}}>
+                {/* Logo header */}
+                <div className="px-4 py-5 border-b border-white/10">
+                    <h1 className="text-xl font-bold">🍜 DD Mau</h1>
+                    <p className="text-xs text-mint-200">{t("staffPortal", language)}</p>
+                </div>
+                {/* Staff + location pill */}
+                <div className="px-4 py-3 border-b border-white/10">
+                    <p className="text-xs text-mint-200 truncate">👤 {staffName}</p>
+                    {(staffLocation === "both" || staffIsAdmin) ? (
+                        <div className="flex gap-1 mt-2">
+                            <button onClick={() => setActiveLocation("webster")}
+                                className={`flex-1 px-2 py-1 rounded text-[10px] font-bold transition ${activeLocation === "webster" ? "bg-white text-mint-700" : "bg-mint-600 text-white hover:bg-mint-500"}`}>
+                                Webster
+                            </button>
+                            <button onClick={() => setActiveLocation("maryland")}
+                                className={`flex-1 px-2 py-1 rounded text-[10px] font-bold transition ${activeLocation === "maryland" ? "bg-white text-mint-700" : "bg-mint-600 text-white hover:bg-mint-500"}`}>
+                                MD Heights
+                            </button>
+                        </div>
+                    ) : (
+                        <p className="text-[10px] text-mint-300 mt-1">📍 {LOCATION_LABELS[staffLocation] || "Webster"}</p>
+                    )}
+                </div>
+                {/* Primary nav */}
+                <nav className="flex-1 px-2 py-3 space-y-0.5">
+                    {sidebarPrimary.map(b => renderSidebarBtn(b))}
+                    {/* AI as a visually distinct purple block */}
+                    {(() => {
+                        const isActive = activeTab === "ai";
+                        return (
+                            <button onClick={() => setActiveTab("ai")}
+                                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold transition mt-2 ${
+                                    isActive ? "bg-purple-500 text-white" : "bg-purple-700/50 text-purple-100 hover:bg-purple-600"
+                                }`}>
+                                <span className="text-lg">🤖</span>
+                                <span>{language === "es" ? "Asistente AI" : "AI Assistant"}</span>
+                            </button>
+                        );
+                    })()}
+                    {(isAtDDMau || hasRecipesAccess) && renderSidebarBtn({ tab: "recipes", icon: "🧑‍🍳", labelEn: "Recipes", labelEs: "Recetas" })}
+                    <div className="pt-3 mt-2 border-t border-white/10">
+                        {sidebarSecondary.map(b => renderSidebarBtn(b))}
+                    </div>
+                    {staffIsAdmin && (
+                        <div className="pt-3 mt-2 border-t border-white/10 space-y-0.5">
+                            {renderSidebarBtn({ tab: "labor",  icon: "📊", labelEn: "Labor",  labelEs: "Mano Obra" })}
+                            {renderSidebarBtn({ tab: "admin",  icon: "⚙️",  labelEn: "Admin",  labelEs: "Admin" })}
+                        </div>
+                    )}
+                </nav>
+                {/* Footer: language + logout */}
+                <div className="px-2 py-3 border-t border-white/10 space-y-1.5">
+                    <button onClick={() => setLanguage(language === "en" ? "es" : "en")}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/15">
+                        🌐 {language === "en" ? "Español" : "English"}
+                    </button>
+                    <button onClick={() => { setStaffName(null); setActiveTab("home"); }}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/15">
+                        🚪 {t("logout", language)}
+                    </button>
+                </div>
+            </aside>
+
+            {/* ─── MAIN COLUMN ─── pad-left on md: to clear the fixed sidebar */}
+            <div className="flex-1 md:ml-56 min-h-screen">
+            {/* Mobile-only header (hidden on md+) — sidebar replaces it on desktop */}
+            <div className="md:hidden bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 sticky top-0 z-40 shadow-lg" style={updateAvailable ? {marginTop: "40px"} : {}}>
+                <div className="flex justify-between items-center">
                     <div>
                         <h1 className="text-2xl font-bold">🍜 DD Mau</h1>
                         <p className="text-sm text-mint-100">{t("staffPortal", language)}</p>
@@ -244,8 +343,8 @@ export default function App() {
                     )}
                 </div>
             </div>
-            {/* Content */}
-            <div className="max-w-lg mx-auto">
+            {/* Content — wider container at md: */}
+            <div className="max-w-lg md:max-w-7xl mx-auto md:px-4 lg:px-6">
                 {activeTab === "home" && (
                     <div className="pb-24" style={{background: "#111827"}}>
                         <div style={{background: "linear-gradient(135deg, #059669, #047857)", padding: "24px 16px 20px", color: "white"}}>
@@ -253,7 +352,7 @@ export default function App() {
                             <h2 style={{fontSize: "22px", fontWeight: 700, margin: "4px 0 0"}}>{t("welcome", language)}, {staffName}!</h2>
                         </div>
                         <div style={{padding: "16px"}}>
-                            <div style={{display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px"}}>
+                            <div className="dd-tile-grid">
                                 {[
                                     { tab: "training", icon: "📚", label: t("trainingHub", language), sub: language === "es" ? "Modulos" : "Modules" },
                                     { tab: "operations", icon: "📋", label: t("dailyOps", language), sub: language === "es" ? "Listas" : "Checklists" },
@@ -344,8 +443,9 @@ export default function App() {
                     </ErrorBoundary>
                 </Suspense>
             </div>
-            {/* Bottom Navigation */}
-            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow">
+            </div>
+            {/* Bottom Navigation — hidden on md+ since sidebar replaces it */}
+            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow md:hidden">
                 <div className="max-w-lg mx-auto flex justify-around items-center h-20">
                     {[
                         { tab: "home", icon: "🏠", label: t("home", language) },
