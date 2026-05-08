@@ -475,6 +475,37 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             setShowAddModal(false);
             setAddPrefill(null);
+
+            // After save, check whether the new shift will actually be visible
+            // in the current view. If not (different week / side / location /
+            // person filter), auto-adjust the view so the user sees what they
+            // just created. Was a real source of "I saved but nothing showed up"
+            // confusion when staff scheduleSide was unset.
+            const savedDate = parseLocalDate(shiftData.date);
+            const targetWeekStart = savedDate ? startOfWeek(savedDate) : null;
+            const savedStaff = (staffList || []).find(s => s.name === shiftData.staffName);
+            const savedSide = savedStaff ? resolveStaffSide(savedStaff) : 'foh';
+            // Jump to the right week
+            if (targetWeekStart && toDateStr(targetWeekStart) !== toDateStr(weekStart)) {
+                setWeekStart(targetWeekStart);
+            }
+            // Jump to the right side
+            if (savedSide !== side) {
+                setSide(savedSide);
+            }
+            // Clear person filter if it would hide this shift
+            if (personFilter && personFilter !== shiftData.staffName) {
+                setPersonFilter(null);
+            }
+            // Warn about location mismatch (no auto-switch — that's an app-level setting)
+            if (storeLocation !== 'both' && shiftData.location && shiftData.location !== storeLocation) {
+                setTimeout(() => {
+                    alert(tx(
+                        `✅ Saved, but this shift is at ${LOCATION_LABELS[shiftData.location]} and you're viewing ${LOCATION_LABELS[storeLocation]}. Switch locations from the home screen to see it.`,
+                        `✅ Guardado, pero este turno es en ${LOCATION_LABELS[shiftData.location]} y estás viendo ${LOCATION_LABELS[storeLocation]}. Cambia de ubicación en la pantalla de inicio para verlo.`,
+                    ));
+                }, 0);
+            }
         } catch (e) {
             console.error('Add shift failed:', e);
             alert(tx('Could not save shift: ', 'No se pudo guardar el turno: ') + e.message);
