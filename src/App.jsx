@@ -9,7 +9,7 @@ import { enableFcmPush, onForegroundMessage } from './messaging';
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import useGeofence from './components/hooks/useGeofence';
-import usePullToRefresh from './components/hooks/usePullToRefresh';
+import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
 const TrainingHub = lazy(() => import('./components/TrainingHub'));
 const Operations = lazy(() => import('./components/Operations'));
@@ -433,6 +433,14 @@ export default function App() {
                         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/15">
                         🌐 {language === "en" ? "Español" : "English"}
                     </button>
+                    {/* Manual refresh — same cache-bust + reload that mobile's
+                        pull-down gesture runs. Lets desktop staff (and mobile
+                        users who don't know the gesture) recover from a
+                        stuck-on-old-build situation with one click. */}
+                    <button onClick={() => forceRefresh()}
+                        className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/15">
+                        ↻ {language === "es" ? "Actualizar" : "Refresh"}
+                    </button>
                     <button onClick={() => { setStaffName(null); setActiveTab("home"); }}
                         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/15">
                         🚪 {t("logout", language)}
@@ -461,6 +469,17 @@ export default function App() {
                             className="bg-mint-500 hover:bg-mint-700 rounded-full p-2 font-bold text-sm transition"
                         >
                             🌐 {language === "en" ? "ES" : "EN"}
+                        </button>
+                        {/* Manual refresh — same handler that the pull-down
+                            gesture uses. Tap-friendly fallback for staff who
+                            don't know the gesture, and a discoverable trigger
+                            for managers walking through the app. */}
+                        <button
+                            onClick={() => forceRefresh()}
+                            title={language === "es" ? "Actualizar" : "Refresh"}
+                            className="bg-mint-500 hover:bg-mint-700 rounded-full p-2 font-bold text-sm transition"
+                        >
+                            ↻
                         </button>
                         <button
                             onClick={() => { setStaffName(null); setActiveTab("home"); }}

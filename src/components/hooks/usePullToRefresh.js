@@ -23,6 +23,34 @@ const THRESHOLD = 80;     // px pull distance to trigger a refresh
 const MAX_PULL = 120;     // px cap on visual progress (rubber-band feel)
 const REFRESHING_PAINT_MS = 300; // brief window so user sees the spinner
 
+// Standalone refresh action — same cache-bust + reload sequence used by the
+// pull gesture, exposed so a desktop button (or a future "refresh" menu
+// item) can trigger the exact same recovery without touch events.
+export async function forceRefresh() {
+    try {
+        if ('serviceWorker' in navigator) {
+            const regs = await navigator.serviceWorker.getRegistrations();
+            for (const r of regs) { try { await r.update(); } catch {} }
+        }
+        if ('caches' in window) {
+            try {
+                const keys = await caches.keys();
+                await Promise.all(keys.map(k => caches.delete(k)));
+            } catch {}
+        }
+        await new Promise(r => setTimeout(r, REFRESHING_PAINT_MS));
+    } catch (e) {
+        console.warn('forceRefresh cache clear failed:', e);
+    }
+    try {
+        const url = new URL(window.location.href);
+        url.searchParams.set('_r', Date.now().toString(36));
+        window.location.replace(url.toString());
+    } catch {
+        window.location.reload();
+    }
+}
+
 export default function usePullToRefresh() {
     const [pullDistance, setPullDistance] = useState(0);
     const [refreshing, setRefreshing] = useState(false);
@@ -89,40 +117,7 @@ export default function usePullToRefresh() {
             if (finalPull < THRESHOLD || refreshingRef.current) return;
 
             setRefreshing(true);
-            try {
-                // 1. Tell every registered SW to fetch new files. iOS PWAs
-                //    in standalone mode are notorious for serving cached
-                //    builds otherwise.
-                if ('serviceWorker' in navigator) {
-                    const regs = await navigator.serviceWorker.getRegistrations();
-                    for (const r of regs) { try { await r.update(); } catch {} }
-                }
-                // 2. Wipe every cache the SW may have populated. Our inline
-                //    SW (pwa.js) doesn't .put() anything, but a future SW or
-                //    a leftover one from a previous deploy might have. Cheap
-                //    to do unconditionally.
-                if ('caches' in window) {
-                    try {
-                        const keys = await caches.keys();
-                        await Promise.all(keys.map(k => caches.delete(k)));
-                    } catch {}
-                }
-                // Brief paint window so the user sees "Refreshing…" before
-                // the reload kicks in.
-                await new Promise(r => setTimeout(r, REFRESHING_PAINT_MS));
-            } catch (e) {
-                console.warn('Pull-refresh cache clear failed:', e);
-            }
-            // 3. Cache-busting URL replace. Plain location.reload() on iOS
-            //    PWA standalone can still serve the cached HTML; appending
-            //    a unique query param forces a fresh GET against the server.
-            try {
-                const url = new URL(window.location.href);
-                url.searchParams.set('_r', Date.now().toString(36));
-                window.location.replace(url.toString());
-            } catch {
-                window.location.reload();
-            }
+            await forceRefresh();
         };
 
         document.addEventListener('touchstart', onTouchStart, { passive: true });
