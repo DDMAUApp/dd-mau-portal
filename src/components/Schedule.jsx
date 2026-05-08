@@ -230,6 +230,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [showTemplateEditor, setShowTemplateEditor] = useState(false);
     const [editingTemplate, setEditingTemplate] = useState(null); // template being edited / null = creating
     const [showApplyTemplate, setShowApplyTemplate] = useState(false);
+    // Recurring shifts ("Maria works Mon/Wed 9-3 every week")
+    const [recurringShifts, setRecurringShifts] = useState([]);
+    const [showRecurringModal, setShowRecurringModal] = useState(false);
     // In-app notifications (bell drawer)
     const [notifications, setNotifications] = useState([]);
     const [showNotifDrawer, setShowNotifDrawer] = useState(false);
@@ -296,6 +299,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setScheduleTemplates(items);
         }, (err) => console.error('schedule_templates snapshot error:', err));
+        return unsub;
+    }, []);
+
+    // ── Listen for recurring shift rules ──
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'recurring_shifts'), (snap) => {
+            const items = [];
+            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+            setRecurringShifts(items);
+        }, (err) => console.error('recurring_shifts snapshot error:', err));
         return unsub;
     }, []);
 
@@ -863,6 +876,92 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Recurring shifts ───────────────────────────────────────────────────
+    // A recurring rule: "Maria works Mon/Wed 9-3 every week, valid from
+    // 2026-05-12 onward (no end date)." We store rules separately and generate
+    // real shifts on-demand via the "Generate this week" button.
+    const handleSaveRecurring = async (rule) => {
+        if (!canEdit) return;
+        try {
+            if (rule.id) {
+                const { id, ...data } = rule;
+                await updateDoc(doc(db, 'recurring_shifts', id), { ...data, updatedAt: serverTimestamp(), updatedBy: staffName });
+            } else {
+                await addDoc(collection(db, 'recurring_shifts'), { ...rule, createdAt: serverTimestamp(), createdBy: staffName });
+            }
+        } catch (e) {
+            console.error('Save recurring failed:', e);
+            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        }
+    };
+
+    const handleDeleteRecurring = async (id) => {
+        if (!canEdit) return;
+        if (!confirm(tx('Delete this recurring rule? Already-generated shifts stay.', '¿Eliminar esta regla? Los turnos ya generados se quedan.'))) return;
+        try {
+            await deleteDoc(doc(db, 'recurring_shifts', id));
+        } catch (e) {
+            console.error('Delete recurring failed:', e);
+        }
+    };
+
+    // Generate shifts for the current week from all active recurring rules.
+    // Skips: closed dates, approved PTO for the staff, days outside validFrom/validUntil,
+    // and dates where the staff already has a shift in the same time block (no double-book).
+    // Generated shifts are DRAFT (published=false) so manager reviews + publishes.
+    const handleGenerateRecurring = async () => {
+        if (!canEdit) return;
+        const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+        const created = [];
+        const skipped = [];
+        for (const rule of recurringShifts) {
+            if (!rule.staffName || !rule.startTime || !rule.endTime) continue;
+            const days = rule.daysOfWeek || [];
+            for (let i = 0; i < 7; i++) {
+                const date = addDays(weekStart, i);
+                const dStr = toDateStr(date);
+                const dow = dayKeys[date.getDay()];
+                if (!days.includes(dow)) continue;
+                if (rule.validFrom && dStr < rule.validFrom) continue;
+                if (rule.validUntil && dStr > rule.validUntil) continue;
+                if (dateClosed(dStr)) { skipped.push(`${rule.staffName} ${dStr}: closed`); continue; }
+                if (isStaffOffOn(rule.staffName, dStr)) { skipped.push(`${rule.staffName} ${dStr}: PTO`); continue; }
+                // Don't double-book: any existing shift overlapping this time block
+                const conflict = shifts.some(sh =>
+                    sh.staffName === rule.staffName && sh.date === dStr &&
+                    !(sh.endTime <= rule.startTime || sh.startTime >= rule.endTime));
+                if (conflict) { skipped.push(`${rule.staffName} ${dStr}: existing shift`); continue; }
+                try {
+                    await addDoc(collection(db, 'shifts'), {
+                        staffName: rule.staffName,
+                        date: dStr,
+                        startTime: rule.startTime,
+                        endTime: rule.endTime,
+                        location: rule.location || (storeLocation !== 'both' ? storeLocation : 'webster'),
+                        isShiftLead: !!rule.isShiftLead,
+                        isDouble: !!rule.isDouble,
+                        notes: tx('Recurring', 'Recurrente'),
+                        published: false,
+                        fromRecurringId: rule.id,
+                        createdBy: staffName,
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp(),
+                    });
+                    created.push(`${rule.staffName} ${dStr} ${rule.startTime}–${rule.endTime}`);
+                } catch (e) {
+                    console.error('Recurring shift create failed:', e);
+                }
+            }
+        }
+        if (created.length === 0) {
+            alert(tx(`No shifts generated.${skipped.length ? '\n\nSkipped:\n' + skipped.slice(0, 8).join('\n') : ''}`,
+                `No se generaron turnos.${skipped.length ? '\n\nOmitidos:\n' + skipped.slice(0, 8).join('\n') : ''}`));
+        } else {
+            alert(tx(`✅ Generated ${created.length} draft shifts.${skipped.length ? `\n\nSkipped ${skipped.length}.` : ''}`,
+                `✅ Se generaron ${created.length} turnos borrador.${skipped.length ? `\n\nOmitidos ${skipped.length}.` : ''}`));
+        }
+    };
+
     // ── Date blocks (closed days / no-time-off days) ───────────────────────
     const handleAddBlock = async (block) => {
         if (!canEdit) return;
@@ -961,13 +1060,30 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Manager approves / denies a pending PTO request
     const handleApprovePto = async (entry) => {
         if (!canEdit) return;
+        // Conflict-detection: warn if approving leaves published shifts orphaned.
+        const start = entry.startDate || entry.date;
+        const end = entry.endDate || entry.date;
+        const conflicts = shifts.filter(sh =>
+            sh.staffName === entry.staffName && sh.published !== false &&
+            sh.date >= start && sh.date <= end);
+        if (conflicts.length > 0) {
+            const lines = conflicts.slice(0, 8).map(sh =>
+                `  · ${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}${sh.location ? ` · ${LOCATION_LABELS[sh.location] || sh.location}` : ''}`
+            ).join('\n');
+            const more = conflicts.length > 8 ? `\n  · ${tx(`...and ${conflicts.length - 8} more`, `...y ${conflicts.length - 8} más`)}` : '';
+            const ok = confirm(tx(
+                `⚠️ Approving this PTO will leave ${conflicts.length} published shift(s) UNCOVERED:\n\n${lines}${more}\n\nApprove anyway? (You'll need to reassign these shifts.)`,
+                `⚠️ Aprobar este tiempo libre dejará ${conflicts.length} turno(s) publicado(s) SIN CUBRIR:\n\n${lines}${more}\n\n¿Aprobar de todas formas?`,
+            ));
+            if (!ok) return;
+        }
         try {
             await updateDoc(doc(db, 'time_off', entry.id), {
                 status: 'approved',
                 reviewedBy: staffName,
                 reviewedAt: serverTimestamp(),
             });
-            const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+            const range = start + (end !== start ? ` → ${end}` : '');
             await notify(entry.staffName, 'pto_approved', tx('Time-off approved', 'Tiempo libre aprobado'),
                 tx(`Your time-off for ${range} was approved.`, `Tu tiempo libre del ${range} fue aprobado.`));
         } catch (e) {
@@ -1010,14 +1126,93 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // app, which was just a screenshot of the responsive layout.
     const handlePrintWeek = () => {
         const dayLabels = isEn ? DAYS_EN : DAYS_ES;
+        const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
         const days = [0,1,2,3,4,5,6].map(i => addDays(weekStart, i));
         const today = toDateStr(new Date());
         const sideLabel = side === 'foh' ? 'Front of House' : 'Back of House';
         const locLabel = LOCATION_LABELS[storeLocation] || storeLocation;
         const weekRange = `${days[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${days[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
-
-        // Build cell HTML for each staff/day
         const escape = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+        // Per-person mode: when personFilter is set, render a clean day-by-day
+        // list instead of the multi-staff wide grid. Better for handing to one
+        // staff member.
+        if (personFilter) {
+            const myShifts = visibleShifts.filter(sh => sh.staffName === personFilter && sh.published !== false);
+            const totalHours = myShifts.reduce((sum, sh) => sum + hoursBetween(sh.startTime, sh.endTime, sh.isDouble), 0);
+            const dayBlocks = days.map((d, i) => {
+                const dStr = toDateStr(d);
+                const todayShifts = myShifts.filter(sh => sh.date === dStr).sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
+                const onPto = isStaffOffOn(personFilter, dStr);
+                const closed = dateClosed(dStr);
+                let body = '';
+                if (closed) body = '<div class="closed">CLOSED</div>';
+                else if (onPto && todayShifts.length === 0) body = '<div class="pto">🌴 Time Off</div>';
+                else if (todayShifts.length === 0) body = '<div class="empty">— Off —</div>';
+                else body = todayShifts.map(sh => {
+                    const hrs = hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                    return `<div class="shift-row">
+                        <span class="time">${escape(formatTime12h(sh.startTime))} – ${escape(formatTime12h(sh.endTime))}</span>
+                        <span class="hrs">${escape(formatHours(hrs))}</span>
+                        ${sh.isShiftLead ? '<span class="lead">🛡️ LEAD</span>' : ''}
+                        ${sh.isDouble ? '<span class="dbl">⏱ DOUBLE</span>' : ''}
+                        ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
+                    </div>`;
+                }).join('');
+                return `<div class="day ${dStr === today ? 'today' : ''} ${closed ? 'closed-day' : ''}">
+                    <div class="day-header">
+                        <span class="dow">${escape(dayLabelsFull[d.getDay()])}</span>
+                        <span class="dnum">${d.getMonth() + 1}/${d.getDate()}</span>
+                    </div>
+                    <div class="day-body">${body}</div>
+                </div>`;
+            }).join('');
+            const personHtml = `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<title>${escape(personFilter)} — ${escape(weekRange)}</title>
+<style>
+    @page { size: letter portrait; margin: 0.5in; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; color: #1f2937; }
+    .header { padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #255a37; display: flex; justify-content: space-between; align-items: baseline; }
+    h1 { font-size: 22px; margin: 0; color: #255a37; }
+    .subhead { font-size: 12px; color: #6b7280; }
+    .day { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
+    .day.today { background: #ecfdf5; }
+    .day.closed-day { background: #f3f4f6; opacity: 0.7; }
+    .day-header { width: 110px; flex-shrink: 0; }
+    .dow { display: block; font-weight: 700; font-size: 13px; color: #1f2937; }
+    .dnum { font-size: 11px; color: #6b7280; }
+    .day-body { flex: 1; }
+    .shift-row { padding: 4px 8px; background: #ecfdf5; border-left: 3px solid #10b981; margin-bottom: 4px; border-radius: 2px; }
+    .time { font-weight: 700; font-size: 13px; }
+    .hrs { font-size: 11px; color: #6b7280; margin-left: 8px; }
+    .lead { display: inline-block; margin-left: 8px; font-size: 9px; padding: 1px 5px; background: #ddd6fe; color: #5b21b6; font-weight: 700; border-radius: 8px; }
+    .dbl { display: inline-block; margin-left: 4px; font-size: 9px; padding: 1px 5px; background: #dbeafe; color: #1e40af; font-weight: 700; border-radius: 8px; }
+    .notes { font-size: 11px; font-style: italic; color: #4b5563; margin-top: 2px; }
+    .empty, .pto, .closed { font-size: 11px; color: #9ca3af; padding: 4px; }
+    .pto { color: #92400e; font-weight: 700; }
+    .closed { color: #6b7280; font-weight: 700; }
+    .summary { margin-top: 14px; padding: 10px; background: #f9fafb; border-radius: 6px; border: 1px solid #e5e7eb; }
+    .summary b { color: #255a37; font-size: 16px; }
+    .footer { margin-top: 12px; font-size: 9px; color: #9ca3af; text-align: center; }
+</style>
+</head><body>
+<div class="header">
+    <h1>📅 ${escape(personFilter)}</h1>
+    <span class="subhead">${escape(weekRange)} · ${escape(locLabel)}</span>
+</div>
+${dayBlocks}
+<div class="summary"><b>Total: ${escape(formatHours(totalHours))}</b> · ${myShifts.length} shifts this week</div>
+<div class="footer">Printed ${new Date().toLocaleString()} · DD Mau</div>
+<script>setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+            const w = window.open('', '_blank', 'width=800,height=1000');
+            if (!w) { alert(tx('Pop-up blocked.', 'Ventana bloqueada.')); return; }
+            w.document.open(); w.document.write(personHtml); w.document.close();
+            return;
+        }
+
+        // Build cell HTML for each staff/day (escape() is hoisted at top of fn)
         const shiftsByCell = new Map();
         for (const sh of visibleShifts) {
             if (sh.published === false) continue; // skip drafts
@@ -1540,6 +1735,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700">
                             ✨ {tx('Auto-fill', 'Auto-rellenar')}
                         </button>
+                        <button onClick={() => setShowRecurringModal(true)}
+                            title={tx('Manage recurring shift rules ("Maria works Mon/Wed 9-3 every week")', 'Reglas recurrentes')}
+                            className="px-3 py-2 rounded-lg bg-cyan-100 text-cyan-800 border border-cyan-300 text-xs font-bold hover:bg-cyan-200">
+                            🔁 {tx('Recurring', 'Recurrentes')}
+                        </button>
                         <button onClick={handleCopyLastWeek}
                             title={tx('Copy last week into this week as drafts', 'Copiar semana pasada como borradores')}
                             className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
@@ -1863,6 +2063,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     isEn={isEn}
                 />
             )}
+            {showRecurringModal && canEdit && (
+                <RecurringShiftsModal
+                    rules={recurringShifts}
+                    staffList={staffList}
+                    storeLocation={storeLocation}
+                    side={side}
+                    weekStart={weekStart}
+                    isEn={isEn}
+                    onSave={handleSaveRecurring}
+                    onDelete={handleDeleteRecurring}
+                    onGenerateThisWeek={handleGenerateRecurring}
+                    onClose={() => setShowRecurringModal(false)}
+                />
+            )}
             {showApplyTemplate && canEdit && (
                 <ApplyTemplateModal
                     templates={scheduleTemplates}
@@ -2060,6 +2274,15 @@ function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact
     const isMine = shift.staffName === currentStaffName;
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
+    // Audit trail tooltip — managers and admins long-press / hover to see who created/edited.
+    const auditLines = [];
+    if (shift.createdBy) auditLines.push(`Created: ${shift.createdBy}`);
+    if (shift.updatedBy) auditLines.push(`Edited: ${shift.updatedBy}`);
+    if (shift.approvedBy) auditLines.push(`Approved (swap): ${shift.approvedBy}`);
+    if (shift.publishedBy) auditLines.push(`Published: ${shift.publishedBy}`);
+    if (shift.fromTemplateId) auditLines.push('From template');
+    if (shift.fromRecurringId) auditLines.push('From recurring rule');
+    if (shift.fromNeedId) auditLines.push('From staffing need');
     return (
         <div
             draggable={!!draggable}
@@ -2068,6 +2291,7 @@ function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact
                 e.dataTransfer.setData('text/shift-id', shift.id);
                 e.dataTransfer.effectAllowed = 'move';
             }}
+            title={auditLines.join('\n') || undefined}
             className={`schedule-shift-cube relative rounded ${shift.published === false ? 'border-2 border-dashed border-gray-400 opacity-75' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 opacity-80' : ''} ${isPending ? 'ring-2 ring-purple-400' : ''} ${colors.bg} ${colors.text} px-1.5 py-1 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}>
             <div className="font-bold">{formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}</div>
             <div className="opacity-80">
@@ -3629,6 +3853,148 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                             <p className="text-[10px] text-gray-500 text-center">{tx("Creates one staffing need per role slot. You fill them next.", "Crea una necesidad por slot. Las llenas luego.")}</p>
                         </div>
                     )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+// ── RecurringShiftsModal ─────────────────────────────────────────────────
+// List existing rules + form to add a new one. Each rule:
+//   { staffName, daysOfWeek: ['mon','wed'], startTime, endTime, location,
+//     isShiftLead, isDouble, validFrom, validUntil }
+// Manager taps "Generate this week" to materialize draft shifts for the
+// current viewing week. Generated shifts skip closed dates, PTO, conflicts.
+function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart, isEn, onSave, onDelete, onGenerateThisWeek, onClose }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const DAYS = [
+        { id: "sun", labelEn: "Sun", labelEs: "Dom" },
+        { id: "mon", labelEn: "Mon", labelEs: "Lun" },
+        { id: "tue", labelEn: "Tue", labelEs: "Mar" },
+        { id: "wed", labelEn: "Wed", labelEs: "Mié" },
+        { id: "thu", labelEn: "Thu", labelEs: "Jue" },
+        { id: "fri", labelEn: "Fri", labelEs: "Vie" },
+        { id: "sat", labelEn: "Sat", labelEs: "Sáb" },
+    ];
+    const [editing, setEditing] = useState(null); // null | rule object being added/edited
+    const startNewRule = () => setEditing({
+        staffName: "",
+        daysOfWeek: [],
+        startTime: "09:00",
+        endTime: "15:00",
+        location: storeLocation && storeLocation !== "both" ? storeLocation : "webster",
+        validFrom: toDateStr(weekStart),
+        validUntil: "",
+        isShiftLead: false,
+        isDouble: false,
+    });
+    const update = (k, v) => setEditing(r => ({ ...r, [k]: v }));
+    const toggleDay = (d) => setEditing(r => ({
+        ...r,
+        daysOfWeek: r.daysOfWeek.includes(d) ? r.daysOfWeek.filter(x => x !== d) : [...r.daysOfWeek, d],
+    }));
+    const canSave = editing && editing.staffName && editing.daysOfWeek.length > 0 && editing.startTime && editing.endTime && editing.startTime < editing.endTime;
+    const sortedStaff = [...(staffList || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-cyan-700">🔁 {tx("Recurring Shifts", "Turnos Recurrentes")}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div className="text-xs text-gray-600 bg-cyan-50 rounded-lg p-2 border border-cyan-200">
+                        {tx("Define rules like \"Maria works Mon/Wed 9–3 every week\". Tap Generate to create DRAFT shifts for the current week (skipping closed dates, PTO, and existing conflicts).", "Define reglas como \"Maria trabaja Lun/Mié 9–3 cada semana\". Toca Generar para crear turnos BORRADOR para la semana actual.")}
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={startNewRule} className="flex-1 py-2 rounded-lg bg-cyan-600 text-white font-bold text-sm">+ {tx("New rule", "Nueva regla")}</button>
+                        <button onClick={onGenerateThisWeek} className="flex-1 py-2 rounded-lg bg-green-600 text-white font-bold text-sm">⚡ {tx("Generate this week", "Generar esta semana")}</button>
+                    </div>
+                    {editing && (
+                        <div className="border-2 border-cyan-300 rounded-lg p-3 space-y-2 bg-cyan-50">
+                            <div className="text-xs font-bold text-cyan-800">{editing.id ? tx("Edit rule", "Editar regla") : tx("New rule", "Nueva regla")}</div>
+                            <select value={editing.staffName} onChange={e => update("staffName", e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                                <option value="">{tx("— Staff —", "— Personal —")}</option>
+                                {sortedStaff.map(s => <option key={s.id || s.name} value={s.name}>{s.name} ({s.role || "?"})</option>)}
+                            </select>
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-600 block mb-1">{tx("Days of week", "Días de la semana")}</label>
+                                <div className="grid grid-cols-7 gap-1">
+                                    {DAYS.map(d => (
+                                        <button key={d.id} onClick={() => toggleDay(d.id)}
+                                            className={`py-1.5 rounded text-[10px] font-bold border ${editing.daysOfWeek.includes(d.id) ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-600 border-gray-300"}`}>
+                                            {tx(d.labelEn, d.labelEs)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[10px] text-gray-500 block">{tx("From", "Desde")}</label>
+                                    <input type="time" value={editing.startTime} onChange={e => update("startTime", e.target.value)}
+                                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-gray-500 block">{tx("To", "Hasta")}</label>
+                                    <input type="time" value={editing.endTime} onChange={e => update("endTime", e.target.value)}
+                                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <label className="text-[10px] text-gray-500 block">{tx("Valid from", "Válido desde")}</label>
+                                    <input type="date" value={editing.validFrom || ""} onChange={e => update("validFrom", e.target.value)}
+                                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                </div>
+                                <div>
+                                    <label className="text-[10px] text-gray-500 block">{tx("Valid until (optional)", "Válido hasta (opcional)")}</label>
+                                    <input type="date" value={editing.validUntil || ""} onChange={e => update("validUntil", e.target.value)}
+                                        className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="text-[10px] text-gray-500 block">{tx("Location", "Ubicación")}</label>
+                                <select value={editing.location} onChange={e => update("location", e.target.value)}
+                                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm">
+                                    <option value="webster">{LOCATION_LABELS.webster}</option>
+                                    <option value="maryland">{LOCATION_LABELS.maryland}</option>
+                                </select>
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setEditing(null)} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold text-sm">{tx("Cancel", "Cancelar")}</button>
+                                <button onClick={() => canSave && onSave(editing).then(() => setEditing(null))} disabled={!canSave}
+                                    className={`flex-1 py-2 rounded-lg font-bold text-white text-sm ${canSave ? "bg-cyan-600" : "bg-gray-300"}`}>
+                                    {tx("Save", "Guardar")}
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                    {rules.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-6">{tx("No recurring rules yet.", "Aún no hay reglas recurrentes.")}</p>
+                    ) : (
+                        <div className="space-y-1">
+                            {rules.map(r => (
+                                <div key={r.id} className="p-2 rounded border border-gray-200 bg-white text-xs flex items-center justify-between gap-2">
+                                    <div className="flex-1 min-w-0">
+                                        <div className="font-bold text-gray-800">{r.staffName}</div>
+                                        <div className="text-[10px] text-gray-600">
+                                            {(r.daysOfWeek || []).map(d => DAYS.find(x => x.id === d)).filter(Boolean).map(d => isEn ? d.labelEn : d.labelEs).join(", ")}
+                                            {" · "}{formatTime12h(r.startTime)}–{formatTime12h(r.endTime)}
+                                            {" · "}{LOCATION_LABELS[r.location] || r.location}
+                                            {r.validUntil && ` · ${tx("until", "hasta")} ${r.validUntil}`}
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setEditing(r)} className="px-2 py-0.5 rounded bg-blue-100 text-blue-700 text-[10px] font-bold">✏️</button>
+                                    <button onClick={() => onDelete(r.id)} className="px-2 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-bold">×</button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+                <div className="border-t border-gray-200 p-3">
+                    <button onClick={onClose} className="w-full py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Done", "Listo")}</button>
                 </div>
             </div>
         </div>
