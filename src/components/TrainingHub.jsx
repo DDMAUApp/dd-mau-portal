@@ -230,12 +230,85 @@ export default function TrainingHub({ staffName, language, staffList }) {
         return <div className="p-4 text-center text-gray-500">{tx("Loading…", "Cargando…")}</div>;
     }
 
+    /* ───────── Desktop split-pane shell ─────────
+       On mobile the existing per-view returns render as-is (full-width).
+       On md+ each view is wrapped with a sticky module-list sidebar on the
+       left so the user can jump between modules without going back to a list.
+       Compact module rows: emoji + code + status pill. */
+    const moduleListSidebar = (() => {
+        const grouped = TRACK_ORDER.map(track => ({
+            track,
+            modules: visibleModules.filter(m => m.track === track),
+        })).filter(g => g.modules.length > 0);
+        return (
+            <div className="space-y-3">
+                <button onClick={() => { setView("list"); setActiveModuleId(null); }}
+                    className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold ${view === "list" ? "bg-mint-100 text-mint-800" : "text-gray-500 hover:bg-gray-50"}`}>
+                    📚 {tx("All modules", "Todos los módulos")}
+                </button>
+                {adminUser && (
+                    <button onClick={() => { loadTracker(); setView("tracker"); }}
+                        className={`w-full text-left px-2 py-1.5 rounded-lg text-xs font-bold ${view === "tracker" ? "bg-purple-100 text-purple-800" : "text-purple-600 hover:bg-purple-50"}`}>
+                        📊 {tx("Tracker", "Progreso")}
+                    </button>
+                )}
+                {grouped.map(g => (
+                    <div key={g.track}>
+                        <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 px-2">
+                            {TRACK_ICONS[g.track]} {TRACK_LABELS[g.track][isEn ? "en" : "es"]}
+                        </h4>
+                        <div className="space-y-0.5">
+                            {g.modules.map(m => {
+                                const st = moduleState(m.id);
+                                const isActive = activeModuleId === m.id;
+                                const totalL = m.lessons.length;
+                                const doneL = st.lessonsCompleted.length;
+                                const pct = totalL > 0 ? Math.round(doneL / totalL * 100) : 0;
+                                return (
+                                    <button key={m.id} onClick={() => { setActiveModuleId(m.id); setView("module"); }}
+                                        className={`w-full text-left px-2 py-1.5 rounded-lg text-xs flex items-center gap-2 transition ${
+                                            isActive ? "bg-mint-50 ring-1 ring-mint-300" :
+                                            st.locked ? "hover:bg-red-50" :
+                                            st.passed ? "hover:bg-green-50" :
+                                            "hover:bg-gray-50"
+                                        }`}>
+                                        <span className="text-lg flex-shrink-0">{m.icon}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="font-semibold text-gray-700 truncate">{m.code}</div>
+                                            <div className="text-[10px] text-gray-500 truncate">{tx(m.titleEn, m.titleEs)}</div>
+                                        </div>
+                                        <span className="text-xs flex-shrink-0">
+                                            {st.locked ? "🔒" : st.passed ? "✅" : doneL > 0 ? `${pct}%` : ""}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        );
+    })();
+
+    // Wrapper for any view's content. Mobile: just renders children full-width.
+    // md+: pins the module sidebar on the left, content fills the rest.
+    const Shell = ({ children }) => (
+        <div className="md:flex md:gap-5 md:p-4">
+            <aside className="hidden md:block md:w-64 lg:w-72 md:flex-shrink-0 md:sticky md:top-4 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-y-auto bg-white md:border md:border-gray-200 md:rounded-xl md:p-3">
+                {moduleListSidebar}
+            </aside>
+            <div className="flex-1 min-w-0 md:bg-white md:border md:border-gray-200 md:rounded-xl">
+                {children}
+            </div>
+        </div>
+    );
+
     // Quiz view
     if (view === "quiz" && activeModule) {
         const m = activeModule;
         const allAnswered = m.quiz.questions.every(q => quizAnswers[q.id]);
         return (
-            <div className="p-4 pb-24">
+            <Shell><div className="p-4 pb-24 md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <h2 className="text-xl font-bold text-mint-700 mb-1">{m.icon} {tx(m.titleEn, m.titleEs)} — {tx("Quiz", "Examen")}</h2>
                 <p className="text-xs text-gray-500 mb-4">{tx(`Pass ${Math.round(m.quiz.passThreshold * 100)}% to clear this module. Two failed attempts in a row will lock the module — your manager has to clear the lock.`, `Aprueba con ${Math.round(m.quiz.passThreshold * 100)}% para completar este módulo. Dos intentos fallidos seguidos bloquean el módulo — tu gerente debe quitar el bloqueo.`)}</p>
@@ -261,7 +334,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                     {tx("Submit Quiz", "Enviar Examen")}
                 </button>
                 {!allAnswered && <p className="text-xs text-gray-500 text-center mt-2">{tx("Answer every question to submit", "Responde todas las preguntas para enviar")}</p>}
-            </div>
+            </div></Shell>
         );
     }
 
@@ -269,7 +342,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "quiz-result" && lastResult && activeModule) {
         const r = lastResult;
         return (
-            <div className="p-4 pb-24">
+            <Shell><div className="p-4 pb-24 md:p-5">
                 <div className={`rounded-2xl p-6 text-center ${r.passed ? "bg-green-50 border-2 border-green-300" : r.locked ? "bg-red-50 border-2 border-red-300" : "bg-amber-50 border-2 border-amber-300"}`}>
                     <div className="text-5xl mb-3">{r.passed ? "🎉" : r.locked ? "🔒" : "❌"}</div>
                     <h2 className="text-2xl font-bold mb-2">
@@ -297,7 +370,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                     <button onClick={() => { setView("list"); setActiveModuleId(null); setQuizAnswers({}); }}
                         className="flex-1 py-3 rounded-xl bg-gray-200 text-gray-700 font-bold">{tx("All Modules", "Todos los Módulos")}</button>
                 </div>
-            </div>
+            </div></Shell>
         );
     }
 
@@ -308,7 +381,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const completed = moduleState(m.id).lessonsCompleted.includes(activeLessonId);
         const content = isEn ? activeLesson.contentEn : activeLesson.contentEs;
         return (
-            <div className="p-4 pb-24">
+            <Shell><div className="p-4 pb-24 md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <p className="text-xs text-gray-500 mb-1">{m.code} · {tx("Lesson", "Lección")} {lIdx + 1} / {m.lessons.length}</p>
                 <h2 className="text-xl font-bold text-mint-700 mb-4">{tx(activeLesson.titleEn, activeLesson.titleEs)}</h2>
@@ -341,7 +414,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                             className="flex-1 py-3 rounded-xl bg-mint-700 text-white font-bold">{tx("Done", "Listo")}</button>
                     )}
                 </div>
-            </div>
+            </div></Shell>
         );
     }
 
@@ -359,7 +432,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
             return c;
         })();
         return (
-            <div className="p-4 pb-24">
+            <Shell><div className="p-4 pb-24 md:p-5">
                 <button onClick={() => { setView("list"); setActiveModuleId(null); }} className="text-sm text-mint-700 mb-3">← {tx("All modules", "Todos los módulos")}</button>
                 <div className="flex items-start gap-3 mb-4">
                     <div className="text-4xl">{m.icon}</div>
@@ -422,7 +495,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                         </div>
                     </div>
                 </button>
-            </div>
+            </div></Shell>
         );
     }
 
@@ -430,7 +503,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "tracker" && adminUser) {
         const docs = Object.entries(allProgress);
         return (
-            <div className="p-4 pb-24">
+            <Shell><div className="p-4 pb-24 md:p-5">
                 <button onClick={() => setView("list")} className="text-sm text-mint-700 mb-3">← {tx("Back", "Atrás")}</button>
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-xl font-bold text-mint-700">📊 {tx("Training Tracker", "Progreso de Capacitación")}</h2>
@@ -475,7 +548,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
                         );
                     })}
                 </div>
-            </div>
+            </div></Shell>
         );
     }
 
@@ -486,7 +559,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     })).filter(g => g.modules.length > 0);
 
     return (
-        <div className="p-4 pb-24">
+        <Shell><div className="p-4 pb-24 md:p-5">
             <div className="flex items-center justify-between mb-3">
                 <h2 className="text-2xl font-bold text-mint-700">📚 {t("trainingHub", language) || tx("Training Hub", "Centro de Capacitación")}</h2>
                 {adminUser && (
@@ -536,6 +609,6 @@ export default function TrainingHub({ staffName, language, staffList }) {
             {visibleModules.length === 0 && (
                 <p className="text-center text-gray-500 mt-12">{tx("No training modules yet.", "Aún no hay módulos de capacitación.")}</p>
             )}
-        </div>
+        </div></Shell>
     );
 }

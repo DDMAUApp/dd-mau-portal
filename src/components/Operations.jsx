@@ -2933,25 +2933,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         {String.fromCodePoint(0x2713)} {checks[currentPrefix + item.id + "_by"]} {String.fromCodePoint(0x2014)} {checks[currentPrefix + item.id + "_at"]}
                                                     </p>
                                                 )}
-                                                {/* Skip indicator + undo */}
-                                                {checks[currentPrefix + item.id + "_skipped"] && (() => {
-                                                    const reasonId = checks[currentPrefix + item.id + "_skipped"];
-                                                    const reason = SKIP_REASON_BY_ID[reasonId];
-                                                    const note = checks[currentPrefix + item.id + "_skipNote"];
-                                                    return (
-                                                        <div className="mt-1 px-2 py-1 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between gap-2">
-                                                            <span>⏭ {reason ? (language === "es" ? reason.labelEs : reason.labelEn) : reasonId}{note ? `: ${note}` : ""} <span className="text-amber-600">— {checks[currentPrefix + item.id + "_by"]}</span></span>
-                                                            <button onClick={() => unskipTask(item.id)} className="text-amber-700 underline text-[10px] font-bold">{language === "es" ? "Deshacer" : "Undo"}</button>
-                                                        </div>
-                                                    );
-                                                })()}
-                                                {/* Skip button — only when not already done and not already skipped */}
-                                                {!editMode && !checks[currentPrefix + item.id] && !checks[currentPrefix + item.id + "_skipped"] && !hasSubtasks && (
-                                                    <button onClick={() => setSkipPickerFor(item.id)}
-                                                        className="mt-1 text-[10px] font-bold text-amber-700 hover:text-amber-900 underline">
-                                                        ⏭ {language === "es" ? "Saltar con razón" : "Skip with reason"}
-                                                    </button>
-                                                )}
                                             </div>
                                         </div>
                                         {editMode && (
@@ -3191,43 +3172,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             </button>
                         )}
 
-                        {/* Skip-with-reason picker modal */}
-                        {skipPickerFor && (() => {
-                            const skipForId = skipPickerFor;
-                            return (
-                                <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-                                    <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
-                                        <div className="border-b border-gray-200 p-4 flex items-center justify-between">
-                                            <h3 className="text-lg font-bold text-amber-700">⏭ {language === "es" ? "Saltar tarea" : "Skip task"}</h3>
-                                            <button onClick={() => setSkipPickerFor(null)} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
-                                        </div>
-                                        <div className="p-4 space-y-2">
-                                            <p className="text-xs text-gray-500 mb-1">{language === "es" ? "¿Por qué se saltó esta tarea?" : "Why was this task skipped?"}</p>
-                                            {SKIP_REASONS.map(r => (
-                                                r.id !== "other" ? (
-                                                    <button key={r.id} onClick={() => skipTask(skipForId, r.id)}
-                                                        className="w-full text-left px-3 py-2 rounded-lg border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 text-sm font-bold text-amber-900">
-                                                        {r.emoji} {language === "es" ? r.labelEs : r.labelEn}
-                                                    </button>
-                                                ) : (
-                                                    <div key={r.id}>
-                                                        <details>
-                                                            <summary className="px-3 py-2 rounded-lg border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 text-sm font-bold text-amber-900 cursor-pointer">
-                                                                {r.emoji} {language === "es" ? r.labelEs : r.labelEn}
-                                                            </summary>
-                                                            <SkipOtherInput onSubmit={(note) => skipTask(skipForId, "other", note)} isEs={language === "es"} />
-                                                        </details>
-                                                    </div>
-                                                )
-                                            ))}
-                                        </div>
-                                        <div className="border-t border-gray-200 p-3">
-                                            <button onClick={() => setSkipPickerFor(null)} className="w-full py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{language === "es" ? "Cancelar" : "Cancel"}</button>
-                                        </div>
-                                    </div>
-                                </div>
-                            );
-                        })()}
                     </div>
                 );
             };

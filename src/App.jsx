@@ -301,8 +301,11 @@ export default function App() {
                 </div>
             </aside>
 
-            {/* ─── MAIN COLUMN ─── pad-left on md: to clear the fixed sidebar */}
-            <div className="flex-1 md:ml-56 min-h-screen">
+            {/* ─── MAIN COLUMN ─── pad-left on md: to clear the fixed sidebar.
+                 min-w-0 keeps wide content (tables, pricing rows) from blowing the
+                 column past the sidebar. overflow-x-hidden on md+ pins the body
+                 width so internal wide tables scroll within their own container. */}
+            <div className="flex-1 md:ml-56 min-h-screen min-w-0 md:overflow-x-hidden">
             {/* Mobile-only header (hidden on md+) — sidebar replaces it on desktop */}
             <div className="md:hidden bg-gradient-to-r from-mint-700 to-mint-600 text-white p-4 sticky top-0 z-40 shadow-lg" style={updateAvailable ? {marginTop: "40px"} : {}}>
                 <div className="flex justify-between items-center">
