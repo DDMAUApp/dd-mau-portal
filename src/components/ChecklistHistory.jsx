@@ -97,12 +97,25 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
                                         )) : task.task}
                                     </span>
                                 </div>
+                                {/* Top-level (no-subtasks) timestamp */}
+                                {!hasSubtasks && checks[task.id] && checks[task.id + "_by"] && (
+                                    <p className="text-[11px] text-green-700 ml-7 mt-0.5">
+                                        ✓ {checks[task.id + "_by"]} — {checks[task.id + "_at"]}
+                                    </p>
+                                )}
                                 {hasSubtasks && (
                                     <div className="ml-7 mt-1 space-y-0.5">
                                         {task.subtasks.map((sub, si) => (
-                                            <div key={si} className="flex items-center gap-1.5 text-xs">
-                                                <span>{checks[sub.id] ? "✅" : "⬜"}</span>
-                                                <span className={checks[sub.id] ? "text-gray-600" : "text-red-600"}>{sub.task}</span>
+                                            <div key={si} className="text-xs">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span>{checks[sub.id] ? "✅" : "⬜"}</span>
+                                                    <span className={checks[sub.id] ? "text-gray-600" : "text-red-600"}>{sub.task}</span>
+                                                </div>
+                                                {checks[sub.id] && checks[sub.id + "_by"] && (
+                                                    <p className="text-[10px] text-green-700 ml-5">
+                                                        {checks[sub.id + "_by"]} — {checks[sub.id + "_at"]}
+                                                    </p>
+                                                )}
                                             </div>
                                         ))}
                                     </div>

@@ -14,6 +14,33 @@ const DEFAULT_CHECKLIST_TASKS = { FOH: { all: [] }, BOH: { all: [] } };
 const CHECKLIST_VERSION = 2;
 const BUSINESS_TZ = "America/Chicago";
 
+// Task categories — restaurant-specific. Each task gets one. Drives:
+//   - color border / chip on each task card
+//   - filter chips at the top of the task list
+//   - audit grouping in history (Phase 2)
+// Order matters — it's the display order in the filter row.
+const TASK_CATEGORIES = [
+    { id: "cleaning",   emoji: "🧽", labelEn: "Cleaning",      labelEs: "Limpieza",          color: "bg-blue-100 text-blue-800 border-blue-300" },
+    { id: "foodsafety", emoji: "🛡️", labelEn: "Food Safety",   labelEs: "Seguridad",         color: "bg-red-100 text-red-800 border-red-300" },
+    { id: "cash",       emoji: "💵", labelEn: "Cash",           labelEs: "Efectivo",          color: "bg-green-100 text-green-800 border-green-300" },
+    { id: "inventory",  emoji: "📦", labelEn: "Inventory",      labelEs: "Inventario",        color: "bg-purple-100 text-purple-800 border-purple-300" },
+    { id: "prep",       emoji: "🔪", labelEn: "Prep",           labelEs: "Preparación",       color: "bg-amber-100 text-amber-800 border-amber-300" },
+    { id: "drinks",     emoji: "🧋", labelEn: "Drinks/Bar",     labelEs: "Bebidas/Bar",       color: "bg-pink-100 text-pink-800 border-pink-300" },
+    { id: "other",      emoji: "📋", labelEn: "Other",          labelEs: "Otro",              color: "bg-gray-100 text-gray-700 border-gray-300" },
+];
+const TASK_CATEGORY_BY_ID = Object.fromEntries(TASK_CATEGORIES.map(c => [c.id, c]));
+const getCategoryFor = (task) => TASK_CATEGORY_BY_ID[task?.category] || TASK_CATEGORY_BY_ID.other;
+
+// Skip-with-reason options. Picker (not free text) so we can analyze later.
+const SKIP_REASONS = [
+    { id: "out_of_stock",     emoji: "🚫", labelEn: "Out of stock",       labelEs: "Sin existencia" },
+    { id: "equipment_broken", emoji: "🔧", labelEn: "Equipment broken",   labelEs: "Equipo dañado" },
+    { id: "no_time",          emoji: "⏰", labelEn: "Ran out of time",    labelEs: "Sin tiempo" },
+    { id: "not_needed",       emoji: "✋", labelEn: "Not needed today",   labelEs: "No se necesita hoy" },
+    { id: "other",            emoji: "❓", labelEn: "Other (note)",       labelEs: "Otro (nota)" },
+];
+const SKIP_REASON_BY_ID = Object.fromEntries(SKIP_REASONS.map(r => [r.id, r]));
+
 // ── Vendor → inventory match seed data ───────────────────────────────────────
 // These were originally hardcoded inside the component (SYSCO_OVERRIDES,
 // SYSCO_ITEM_CATEGORIES). They now seed Firestore on first run; after that the
@@ -110,6 +137,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [editMode, setEditMode] = useState(false);
             const [editingIdx, setEditingIdx] = useState(null);
             const [editTask, setEditTask] = useState("");
+            const [editCategory, setEditCategory] = useState("other");
             const [editRequirePhoto, setEditRequirePhoto] = useState(false);
             const [editSubtasks, setEditSubtasks] = useState([]);
             const [editCompleteBy, setEditCompleteBy] = useState("");
@@ -117,7 +145,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [editFollowUp, setEditFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
+            const [newCategory, setNewCategory] = useState("other");
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
+            // Category filter for the task list view (also used by quick-add to default the new task's category)
+            const [categoryFilter, setCategoryFilter] = useState("all");
+            // Skip-with-reason modal state — { taskId, parentTaskId } when picking, null otherwise
+            const [skipPickerFor, setSkipPickerFor] = useState(null);
+            // Quick-add inline input state (single field on top of task list)
+            const [quickAddText, setQuickAddText] = useState("");
             const [newSubtasks, setNewSubtasks] = useState([]);
             const [newCompleteBy, setNewCompleteBy] = useState("");
             const [newAssignTo, setNewAssignTo] = useState("");
@@ -1585,11 +1620,79 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await saveChecklistState(newChecks, customTasksRef.current);
             };
 
+            // ── Skip-with-reason ──
+            // Marks a task (or sub-task item) as "skipped" rather than "done".
+            // Stored as parallel keys on the same `checks` object so we don't
+            // need a schema migration: pKey + "_skipped" → reason id, plus the
+            // existing _by / _at fields, plus _skipNote for "other".
+            // History view (and stats) can then distinguish skipped from forgotten.
+            const skipTask = async (taskId, reasonId, note) => {
+                const cur = checksRef.current;
+                const pKey = currentPrefix + taskId;
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const newChecks = {
+                    ...cur,
+                    // Force the boolean to false (un-done) so progress math is correct,
+                    // but keep the skip metadata to render ⏭ + reason.
+                    [pKey]: false,
+                    [pKey + "_skipped"]: reasonId,
+                    [pKey + "_by"]: staffName,
+                    [pKey + "_at"]: timeStr,
+                };
+                if (note) newChecks[pKey + "_skipNote"] = note;
+                else delete newChecks[pKey + "_skipNote"];
+                setChecks(newChecks);
+                await saveChecklistState(newChecks, customTasksRef.current);
+                setSkipPickerFor(null);
+            };
+
+            const unskipTask = async (taskId) => {
+                const cur = checksRef.current;
+                const pKey = currentPrefix + taskId;
+                const newChecks = { ...cur };
+                delete newChecks[pKey + "_skipped"];
+                delete newChecks[pKey + "_skipNote"];
+                delete newChecks[pKey + "_by"];
+                delete newChecks[pKey + "_at"];
+                setChecks(newChecks);
+                await saveChecklistState(newChecks, customTasksRef.current);
+            };
+
+            // Quick-add — one-shot task creation from a single input.
+            // Syntax: "Wipe register ; spray ; wipe ; dry"  →  task "Wipe register"
+            //         with subtasks ["spray", "wipe", "dry"]. The first segment
+            //         is the title, all subsequent `; foo` segments become subtasks.
+            // Inherits the category from `categoryFilter` if it's not "all", else "other".
+            const quickAddTask = async () => {
+                const text = quickAddText.trim();
+                if (!text) return;
+                const parts = text.split(/\s*;\s*/).filter(p => p.length > 0);
+                if (parts.length === 0) return;
+                const item = {
+                    id: checklistSide + "_" + Date.now().toString(),
+                    task: parts[0],
+                };
+                const cat = categoryFilter !== "all" ? categoryFilter : "other";
+                if (cat !== "other") item.category = cat;
+                if (parts.length > 1) {
+                    item.subtasks = parts.slice(1).map((p, i) => ({ id: item.id + "_s" + i, task: p }));
+                }
+                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                if (!updated[checklistSide]) updated[checklistSide] = {};
+                if (!updated[checklistSide][activePeriod]) updated[checklistSide][activePeriod] = [];
+                updated[checklistSide][activePeriod].push(item);
+                setCustomTasks(updated);
+                await saveChecklistState(checksRef.current, updated);
+                setQuickAddText("");
+            };
+
             const addChecklistTask = async () => {
                 if (!newTask.trim()) return;
                 // Include the side in the ID so a FOH and BOH task created in the same millisecond
                 // don't share the same key in the `checks` map (list-0 has no prefix for backward compat).
                 const item = { id: checklistSide + "_" + Date.now().toString(), task: newTask.trim() };
+                if (newCategory && newCategory !== "other") item.category = newCategory;
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
                 const newAssignArr = Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : [];
@@ -1608,7 +1711,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
+                setNewTask(""); setNewCategory("other"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -1616,6 +1719,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][activePeriod][idx];
                 item.task = editTask.trim();
+                if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
                 const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
@@ -1630,7 +1734,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
+                setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
             };
 
             // Photo capture and upload
@@ -2340,7 +2444,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const all = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
                 const hasNoAssign = (t) => !t.assignTo || (Array.isArray(t.assignTo) && t.assignTo.length === 0);
                 // Tag each task with its original index so edit/delete still works after filtering
-                const tagged = all.map((t, i) => ({...t, _origIdx: i}));
+                let tagged = all.map((t, i) => ({...t, _origIdx: i}));
+                // Category filter — applied to both staff and admin views
+                if (categoryFilter && categoryFilter !== "all") {
+                    tagged = tagged.filter(t => (t.category || "other") === categoryFilter);
+                }
                 // Non-admin staff: only see tasks assigned to them or unassigned
                 if (!currentIsAdmin) {
                     return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, staffName));
@@ -2350,6 +2458,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, taskFilter));
                 }
                 return tagged;
+            };
+
+            // Per-category counts for the filter chip badges
+            const getCategoryCounts = () => {
+                const all = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                const counts = { all: all.length };
+                for (const c of TASK_CATEGORIES) counts[c.id] = 0;
+                for (const t of all) counts[t.category || "other"] = (counts[t.category || "other"] || 0) + 1;
+                return counts;
             };
             // Get all tasks without filtering (for stats)
             const getAllTasks = () => {
@@ -2477,17 +2594,79 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             </div>
                         )}
 
-                        {/* Overall progress bar */}
-                        <div className="bg-gray-100 rounded-lg p-3 mb-2">
-                            <div className="flex justify-between text-xs font-bold text-gray-600 mb-1">
-                                <span>{checklistSide} {"\u{2014}"} {language === "es" ? "Progreso del día" : "Day progress"}</span>
-                                <span>{overallStats.done}/{overallStats.total}</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                                <div className={`h-2 rounded-full transition-all ${checklistSide === "FOH" ? "bg-blue-500" : "bg-amber-500"}`}
-                                    style={{ width: overallStats.total > 0 ? (overallStats.done / overallStats.total * 100) + "%" : "0%" }} />
-                            </div>
-                        </div>
+                        {/* Manager dashboard — completion %, overdue, scoreboard.
+                            Shown to all staff with Ops access (Andrew's call: "everyone that has access to that page"). */}
+                        {(() => {
+                            const fohStats = getCompletionStats("FOH");
+                            const bohStats = getCompletionStats("BOH");
+                            // Per-staff scoreboard: count completed items where checks[*+_by] = staffName
+                            // Iterates all known checks and groups by who finished each.
+                            const scoreboard = new Map();
+                            const overdue = [];
+                            const ALL_TASKS = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                            for (const t of ALL_TASKS) {
+                                if (t.completeBy) {
+                                    const isDone = isTaskComplete(t);
+                                    if (!isDone) {
+                                        const [hh, mm] = t.completeBy.split(":").map(Number);
+                                        const due = new Date(); due.setHours(hh, mm, 0, 0);
+                                        if (Date.now() > due.getTime()) overdue.push(t);
+                                    }
+                                }
+                            }
+                            for (const k of Object.keys(checks)) {
+                                if (!k.endsWith("_by")) continue;
+                                const baseKey = k.slice(0, -3);
+                                if (!checks[baseKey]) continue;
+                                const name = checks[k];
+                                if (!name) continue;
+                                scoreboard.set(name, (scoreboard.get(name) || 0) + 1);
+                            }
+                            const top = [...scoreboard.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
+                            const sidePct = (s) => s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
+                            return (
+                                <div className="rounded-lg border-2 border-mint-200 bg-gradient-to-br from-white to-mint-50 p-3 mb-2">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-bold text-gray-700">📊 {language === "es" ? "Resumen del día" : "Today's snapshot"}</span>
+                                        {overdue.length > 0 && (
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-300">
+                                                🚨 {overdue.length} {language === "es" ? "atrasadas" : "overdue"}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 mb-2">
+                                        <div className="bg-blue-50 border border-blue-200 rounded p-2">
+                                            <div className="flex justify-between text-[10px] font-bold text-blue-700 mb-1">
+                                                <span>FOH</span>
+                                                <span>{fohStats.done}/{fohStats.total} · {sidePct(fohStats)}%</span>
+                                            </div>
+                                            <div className="w-full bg-blue-100 rounded-full h-1.5">
+                                                <div className="h-1.5 rounded-full bg-blue-500" style={{ width: sidePct(fohStats) + "%" }} />
+                                            </div>
+                                        </div>
+                                        <div className="bg-amber-50 border border-amber-200 rounded p-2">
+                                            <div className="flex justify-between text-[10px] font-bold text-amber-700 mb-1">
+                                                <span>BOH</span>
+                                                <span>{bohStats.done}/{bohStats.total} · {sidePct(bohStats)}%</span>
+                                            </div>
+                                            <div className="w-full bg-amber-100 rounded-full h-1.5">
+                                                <div className="h-1.5 rounded-full bg-amber-500" style={{ width: sidePct(bohStats) + "%" }} />
+                                            </div>
+                                        </div>
+                                    </div>
+                                    {top.length > 0 && (
+                                        <div className="flex flex-wrap gap-1">
+                                            <span className="text-[10px] font-bold text-gray-500 mr-1">🏆</span>
+                                            {top.map(([name, count]) => (
+                                                <span key={name} className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${name === staffName ? "bg-mint-100 text-mint-800 border-mint-300" : "bg-white text-gray-600 border-gray-300"}`}>
+                                                    {name === staffName ? "✓ " : ""}{name.split(" ")[0]} · {count}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })()}
 
                         {/* Edit button */}
                         <div className="flex justify-end items-center mt-1">
@@ -2498,6 +2677,43 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 </button>
                             )}
                         </div>
+
+                        {/* Category filter chips — restaurant-task-app convention. Tap a chip to scope. */}
+                        {(() => {
+                            const counts = getCategoryCounts();
+                            return (
+                                <div className="flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1 mb-1" style={{ scrollbarWidth: "thin" }}>
+                                    <button onClick={() => setCategoryFilter("all")}
+                                        className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${categoryFilter === "all" ? "bg-gray-800 text-white border-gray-800" : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"}`}>
+                                        {language === "es" ? "Todas" : "All"} <span className="opacity-70">({counts.all})</span>
+                                    </button>
+                                    {TASK_CATEGORIES.map(c => (
+                                        counts[c.id] > 0 || categoryFilter === c.id ? (
+                                            <button key={c.id} onClick={() => setCategoryFilter(c.id)}
+                                                className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${categoryFilter === c.id ? c.color.replace("bg-", "bg-").replace("text-", "text-") + " ring-2 ring-offset-1 ring-gray-700" : c.color + " hover:opacity-80"}`}>
+                                                {c.emoji} {language === "es" ? c.labelEs : c.labelEn} <span className="opacity-70">({counts[c.id]})</span>
+                                            </button>
+                                        ) : null
+                                    ))}
+                                </div>
+                            );
+                        })()}
+
+                        {/* Quick-add — single input, syntax: "Title ; sub1 ; sub2 ; sub3" */}
+                        {currentIsAdmin && (
+                            <div className="flex gap-1 mb-2">
+                                <input type="text" value={quickAddText}
+                                    onChange={e => setQuickAddText(e.target.value)}
+                                    onKeyDown={e => { if (e.key === "Enter") quickAddTask(); }}
+                                    placeholder={language === "es" ? "+ Tarea rápida — usa ' ; ' para subtareas" : "+ Quick add — use ' ; ' for subtasks"}
+                                    className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white" />
+                                <button onClick={quickAddTask}
+                                    disabled={!quickAddText.trim()}
+                                    className={`px-3 py-2 rounded-lg text-sm font-bold ${quickAddText.trim() ? "bg-mint-700 text-white hover:bg-mint-800" : "bg-gray-200 text-gray-400"}`}>
+                                    +
+                                </button>
+                            </div>
+                        )}
 
                         {/* Task list */}
                         {tasks.length === 0 && !editMode && (
@@ -2530,6 +2746,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                     <div key={item.id} className="p-3 rounded-lg border-2 border-blue-300 bg-blue-50">
                                         <input type="text" value={editTask} onChange={e => setEditTask(e.target.value)}
                                             className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:border-blue-400" autoFocus />
+                                        {/* Category picker */}
+                                        <div className="mb-2">
+                                            <label className="text-xs font-bold text-gray-600 block mb-1">{language === "es" ? "Categoría" : "Category"}</label>
+                                            <div className="flex flex-wrap gap-1">
+                                                {TASK_CATEGORIES.map(c => (
+                                                    <button key={c.id} onClick={() => setEditCategory(c.id)}
+                                                        className={`px-2 py-1 rounded-full text-[11px] font-bold border transition ${editCategory === c.id ? c.color + " ring-2 ring-offset-1 ring-gray-700" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"}`}>
+                                                        {c.emoji} {language === "es" ? c.labelEs : c.labelEn}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
                                         {/* Complete by time */}
                                         <div className="flex items-center gap-2 mb-2">
                                             <label className="text-xs font-bold text-gray-600">{"\u{23F0}"} {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
@@ -2625,7 +2853,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         <div className="flex items-center gap-2">
                                             <button onClick={() => saveChecklistEdit(origIdx)}
                                                 className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Guardar" : "Save"}</button>
-                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null); }}
+                                            <button onClick={() => { setEditingIdx(null); setEditCategory("other"); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null); }}
                                                 className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                         </div>
                                     </div>
@@ -2646,12 +2874,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     className="w-5 h-5 text-mint-700 rounded focus:ring-2 focus:ring-mint-700 mt-0.5" />
                                             )}
                                             <div className={"flex-1 " + (!editMode && !hasSubtasks ? "ml-3" : "")}>
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex items-center gap-1.5 flex-wrap">
                                                     <p className={"font-bold text-gray-800 " + (taskComplete ? "line-through text-green-700" : "")}>
                                                         {item.task.includes("\n") ? item.task.split("\n").map((line, li) => (
                                                             <span key={li}>{li === 0 ? line : <><br/><span className="font-normal text-xs text-gray-500">{line}</span></>}</span>
                                                         )) : item.task}
                                                     </p>
+                                                    {(() => {
+                                                        const cat = getCategoryFor(item);
+                                                        if (cat.id === "other") return null;
+                                                        return (
+                                                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${cat.color}`}>
+                                                                {cat.emoji} {language === "es" ? cat.labelEs : cat.labelEn}
+                                                            </span>
+                                                        );
+                                                    })()}
                                                     {item.requirePhoto && <span className="text-xs">{"\u{1F4F8}"}</span>}
                                                     {item.completeBy && (
                                                         <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
@@ -2696,11 +2933,30 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         {String.fromCodePoint(0x2713)} {checks[currentPrefix + item.id + "_by"]} {String.fromCodePoint(0x2014)} {checks[currentPrefix + item.id + "_at"]}
                                                     </p>
                                                 )}
+                                                {/* Skip indicator + undo */}
+                                                {checks[currentPrefix + item.id + "_skipped"] && (() => {
+                                                    const reasonId = checks[currentPrefix + item.id + "_skipped"];
+                                                    const reason = SKIP_REASON_BY_ID[reasonId];
+                                                    const note = checks[currentPrefix + item.id + "_skipNote"];
+                                                    return (
+                                                        <div className="mt-1 px-2 py-1 rounded bg-amber-50 border border-amber-200 text-xs text-amber-800 flex items-center justify-between gap-2">
+                                                            <span>⏭ {reason ? (language === "es" ? reason.labelEs : reason.labelEn) : reasonId}{note ? `: ${note}` : ""} <span className="text-amber-600">— {checks[currentPrefix + item.id + "_by"]}</span></span>
+                                                            <button onClick={() => unskipTask(item.id)} className="text-amber-700 underline text-[10px] font-bold">{language === "es" ? "Deshacer" : "Undo"}</button>
+                                                        </div>
+                                                    );
+                                                })()}
+                                                {/* Skip button — only when not already done and not already skipped */}
+                                                {!editMode && !checks[currentPrefix + item.id] && !checks[currentPrefix + item.id + "_skipped"] && !hasSubtasks && (
+                                                    <button onClick={() => setSkipPickerFor(item.id)}
+                                                        className="mt-1 text-[10px] font-bold text-amber-700 hover:text-amber-900 underline">
+                                                        ⏭ {language === "es" ? "Saltar con razón" : "Skip with reason"}
+                                                    </button>
+                                                )}
                                             </div>
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditCategory(item.category || "other"); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">{String.fromCodePoint(0x270F, 0xFE0F)}</button>
                                                 <button onClick={() => deleteChecklistTask(origIdx)}
                                                     className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">{"\u{1F5D1}"}{"\u{FE0F}"}</button>
@@ -2814,6 +3070,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <input type="text" value={newTask} onChange={e => setNewTask(e.target.value)}
                                     placeholder={language === "es" ? "Nueva tarea..." : "New task..."}
                                     className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm mb-2 focus:outline-none focus:border-green-400" autoFocus />
+                                {/* Category picker */}
+                                <div className="mb-2">
+                                    <label className="text-xs font-bold text-gray-600 block mb-1">{language === "es" ? "Categoría" : "Category"}</label>
+                                    <div className="flex flex-wrap gap-1">
+                                        {TASK_CATEGORIES.map(c => (
+                                            <button key={c.id} onClick={() => setNewCategory(c.id)}
+                                                className={`px-2 py-1 rounded-full text-[11px] font-bold border transition ${newCategory === c.id ? c.color + " ring-2 ring-offset-1 ring-gray-700" : "bg-white text-gray-500 border-gray-300 hover:bg-gray-50"}`}>
+                                                {c.emoji} {language === "es" ? c.labelEs : c.labelEn}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
                                 {/* Complete by time */}
                                 <div className="flex items-center gap-2 mb-2">
                                     <label className="text-xs font-bold text-gray-600">{"\u{23F0}"} {language === "es" ? "Completar antes de:" : "Complete by:"}</label>
@@ -2922,6 +3190,44 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 {language === "es" ? "\u{1F4BE} Guardar y Reiniciar Checklists" : "\u{1F4BE} Save & Reset Checklists"}
                             </button>
                         )}
+
+                        {/* Skip-with-reason picker modal */}
+                        {skipPickerFor && (() => {
+                            const skipForId = skipPickerFor;
+                            return (
+                                <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                                    <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
+                                        <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                                            <h3 className="text-lg font-bold text-amber-700">⏭ {language === "es" ? "Saltar tarea" : "Skip task"}</h3>
+                                            <button onClick={() => setSkipPickerFor(null)} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                                        </div>
+                                        <div className="p-4 space-y-2">
+                                            <p className="text-xs text-gray-500 mb-1">{language === "es" ? "¿Por qué se saltó esta tarea?" : "Why was this task skipped?"}</p>
+                                            {SKIP_REASONS.map(r => (
+                                                r.id !== "other" ? (
+                                                    <button key={r.id} onClick={() => skipTask(skipForId, r.id)}
+                                                        className="w-full text-left px-3 py-2 rounded-lg border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 text-sm font-bold text-amber-900">
+                                                        {r.emoji} {language === "es" ? r.labelEs : r.labelEn}
+                                                    </button>
+                                                ) : (
+                                                    <div key={r.id}>
+                                                        <details>
+                                                            <summary className="px-3 py-2 rounded-lg border-2 border-amber-200 bg-amber-50 hover:bg-amber-100 text-sm font-bold text-amber-900 cursor-pointer">
+                                                                {r.emoji} {language === "es" ? r.labelEs : r.labelEn}
+                                                            </summary>
+                                                            <SkipOtherInput onSubmit={(note) => skipTask(skipForId, "other", note)} isEs={language === "es"} />
+                                                        </details>
+                                                    </div>
+                                                )
+                                            ))}
+                                        </div>
+                                        <div className="border-t border-gray-200 p-3">
+                                            <button onClick={() => setSkipPickerFor(null)} className="w-full py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 );
             };
@@ -5244,6 +5550,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 </div>
             );
         }
+
+// Tiny helper for the "Other" skip-reason path — captures a free-text note.
+function SkipOtherInput({ onSubmit, isEs }) {
+    const [v, setV] = useState("");
+    return (
+        <div className="mt-1 p-2 bg-amber-50 rounded-lg border border-amber-200 flex gap-1">
+            <input type="text" value={v} onChange={e => setV(e.target.value)}
+                placeholder={isEs ? "Anota la razón..." : "Note the reason..."}
+                className="flex-1 px-2 py-1 border border-amber-300 rounded text-xs" autoFocus />
+            <button onClick={() => v.trim() && onSubmit(v.trim())}
+                disabled={!v.trim()}
+                className={`px-3 py-1 rounded text-xs font-bold ${v.trim() ? "bg-amber-600 text-white" : "bg-gray-200 text-gray-400"}`}>
+                {isEs ? "Guardar" : "Save"}
+            </button>
+        </div>
+    );
+}
 
         // NOTE: MenuReference, Schedule, useGeofence, RecipeForm live in their own files
         // (imported by App.jsx). Duplicate definitions removed to save ~490 lines.
