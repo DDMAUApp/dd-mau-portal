@@ -23,13 +23,30 @@ export function setupPWA() {
     manifestLink.href = manifestURL;
     document.head.appendChild(manifestLink);
 
-    // Inline service worker
+    // Inline service worker — install-claim-pass-through, no cache.
+    //
+    // Why this minimalist version:
+    //   • The PWA installability requirement only needs an SW to exist; it
+    //     doesn't need to cache anything.
+    //   • The previous SW's fetch handler returned `caches.match(req)` on
+    //     network failure, which evaluates to undefined when there's no
+    //     cache (we never .put()). Browsers treat undefined-respondWith
+    //     as a network error, breaking the page on any transient blip
+    //     after a deploy. The current handler simply does NOT call
+    //     respondWith — the browser handles the request normally.
+    //   • clients.claim() in activate makes a freshly-installed SW take
+    //     over without needing a refresh, so deploys propagate cleanly.
+    //   • skipWaiting() in install means the new SW activates immediately
+    //     instead of waiting for the old one to be unloaded.
+    //
+    // To force-update a stuck device: the in-app "↻ Refresh" button or
+    // the mobile pull-down gesture both call forceRefresh() which runs
+    // registration.update() + caches.delete() + cache-busting reload.
     const swCode = `
         self.addEventListener('install', () => self.skipWaiting());
         self.addEventListener('activate', (e) => e.waitUntil(clients.claim()));
-        self.addEventListener('fetch', (e) => {
-            e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
-        });
+        // No fetch handler — let the browser handle requests normally.
+        // We only need the SW registered for PWA installability.
     `;
     if ('serviceWorker' in navigator) {
         const swBlob = new Blob([swCode], { type: 'application/javascript' });
