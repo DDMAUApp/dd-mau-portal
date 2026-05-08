@@ -31,6 +31,27 @@ const TASK_CATEGORIES = [
 const TASK_CATEGORY_BY_ID = Object.fromEntries(TASK_CATEGORIES.map(c => [c.id, c]));
 const getCategoryFor = (task) => TASK_CATEGORY_BY_ID[task?.category] || TASK_CATEGORY_BY_ID.other;
 
+// Recurrence options for tasks. Tasks with a recurrence pattern only show on
+// matching days. Default "daily" (or unset = daily) means show every day.
+const TASK_RECURRENCE = [
+    { id: "daily",     labelEn: "Every day",       labelEs: "Cada día",         match: () => true },
+    { id: "weekday",   labelEn: "Weekdays",        labelEs: "Lunes-Viernes",    match: (d) => d.getDay() >= 1 && d.getDay() <= 5 },
+    { id: "weekend",   labelEn: "Weekends",        labelEs: "Fines de semana",  match: (d) => d.getDay() === 0 || d.getDay() === 6 },
+    { id: "monday",    labelEn: "Mondays",         labelEs: "Lunes",            match: (d) => d.getDay() === 1 },
+    { id: "tuesday",   labelEn: "Tuesdays",        labelEs: "Martes",           match: (d) => d.getDay() === 2 },
+    { id: "wednesday", labelEn: "Wednesdays",      labelEs: "Miércoles",        match: (d) => d.getDay() === 3 },
+    { id: "thursday",  labelEn: "Thursdays",       labelEs: "Jueves",           match: (d) => d.getDay() === 4 },
+    { id: "friday",    labelEn: "Fridays",         labelEs: "Viernes",          match: (d) => d.getDay() === 5 },
+    { id: "saturday",  labelEn: "Saturdays",       labelEs: "Sábados",          match: (d) => d.getDay() === 6 },
+    { id: "sunday",    labelEn: "Sundays",         labelEs: "Domingos",         match: (d) => d.getDay() === 0 },
+];
+const TASK_RECURRENCE_BY_ID = Object.fromEntries(TASK_RECURRENCE.map(r => [r.id, r]));
+const taskShowsToday = (task, date = new Date()) => {
+    const r = task.recurrence || "daily";
+    const rule = TASK_RECURRENCE_BY_ID[r] || TASK_RECURRENCE_BY_ID.daily;
+    return rule.match(date);
+};
+
 // Skip-with-reason options. Picker (not free text) so we can analyze later.
 const SKIP_REASONS = [
     { id: "out_of_stock",     emoji: "🚫", labelEn: "Out of stock",       labelEs: "Sin existencia" },
@@ -138,6 +159,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [editingIdx, setEditingIdx] = useState(null);
             const [editTask, setEditTask] = useState("");
             const [editCategory, setEditCategory] = useState("other");
+            const [editRecurrence, setEditRecurrence] = useState("daily");
             const [editRequirePhoto, setEditRequirePhoto] = useState(false);
             const [editSubtasks, setEditSubtasks] = useState([]);
             const [editCompleteBy, setEditCompleteBy] = useState("");
@@ -146,6 +168,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
             const [newCategory, setNewCategory] = useState("other");
+            const [newRecurrence, setNewRecurrence] = useState("daily");
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
             // Category filter for the task list view (also used by quick-add to default the new task's category)
             const [categoryFilter, setCategoryFilter] = useState("all");
@@ -153,6 +176,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [skipPickerFor, setSkipPickerFor] = useState(null);
             // Quick-add inline input state (single field on top of task list)
             const [quickAddText, setQuickAddText] = useState("");
+            // Per-task comments — which task's thread is open + draft text
+            const [openCommentTask, setOpenCommentTask] = useState(null);
+            const [commentDraft, setCommentDraft] = useState("");
             const [newSubtasks, setNewSubtasks] = useState([]);
             const [newCompleteBy, setNewCompleteBy] = useState("");
             const [newAssignTo, setNewAssignTo] = useState("");
@@ -1584,6 +1610,33 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
             };
 
+            // ── Per-task comments ──
+            // Stored in the same `checks` doc under key `${prefix}${taskId}_comments`
+            // as an array of {by, at, text}. So they survive in checklistHistory too.
+            const addTaskComment = async (taskId, text) => {
+                if (!text || !text.trim()) return;
+                const cur = checksRef.current;
+                const pKey = currentPrefix + taskId + "_comments";
+                const existing = Array.isArray(cur[pKey]) ? cur[pKey] : [];
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+                const newChecks = { ...cur, [pKey]: [...existing, { by: staffName, at: timeStr, text: text.trim(), ts: now.toISOString() }] };
+                setChecks(newChecks);
+                await saveChecklistState(newChecks, customTasksRef.current);
+            };
+
+            const removeTaskComment = async (taskId, idx) => {
+                const cur = checksRef.current;
+                const pKey = currentPrefix + taskId + "_comments";
+                const existing = Array.isArray(cur[pKey]) ? cur[pKey] : [];
+                if (idx < 0 || idx >= existing.length) return;
+                const newArr = existing.filter((_, i) => i !== idx);
+                const newChecks = { ...cur };
+                if (newArr.length > 0) newChecks[pKey] = newArr; else delete newChecks[pKey];
+                setChecks(newChecks);
+                await saveChecklistState(newChecks, customTasksRef.current);
+            };
+
             const toggleCheckItem = async (taskId, parentTask) => {
                 const cur = checksRef.current;
                 const pKey = currentPrefix + taskId;
@@ -1693,6 +1746,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // don't share the same key in the `checks` map (list-0 has no prefix for backward compat).
                 const item = { id: checklistSide + "_" + Date.now().toString(), task: newTask.trim() };
                 if (newCategory && newCategory !== "other") item.category = newCategory;
+                if (newRecurrence && newRecurrence !== "daily") item.recurrence = newRecurrence;
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
                 const newAssignArr = Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : [];
@@ -1711,7 +1765,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewCategory("other"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
+                setNewTask(""); setNewCategory("other"); setNewRecurrence("daily"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -1720,6 +1774,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const item = updated[checklistSide][activePeriod][idx];
                 item.task = editTask.trim();
                 if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
+                if (editRecurrence && editRecurrence !== "daily") { item.recurrence = editRecurrence; } else { delete item.recurrence; }
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
                 const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
@@ -1734,7 +1789,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
+                setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRecurrence("daily"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
             };
 
             // Photo capture and upload
@@ -2445,6 +2500,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const hasNoAssign = (t) => !t.assignTo || (Array.isArray(t.assignTo) && t.assignTo.length === 0);
                 // Tag each task with its original index so edit/delete still works after filtering
                 let tagged = all.map((t, i) => ({...t, _origIdx: i}));
+                // Recurrence filter — only show tasks matching today's day-of-week.
+                // In edit mode, show all so admins can set recurrence on any task.
+                if (!editMode) {
+                    const today = new Date();
+                    tagged = tagged.filter(t => taskShowsToday(t, today));
+                }
                 // Category filter — applied to both staff and admin views
                 if (categoryFilter && categoryFilter !== "all") {
                     tagged = tagged.filter(t => (t.category || "other") === categoryFilter);
@@ -2545,6 +2606,68 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     </div>
                 );
             }
+
+            // Pre-shift printout — opens a clean HTML page in a new window with
+            // today's tasks for the current side, optionally scoped to one staff
+            // member. Hand to the shift lead or the assignee at start of shift.
+            const handlePrintTasks = () => {
+                const escape = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                const todayDate = new Date();
+                const today = todayDate.toLocaleDateString(language === "es" ? "es-US" : "en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+                const tasks = getCurrentTasks();
+                const sideLabel = checklistSide === "FOH" ? "Front of House" : "Back of House";
+                const filterLabel = taskFilter ? ` · ${taskFilter}` : "";
+                const groupedByCat = {};
+                for (const t of tasks) {
+                    const cat = (t.category || "other");
+                    if (!groupedByCat[cat]) groupedByCat[cat] = [];
+                    groupedByCat[cat].push(t);
+                }
+                const orderedCats = TASK_CATEGORIES.filter(c => groupedByCat[c.id]);
+                const taskHtml = orderedCats.map(cat => {
+                    const items = groupedByCat[cat.id];
+                    return `<div class="cat">
+                        <h3>${escape(cat.emoji)} ${escape(language === "es" ? cat.labelEs : cat.labelEn)}</h3>
+                        <ul>${items.map(t => {
+                            const subs = (t.subtasks || []).map(s => `<li class="sub">☐ ${escape(s.task)}</li>`).join("");
+                            const photo = t.requirePhoto ? '<span class="badge">📸 photo</span>' : '';
+                            const completeBy = t.completeBy ? `<span class="badge">⏰ by ${escape(t.completeBy)}</span>` : '';
+                            const assignees = (t.assignTo ? (Array.isArray(t.assignTo) ? t.assignTo : [t.assignTo]) : []).map(a => `<span class="badge person">👤 ${escape(a)}</span>`).join('');
+                            return `<li class="main">☐ ${escape(t.task)} ${photo} ${completeBy} ${assignees}${subs ? `<ul>${subs}</ul>` : ''}</li>`;
+                        }).join("")}</ul>
+                    </div>`;
+                }).join("");
+                const html = `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<title>${escape(`Pre-shift Tasks · ${sideLabel} · ${today}`)}</title>
+<style>
+    @page { size: letter portrait; margin: 0.5in; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; color: #1f2937; }
+    .header { padding-bottom: 8px; margin-bottom: 12px; border-bottom: 2px solid #255a37; }
+    h1 { font-size: 20px; margin: 0; color: #255a37; }
+    .sub { font-size: 12px; color: #6b7280; }
+    .cat { margin-top: 14px; page-break-inside: avoid; }
+    h3 { font-size: 13px; color: #1f2937; margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid #e5e7eb; }
+    ul { list-style: none; padding: 0; margin: 0; }
+    li.main { font-size: 12px; padding: 6px 0; border-bottom: 1px dashed #e5e7eb; }
+    li.sub { font-size: 11px; padding: 2px 0 2px 24px; color: #4b5563; }
+    .badge { display: inline-block; font-size: 9px; padding: 1px 6px; background: #f3f4f6; border-radius: 8px; margin-left: 4px; color: #374151; }
+    .badge.person { background: #dbeafe; color: #1e40af; }
+    .footer { margin-top: 18px; font-size: 9px; color: #9ca3af; text-align: center; }
+</style>
+</head><body>
+<div class="header">
+    <h1>📋 ${escape(sideLabel)} — Pre-Shift Tasks${escape(filterLabel)}</h1>
+    <div class="sub">${escape(today)} · ${escape(LOCATION_LABELS[storeLocation] || storeLocation)} · ${tasks.length} tasks</div>
+</div>
+${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks for today.</p>'}
+<div class="footer">Printed ${new Date().toLocaleString()} · DD Mau</div>
+<script>setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+                const w = window.open("", "_blank", "width=800,height=1000");
+                if (!w) { alert(language === "es" ? "Ventana bloqueada." : "Pop-up blocked."); return; }
+                w.document.open(); w.document.write(html); w.document.close();
+            };
 
             const renderChecklist = () => {
                 const tasks = getCurrentTasks();
@@ -2668,8 +2791,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             );
                         })()}
 
-                        {/* Edit button */}
-                        <div className="flex justify-end items-center mt-1">
+                        {/* Print + Edit buttons */}
+                        <div className="flex justify-end items-center gap-2 mt-1 print:hidden">
+                            <button onClick={handlePrintTasks}
+                                title={language === "es" ? "Imprimir tareas para el turno" : "Print pre-shift task list"}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-gray-100 text-gray-700 hover:bg-gray-200">
+                                🖨 {language === "es" ? "Imprimir" : "Print"}
+                            </button>
                             {currentIsAdmin && (
                                 <button onClick={() => { setEditMode(!editMode); setEditingIdx(null); setShowAddForm(false); }}
                                     className={"px-3 py-1.5 rounded-lg text-xs font-bold transition " + (editMode ? "bg-mint-100 text-mint-700 border border-mint-200" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}>
@@ -2757,6 +2885,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                     </button>
                                                 ))}
                                             </div>
+                                        </div>
+                                        {/* Recurrence picker */}
+                                        <div className="mb-2">
+                                            <label className="text-xs font-bold text-gray-600 block mb-1">🔁 {language === "es" ? "Recurrencia" : "Recurrence"}</label>
+                                            <select value={editRecurrence} onChange={e => setEditRecurrence(e.target.value)}
+                                                className="w-full border border-gray-200 rounded px-2 py-1 text-xs">
+                                                {TASK_RECURRENCE.map(r => (
+                                                    <option key={r.id} value={r.id}>{language === "es" ? r.labelEs : r.labelEn}</option>
+                                                ))}
+                                            </select>
                                         </div>
                                         {/* Complete by time */}
                                         <div className="flex items-center gap-2 mb-2">
@@ -2889,6 +3027,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             </span>
                                                         );
                                                     })()}
+                                                    {item.recurrence && item.recurrence !== "daily" && (
+                                                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-cyan-100 text-cyan-800 border border-cyan-300">
+                                                            🔁 {(TASK_RECURRENCE_BY_ID[item.recurrence] || {})[language === "es" ? "labelEs" : "labelEn"] || item.recurrence}
+                                                        </span>
+                                                    )}
                                                     {item.requirePhoto && <span className="text-xs">{"\u{1F4F8}"}</span>}
                                                     {item.completeBy && (
                                                         <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
@@ -2933,11 +3076,56 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                         {String.fromCodePoint(0x2713)} {checks[currentPrefix + item.id + "_by"]} {String.fromCodePoint(0x2014)} {checks[currentPrefix + item.id + "_at"]}
                                                     </p>
                                                 )}
+                                                {/* Comment thread — collapsed badge on the card,
+                                                    expand to see + add. Always-visible 💬 toggle below the title. */}
+                                                {(() => {
+                                                    const ck = currentPrefix + item.id + "_comments";
+                                                    const comments = Array.isArray(checks[ck]) ? checks[ck] : [];
+                                                    const isOpen = openCommentTask === item.id;
+                                                    return (
+                                                        <div className="mt-1">
+                                                            <button onClick={() => { setOpenCommentTask(isOpen ? null : item.id); setCommentDraft(""); }}
+                                                                className={`text-[11px] font-bold underline ${comments.length > 0 ? "text-blue-700" : "text-gray-500"}`}>
+                                                                💬 {comments.length > 0 ? `${comments.length} ${language === "es" ? "nota(s)" : "note(s)"}` : (language === "es" ? "Agregar nota" : "Add note")}
+                                                            </button>
+                                                            {isOpen && (
+                                                                <div className="mt-1 bg-blue-50 border border-blue-200 rounded p-2 space-y-1">
+                                                                    {comments.length === 0 && (
+                                                                        <p className="text-[10px] text-gray-500 italic">{language === "es" ? "Aún no hay notas" : "No notes yet"}</p>
+                                                                    )}
+                                                                    {comments.map((c, ci) => (
+                                                                        <div key={ci} className="flex items-start justify-between gap-2 bg-white rounded p-1.5 border border-blue-100">
+                                                                            <div className="text-[11px] flex-1 min-w-0">
+                                                                                <span className="font-bold text-blue-800">{c.by}</span>
+                                                                                <span className="text-gray-400 ml-1">{c.at}</span>
+                                                                                <div className="text-gray-700 mt-0.5">{c.text}</div>
+                                                                            </div>
+                                                                            <button onClick={() => removeTaskComment(item.id, ci)}
+                                                                                className="text-red-400 hover:text-red-600 text-xs">×</button>
+                                                                        </div>
+                                                                    ))}
+                                                                    <div className="flex gap-1">
+                                                                        <input type="text" value={commentDraft}
+                                                                            onChange={e => setCommentDraft(e.target.value)}
+                                                                            onKeyDown={e => { if (e.key === "Enter" && commentDraft.trim()) { addTaskComment(item.id, commentDraft); setCommentDraft(""); } }}
+                                                                            placeholder={language === "es" ? "Anota algo..." : "Type a note..."}
+                                                                            className="flex-1 px-2 py-1 border border-blue-200 rounded text-[11px]" />
+                                                                        <button onClick={() => { if (commentDraft.trim()) { addTaskComment(item.id, commentDraft); setCommentDraft(""); } }}
+                                                                            disabled={!commentDraft.trim()}
+                                                                            className={`px-2 py-1 rounded text-[11px] font-bold ${commentDraft.trim() ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-400"}`}>
+                                                                            ✓
+                                                                        </button>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditCategory(item.category || "other"); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditCategory(item.category || "other"); setEditRecurrence(item.recurrence || "daily"); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">{String.fromCodePoint(0x270F, 0xFE0F)}</button>
                                                 <button onClick={() => deleteChecklistTask(origIdx)}
                                                     className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">{"\u{1F5D1}"}{"\u{FE0F}"}</button>
@@ -3062,6 +3250,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                             </button>
                                         ))}
                                     </div>
+                                </div>
+                                {/* Recurrence picker */}
+                                <div className="mb-2">
+                                    <label className="text-xs font-bold text-gray-600 block mb-1">🔁 {language === "es" ? "Recurrencia" : "Recurrence"}</label>
+                                    <select value={newRecurrence} onChange={e => setNewRecurrence(e.target.value)}
+                                        className="w-full border border-gray-200 rounded px-2 py-1 text-xs">
+                                        {TASK_RECURRENCE.map(r => (
+                                            <option key={r.id} value={r.id}>{language === "es" ? r.labelEs : r.labelEn}</option>
+                                        ))}
+                                    </select>
                                 </div>
                                 {/* Complete by time */}
                                 <div className="flex items-center gap-2 mb-2">
