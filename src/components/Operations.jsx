@@ -1250,23 +1250,59 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
+                // Helper: determine if a trigger doc is "stale" (a previous scrape
+                // crashed or got killed mid-run, leaving status="running"/"pending"
+                // forever and locking the refresh button). 10-min ceiling matches
+                // the longest reasonable scrape time + buffer. Without this guard,
+                // a single crashed scrape jams the button until someone manually
+                // edits Firestore.
+                const TRIGGER_STALE_MS = 10 * 60 * 1000;
+                const isTriggerStale = (data) => {
+                    const ts = data.startedAt || data.requestedAt;
+                    if (!ts) return false;
+                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
+                    if (!tsMs) return false;
+                    return Date.now() - tsMs > TRIGGER_STALE_MS;
+                };
+                const isCompletionStale = (data) => {
+                    const ts = data.completedAt;
+                    if (!ts) return false;
+                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
+                    if (!tsMs) return false;
+                    // Completion banners only show for 30s — past that, an old
+                    // "done" or "error" state is just historical noise on page load.
+                    return Date.now() - tsMs > 30 * 1000;
+                };
+                const applyTriggerSnapshot = (data, setter) => {
+                    // Stale running/pending → treat as null so user can re-trigger.
+                    if ((data.status === "running" || data.status === "pending") && isTriggerStale(data)) {
+                        setter(null);
+                        return;
+                    }
+                    // Old done/error from a prior session → don't flash the banner.
+                    if ((data.status === "done" || data.status === "error") && isCompletionStale(data)) {
+                        setter(null);
+                        return;
+                    }
+                    if (data.status === "running") {
+                        setter("running");
+                    } else if (data.status === "done") {
+                        setter("done");
+                        setTimeout(() => setter(null), 4000);
+                    } else if (data.status === "error") {
+                        setter("error");
+                        setTimeout(() => setter(null), 5000);
+                    } else if (data.status === "pending") {
+                        setter("requesting");
+                    } else if (!data.trigger) {
+                        setter(null);
+                    }
+                };
+
                 // Listen for Sysco scrape trigger status updates
                 const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
                     if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        if (data.status === "running") {
-                            setSyscoTriggerStatus("running");
-                        } else if (data.status === "done") {
-                            setSyscoTriggerStatus("done");
-                            setTimeout(() => setSyscoTriggerStatus(null), 4000);
-                        } else if (data.status === "error") {
-                            setSyscoTriggerStatus("error");
-                            setTimeout(() => setSyscoTriggerStatus(null), 5000);
-                        } else if (data.status === "pending") {
-                            setSyscoTriggerStatus("requesting");
-                        } else if (!data.trigger) {
-                            setSyscoTriggerStatus(null);
-                        }
+                        applyTriggerSnapshot(docSnap.data(), setSyscoTriggerStatus);
                     }
                 });
 
@@ -1287,20 +1323,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // US Foods trigger status
                 const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
                     if (docSnap.exists()) {
-                        const data = docSnap.data();
-                        if (data.status === "running") {
-                            setUsfoodsTriggerStatus("running");
-                        } else if (data.status === "done") {
-                            setUsfoodsTriggerStatus("done");
-                            setTimeout(() => setUsfoodsTriggerStatus(null), 4000);
-                        } else if (data.status === "error") {
-                            setUsfoodsTriggerStatus("error");
-                            setTimeout(() => setUsfoodsTriggerStatus(null), 5000);
-                        } else if (data.status === "pending") {
-                            setUsfoodsTriggerStatus("requesting");
-                        } else if (!data.trigger) {
-                            setUsfoodsTriggerStatus(null);
-                        }
+                        applyTriggerSnapshot(docSnap.data(), setUsfoodsTriggerStatus);
                     }
                 });
 
