@@ -162,6 +162,30 @@ const hoursBetween = (start, end, isDouble = false) => {
     return hrs;
 };
 
+// Paid hours for ONE day given that day's shifts. If 2+ shifts that day
+// (e.g. morning 10-3 + evening 4-8), it's a double — subtract the unpaid
+// 1-hr break ONCE for the day. Otherwise honor the legacy single-shift
+// isDouble flag (for shifts recorded as a single 10-8 double with built-in
+// break). One source of truth for hours math.
+const dayPaidHours = (dayShifts) => {
+    if (!dayShifts || dayShifts.length === 0) return 0;
+    if (dayShifts.length === 1) {
+        const sh = dayShifts[0];
+        return hoursBetween(sh.startTime, sh.endTime, !!sh.isDouble);
+    }
+    // 2+ shifts on the same day → automatic double, deduct 1h break once.
+    const raw = dayShifts.reduce((sum, sh) => sum + hoursBetween(sh.startTime, sh.endTime, false), 0);
+    return Math.max(0, raw - 1);
+};
+
+// True if a staff has 2+ shifts on the given date OR a single shift flagged
+// isDouble. Used for the visual badge on shift cubes.
+const isDoubleDay = (dayShifts) => {
+    if (!dayShifts || dayShifts.length === 0) return false;
+    if (dayShifts.length >= 2) return true;
+    return !!dayShifts[0].isDouble;
+};
+
 const formatHours = (h) => {
     if (h === Math.floor(h)) return `${h}h`;
     return `${h.toFixed(1)}h`;
@@ -547,8 +571,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 const allMyShifts = shifts.filter(sh =>
                     sh.staffName === s.name &&
                     (storeLocation === 'both' || sh.location === storeLocation));
-                const totalHours = allMyShifts.reduce((sum, sh) =>
-                    sum + hoursBetween(sh.startTime, sh.endTime, sh.isDouble), 0);
+                // Group by date and let dayPaidHours handle the double-shift
+                // break deduction (auto-detected from 2+ shifts/day OR legacy
+                // isDouble flag). Important — this means weekly totals are
+                // correct even when managers don't manually flag isDouble.
+                const byDate = new Map();
+                for (const sh of allMyShifts) {
+                    const arr = byDate.get(sh.date) || [];
+                    arr.push(sh);
+                    byDate.set(sh.date, arr);
+                }
+                const totalHours = Array.from(byDate.values())
+                    .reduce((sum, dayShifts) => sum + dayPaidHours(dayShifts), 0);
                 const sideShiftCount = visibleShifts.filter(sh => sh.staffName === s.name).length;
                 return { ...s, totalHours, shiftCount: sideShiftCount };
             })
@@ -1213,18 +1247,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // staff member.
         if (personFilter) {
             const myShifts = visibleShifts.filter(sh => sh.staffName === personFilter && sh.published !== false);
-            const totalHours = myShifts.reduce((sum, sh) => sum + hoursBetween(sh.startTime, sh.endTime, sh.isDouble), 0);
+            // Group by date so the per-day double-shift break gets deducted once.
+            const byDate = new Map();
+            for (const sh of myShifts) {
+                const arr = byDate.get(sh.date) || [];
+                arr.push(sh);
+                byDate.set(sh.date, arr);
+            }
+            const totalHours = Array.from(byDate.values()).reduce((sum, dayShifts) => sum + dayPaidHours(dayShifts), 0);
             const dayBlocks = days.map((d, i) => {
                 const dStr = toDateStr(d);
-                const todayShifts = myShifts.filter(sh => sh.date === dStr).sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
+                const todayShifts = (byDate.get(dStr) || []).slice().sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
                 const onPto = isStaffOffOn(personFilter, dStr);
                 const closed = dateClosed(dStr);
+                const isDoubleDayPrint = todayShifts.length >= 2;
                 let body = '';
                 if (closed) body = '<div class="closed">CLOSED</div>';
                 else if (onPto && todayShifts.length === 0) body = '<div class="pto">🌴 Time Off</div>';
                 else if (todayShifts.length === 0) body = '<div class="empty">— Off —</div>';
                 else body = todayShifts.map(sh => {
-                    const hrs = hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                    // Per-day total handles the break deduction; shift line shows raw hours.
+                    const hrs = isDoubleDayPrint
+                        ? hoursBetween(sh.startTime, sh.endTime, false)
+                        : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
                     return `<div class="shift-row">
                         <span class="time">${escape(formatTime12h(sh.startTime))} – ${escape(formatTime12h(sh.endTime))}</span>
                         <span class="hrs">${escape(formatHours(hrs))}</span>
@@ -1232,7 +1277,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         ${sh.isDouble ? '<span class="dbl">⏱ DOUBLE</span>' : ''}
                         ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
                     </div>`;
-                }).join('');
+                }).join('') + (isDoubleDayPrint ? `<div class="dbl-day">🔁 DOUBLE DAY · ${escape(formatHours(dayPaidHours(todayShifts)))} paid (1h break)</div>` : '');
                 return `<div class="day ${dStr === today ? 'today' : ''} ${closed ? 'closed-day' : ''}">
                     <div class="day-header">
                         <span class="dow">${escape(dayLabelsFull[d.getDay()])}</span>
@@ -1310,16 +1355,21 @@ ${dayBlocks}
                 if (cellClosed) cellHtml = '<div class="closed">CLOSED</div>';
                 else if (cellOnPto && cellShifts.length === 0) cellHtml = '<div class="pto">🌴 PTO</div>';
                 else if (cellShifts.length === 0) cellHtml = '<div class="empty">—</div>';
-                else cellHtml = cellShifts.map(sh => {
-                    const hrs = hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
-                    return `<div class="shift">
-                        <b>${escape(formatTime12h(sh.startTime))}–${escape(formatTime12h(sh.endTime))}</b>
-                        <span class="hrs">${escape(formatHours(hrs))}</span>
-                        ${sh.isShiftLead ? '<span class="lead">🛡️</span>' : ''}
-                        ${sh.isDouble ? '<span class="dbl">⏱</span>' : ''}
-                        ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
-                    </div>`;
-                }).join('');
+                else {
+                    const cellIsDoubleDay = cellShifts.length >= 2;
+                    cellHtml = cellShifts.map(sh => {
+                        const hrs = cellIsDoubleDay
+                            ? hoursBetween(sh.startTime, sh.endTime, false)
+                            : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                        return `<div class="shift">
+                            <b>${escape(formatTime12h(sh.startTime))}–${escape(formatTime12h(sh.endTime))}</b>
+                            <span class="hrs">${escape(formatHours(hrs))}</span>
+                            ${sh.isShiftLead ? '<span class="lead">🛡️</span>' : ''}
+                            ${sh.isDouble ? '<span class="dbl">⏱</span>' : ''}
+                            ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
+                        </div>`;
+                    }).join('') + (cellIsDoubleDay ? '<div class="dbl-tag">🔁 Double</div>' : '');
+                }
                 cells += `<td class="${isToday ? 'today' : ''} ${cellClosed ? 'closed-cell' : ''}">${cellHtml}</td>`;
             }
             const hoursClass = s.totalHours >= HOURS_YELLOW_MAX ? 'h-red' : s.totalHours >= HOURS_GREEN_MAX ? 'h-yellow' : 'h-green';
@@ -1617,8 +1667,15 @@ ${dayBlocks}
             const avail = s.availability || {};
             // Already-scheduled hours for this person this week (don't double-book).
             const myExisting = visibleShifts.filter(sh => sh.staffName === s.name);
-            const existingHours = myExisting.reduce((sum, sh) =>
-                sum + hoursBetween(sh.startTime, sh.endTime, sh.isDouble), 0);
+            // Group by date so the auto-double break gets deducted once per day
+            // (e.g. existing 10–3 + 4–8 same day → 8h paid, not 9h).
+            const myByDate = new Map();
+            for (const sh of myExisting) {
+                const arr = myByDate.get(sh.date) || [];
+                arr.push(sh);
+                myByDate.set(sh.date, arr);
+            }
+            const existingHours = Array.from(myByDate.values()).reduce((sum, dayShifts) => sum + dayPaidHours(dayShifts), 0);
             const remaining = target - existingHours;
             if (remaining <= 0) { skipped.push(`${s.name}: ${tx('already at target', 'ya alcanzó objetivo')}`); continue; }
 
@@ -2082,6 +2139,7 @@ ${dayBlocks}
                     prefill={addPrefill}
                     weekStart={weekStart}
                     dateClosed={dateClosed}
+                    existingShifts={shifts}
                 />
             )}
             {showBlockModal && canEdit && (
@@ -2409,7 +2467,9 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             {cellShifts.map(sh => (
                                                 <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
                                                     currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer}
-                                                    draggable={canEdit} />
+                                                    draggable={canEdit}
+                                                    isDoubleDay={cellShifts.length >= 2}
+                                                    dayShiftCount={cellShifts.length} />
                                             ))}
                                             {canEdit && cellShifts.length === 0 && !onPTO && (
                                                 <div className="text-center text-gray-300 text-lg leading-none py-1">+</div>
@@ -2426,11 +2486,16 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     );
 }
 
-function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable }) {
+function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount }) {
     const colors = roleColors(staffRole);
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const hasWarning = warnings.length > 0;
-    const hours = hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
+    // Raw shift hours — when this is one of two shifts on the same day, we
+    // DON'T subtract the break here (the deduction happens once at the day
+    // level in dayPaidHours). The badge below explains that to the user.
+    const hours = (dayShiftCount && dayShiftCount >= 2)
+        ? hoursBetween(shift.startTime, shift.endTime, false)
+        : hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
     const isMine = shift.staffName === currentStaffName;
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
@@ -2438,6 +2503,9 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDe
     // Shown as a small badge so managers spot it at a glance.
     const homeSide = staffScheduleSide || (BOH_ROLE_HINTS.has(staffRole) ? 'boh' : 'foh');
     const isCrossSide = shift.side && shift.side !== homeSide;
+    // Auto-double = 2+ shifts on this day. Different from shift.isDouble
+    // (which is the legacy single-shift "had a built-in break" flag).
+    const isAutoDouble = !!isDoubleDay && dayShiftCount >= 2;
     // Audit trail tooltip — managers and admins long-press / hover to see who created/edited.
     const auditLines = [];
     if (shift.createdBy) auditLines.push(`Created: ${shift.createdBy}`);
@@ -2462,7 +2530,11 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDe
                 {formatHours(hours)}
                 {shift.isShiftLead && <span title="Shift Lead this shift" className="ml-0.5">🛡️</span>}
                 {shift.isDouble && <span title="Double shift" className="ml-0.5">⏱</span>}
+                {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."} className="ml-0.5">🔁</span>}
             </div>
+            {isAutoDouble && !compact && (
+                <div className="text-[9px] mt-0.5 font-bold text-blue-700">🔁 {isEn ? 'Double day' : 'Día doble'}</div>
+            )}
             {shift.published === false && <div className="text-[9px] mt-0.5 font-bold text-gray-600">📝 {isEn ? 'Draft' : 'Borrador'}</div>}
             {isCrossSide && <div className="text-[9px] mt-0.5 font-bold text-amber-700">🔀 {isEn ? `Cross-side (${shift.side?.toUpperCase()})` : `Lado cruzado (${shift.side?.toUpperCase()})`}</div>}
             {isOffered && <div className="text-[9px] mt-0.5 font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</div>}
@@ -2500,6 +2572,16 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
         .filter(sh => sh.date === dStr)
         .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
 
+    // How many shifts each staff has on the SELECTED day — used to spot
+    // double-days (2+ shifts) and tag rows accordingly.
+    const dayShiftCountByStaff = useMemo(() => {
+        const map = new Map();
+        for (const sh of dayShifts) {
+            map.set(sh.staffName, (map.get(sh.staffName) || 0) + 1);
+        }
+        return map;
+    }, [dayShifts]);
+
     // Lookup tables for staff role + minor status, used per-row
     const staffByName = useMemo(() => {
         const map = new Map();
@@ -2533,13 +2615,15 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                 <div className="space-y-1">
                     {dayShifts.map(sh => {
                         const staff = staffByName.get(sh.staffName);
+                        const dayCount = dayShiftCountByStaff.get(sh.staffName) || 1;
                         return (
                             <DayRow key={sh.id} shift={sh} staffRole={staff?.role} isMinor={!!staff?.isMinor}
                                 isCurrentStaff={sh.staffName === currentStaffName}
                                 canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn}
                                 currentStaffName={currentStaffName}
                                 onOfferShift={onOfferShift}
-                                onCancelOffer={onCancelOffer} />
+                                onCancelOffer={onCancelOffer}
+                                dayShiftCount={dayCount} />
                         );
                     })}
                 </div>
@@ -2548,10 +2632,15 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
     );
 }
 
-function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer }) {
+function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer, dayShiftCount }) {
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const colors = roleColors(staffRole);
-    const hours = hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
+    // Auto-double = 2+ shifts on same day. Show raw shift hours; the per-day
+    // 1h break deduction lives in the weekly total (dayPaidHours).
+    const isAutoDouble = dayShiftCount && dayShiftCount >= 2;
+    const hours = isAutoDouble
+        ? hoursBetween(shift.startTime, shift.endTime, false)
+        : hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
     const isMine = shift.staffName === currentStaffName;
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
@@ -2565,6 +2654,7 @@ function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, 
                     {staffRole && <span className={`text-[10px] font-semibold ${colors.text} opacity-70`}>· {staffRole}</span>}
                     {shift.isShiftLead && <span title="Shift Lead">🛡️</span>}
                     {shift.isDouble && <span title="Double shift">⏱</span>}
+                    {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."} className="text-[10px] font-bold text-blue-700">🔁 {isEn ? 'Double day' : 'Día doble'}</span>}
                     {isOffered && <span className="text-[10px] font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</span>}
                     {isPending && <span className="text-[10px] font-bold text-purple-700">⏳ {isEn ? 'Pending' : 'Pendiente'}: {shift.pendingClaimBy}</span>}
                 </div>
@@ -2604,6 +2694,16 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
         for (const s of staffSummary) map.set(s.name, s);
         return map;
     }, [staffSummary]);
+
+    // Per (staff, date) shift count — used to detect double-days in this list.
+    const dayShiftCountByCell = useMemo(() => {
+        const map = new Map();
+        for (const sh of shifts) {
+            const key = `${sh.staffName}|${sh.date}`;
+            map.set(key, (map.get(key) || 0) + 1);
+        }
+        return map;
+    }, [shifts]);
 
     const sorted = useMemo(() => {
         const filtered = filterStaff
@@ -2648,7 +2748,11 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                         const staff = staffByName.get(sh.staffName);
                         const warnings = staff?.isMinor ? minorShiftWarnings(sh, isEn) : [];
                         const colors = roleColors(staff?.role);
-                        const hours = hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                        const dayCount = dayShiftCountByCell.get(`${sh.staffName}|${sh.date}`) || 1;
+                        const isAutoDouble = dayCount >= 2;
+                        const hours = isAutoDouble
+                            ? hoursBetween(sh.startTime, sh.endTime, false)
+                            : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
                         return (
                             <div key={sh.id} className={`flex items-center justify-between gap-2 p-2 rounded border-2 text-xs ${isMine ? 'bg-green-50 border-green-300' : `${colors.bg} ${colors.border}`}`}>
                                 <div className="text-center w-12 flex-shrink-0">
@@ -2661,6 +2765,7 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                                         {staff?.role && <span className={`text-[10px] opacity-70 ${colors.text}`}>· {staff.role}</span>}
                                         {sh.isShiftLead && <span>🛡️</span>}
                                         {sh.isDouble && <span>⏱</span>}
+                                        {isAutoDouble && <span title={isEn ? 'Double day' : 'Día doble'} className="text-blue-700 font-bold">🔁</span>}
                                     </div>
                                     <div className="text-gray-700">
                                         {formatTime12h(sh.startTime)}–{formatTime12h(sh.endTime)}
@@ -2859,7 +2964,7 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────
 
-function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed }) {
+function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts }) {
     const today = toDateStr(new Date());
     const tx = (en, es) => (isEn ? en : es);
 
@@ -3028,6 +3133,36 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                         {tx('Total hours:', 'Horas totales:')} <span className="font-bold">{formatHours(hours)}</span>
                         {form.isDouble && <span className="text-gray-400"> ({tx('1h break subtracted', '1h descanso restado')})</span>}
                     </div>
+
+                    {/* Auto-double notice — staff already has another shift on this date */}
+                    {(() => {
+                        if (!form.staffName || !form.date || !existingShifts) return null;
+                        const sameDayShifts = existingShifts.filter(sh => sh.staffName === form.staffName && sh.date === form.date);
+                        if (sameDayShifts.length === 0) return null;
+                        const totalRaw = sameDayShifts.reduce((sum, sh) => sum + hoursBetween(sh.startTime, sh.endTime, false), 0)
+                            + hoursBetween(form.startTime, form.endTime, false);
+                        const totalPaid = Math.max(0, totalRaw - 1);
+                        return (
+                            <div className="p-2 rounded-lg bg-blue-50 border-2 border-blue-300 text-xs text-blue-900">
+                                <div className="font-bold mb-0.5">🔁 {tx('Double day detected', 'Día doble detectado')}</div>
+                                <div className="text-[11px]">
+                                    {tx(`${form.staffName} already has ${sameDayShifts.length} shift(s) on ${form.date}:`,
+                                        `${form.staffName} ya tiene ${sameDayShifts.length} turno(s) el ${form.date}:`)}
+                                </div>
+                                <ul className="mt-1 space-y-0.5">
+                                    {sameDayShifts.map(sh => (
+                                        <li key={sh.id} className="text-[11px] ml-2">
+                                            • {formatTime12h(sh.startTime)}–{formatTime12h(sh.endTime)}
+                                        </li>
+                                    ))}
+                                </ul>
+                                <div className="text-[11px] mt-1 font-bold">
+                                    {tx(`Day total: ${formatHours(totalRaw)} raw → ${formatHours(totalPaid)} paid (1h unpaid break).`,
+                                        `Total del día: ${formatHours(totalRaw)} bruto → ${formatHours(totalPaid)} pagado (1h descanso).`)}
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* Location */}
                     <div>
@@ -3503,8 +3638,8 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                 const d = toDateStr(addDays(weekStartLocal, i));
                 const myShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === d
                     && (storeLocation === 'both' || sh.location === storeLocation));
-                weeklyHours += myShifts.reduce((sum, sh) =>
-                    sum + hoursBetween(sh.startTime, sh.endTime, sh.isDouble), 0);
+                // Per-day paid hours (auto-double deduction baked in).
+                weeklyHours += dayPaidHours(myShifts);
             }
         }
         // Already scheduled this day?
