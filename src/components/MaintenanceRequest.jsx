@@ -100,7 +100,7 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
             const statusLabels = { open: language === "es" ? "Abierto" : "Open", "in-progress": language === "es" ? "En Progreso" : "In Progress", completed: language === "es" ? "Completado" : "Completed", declined: language === "es" ? "Rechazado" : "Declined" };
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-2">🔧 {language === "es" ? "Solicitud de Mantenimiento" : "Maintenance Request"}</h2>
                     <p className="text-xs text-gray-500 mb-4">{language === "es" ? "Reporta cualquier problema o reparación necesaria" : "Report any issue or repair needed"}</p>
 

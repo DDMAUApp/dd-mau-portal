@@ -13,6 +13,24 @@ body {
     box-shadow: 0 -2px 4px rgba(0,0,0,0.05);
 }
 
+/* Bottom nav sits above iPhone home indicator. Without this, the indicator
+   either covers the nav buttons or floats translucently on top of them. */
+.bottom-nav-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Bottom padding for scrollable views so their last row clears the fixed
+   bottom nav AND the iPhone home indicator. The nav is h-20 = 5rem (80px),
+   plus visual breathing room, plus the home-indicator safe area. Drop-in
+   replacement for pb-24 on mobile-first views — desktop keeps 6rem (matches
+   the original pb-24) so layouts that worked on desktop don't shift. */
+.pb-bottom-nav {
+    padding-bottom: calc(7rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+    .pb-bottom-nav { padding-bottom: 6rem; }
+}
+
 @keyframes flash-yellow {
     0%, 100% { background-color: #fef9c3; border-color: #facc15; }
     50% { background-color: #fef08a; border-color: #eab308; }

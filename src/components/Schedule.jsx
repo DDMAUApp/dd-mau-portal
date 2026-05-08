@@ -1819,7 +1819,7 @@ ${dayBlocks}
 
     // ── Render ──
     return (
-        <div className="p-4 pb-24 print:p-2 print:pb-0">
+        <div className="p-4 pb-bottom-nav print:p-2 print:pb-0">
             {/* Inline print stylesheet — keep schedule readable on paper */}
             <style>{`
                 @media print {

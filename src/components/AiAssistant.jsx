@@ -211,7 +211,7 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
 
     // ── Layout shell ────────────────────────────────────────────────────
     return (
-        <div className="md:flex md:gap-4 md:p-4 md:max-w-7xl md:mx-auto pb-24 md:pb-4" style={{ minHeight: "100vh", background: "#f9fafb" }}>
+        <div className="md:flex md:gap-4 md:p-4 md:max-w-7xl md:mx-auto pb-bottom-nav md:pb-4" style={{ minHeight: "100vh", background: "#f9fafb" }}>
             {/* MAIN CHAT COLUMN */}
             <div className="flex-1 min-w-0 md:rounded-xl md:overflow-hidden md:shadow-sm md:bg-white md:flex md:flex-col">
                 {/* Header */}

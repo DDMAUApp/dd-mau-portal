@@ -1873,7 +1873,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F4CB}"} {t("dailyOps", language)}</h2>
 
                     {/* Labor % Card — visible to all staff, percentage only (no dollar amounts) */}
@@ -3421,7 +3421,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [expandedCategory, setExpandedCategory] = useState(null);
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F35C}"} {t("menuReference", language)}</h2>
 
                     <div className="space-y-3">
@@ -3475,7 +3475,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             });
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-2">{"\u{1F4C5}"} {t("weeklySchedule", language)}</h2>
                     <p className="text-gray-600 mb-4">{SCHEDULE_DATA.week} {"\u{2014}"} <span className="font-bold text-mint-700">{LOCATION_LABELS[storeLocation]}</span></p>
 
@@ -3832,7 +3832,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             );
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <div className="flex items-center justify-between mb-4">
                         <h2 className="text-xl font-bold text-mint-700">
                             {isEdit ? (language === "es" ? "Editar Receta" : "Edit Recipe") : (language === "es" ? "Nueva Receta" : "New Recipe")}

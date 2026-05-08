@@ -93,7 +93,7 @@ export default function LaborDashboard({ language, storeLocation }) {
     const isStale = minutesAgo !== null && minutesAgo > 10;
 
     return (
-        <div className="pb-24">
+        <div className="pb-bottom-nav">
             {/* Header */}
             <div className="bg-gradient-to-r from-indigo-600 to-indigo-500 text-white p-4">
                 <div className="flex justify-between items-center">

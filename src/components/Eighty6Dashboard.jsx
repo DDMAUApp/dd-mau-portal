@@ -38,7 +38,7 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
     const locationLabel = storeLocation === "maryland" ? "Maryland Heights" : "Webster";
 
     return (
-        <div className="pb-24" style={{background: "#111827", minHeight: "100vh"}}>
+        <div className="pb-bottom-nav" style={{background: "#111827", minHeight: "100vh"}}>
             <div style={{background: "linear-gradient(135deg, #dc2626, #b91c1c)", padding: "24px 16px 20px", color: "white"}}>
                 <div style={{display: "flex", justifyContent: "space-between", alignItems: "center"}}>
                     <div>

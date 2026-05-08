@@ -344,7 +344,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const m = activeModule;
         const allAnswered = m.quiz.questions.every(q => quizAnswers[q.id]);
         return (
-            <Shell><div className="p-4 pb-24 md:p-5">
+            <Shell><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <h2 className="text-xl font-bold text-mint-700 mb-1">{m.icon} {tx(m.titleEn, m.titleEs)} — {tx("Quiz", "Examen")}</h2>
                 <p className="text-xs text-gray-500 mb-4">{tx(`Pass ${Math.round(m.quiz.passThreshold * 100)}% to clear this module. Two failed attempts in a row will lock the module — your manager has to clear the lock.`, `Aprueba con ${Math.round(m.quiz.passThreshold * 100)}% para completar este módulo. Dos intentos fallidos seguidos bloquean el módulo — tu gerente debe quitar el bloqueo.`)}</p>
@@ -378,7 +378,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "quiz-result" && lastResult && activeModule) {
         const r = lastResult;
         return (
-            <Shell><div className="p-4 pb-24 md:p-5">
+            <Shell><div className="p-4 pb-bottom-nav md:p-5">
                 <div className={`rounded-2xl p-6 text-center ${r.passed ? "bg-green-50 border-2 border-green-300" : r.locked ? "bg-red-50 border-2 border-red-300" : "bg-amber-50 border-2 border-amber-300"}`}>
                     <div className="text-5xl mb-3">{r.passed ? "🎉" : r.locked ? "🔒" : "❌"}</div>
                     <h2 className="text-2xl font-bold mb-2">
@@ -417,7 +417,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const completed = moduleState(m.id).lessonsCompleted.includes(activeLessonId);
         const content = isEn ? activeLesson.contentEn : activeLesson.contentEs;
         return (
-            <Shell><div className="p-4 pb-24 md:p-5">
+            <Shell><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <p className="text-xs text-gray-500 mb-1">{m.code} · {tx("Lesson", "Lección")} {lIdx + 1} / {m.lessons.length}</p>
                 <h2 className="text-xl font-bold text-mint-700 mb-4">{tx(activeLesson.titleEn, activeLesson.titleEs)}</h2>
@@ -468,7 +468,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
             return c;
         })();
         return (
-            <Shell><div className="p-4 pb-24 md:p-5">
+            <Shell><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => { setView("list"); setActiveModuleId(null); }} className="text-sm text-mint-700 mb-3">← {tx("All modules", "Todos los módulos")}</button>
                 <div className="flex items-start gap-3 mb-4">
                     <div className="text-4xl">{m.icon}</div>
@@ -539,7 +539,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     if (view === "tracker" && adminUser) {
         const docs = Object.entries(allProgress);
         return (
-            <Shell><div className="p-4 pb-24 md:p-5">
+            <Shell><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("list")} className="text-sm text-mint-700 mb-3">← {tx("Back", "Atrás")}</button>
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-xl font-bold text-mint-700">📊 {tx("Training Tracker", "Progreso de Capacitación")}</h2>
@@ -595,7 +595,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     })).filter(g => g.modules.length > 0);
 
     return (
-        <Shell><div className="p-4 pb-24 md:p-5">
+        <Shell><div className="p-4 pb-bottom-nav md:p-5">
             <div className="flex items-center justify-between mb-3">
                 <h2 className="text-2xl font-bold text-mint-700">📚 {t("trainingHub", language) || tx("Training Hub", "Centro de Capacitación")}</h2>
                 {adminUser && (

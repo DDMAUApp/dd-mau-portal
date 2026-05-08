@@ -433,7 +433,7 @@ export default function App() {
             {/* Content — wider container at md: */}
             <div className="max-w-lg md:max-w-7xl mx-auto md:px-4 lg:px-6">
                 {activeTab === "home" && (
-                    <div className="pb-24" style={{background: "#111827"}}>
+                    <div className="pb-bottom-nav" style={{background: "#111827"}}>
                         <div style={{background: "linear-gradient(135deg, #059669, #047857)", padding: "24px 16px 20px", color: "white"}}>
                             <p style={{fontSize: "13px", opacity: 0.8, margin: 0}}>{language === "es" ? (new Date().getHours() < 12 ? "Buenos días" : new Date().getHours() < 17 ? "Buenas tardes" : "Buenas noches") : new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening"}</p>
                             <h2 style={{fontSize: "22px", fontWeight: 700, margin: "4px 0 0"}}>{t("welcome", language)}, {staffName}!</h2>
@@ -532,7 +532,7 @@ export default function App() {
             </div>
             </div>
             {/* Bottom Navigation — hidden on md+ since sidebar replaces it */}
-            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow md:hidden">
+            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow md:hidden bottom-nav-safe">
                 <div className="max-w-lg mx-auto flex justify-around items-center h-20">
                     {[
                         { tab: "home", icon: "🏠", label: t("home", language) },

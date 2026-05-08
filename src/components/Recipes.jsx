@@ -69,7 +69,7 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
     );
 
     return (
-        <div className="p-4 pb-24">
+        <div className="p-4 pb-bottom-nav">
             <div className="flex items-center justify-between mb-4">
                 <h2 className="text-xl font-bold text-mint-700">
                     {isEdit ? (language === "es" ? "Editar Receta" : "Edit Recipe") : (language === "es" ? "Nueva Receta" : "New Recipe")}
@@ -304,7 +304,7 @@ export default function Recipes({ language, staffName, staffList }) {
     // Access gate — block staff without recipesAccess
     if (!hasRecipesAccess) {
         return (
-            <div className="p-4 pb-24">
+            <div className="p-4 pb-bottom-nav">
                 <div className="max-w-sm mx-auto mt-16 text-center">
                     <div className="text-6xl mb-4">{"\u{1F512}"}</div>
                     <h2 className="text-xl font-bold text-gray-800 mb-2">
@@ -330,7 +330,7 @@ export default function Recipes({ language, staffName, staffList }) {
     }
 
     return (
-        <div className={`p-4 pb-24 recipe-protected ${screenBlurred ? "screen-blur" : ""}`} onContextMenu={e => e.preventDefault()}>
+        <div className={`p-4 pb-bottom-nav recipe-protected ${screenBlurred ? "screen-blur" : ""}`} onContextMenu={e => e.preventDefault()}>
             <div className="flex items-center justify-between mb-2">
                 <h2 className="text-2xl font-bold text-mint-700">🧑‍🍳 {t("recipesTitle", language)}</h2>
                 {adminUser && (

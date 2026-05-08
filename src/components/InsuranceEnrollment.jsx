@@ -362,7 +362,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
 
   if (loading) {
     return (
-      <div className="p-4 pb-24 text-center">
+      <div className="p-4 pb-bottom-nav text-center">
         <p className="text-gray-500 mt-8">{L("Loading...", "Cargando...")}</p>
       </div>
     );
@@ -371,7 +371,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   // Show success state
   if (submitted) {
     return (
-      <div className="p-4 pb-24">
+      <div className="p-4 pb-bottom-nav">
         <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 text-center mt-4">
           <div className="text-5xl mb-3">✅</div>
           <h3 className="text-xl font-bold text-green-700 mb-2">
@@ -391,7 +391,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   // Admin panel (must be checked before existingData so the button works)
   if (isAdmin && showAdmin && adminUnlocked) {
     return (
-      <div className="p-4 pb-24">
+      <div className="p-4 pb-bottom-nav">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-2xl font-bold text-mint-700">
             📋 {L("Insurance Admin", "Admin de Seguro")}
@@ -556,7 +556,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     const status = statusConfig[existingData.status] || statusConfig.pending_review;
 
     return (
-      <div className="p-4 pb-24">
+      <div className="p-4 pb-bottom-nav">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-2xl font-bold text-mint-700">
             🏥 {L("Insurance Enrollment", "Inscripción de Seguro")}
@@ -641,7 +641,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   const progressPercent = (step / totalSteps) * 100;
 
   return (
-    <div className="p-4 pb-24">
+    <div className="p-4 pb-bottom-nav">
       <div className="flex items-center justify-between mb-1">
         <h2 className="text-2xl font-bold text-mint-700">
           🏥 {L("Insurance Enrollment", "Inscripción de Seguro")}

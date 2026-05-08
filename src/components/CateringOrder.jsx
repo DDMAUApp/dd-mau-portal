@@ -721,7 +721,7 @@ export default function CateringOrder({ language, staffName }) {
             // Success screen
             if (pageTab === "catering" && submitted) {
                 return (
-                    <div className="p-4 pb-24">
+                    <div className="p-4 pb-bottom-nav">
                         <div className="max-w-lg mx-auto text-center mt-8">
                             <div className="text-6xl mb-4">✅</div>
                             <h2 className="text-2xl font-bold text-mint-700 mb-2">{editingOrderId ? (language === "es" ? "¡Pedido Actualizado!" : "Order Updated!") : (language === "es" ? "¡Pedido Enviado!" : "Order Submitted!")}</h2>
@@ -742,7 +742,7 @@ export default function CateringOrder({ language, staffName }) {
                 const vo = viewingOrder;
                 const vc = vo.customer || {};
                 return (
-                    <div className="p-2 pb-24">
+                    <div className="p-2 pb-bottom-nav">
                         <div className="flex gap-2 mb-3">
                             <button onClick={() => setViewingOrder(null)} className="px-4 py-3 bg-gray-200 text-gray-700 rounded-lg font-bold text-sm">← {language === "es" ? "Volver" : "Back"}</button>
                             <button onClick={() => loadOrderForEdit(vo)} className="flex-1 py-3 bg-amber-500 text-white rounded-lg font-bold text-sm">✏️ {language === "es" ? "Editar Pedido" : "Edit Order"}</button>
@@ -855,7 +855,7 @@ export default function CateringOrder({ language, staffName }) {
             // Order History View
             if (pageTab === "catering" && showHistory) {
                 return (
-                    <div className="p-4 pb-24">
+                    <div className="p-4 pb-bottom-nav">
                         <div className="flex items-center justify-between mb-4">
                             <h2 className="text-xl font-bold text-mint-700">{language === "es" ? "Historial de Pedidos" : "Order History"}</h2>
                             <button onClick={() => setShowHistory(false)} className="text-sm bg-gray-100 px-3 py-1 rounded-full font-bold text-gray-600">✕ {language === "es" ? "Cerrar" : "Close"}</button>
@@ -887,7 +887,7 @@ export default function CateringOrder({ language, staffName }) {
                 );
             }
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     {/* ── Page Tab Bar ── */}
                     <div className="flex gap-2 mb-4">
                         <button onClick={() => setPageTab("orders")}

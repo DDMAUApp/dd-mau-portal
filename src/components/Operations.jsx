@@ -3556,7 +3556,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
             };
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F4CB}"} {t("dailyOps", language)}</h2>
 
                     {/* Labor % Card — visible to all staff, percentage only (no dollar amounts) */}

@@ -7,7 +7,7 @@ export default function MenuReference({ language }) {
     const isEs = language === "es";
 
     return (
-        <div className="p-4 pb-24">
+        <div className="p-4 pb-bottom-nav">
             <h2 className="text-2xl font-bold text-mint-700 mb-1">🍜 {t("menuReference", language)}</h2>
             <p className="text-xs text-gray-500 mb-4">
                 {isEs

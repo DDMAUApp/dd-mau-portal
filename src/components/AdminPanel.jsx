@@ -167,7 +167,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const roleOptions = ["FOH", "BOH", "Shift Lead", "Kitchen Manager", "Asst Kitchen Manager", "Manager", "Owner", "Prep", "Grill", "Fryer", "Fried Rice", "Dish", "Bao/Tacos/Banh Mi", "Spring Rolls/Prep", "Pho Station"];
 
             return (
-                <div className="p-4 pb-24">
+                <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-2">⚙️ {t("adminPanel", language)}</h2>
                     <p className="text-xs text-gray-500 mb-4 bg-mint-50 border border-mint-200 rounded-lg p-2">
                         🔐 {language === "es"
