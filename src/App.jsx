@@ -257,6 +257,22 @@ export default function App() {
         }
     }, [staffName, staffList]);
     const staffIsAdmin = isAdmin(staffName, staffList);
+    // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
+    // open the Recipes tab even when they're not at a DD Mau location.
+    const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
+    const hasRecipesAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
+    // Manager-or-admin gate for HR-style features (tardiness, shift handoff).
+    // "Manager" in role title catches Manager / Asst Manager / Kitchen Manager
+    // / Asst Kitchen Manager. Shift Lead is intentionally NOT included —
+    // those are leads, not managers, and tardy authority sits with managers.
+    //
+    // CRITICAL: this `const isManager` MUST be declared BEFORE the useEffect
+    // below that references it in its dependency array. The dep array is
+    // evaluated on every render — referencing a `const` before its
+    // declaration triggers a TDZ "Cannot access 'isManager' before
+    // initialization" error and BREAKS THE WHOLE APP. (This was the cause
+    // of the May 2026 production outage.)
+    const isManager = staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || ''));
     // Guard: if a non-admin restored a session that landed on admin/labor,
     // bounce them back to Home. Otherwise the tab gate hides the content
     // and they see a blank screen + a sidebar item highlighted that they
@@ -272,15 +288,6 @@ export default function App() {
         }
     }, [staffName, staffIsAdmin, isManager, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
-    // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
-    // open the Recipes tab even when they're not at a DD Mau location.
-    const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
-    const hasRecipesAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
-    // Manager-or-admin gate for HR-style features (tardiness, shift handoff).
-    // "Manager" in role title catches Manager / Asst Manager / Kitchen Manager
-    // / Asst Kitchen Manager. Shift Lead is intentionally NOT included —
-    // those are leads, not managers, and tardy authority sits with managers.
-    const isManager = staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || ''));
     const handleSelectStaff = (name) => {
         setStaffName(name);
         const staff = staffList.find(s => s.name === name);
