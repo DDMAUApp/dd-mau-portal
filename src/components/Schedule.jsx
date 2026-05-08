@@ -3983,6 +3983,25 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
 
     const canSave = tpl.name.trim() && tpl.blocks.length > 0 && tpl.blocks.every(b => b.startTime && b.endTime && b.startTime < b.endTime && b.slots.length > 0);
 
+    // Common time presets per block — same DD Mau set as Add Shift, scoped to side.
+    const blockPresets = tpl.side === "boh"
+        ? [
+            { label: "10–8", start: "10:00", end: "20:00" },
+            { label: "10–3", start: "10:00", end: "15:00" },
+            { label: "4–8",  start: "16:00", end: "20:00" },
+        ]
+        : [
+            { label: "10–3", start: "10:00", end: "15:00" },
+            { label: "3–8",  start: "15:00", end: "20:00" },
+            { label: "4–8",  start: "16:00", end: "20:00" },
+            { label: "12–7", start: "12:00", end: "19:00" },
+        ];
+    const isBlockPresetActive = (b, p) => b.startTime === p.start && b.endTime === p.end;
+    const applyBlockPreset = (bi, p) => setTpl(t => ({
+        ...t,
+        blocks: t.blocks.map((b, i) => i === bi ? { ...b, startTime: p.start, endTime: p.end } : b),
+    }));
+
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
@@ -4044,6 +4063,20 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                                         <input type="time" value={b.endTime} onChange={e => updateBlock(bi, "endTime", e.target.value)}
                                             className="w-full border border-gray-300 rounded px-2 py-1 text-xs" />
                                     </div>
+                                </div>
+                                {/* Per-block time preset chips */}
+                                <div className="flex flex-wrap gap-1 -mt-1">
+                                    {blockPresets.map(p => (
+                                        <button key={p.label} type="button"
+                                            onClick={() => applyBlockPreset(bi, p)}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                                isBlockPresetActive(b, p)
+                                                    ? 'bg-indigo-600 text-white border-indigo-600'
+                                                    : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                                            }`}>
+                                            {p.label}
+                                        </button>
+                                    ))}
                                 </div>
                                 <div className="space-y-1">
                                     <div className="flex items-center justify-between">
