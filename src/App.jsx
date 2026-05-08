@@ -9,6 +9,7 @@ import { enableFcmPush, onForegroundMessage } from './messaging';
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import useGeofence from './components/hooks/useGeofence';
+import usePullToRefresh from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
 const TrainingHub = lazy(() => import('./components/TrainingHub'));
 const Operations = lazy(() => import('./components/Operations'));
@@ -159,6 +160,10 @@ export default function App() {
     useEffect(() => { SS.set("activeTab", activeTab); }, [activeTab]);
     const { isAtDDMau, checking: geoChecking, error: geoError } = useGeofence();
     const updateAvailable = useVersionCheck();
+    // Mobile pull-down-to-refresh — bypasses the cached SW and forces the
+    // app to re-download HTML+JS. Without this, PWAs installed on iOS get
+    // stuck on stale builds (no native pull-to-refresh in standalone mode).
+    const pullRefresh = usePullToRefresh();
     // Run migrations once on first mount
     useEffect(() => {
         if (!migrationRan) {
@@ -326,6 +331,36 @@ export default function App() {
             {updateAvailable && (
                 <div onClick={() => window.location.reload()} style={{position: "fixed", top: 0, left: 0, right: 0, zIndex: 9999, background: "#2563eb", color: "white", textAlign: "center", padding: "10px 16px", fontSize: "14px", fontWeight: 600, cursor: "pointer"}}>
                     {language === "es" ? "Nueva actualizacion disponible — toca para refrescar" : "New update available — tap to refresh"}
+                </div>
+            )}
+
+            {/* Pull-to-refresh indicator. Shows during a downward pull at the
+                top of the page; goes solid when threshold is reached or while
+                the reload is in flight. Mobile-only via the gesture itself —
+                desktop has no touch events. */}
+            {(pullRefresh.pullDistance > 0 || pullRefresh.refreshing) && (
+                <div style={{
+                    position: "fixed",
+                    top: updateAvailable ? "40px" : "env(safe-area-inset-top, 0px)",
+                    left: 0, right: 0,
+                    zIndex: 9998,
+                    height: pullRefresh.refreshing ? "44px" : `${Math.min(pullRefresh.pullDistance, 80)}px`,
+                    background: pullRefresh.triggered || pullRefresh.refreshing ? "#059669" : "#10b981",
+                    color: "white",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "13px",
+                    fontWeight: 600,
+                    transition: pullRefresh.refreshing ? "height 0.15s" : "none",
+                    pointerEvents: "none",
+                }}>
+                    {pullRefresh.refreshing
+                        ? <span>↻ {language === "es" ? "Actualizando…" : "Refreshing…"}</span>
+                        : pullRefresh.triggered
+                            ? <span>↑ {language === "es" ? "Suelta para actualizar" : "Release to refresh"}</span>
+                            : <span style={{ opacity: pullRefresh.progress }}>↓ {language === "es" ? "Jala para actualizar" : "Pull to refresh"}</span>
+                    }
                 </div>
             )}
 
