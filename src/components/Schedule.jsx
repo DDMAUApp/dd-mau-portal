@@ -199,6 +199,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Phase 3: staff self-serve PTO request modal + my-availability modal
     const [showPtoRequestModal, setShowPtoRequestModal] = useState(false);
     const [showMyAvailModal, setShowMyAvailModal] = useState(false);
+    // Click-a-day-header → "who's available?" picker
+    const [availableForDate, setAvailableForDate] = useState(null);
 
     // ── Data load ──
     useEffect(() => {
@@ -353,6 +355,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // Refuse to drop on a closed date.
         if (dateClosed(newDate)) {
             alert(tx('Cannot drop on a closed date.', 'No puedes soltar en una fecha cerrada.'));
+            return;
+        }
+        // Refuse to drop on a staffer's PTO date.
+        if (isStaffOffOn(newStaffName, newDate)) {
+            alert(tx(`${newStaffName} is on approved time-off that date.`, `${newStaffName} tiene tiempo libre aprobado esa fecha.`));
             return;
         }
         try {
@@ -831,6 +838,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     { key: 'grid', labelEn: 'Week', labelEs: 'Semana', icon: '⊞' },
                     { key: 'day', labelEn: 'Day', labelEs: 'Día', icon: '☰' },
                     { key: 'list', labelEn: 'List', labelEs: 'Lista', icon: '≡' },
+                    { key: 'pto', labelEn: 'PTO', labelEs: 'PTO', icon: '🌴' },
                 ].map(v => (
                     <button key={v.key} onClick={() => setViewMode(v.key)}
                         className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${viewMode === v.key ? 'bg-white text-mint-700 shadow' : 'text-gray-500'}`}>
@@ -945,6 +953,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                                     alert(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
                                     return;
                                 }
+                                if (isStaffOffOn(staff.name, dateStr)) {
+                                    alert(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
+                                    return;
+                                }
                                 openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
                             }}
                             onDeleteShift={handleDeleteShift}
@@ -955,6 +967,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             blocksByDate={blocksByDate}
                             onDropShift={handleDropShift}
                             isStaffOffOn={isStaffOffOn}
+                            timeOff={timeOff}
+                            onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
                         />
                     )}
                     {viewMode === 'day' && (
@@ -984,6 +998,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             onOfferShift={handleOfferShift}
                             onTakeShift={handleTakeShift}
                             onCancelOffer={handleCancelOffer}
+                        />
+                    )}
+                    {viewMode === 'pto' && (
+                        <PtoView
+                            weekStart={weekStart}
+                            timeOff={timeOff}
+                            sideStaffNames={sideStaffNames}
+                            isEn={isEn}
+                            currentStaffName={staffName}
+                            canEdit={canEdit}
+                            onApprove={handleApprovePto}
+                            onDeny={handleDenyPto}
+                            onRemove={handleRemoveTimeOff}
                         />
                     )}
 
@@ -1041,6 +1068,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     isEn={isEn}
                 />
             )}
+            {availableForDate && (
+                <AvailableStaffModal
+                    dateStr={availableForDate}
+                    onClose={() => setAvailableForDate(null)}
+                    sideStaff={sideStaff}
+                    shifts={shifts}
+                    storeLocation={storeLocation}
+                    isStaffOffOn={isStaffOffOn}
+                    isEn={isEn}
+                    onSchedule={(staff) => {
+                        setAvailableForDate(null);
+                        openAddModal({ staffName: staff.name, date: availableForDate, location: staff.location });
+                    }}
+                />
+            )}
         </div>
     );
 }
@@ -1078,7 +1120,15 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn }) {
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff }) {
+    // Helper: is staff PENDING (not approved) for date? Visual only — doesn't block.
+    const isStaffPendingOff = (staffName, dateStr) => (timeOff || []).some(t => {
+        if (t.status !== 'pending') return false;
+        if (t.staffName !== staffName) return false;
+        const start = t.startDate || t.date;
+        const end = t.endDate || t.date;
+        return dateStr >= start && dateStr <= end;
+    });
     const [dragOverCell, setDragOverCell] = useState(null); // "staffName|date" while dragging
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
@@ -1114,11 +1164,14 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                             const closed = dayBlocks.some(b => b.type === 'closed');
                             const noTimeoff = dayBlocks.some(b => b.type === 'no_timeoff');
                             return (
-                                <th key={i} className={`border-b border-gray-200 px-1 py-2 min-w-[110px] ${closed ? 'bg-gray-200' : isToday ? 'bg-mint-50' : ''}`}>
+                                <th key={i}
+                                    onClick={() => onDayHeaderClick && !closed && onDayHeaderClick(dStr)}
+                                    className={`border-b border-gray-200 px-1 py-2 min-w-[110px] ${closed ? 'bg-gray-200' : isToday ? 'bg-mint-50' : ''} ${onDayHeaderClick && !closed ? 'cursor-pointer hover:bg-mint-100' : ''}`}>
                                     <div className={`text-[10px] uppercase font-semibold ${closed ? 'text-gray-600' : isToday ? 'text-mint-700' : 'text-gray-500'}`}>{dayLabels[i]}</div>
                                     <div className={`text-sm font-bold ${closed ? 'text-gray-700' : isToday ? 'text-mint-800' : 'text-gray-700'}`}>{d.getDate()}</div>
                                     {closed && <div className="text-[9px] font-bold text-gray-700 mt-0.5">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>}
                                     {!closed && noTimeoff && <div className="text-[9px] font-bold text-amber-700 mt-0.5">🛑 {isEn ? 'No PTO' : 'Sin PTO'}</div>}
+                                    {onDayHeaderClick && !closed && <div className="text-[8px] text-mint-600 mt-0.5 print:hidden">👥 {isEn ? 'tap' : 'tocar'}</div>}
                                 </th>
                             );
                         })}
@@ -1150,6 +1203,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 const cellKey = `${s.name}|${dStr}`;
                                 const isDragOver = dragOverCell === cellKey;
                                 const onPTO = isStaffOffOn && isStaffOffOn(s.name, dStr);
+                                const onPendingPTO = !onPTO && isStaffPendingOff(s.name, dStr);
                                 return (
                                     <td key={i}
                                         onClick={() => canEdit && cellShifts.length === 0 && !closed && onCellClick(s, dStr)}
@@ -1166,10 +1220,13 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
                                             if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
                                         }}
-                                        className={`border-b border-r border-gray-200 align-top p-1 ${closed ? 'bg-gray-100' : onPTO ? 'bg-amber-50' : isDragOver ? 'bg-blue-100 ring-2 ring-blue-400' : isToday ? 'bg-mint-50/30' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-mint-50' : ''}`}>
+                                        className={`border-b border-r border-gray-200 align-top p-1 ${closed ? 'bg-gray-100' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-100 ring-2 ring-blue-400' : isToday ? 'bg-mint-50/30' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-mint-50' : ''}`}>
                                         <div className="space-y-1">
                                             {onPTO && cellShifts.length === 0 && (
                                                 <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'PTO' : 'PTO'}</div>
+                                            )}
+                                            {onPendingPTO && cellShifts.length === 0 && (
+                                                <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'PTO pending' : 'PTO pendiente'}</div>
                                             )}
                                             {cellShifts.map(sh => (
                                                 <ShiftCube key={sh.id} shift={sh} staffRole={s.role} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
@@ -2107,6 +2164,252 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                     <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={handleSave} className="flex-1 py-2 rounded-lg bg-purple-700 text-white font-bold">{tx('Save', 'Guardar')}</button>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+
+// ── AvailableStaffModal ────────────────────────────────────────────────────
+// Click a day header in the Weekly Grid → opens this modal showing every
+// staff member who is available that day (per their availability windows AND
+// not on approved PTO AND not already scheduled). Each entry is color-coded
+// by current weekly hours so the manager can pick the lowest-hours person to
+// avoid pushing anyone into OT. Tap any name to jump straight into the
+// Add Shift modal pre-filled for that staff + date.
+function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const date = parseLocalDate(dateStr);
+    const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const dayKey = date ? dayKeys[date.getDay()] : null;
+    const dayName = date ? (isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[date.getDay()] : '';
+
+    // Compute each staff's weekly hours (across the FLSA week containing dateStr)
+    // and their availability state for this specific day.
+    const weekStartLocal = date ? startOfWeek(date) : null;
+    const rows = sideStaff.map(s => {
+        // Total this week's hours
+        let weeklyHours = 0;
+        if (weekStartLocal) {
+            for (let i = 0; i < 7; i++) {
+                const d = toDateStr(addDays(weekStartLocal, i));
+                const myShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === d
+                    && (storeLocation === 'both' || sh.location === storeLocation));
+                weeklyHours += myShifts.reduce((sum, sh) =>
+                    sum + hoursBetween(sh.startTime, sh.endTime, sh.isDouble), 0);
+            }
+        }
+        // Already scheduled this day?
+        const alreadyOnDay = shifts.some(sh => sh.staffName === s.name && sh.date === dateStr
+            && (storeLocation === 'both' || sh.location === storeLocation));
+        // Availability for this weekday
+        const dayAvail = (s.availability || {})[dayKey];
+        const availableThisDay = dayAvail && dayAvail.available !== false && dayAvail.from && dayAvail.to;
+        // PTO?
+        const onPto = isStaffOffOn(s.name, dateStr);
+
+        let status = 'available';
+        let reason = '';
+        if (onPto) { status = 'pto'; reason = tx('on time-off', 'tiempo libre'); }
+        else if (alreadyOnDay) { status = 'scheduled'; reason = tx('already scheduled', 'ya programado'); }
+        else if (!availableThisDay) { status = 'unavailable'; reason = tx('not available this day', 'no disponible este día'); }
+
+        return { ...s, weeklyHours, status, reason, dayAvail };
+    });
+
+    // Sort: available first, then by weekly hours ascending (lowest → best candidate)
+    const STATUS_RANK = { available: 0, scheduled: 1, unavailable: 2, pto: 3 };
+    rows.sort((a, b) => {
+        if (a.status !== b.status) return STATUS_RANK[a.status] - STATUS_RANK[b.status];
+        return a.weeklyHours - b.weeklyHours;
+    });
+
+    const available = rows.filter(r => r.status === 'available');
+    const otherwise = rows.filter(r => r.status !== 'available');
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-bold text-mint-700">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
+                        <p className="text-xs text-gray-500">{dayName} · {dateStr}</p>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {/* AVAILABLE — sorted by lowest hours first (best candidates) */}
+                    {available.length > 0 ? (
+                        <div>
+                            <div className="text-xs font-bold text-green-800 mb-1">
+                                ✓ {tx('Available', 'Disponible')} ({available.length})
+                                <span className="font-normal text-gray-500 ml-1">— {tx('lowest hours first', 'menos horas primero')}</span>
+                            </div>
+                            <div className="space-y-1">
+                                {available.map(r => (
+                                    <button key={r.id || r.name}
+                                        onClick={() => onSchedule(r)}
+                                        className="w-full flex items-center justify-between gap-2 p-2 rounded-lg border bg-white hover:bg-mint-50 hover:border-mint-300 text-left">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="font-bold text-gray-800 truncate flex items-center gap-1">
+                                                {r.name}
+                                                {r.shiftLead && <span title="Shift Lead">🛡️</span>}
+                                                {r.isMinor && <span title="Minor">🔑</span>}
+                                            </div>
+                                            <div className="text-[10px] text-gray-500">
+                                                {r.role} · {tx('Avail', 'Disp')} {r.dayAvail?.from}–{r.dayAvail?.to}
+                                                {r.targetHours ? ` · ${tx('target', 'objetivo')} ${r.targetHours}h` : ''}
+                                            </div>
+                                        </div>
+                                        <span className={`flex-shrink-0 px-2 py-1 rounded border text-[11px] font-bold ${hoursColor(r.weeklyHours)}`}>
+                                            {formatHours(r.weeklyHours)}
+                                        </span>
+                                        <span className="flex-shrink-0 text-mint-700 font-bold text-lg">+</span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center py-4 text-gray-400 text-sm">{tx('No staff available this day.', 'Sin personal disponible este día.')}</div>
+                    )}
+
+                    {/* OTHERWISE — visible but greyed, with reason */}
+                    {otherwise.length > 0 && (
+                        <details className="mt-3">
+                            <summary className="text-xs font-bold text-gray-500 cursor-pointer">
+                                {tx('Not available', 'No disponible')} ({otherwise.length})
+                            </summary>
+                            <div className="space-y-1 mt-1 opacity-60">
+                                {otherwise.map(r => (
+                                    <div key={r.id || r.name} className="flex items-center justify-between gap-2 p-2 rounded-lg border border-gray-200 bg-gray-50 text-xs">
+                                        <div className="min-w-0 flex-1">
+                                            <div className="font-bold text-gray-700 truncate">{r.name}</div>
+                                            <div className="text-[10px] text-gray-500">
+                                                {r.status === 'pto' && '🌴 '}
+                                                {r.status === 'scheduled' && '📅 '}
+                                                {r.status === 'unavailable' && '🚫 '}
+                                                {r.reason}
+                                            </div>
+                                        </div>
+                                        <span className={`flex-shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-bold ${hoursColor(r.weeklyHours)}`}>
+                                            {formatHours(r.weeklyHours)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </details>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+
+// ── PtoView ────────────────────────────────────────────────────────────────
+// 4th view mode (next to Grid/Day/List). Calendar of all time-off entries
+// for the current week + side, color-coded by status.
+function PtoView({ weekStart, timeOff, sideStaffNames, isEn, currentStaffName, canEdit, onApprove, onDeny, onRemove }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const days = [0,1,2,3,4,5,6].map(i => addDays(weekStart, i));
+    const dayLabels = isEn ? DAYS_EN : DAYS_ES;
+    const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
+    const today = toDateStr(new Date());
+
+    // Filter time-off to entries whose range overlaps this week + side.
+    const weekStartStr = toDateStr(weekStart);
+    const weekEndStr = toDateStr(addDays(weekStart, 7));
+    const weekTimeOff = (timeOff || []).filter(t => {
+        if (!sideStaffNames.has(t.staffName)) return false;
+        const start = t.startDate || t.date;
+        const end = t.endDate || t.date;
+        // Overlap test
+        return start < weekEndStr && end >= weekStartStr;
+    });
+
+    // Group entries that touch each day for a calendar-style view
+    const entriesByDay = days.map(d => {
+        const dStr = toDateStr(d);
+        const list = weekTimeOff.filter(t => {
+            const start = t.startDate || t.date;
+            const end = t.endDate || t.date;
+            return dStr >= start && dStr <= end;
+        });
+        // Sort: pending first (manager attention), then approved, then denied
+        list.sort((a, b) => {
+            const rank = (s) => s === 'pending' ? 0 : s === 'approved' ? 1 : 2;
+            return rank(a.status) - rank(b.status);
+        });
+        return { date: d, dStr, list };
+    });
+
+    const totalsByStatus = weekTimeOff.reduce((acc, t) => {
+        acc[t.status || 'pending'] = (acc[t.status || 'pending'] || 0) + 1;
+        return acc;
+    }, {});
+
+    const statusBadge = (status) => {
+        if (status === 'approved') return { bg: 'bg-green-100', border: 'border-green-300', text: 'text-green-800', icon: '✅' };
+        if (status === 'denied')   return { bg: 'bg-red-100',   border: 'border-red-300',   text: 'text-red-800',   icon: '❌' };
+        return                       { bg: 'bg-yellow-100', border: 'border-yellow-300', text: 'text-yellow-800', icon: '⏳' };
+    };
+
+    return (
+        <div>
+            {/* Week summary */}
+            <div className="mb-3 flex flex-wrap gap-2 text-xs">
+                <span className="px-2 py-1 rounded-full bg-yellow-100 text-yellow-900 font-bold border border-yellow-300">⏳ {tx('Pending', 'Pendiente')}: {totalsByStatus.pending || 0}</span>
+                <span className="px-2 py-1 rounded-full bg-green-100 text-green-900 font-bold border border-green-300">✅ {tx('Approved', 'Aprobado')}: {totalsByStatus.approved || 0}</span>
+                {totalsByStatus.denied > 0 && (
+                    <span className="px-2 py-1 rounded-full bg-red-100 text-red-900 font-bold border border-red-300">❌ {tx('Denied', 'Negado')}: {totalsByStatus.denied}</span>
+                )}
+            </div>
+
+            {/* Day-by-day list (mobile-friendly stack instead of grid) */}
+            <div className="space-y-2">
+                {entriesByDay.map(({ date, dStr, list }) => {
+                    const isToday = dStr === today;
+                    return (
+                        <div key={dStr} className={`border rounded-lg ${isToday ? 'border-mint-400' : 'border-gray-200'} bg-white overflow-hidden`}>
+                            <div className={`px-3 py-2 ${isToday ? 'bg-mint-50' : 'bg-gray-50'} border-b ${isToday ? 'border-mint-200' : 'border-gray-200'}`}>
+                                <div className="text-xs font-bold text-gray-700">{dayLabelsFull[date.getDay()]} · {dStr}</div>
+                            </div>
+                            {list.length === 0 ? (
+                                <div className="p-2 text-center text-gray-400 text-xs">— {tx('no time-off', 'sin tiempo libre')} —</div>
+                            ) : (
+                                <div className="p-2 space-y-1">
+                                    {list.map(t => {
+                                        const b = statusBadge(t.status);
+                                        const isMine = t.staffName === currentStaffName;
+                                        return (
+                                            <div key={t.id} className={`flex items-center justify-between gap-2 p-2 rounded border ${b.border} ${b.bg}`}>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className={`font-bold text-xs ${b.text}`}>
+                                                        {b.icon} {isMine && '✓ '}{t.staffName}
+                                                    </div>
+                                                    <div className="text-[10px] text-gray-700">
+                                                        {t.startDate}{t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : ''}
+                                                        {t.reason && <span className="italic ml-2">"{t.reason}"</span>}
+                                                    </div>
+                                                </div>
+                                                {canEdit && t.status === 'pending' && (
+                                                    <div className="flex gap-1 print:hidden">
+                                                        <button onClick={() => onApprove(t)} className="px-2 py-1 rounded bg-green-600 text-white text-[10px] font-bold">✓</button>
+                                                        <button onClick={() => onDeny(t)} className="px-2 py-1 rounded bg-gray-300 text-gray-700 text-[10px] font-bold">✕</button>
+                                                    </div>
+                                                )}
+                                                {canEdit && t.status !== 'pending' && (
+                                                    <button onClick={() => onRemove(t.id)} className="px-2 py-1 rounded bg-red-100 text-red-700 text-[10px] font-bold print:hidden">×</button>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
