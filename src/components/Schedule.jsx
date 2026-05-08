@@ -227,6 +227,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [staffingNeeds, setStaffingNeeds] = useState([]);
     const [showNeedModal, setShowNeedModal] = useState(false);
     const [fillingNeed, setFillingNeed] = useState(null); // need being filled when AvailableStaffModal is open
+    const [editingNeed, setEditingNeed] = useState(null); // existing staffing_need being edited (start/end/count)
+    // When manager taps "+" on a staff cell that has matching open slots, we
+    // first show a chooser of those open slots ("fill this need?") instead of
+    // jumping straight to the free-form Add Shift modal.
+    const [fillSlotChooser, setFillSlotChooser] = useState(null); // { staff, dateStr, needs: [...] }
     // Day templates (reusable patterns: morning needs 3 FOH + 1 Lead + 1 Manager, etc.)
     const [scheduleTemplates, setScheduleTemplates] = useState([]);
     const [showTemplateEditor, setShowTemplateEditor] = useState(false);
@@ -747,6 +752,26 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await deleteDoc(doc(db, 'staffing_needs', needId));
         } catch (e) {
             console.error('Remove need failed:', e);
+        }
+    };
+
+    // Edit an existing staffing need (start/end times, count, role group, notes).
+    // Already-filled shifts are NOT retroactively retimed — managers can choose
+    // to delete + re-fill if they want the changed times to apply to the live
+    // shifts too.
+    const handleEditNeed = async (need) => {
+        if (!canEdit || !need?.id) return;
+        try {
+            const { id, ...data } = need;
+            await updateDoc(doc(db, 'staffing_needs', id), {
+                ...data,
+                updatedAt: serverTimestamp(),
+                updatedBy: staffName,
+            });
+            setEditingNeed(null);
+        } catch (e) {
+            console.error('Edit need failed:', e);
+            alert(tx('Could not update slot: ', 'No se pudo actualizar el espacio: ') + e.message);
         }
     };
 
@@ -1845,6 +1870,11 @@ ${dayBlocks}
                                                         {tx('Fill 1', 'Asignar 1')}
                                                     </button>
                                                 )}
+                                                <button onClick={() => setEditingNeed(n)}
+                                                    title={tx('Edit slot times / count', 'Editar horario / cantidad')}
+                                                    className="px-2 py-1 rounded bg-gray-200 text-gray-700 text-[10px] font-bold hover:bg-gray-300">
+                                                    ✏ {tx('Edit', 'Editar')}
+                                                </button>
                                                 <button onClick={() => handleRemoveNeed(n.id)}
                                                     className="px-2 py-1 rounded bg-red-100 text-red-700 text-[10px] font-bold hover:bg-red-200">×</button>
                                             </div>
@@ -1897,8 +1927,27 @@ ${dayBlocks}
                                         alert(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
                                         return;
                                     }
-                                    openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                                    // If there are open slots on this day that match this staff's
+                                    // role + side + location, surface them as a chooser instead of
+                                    // jumping straight to the free-form Add Shift modal.
+                                    const matchingNeeds = staffingNeeds.filter(n =>
+                                        n.date === dateStr &&
+                                        n.side === side &&
+                                        (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation || n.location === staff.location) &&
+                                        ((n.filledStaff || []).length < (n.count || 0)) &&
+                                        isRoleEligible(staff.role, n.roleGroup) &&
+                                        !((n.filledStaff || []).includes(staff.name))
+                                    );
+                                    if (matchingNeeds.length > 0) {
+                                        setFillSlotChooser({ staff, dateStr, needs: matchingNeeds });
+                                    } else {
+                                        openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                                    }
                                 }}
+                                weekNeeds={staffingNeeds.filter(n =>
+                                    n.side === side &&
+                                    (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation)
+                                )}
                                 onDeleteShift={handleDeleteShift}
                                 onStaffClick={(name) => setPersonFilter(name)}
                                 onOfferShift={handleOfferShift}
@@ -2059,6 +2108,34 @@ ${dayBlocks}
                     isEn={isEn}
                 />
             )}
+            {editingNeed && canEdit && (
+                <StaffingNeedModal
+                    initial={editingNeed}
+                    onClose={() => setEditingNeed(null)}
+                    onSave={handleEditNeed}
+                    storeLocation={storeLocation}
+                    side={side}
+                    weekStart={weekStart}
+                    isEn={isEn}
+                />
+            )}
+            {fillSlotChooser && canEdit && (
+                <FillSlotChooserModal
+                    chooser={fillSlotChooser}
+                    onClose={() => setFillSlotChooser(null)}
+                    onAssignSlot={(need) => {
+                        // Use the existing fill-need flow so the slot ticks down.
+                        fillNeedWithStaff(need, fillSlotChooser.staff);
+                        setFillSlotChooser(null);
+                    }}
+                    onCustomShift={() => {
+                        const { staff, dateStr } = fillSlotChooser;
+                        setFillSlotChooser(null);
+                        openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                    }}
+                    isEn={isEn}
+                />
+            )}
             {showTemplateEditor && canEdit && (
                 <TemplateEditorModal
                     initial={editingTemplate}
@@ -2144,7 +2221,22 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff }) {
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds }) {
+    // Pre-compute per-day staffing-need stats (filled / total / open) so the
+    // day header can show a live countdown badge as slots get assigned.
+    const needStatsByDate = useMemo(() => {
+        const map = new Map();
+        for (const n of (weekNeeds || [])) {
+            const filled = (n.filledStaff || []).length;
+            const total = n.count || 0;
+            const cur = map.get(n.date) || { filled: 0, total: 0, open: 0 };
+            cur.filled += Math.min(filled, total);
+            cur.total += total;
+            cur.open = Math.max(0, cur.total - cur.filled);
+            map.set(n.date, cur);
+        }
+        return map;
+    }, [weekNeeds]);
     // Helper: is staff PENDING (not approved) for date? Visual only — doesn't block.
     const isStaffPendingOff = (staffName, dateStr) => (timeOff || []).some(t => {
         if (t.status !== 'pending') return false;
@@ -2187,6 +2279,10 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                             const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
                             const closed = dayBlocks.some(b => b.type === 'closed');
                             const noTimeoff = dayBlocks.some(b => b.type === 'no_timeoff');
+                            const stats = needStatsByDate.get(dStr);
+                            const fullyStaffed = stats && stats.total > 0 && stats.open === 0;
+                            const partiallyFilled = stats && stats.total > 0 && stats.filled > 0 && stats.open > 0;
+                            const allOpen = stats && stats.total > 0 && stats.filled === 0;
                             return (
                                 <th key={i}
                                     onClick={() => onDayHeaderClick && !closed && onDayHeaderClick(dStr)}
@@ -2195,6 +2291,17 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                     <div className={`text-sm font-bold ${closed ? 'text-gray-700' : isToday ? 'text-mint-800' : 'text-gray-700'}`}>{d.getDate()}</div>
                                     {closed && <div className="text-[9px] font-bold text-gray-700 mt-0.5">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>}
                                     {!closed && noTimeoff && <div className="text-[9px] font-bold text-amber-700 mt-0.5">🛑 {isEn ? 'No PTO' : 'Sin PTO'}</div>}
+                                    {/* Slot countdown — N/M filled. Color shifts as slots fill. */}
+                                    {!closed && stats && stats.total > 0 && (
+                                        <div className={`text-[9px] font-bold mt-0.5 inline-block px-1 rounded border ${
+                                            fullyStaffed ? 'bg-green-100 text-green-800 border-green-300' :
+                                            partiallyFilled ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
+                                            allOpen ? 'bg-red-100 text-red-800 border-red-300' :
+                                            'bg-blue-100 text-blue-800 border-blue-300'
+                                        }`}>
+                                            {fullyStaffed ? `✅ ${stats.filled}/${stats.total}` : `${stats.filled}/${stats.total} ${isEn ? 'slots' : 'esp.'}`}
+                                        </div>
+                                    )}
                                     {onDayHeaderClick && !closed && <div className="text-[8px] text-mint-600 mt-0.5 print:hidden">👥 {isEn ? 'tap' : 'tocar'}</div>}
                                 </th>
                             );
@@ -2707,13 +2814,38 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     const [form, setForm] = useState({
         staffName: prefill?.staffName || '',
         date: prefill?.date || today,
-        startTime: prefill?.startTime || '09:00',
+        startTime: prefill?.startTime || '10:00',
         endTime: prefill?.endTime || '15:00',
         location: prefill?.location && prefill.location !== 'both' ? prefill.location : (storeLocation && storeLocation !== 'both' ? storeLocation : 'webster'),
         isShiftLead: false,
         isDouble: false,
         notes: '',
     });
+
+    // DD Mau common shift presets — pick to fill start/end (and isDouble when
+    // the preset implies a double like 10–8 with break).
+    const selectedStaffForPresets = staffList?.find(s => s.name === form.staffName);
+    const presetSide = (() => {
+        const role = selectedStaffForPresets?.role || '';
+        const explicit = selectedStaffForPresets?.scheduleSide;
+        if (explicit === 'foh' || explicit === 'boh') return explicit;
+        if (BOH_ROLE_HINTS && BOH_ROLE_HINTS.has && BOH_ROLE_HINTS.has(role)) return 'boh';
+        return 'foh';
+    })();
+    const SHIFT_PRESETS = presetSide === 'boh'
+        ? [
+            { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
+            { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
+            { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
+        ]
+        : [
+            { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
+            { label: '3–8',  start: '15:00', end: '20:00', isDouble: false },
+            { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
+            { label: '12–7', start: '12:00', end: '19:00', isDouble: false },
+            { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
+        ];
+    const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end && form.isDouble === !!p.isDouble;
 
     const eligibleStaff = useMemo(() => {
         return (staffList || [])
@@ -2760,6 +2892,29 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                             min={toDateStr(addDays(weekStart, -14))}
                             max={toDateStr(addDays(weekStart, 28))}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    </div>
+
+                    {/* Quick presets — tap to fill start/end. Preset list adapts to FOH/BOH. */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Quick presets', 'Presets rápidos')}</label>
+                        <div className="flex flex-wrap gap-1.5">
+                            {SHIFT_PRESETS.map(p => (
+                                <button key={p.label} type="button"
+                                    onClick={() => setForm(f => ({ ...f, startTime: p.start, endTime: p.end, isDouble: !!p.isDouble }))}
+                                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold border ${
+                                        isPresetActive(p)
+                                            ? 'bg-mint-700 text-white border-mint-700'
+                                            : 'bg-white text-gray-700 border-gray-300 hover:border-mint-500'
+                                    }`}>
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">
+                            {presetSide === 'boh'
+                                ? tx('BOH presets — tap to fill, or set custom below.', 'Presets BOH — toca para llenar, o ajusta abajo.')
+                                : tx('FOH presets — tap to fill, or set custom below.', 'Presets FOH — toca para llenar, o ajusta abajo.')}
+                        </p>
                     </div>
 
                     {/* Times */}
@@ -3556,24 +3711,59 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
 // Manager defines a "we need N people in this time block" slot. Each slot can
 // be filled later via the AvailableStaffModal flow — picking a person creates
 // a real shift and ticks one of the slot's openings down.
-function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, isEn }) {
+function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, isEn, initial }) {
     const tx = (en, es) => (isEn ? en : es);
-    const [form, setForm] = useState({
-        date: toDateStr(weekStart),
-        side: side,
-        location: storeLocation && storeLocation !== 'both' ? storeLocation : 'webster',
-        startTime: '09:00',
-        endTime: '15:00',
-        count: 5,
-        notes: '',
-    });
+    const isEditing = !!initial?.id;
+    const [form, setForm] = useState(() => ({
+        date: initial?.date || toDateStr(weekStart),
+        side: initial?.side || side,
+        location: initial?.location || (storeLocation && storeLocation !== 'both' ? storeLocation : 'webster'),
+        startTime: initial?.startTime || '09:00',
+        endTime: initial?.endTime || '15:00',
+        count: initial?.count || 5,
+        roleGroup: initial?.roleGroup || 'any',
+        notes: initial?.notes || '',
+    }));
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
     const canSubmit = form.date && form.startTime && form.endTime && form.count >= 1 && form.startTime < form.endTime;
+    const handleSave = () => {
+        if (!canSubmit) return;
+        // When editing, preserve id + filledStaff/filledShiftIds so the count
+        // bookkeeping doesn't reset.
+        if (isEditing) {
+            onSave({
+                ...form,
+                id: initial.id,
+                filledStaff: initial.filledStaff || [],
+                filledShiftIds: initial.filledShiftIds || [],
+                fromTemplateId: initial.fromTemplateId,
+            });
+        } else {
+            onSave(form);
+        }
+    };
+    // Common DD Mau time presets — tap to fill start/end. Different sets for
+    // FOH (10-3, 3-8, 4-8, 12-7) vs BOH (10-8 double, 10-3, 4-8).
+    const presets = form.side === 'boh'
+        ? [
+            { label: '10–8', start: '10:00', end: '20:00' },
+            { label: '10–3', start: '10:00', end: '15:00' },
+            { label: '4–8',  start: '16:00', end: '20:00' },
+        ]
+        : [
+            { label: '10–3', start: '10:00', end: '15:00' },
+            { label: '3–8',  start: '15:00', end: '20:00' },
+            { label: '4–8',  start: '16:00', end: '20:00' },
+            { label: '12–7', start: '12:00', end: '19:00' },
+        ];
+    const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end;
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
-                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-blue-700">👥 {tx('Add Staffing Need', 'Agregar Necesidad de Personal')}</h3>
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
+                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-blue-700">
+                        👥 {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
+                    </h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
                 </div>
                 <div className="p-4 space-y-3">
@@ -3594,6 +3784,24 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                                 className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'boh' ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-gray-700 border-gray-300'}`}>BOH</button>
                         </div>
                     </div>
+                    {/* Common time presets — tap to fill start/end */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Quick presets', 'Presets rápidos')}</label>
+                        <div className="flex flex-wrap gap-1.5">
+                            {presets.map(p => (
+                                <button key={p.label} type="button"
+                                    onClick={() => setForm(f => ({ ...f, startTime: p.start, endTime: p.end }))}
+                                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold border ${
+                                        isPresetActive(p)
+                                            ? 'bg-blue-600 text-white border-blue-600'
+                                            : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
+                                    }`}>
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1">{tx('Or set custom times below.', 'O ingresa horario personalizado abajo.')}</p>
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                         <div>
                             <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Start', 'Inicio')}</label>
@@ -3611,6 +3819,29 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         <input type="number" min="1" max="20" value={form.count}
                             onChange={e => update('count', Math.max(1, parseInt(e.target.value) || 1))}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        {isEditing && (initial.filledStaff || []).length > 0 && (
+                            <p className="text-[10px] text-amber-700 mt-1">
+                                {tx(`⚠ ${(initial.filledStaff || []).length} already assigned. Lowering below this won't unassign — remove individually.`,
+                                   `⚠ ${(initial.filledStaff || []).length} ya asignados. Bajar la cuenta no los quitará — quítalos individualmente.`)}
+                            </p>
+                        )}
+                    </div>
+                    {/* Role filter — restricts who can fill the slot */}
+                    <div>
+                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Role required', 'Rol requerido')}</label>
+                        <div className="grid grid-cols-3 gap-1.5">
+                            {SLOT_ROLE_GROUPS.map(g => (
+                                <button key={g.id} type="button"
+                                    onClick={() => update('roleGroup', g.id)}
+                                    className={`py-1.5 px-2 rounded-md text-[10px] font-bold border ${
+                                        form.roleGroup === g.id
+                                            ? 'bg-indigo-600 text-white border-indigo-600'
+                                            : 'bg-white text-gray-700 border-gray-300'
+                                    }`}>
+                                    {g.emoji} {tx(g.labelEn, g.labelEs)}
+                                </button>
+                            ))}
+                        </div>
                     </div>
                     <div>
                         <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Location', 'Ubicación')}</label>
@@ -3630,11 +3861,78 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
                 </div>
-                <div className="border-t border-gray-200 p-4 flex gap-2">
+                <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 flex gap-2">
                     <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
-                    <button onClick={() => canSubmit && onSave(form)} disabled={!canSubmit}
+                    <button onClick={handleSave} disabled={!canSubmit}
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
-                        {tx('Save Need', 'Guardar Necesidad')}
+                        {isEditing ? tx('Save Changes', 'Guardar Cambios') : tx('Save Need', 'Guardar Necesidad')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── FillSlotChooserModal ──────────────────────────────────────────────────
+// When manager clicks "+" on a staff cell and there are open slots that staff
+// can fill, this modal pops up first. Shows the matching slots with one-tap
+// "Assign here" buttons, plus a "custom shift instead" fallback.
+function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const { staff, dateStr, needs } = chooser;
+    const date = parseLocalDate(dateStr);
+    const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
+                    <div>
+                        <h3 className="text-lg font-bold text-blue-700">
+                            👥 {tx('Open Slots', 'Espacios Abiertos')}
+                        </h3>
+                        <p className="text-xs text-gray-600">{staff.name} · {dayLabel} {dateStr}</p>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    <p className="text-xs text-gray-600 bg-blue-50 rounded-lg p-2 border border-blue-200">
+                        {tx('Tap a slot below to fill it. Or create a custom shift at the bottom.',
+                           'Toca un espacio para asignarlo. O crea un turno personalizado abajo.')}
+                    </p>
+                    {needs.map(n => {
+                        const filled = (n.filledStaff || []).length;
+                        const open = Math.max(0, (n.count || 0) - filled);
+                        const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
+                        return (
+                            <button key={n.id} onClick={() => onAssignSlot(n)}
+                                className="w-full text-left p-3 rounded-lg border-2 border-blue-200 hover:border-blue-500 bg-white">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="font-bold text-gray-800 text-sm">
+                                            {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}
+                                            {roleGroup && roleGroup.id !== 'any' && (
+                                                <span className="ml-2 inline-block px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                                                    {roleGroup.emoji} {tx(roleGroup.labelEn, roleGroup.labelEs)}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-[11px] text-gray-600 mt-0.5">
+                                            {filled} / {n.count} {tx('filled', 'asignados')} · {open} {tx('open', 'abierto')}
+                                            {n.notes && <span className="italic"> · {n.notes}</span>}
+                                        </div>
+                                    </div>
+                                    <span className="px-2 py-1 rounded bg-blue-600 text-white text-[11px] font-bold flex-shrink-0">
+                                        {tx('Assign →', 'Asignar →')}
+                                    </span>
+                                </div>
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="border-t border-gray-200 p-3 flex-shrink-0">
+                    <button onClick={onCustomShift}
+                        className="w-full py-2 rounded-lg bg-mint-600 text-white font-bold text-sm hover:bg-mint-700">
+                        ✏ {tx('Or create a custom shift instead', 'O crear un turno personalizado')}
                     </button>
                 </div>
             </div>
