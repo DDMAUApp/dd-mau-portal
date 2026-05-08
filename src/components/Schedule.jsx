@@ -26,7 +26,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import {
-    collection, doc, onSnapshot, query, where, addDoc, deleteDoc,
+    collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     serverTimestamp,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
@@ -188,6 +188,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Single-person filter — when set, every view scopes to ONE staff member.
     // Cleared with the "Show all" button.
     const [personFilter, setPersonFilter] = useState(null);
+    // Date blocks ("restaurant closed" / "no time-off allowed"). Manager-defined.
+    const [dateBlocks, setDateBlocks] = useState([]);
+    const [showBlockModal, setShowBlockModal] = useState(false);
 
     // ── Data load ──
     useEffect(() => {
@@ -213,6 +216,30 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         });
         return unsub;
     }, [weekStart]);
+
+    // ── Listen for date blocks (restaurant closed days, no-time-off days) ──
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'date_blocks'), (snap) => {
+            const items = [];
+            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+            setDateBlocks(items);
+        }, (err) => console.error('date_blocks snapshot error:', err));
+        return unsub;
+    }, []);
+
+    // ── Helper: lookup blocks for a date (filtered by location). ──
+    // Multiple blocks could exist for the same day — closed wins over no_timeoff.
+    const blocksByDate = useMemo(() => {
+        const map = new Map();
+        for (const b of dateBlocks) {
+            if (b.location && b.location !== 'both' && storeLocation !== 'both' && b.location !== storeLocation) continue;
+            if (!map.has(b.date)) map.set(b.date, []);
+            map.get(b.date).push(b);
+        }
+        return map;
+    }, [dateBlocks, storeLocation]);
+
+    const dateClosed = (dateStr) => (blocksByDate.get(dateStr) || []).some(b => b.type === 'closed');
 
     // ── Derived: staff list filtered by location AND current side (FOH/BOH) ──
     // Managers + Owners + Shift Leads appear on BOTH sides automatically via isOnSide().
@@ -281,6 +308,122 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Delete shift failed:', e);
             alert(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message);
+        }
+    };
+
+    // ── Shift offer / take / approve / deny ────────────────────────────────
+    const handleOfferShift = async (shift) => {
+        const ok = confirm(tx(
+            `⚠ This shift on ${shift.date} from ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} is YOUR responsibility until someone takes it. You'll be notified when a manager approves the takeover. Confirm offer?`,
+            `⚠ Este turno el ${shift.date} de ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} es TU responsabilidad hasta que alguien lo tome. Te notificaremos cuando un gerente apruebe el cambio. ¿Confirmar oferta?`,
+        ));
+        if (!ok) return;
+        try {
+            await updateDoc(doc(db, 'shifts', shift.id), {
+                offerStatus: 'open',
+                offeredBy: staffName,
+                offeredAt: serverTimestamp(),
+                pendingClaimBy: null,
+                claimedAt: null,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Offer shift failed:', e);
+            alert(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message);
+        }
+    };
+
+    const handleCancelOffer = async (shift) => {
+        try {
+            await updateDoc(doc(db, 'shifts', shift.id), {
+                offerStatus: null,
+                offeredBy: null,
+                offeredAt: null,
+                pendingClaimBy: null,
+                claimedAt: null,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Cancel offer failed:', e);
+        }
+    };
+
+    const handleTakeShift = async (shift) => {
+        const ok = confirm(tx(
+            `✅ This shift on ${shift.date} from ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} is now YOUR responsibility (pending manager approval). Confirm?`,
+            `✅ Este turno el ${shift.date} de ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} ahora es TU responsabilidad (pendiente de aprobación del gerente). ¿Confirmar?`,
+        ));
+        if (!ok) return;
+        try {
+            await updateDoc(doc(db, 'shifts', shift.id), {
+                offerStatus: 'pending',
+                pendingClaimBy: staffName,
+                claimedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Take shift failed:', e);
+            alert(tx('Could not take shift: ', 'No se pudo tomar: ') + e.message);
+        }
+    };
+
+    const handleApproveSwap = async (shift) => {
+        if (!canEdit) return;
+        try {
+            await updateDoc(doc(db, 'shifts', shift.id), {
+                staffName: shift.pendingClaimBy,
+                offerStatus: null,
+                offeredBy: null,
+                offeredAt: null,
+                pendingClaimBy: null,
+                claimedAt: null,
+                approvedBy: staffName,
+                approvedAt: serverTimestamp(),
+                updatedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Approve failed:', e);
+            alert(tx('Could not approve: ', 'No se pudo aprobar: ') + e.message);
+        }
+    };
+
+    const handleDenySwap = async (shift) => {
+        if (!canEdit) return;
+        try {
+            await updateDoc(doc(db, 'shifts', shift.id), {
+                offerStatus: 'open', // back to open offer; original owner still on hook
+                pendingClaimBy: null,
+                claimedAt: null,
+                updatedAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Deny failed:', e);
+        }
+    };
+
+    // ── Date blocks (closed days / no-time-off days) ───────────────────────
+    const handleAddBlock = async (block) => {
+        if (!canEdit) return;
+        try {
+            await addDoc(collection(db, 'date_blocks'), {
+                ...block,
+                createdBy: staffName,
+                createdAt: serverTimestamp(),
+            });
+            setShowBlockModal(false);
+        } catch (e) {
+            console.error('Add block failed:', e);
+            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        }
+    };
+
+    const handleRemoveBlock = async (blockId) => {
+        if (!canEdit) return;
+        if (!confirm(tx('Remove this date block?', '¿Quitar este bloqueo?'))) return;
+        try {
+            await deleteDoc(doc(db, 'date_blocks', blockId));
+        } catch (e) {
+            console.error('Remove block failed:', e);
         }
     };
 
@@ -354,10 +497,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     🖨 {tx('Print', 'Imprimir')}
                 </button>
                 {canEdit && (
-                    <button onClick={() => openAddModal()}
-                        className="px-3 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
-                        + {tx('Shift', 'Turno')}
-                    </button>
+                    <>
+                        <button onClick={() => setShowBlockModal(true)}
+                            title={tx('Manage closed dates / no-time-off dates', 'Gestionar fechas cerradas / sin tiempo libre')}
+                            className="px-3 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
+                            🚫 {tx('Blackouts', 'Bloqueos')}
+                        </button>
+                        <button onClick={() => openAddModal()}
+                            className="px-3 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
+                            + {tx('Shift', 'Turno')}
+                        </button>
+                    </>
                 )}
             </div>
             {personFilter && (
@@ -372,6 +522,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 <div className="text-sm">{personFilter ? `For: ${personFilter}` : 'All staff'}</div>
             </div>
 
+            {/* Open offers + pending approvals (drawn from ALL visible shifts, both sides) */}
+            <SwapPanels
+                shifts={shifts}
+                staffName={staffName}
+                canEdit={canEdit}
+                isEn={isEn}
+                onTake={handleTakeShift}
+                onCancelOffer={handleCancelOffer}
+                onApprove={handleApproveSwap}
+                onDeny={handleDenySwap}
+                storeLocation={storeLocation}
+            />
+
             {loading ? (
                 <p className="text-center text-gray-400 mt-8">{tx('Loading…', 'Cargando…')}</p>
             ) : (
@@ -384,9 +547,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             isEn={isEn}
                             currentStaffName={staffName}
                             canEdit={canEdit}
-                            onCellClick={(staff, dateStr) => canEdit && openAddModal({ staffName: staff.name, date: dateStr, location: staff.location })}
+                            onCellClick={(staff, dateStr) => {
+                                if (!canEdit) return;
+                                if (dateClosed(dateStr)) {
+                                    alert(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
+                                    return;
+                                }
+                                openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                            }}
                             onDeleteShift={handleDeleteShift}
                             onStaffClick={(name) => setPersonFilter(name)}
+                            onOfferShift={handleOfferShift}
+                            onTakeShift={handleTakeShift}
+                            onCancelOffer={handleCancelOffer}
+                            blocksByDate={blocksByDate}
                         />
                     )}
                     {viewMode === 'day' && (
@@ -400,6 +574,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             currentStaffName={staffName}
                             canEdit={canEdit}
                             onDeleteShift={handleDeleteShift}
+                            onOfferShift={handleOfferShift}
+                            onTakeShift={handleTakeShift}
+                            onCancelOffer={handleCancelOffer}
                         />
                     )}
                     {viewMode === 'list' && (
@@ -410,6 +587,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             canEdit={canEdit}
                             onDeleteShift={handleDeleteShift}
                             staffSummary={staffSummary}
+                            onOfferShift={handleOfferShift}
+                            onTakeShift={handleTakeShift}
+                            onCancelOffer={handleCancelOffer}
                         />
                     )}
 
@@ -427,6 +607,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     isEn={isEn}
                     prefill={addPrefill}
                     weekStart={weekStart}
+                    dateClosed={dateClosed}
+                />
+            )}
+            {showBlockModal && canEdit && (
+                <BlackoutsModal
+                    onClose={() => setShowBlockModal(false)}
+                    onAdd={handleAddBlock}
+                    onRemove={handleRemoveBlock}
+                    blocks={dateBlocks}
+                    storeLocation={storeLocation}
+                    isEn={isEn}
                 />
             )}
         </div>
@@ -466,7 +657,7 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick }) {
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate }) {
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
     const today = toDateStr(new Date());
@@ -497,10 +688,15 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                         {days.map((d, i) => {
                             const dStr = toDateStr(d);
                             const isToday = dStr === today;
+                            const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
+                            const closed = dayBlocks.some(b => b.type === 'closed');
+                            const noTimeoff = dayBlocks.some(b => b.type === 'no_timeoff');
                             return (
-                                <th key={i} className={`border-b border-gray-200 px-1 py-2 min-w-[110px] ${isToday ? 'bg-mint-50' : ''}`}>
-                                    <div className={`text-[10px] uppercase font-semibold ${isToday ? 'text-mint-700' : 'text-gray-500'}`}>{dayLabels[i]}</div>
-                                    <div className={`text-sm font-bold ${isToday ? 'text-mint-800' : 'text-gray-700'}`}>{d.getDate()}</div>
+                                <th key={i} className={`border-b border-gray-200 px-1 py-2 min-w-[110px] ${closed ? 'bg-gray-200' : isToday ? 'bg-mint-50' : ''}`}>
+                                    <div className={`text-[10px] uppercase font-semibold ${closed ? 'text-gray-600' : isToday ? 'text-mint-700' : 'text-gray-500'}`}>{dayLabels[i]}</div>
+                                    <div className={`text-sm font-bold ${closed ? 'text-gray-700' : isToday ? 'text-mint-800' : 'text-gray-700'}`}>{d.getDate()}</div>
+                                    {closed && <div className="text-[9px] font-bold text-gray-700 mt-0.5">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>}
+                                    {!closed && noTimeoff && <div className="text-[9px] font-bold text-amber-700 mt-0.5">🛑 {isEn ? 'No PTO' : 'Sin PTO'}</div>}
                                 </th>
                             );
                         })}
@@ -527,13 +723,16 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 const cellShifts = (shiftsByCell.get(`${s.name}|${dStr}`) || [])
                                     .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
                                 const isToday = dStr === today;
+                                const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
+                                const closed = dayBlocks.some(b => b.type === 'closed');
                                 return (
                                     <td key={i}
-                                        onClick={() => canEdit && cellShifts.length === 0 && onCellClick(s, dStr)}
-                                        className={`border-b border-r border-gray-200 align-top p-1 ${isToday ? 'bg-mint-50/30' : ''} ${canEdit && cellShifts.length === 0 ? 'cursor-pointer hover:bg-mint-50' : ''}`}>
+                                        onClick={() => canEdit && cellShifts.length === 0 && !closed && onCellClick(s, dStr)}
+                                        className={`border-b border-r border-gray-200 align-top p-1 ${closed ? 'bg-gray-100' : isToday ? 'bg-mint-50/30' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-mint-50' : ''}`}>
                                         <div className="space-y-1">
                                             {cellShifts.map(sh => (
-                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact />
+                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
+                                                    currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer} />
                                             ))}
                                             {canEdit && cellShifts.length === 0 && (
                                                 <div className="text-center text-gray-300 text-lg leading-none py-1">+</div>
@@ -550,28 +749,40 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     );
 }
 
-function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact }) {
+function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer }) {
     const colors = roleColors(staffRole);
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const hasWarning = warnings.length > 0;
     const hours = hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
+    const isMine = shift.staffName === currentStaffName;
+    const isOffered = shift.offerStatus === 'open';
+    const isPending = shift.offerStatus === 'pending';
     return (
-        <div className={`schedule-shift-cube relative rounded border ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${colors.bg} ${colors.text} px-1.5 py-1 ${compact ? 'text-[10px] leading-tight' : 'text-xs'}`}>
+        <div className={`schedule-shift-cube relative rounded border ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 opacity-80' : ''} ${isPending ? 'ring-2 ring-purple-400' : ''} ${colors.bg} ${colors.text} px-1.5 py-1 ${compact ? 'text-[10px] leading-tight' : 'text-xs'}`}>
             <div className="font-bold">{formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}</div>
             <div className="opacity-80">
                 {formatHours(hours)}
                 {shift.isShiftLead && <span title="Shift Lead this shift" className="ml-0.5">🛡️</span>}
                 {shift.isDouble && <span title="Double shift" className="ml-0.5">⏱</span>}
             </div>
+            {isOffered && <div className="text-[9px] mt-0.5 font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</div>}
+            {isPending && <div className="text-[9px] mt-0.5 font-bold text-purple-700">⏳ {isEn ? 'Pending swap to' : 'Cambio pendiente a'} {shift.pendingClaimBy}</div>}
             {shift.notes && !compact && (
                 <div className="text-[10px] mt-0.5 italic opacity-80 truncate">{shift.notes}</div>
             )}
             {hasWarning && (
                 <div className="text-[9px] mt-0.5 font-bold text-amber-700">⚠ {warnings.join(' • ')}</div>
             )}
+            {/* Offer / cancel-offer buttons (own-shift only, not when pending) */}
+            {isMine && !isPending && onOfferShift && (
+                <button onClick={(e) => { e.stopPropagation(); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
+                    className={`mt-1 w-full text-[9px] font-bold px-1 py-0.5 rounded print:hidden ${isOffered ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                    {isOffered ? (isEn ? 'Cancel offer' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
+                </button>
+            )}
             {canEdit && (
                 <button onClick={(e) => { e.stopPropagation(); onDelete(shift.id); }}
-                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-none hover:bg-red-600">
+                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-none hover:bg-red-600 print:hidden">
                     ×
                 </button>
             )}
@@ -579,7 +790,7 @@ function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact
     );
 }
 
-function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift }) {
+function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer }) {
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
     const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
@@ -625,7 +836,10 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                         return (
                             <DayRow key={sh.id} shift={sh} staffRole={staff?.role} isMinor={!!staff?.isMinor}
                                 isCurrentStaff={sh.staffName === currentStaffName}
-                                canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} />
+                                canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn}
+                                currentStaffName={currentStaffName}
+                                onOfferShift={onOfferShift}
+                                onCancelOffer={onCancelOffer} />
                         );
                     })}
                 </div>
@@ -634,12 +848,15 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
     );
 }
 
-function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, isEn }) {
+function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer }) {
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const colors = roleColors(staffRole);
     const hours = hoursBetween(shift.startTime, shift.endTime, shift.isDouble);
+    const isMine = shift.staffName === currentStaffName;
+    const isOffered = shift.offerStatus === 'open';
+    const isPending = shift.offerStatus === 'pending';
     return (
-        <div className={`flex items-center justify-between p-2 rounded border-2 ${colors.border} ${isCurrentStaff ? 'bg-green-50' : colors.bg} ${warnings.length ? 'ring-2 ring-amber-400' : ''}`}>
+        <div className={`flex items-center justify-between p-2 rounded border-2 ${colors.border} ${isCurrentStaff ? 'bg-green-50' : colors.bg} ${warnings.length ? 'ring-2 ring-amber-400' : ''} ${isOffered ? 'ring-2 ring-blue-400' : ''} ${isPending ? 'ring-2 ring-purple-400' : ''}`}>
             <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                     <span className={`font-bold ${isCurrentStaff ? 'text-green-800' : colors.text}`}>
@@ -648,6 +865,8 @@ function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, 
                     {staffRole && <span className={`text-[10px] font-semibold ${colors.text} opacity-70`}>· {staffRole}</span>}
                     {shift.isShiftLead && <span title="Shift Lead">🛡️</span>}
                     {shift.isDouble && <span title="Double shift">⏱</span>}
+                    {isOffered && <span className="text-[10px] font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</span>}
+                    {isPending && <span className="text-[10px] font-bold text-purple-700">⏳ {isEn ? 'Pending' : 'Pendiente'}: {shift.pendingClaimBy}</span>}
                 </div>
                 <div className="text-xs text-gray-700">
                     {formatTime12h(shift.startTime)} – {formatTime12h(shift.endTime)}
@@ -658,17 +877,25 @@ function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, 
                     <div className="text-[10px] font-bold text-amber-700 mt-0.5">⚠ {warnings.join(' • ')}</div>
                 )}
             </div>
-            {canEdit && (
-                <button onClick={() => onDelete(shift.id)}
-                    className="ml-2 px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200 print:hidden">
-                    {isEn ? 'Delete' : 'Borrar'}
-                </button>
-            )}
+            <div className="flex items-center gap-1 print:hidden">
+                {isMine && !isPending && onOfferShift && (
+                    <button onClick={() => isOffered ? onCancelOffer(shift) : onOfferShift(shift)}
+                        className={`px-2 py-1 text-xs rounded font-bold ${isOffered ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                        {isOffered ? (isEn ? 'Cancel' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
+                    </button>
+                )}
+                {canEdit && (
+                    <button onClick={() => onDelete(shift.id)}
+                        className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200">
+                        {isEn ? 'Delete' : 'Borrar'}
+                    </button>
+                )}
+            </div>
         </div>
     );
 }
 
-function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staffSummary }) {
+function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staffSummary, onOfferShift, onTakeShift, onCancelOffer }) {
     const [sortKey, setSortKey] = useState('date');
     const [filterStaff, setFilterStaff] = useState('');
 
@@ -741,13 +968,104 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                                     </div>
                                     {warnings.length > 0 && <div className="text-amber-700 font-bold">⚠ {warnings.join(' • ')}</div>}
                                 </div>
-                                {canEdit && (
-                                    <button onClick={() => onDeleteShift(sh.id)}
-                                        className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200 print:hidden">×</button>
-                                )}
+                                <div className="flex items-center gap-1 print:hidden">
+                                    {sh.staffName === currentStaffName && sh.offerStatus !== 'pending' && onOfferShift && (
+                                        <button onClick={() => sh.offerStatus === 'open' ? onCancelOffer(sh) : onOfferShift(sh)}
+                                            className={`px-2 py-1 rounded font-bold ${sh.offerStatus === 'open' ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white'}`}>
+                                            {sh.offerStatus === 'open' ? (isEn ? 'Cancel' : 'Cancelar') : '📣'}
+                                        </button>
+                                    )}
+                                    {canEdit && (
+                                        <button onClick={() => onDeleteShift(sh.id)}
+                                            className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                    )}
+                                </div>
                             </div>
                         );
                     })}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── SwapPanels: open offers + pending approval queue ───────────────────────
+function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const today = toDateStr(new Date());
+
+    // Open offers — visible to everyone except the original owner.
+    // Filter: future-or-today only (don't show shifts that already passed).
+    const openOffers = shifts
+        .filter(s => s.offerStatus === 'open' && s.date >= today && s.staffName !== staffName)
+        .filter(s => storeLocation === 'both' || s.location === storeLocation)
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+    // My open offers — quick reminder this is on me until taken.
+    const myOpenOffers = shifts.filter(s => s.offerStatus === 'open' && s.staffName === staffName);
+
+    // Pending approvals — managers/admin only.
+    const pending = canEdit
+        ? shifts.filter(s => s.offerStatus === 'pending' && s.date >= today)
+            .filter(s => storeLocation === 'both' || s.location === storeLocation)
+            .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+        : [];
+
+    if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0) return null;
+
+    const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
+
+    return (
+        <div className="mb-3 space-y-2 print:hidden">
+            {/* My own open offers — gentle reminder this is still mine */}
+            {myOpenOffers.length > 0 && (
+                <div className="rounded-lg p-2 bg-blue-50 border border-blue-300 text-xs">
+                    <div className="font-bold text-blue-800 mb-1">📣 {tx('Your offered shifts (still your responsibility)', 'Tus turnos ofrecidos (siguen siendo tu responsabilidad)')}</div>
+                    {myOpenOffers.map(sh => (
+                        <div key={sh.id} className="flex items-center justify-between gap-2 mt-1">
+                            <span className="text-blue-900">{renderShiftLine(sh)}</span>
+                            <button onClick={() => onCancelOffer(sh)}
+                                className="px-2 py-0.5 rounded bg-white border border-blue-300 text-blue-700 font-bold">{tx('Cancel offer', 'Cancelar oferta')}</button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Open shifts up for grabs (others can take) */}
+            {openOffers.length > 0 && (
+                <div className="rounded-lg p-2 bg-blue-50 border-2 border-blue-400 text-xs">
+                    <div className="font-bold text-blue-900 mb-1">📣 {tx('Shifts available to pick up', 'Turnos disponibles para tomar')}</div>
+                    {openOffers.map(sh => (
+                        <div key={sh.id} className="flex items-center justify-between gap-2 mt-1 bg-white rounded p-1.5 border border-blue-200">
+                            <div className="min-w-0">
+                                <div className="font-bold text-gray-800">{sh.staffName}</div>
+                                <div className="text-gray-600">{renderShiftLine(sh)}</div>
+                            </div>
+                            <button onClick={() => onTake(sh)}
+                                className="px-2 py-1 rounded bg-blue-600 text-white font-bold whitespace-nowrap">{tx('Take', 'Tomar')}</button>
+                        </div>
+                    ))}
+                </div>
+            )}
+
+            {/* Manager / admin pending approval queue */}
+            {pending.length > 0 && (
+                <div className="rounded-lg p-2 bg-purple-50 border-2 border-purple-400 text-xs">
+                    <div className="font-bold text-purple-900 mb-1">⏳ {tx('Pending swap approvals', 'Cambios pendientes de aprobar')} ({pending.length})</div>
+                    {pending.map(sh => (
+                        <div key={sh.id} className="bg-white rounded p-1.5 border border-purple-200 mt-1">
+                            <div className="text-gray-800">
+                                <b>{sh.staffName}</b> → <b className="text-purple-800">{sh.pendingClaimBy}</b>
+                            </div>
+                            <div className="text-gray-600">{renderShiftLine(sh)}</div>
+                            <div className="flex gap-1 mt-1">
+                                <button onClick={() => onApprove(sh)}
+                                    className="flex-1 px-2 py-1 rounded bg-green-600 text-white font-bold">✓ {tx('Approve', 'Aprobar')}</button>
+                                <button onClick={() => onDeny(sh)}
+                                    className="flex-1 px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold">✕ {tx('Deny', 'Negar')}</button>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             )}
         </div>
@@ -794,7 +1112,7 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────
 
-function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart }) {
+function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed }) {
     const today = toDateStr(new Date());
     const tx = (en, es) => (isEn ? en : es);
 
@@ -821,7 +1139,8 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     const selectedStaff = staffList?.find(s => s.name === form.staffName);
     const minorWarnings = selectedStaff?.isMinor ? minorShiftWarnings(form, isEn) : [];
 
-    const canSubmit = form.staffName && form.date && form.startTime && form.endTime && hours > 0;
+    const isOnClosedDate = dateClosed && dateClosed(form.date);
+    const canSubmit = form.staffName && form.date && form.startTime && form.endTime && hours > 0 && !isOnClosedDate;
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -919,6 +1238,13 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                             ⚠ <b>{tx('Minor labor flag:', 'Aviso de menor:')}</b> {minorWarnings.join(' • ')}
                         </div>
                     )}
+
+                    {/* Closed-date guard */}
+                    {isOnClosedDate && (
+                        <div className="p-2 rounded-lg bg-gray-200 border border-gray-400 text-xs text-gray-800">
+                            🚫 <b>{tx('Restaurant closed', 'Restaurante cerrado')}</b> {tx('on this date — pick another.', 'en esta fecha — elige otra.')}
+                        </div>
+                    )}
                 </div>
 
                 <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 flex gap-2">
@@ -930,6 +1256,126 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     </button>
                 </div>
             </div>
+        </div>
+    );
+}
+
+// ── BlackoutsModal ─────────────────────────────────────────────────────────
+// Manager UI for two kinds of blackouts:
+//   • CLOSED — restaurant is closed (no shifts can be scheduled, no time-off needed)
+//   • NO TIME OFF — restaurant is open, but no PTO requests will be approved
+//                   (busy season, holiday weekends, special events)
+function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const today = toDateStr(new Date());
+    const [form, setForm] = useState({
+        date: today,
+        type: 'closed',
+        location: storeLocation && storeLocation !== 'both' ? storeLocation : 'both',
+        reason: '',
+    });
+
+    // Sort upcoming blocks first; past blocks at the bottom dimmed.
+    const sorted = [...blocks].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const upcoming = sorted.filter(b => b.date >= today);
+    const past = sorted.filter(b => b.date < today);
+
+    const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
+    const canSubmit = form.date && form.type;
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto">
+                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-gray-800">🚫 {tx('Date Blackouts', 'Bloqueos de Fechas')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                </div>
+
+                <div className="p-4 space-y-3">
+                    <div className="text-xs text-gray-600 leading-relaxed bg-gray-50 rounded-lg p-2 border border-gray-200">
+                        <b>{tx('Closed', 'Cerrado')}</b> = {tx('restaurant is not open. No shifts can be scheduled.', 'restaurante no está abierto. No se pueden agendar turnos.')}<br/>
+                        <b>{tx('No time off', 'Sin tiempo libre')}</b> = {tx('restaurant is open, but no PTO requests will be approved (busy season, holidays, special events).', 'restaurante está abierto, pero no se aprobará tiempo libre (temporada alta, días feriados, eventos especiales).')}
+                    </div>
+
+                    {/* Add form */}
+                    <div className="border border-gray-300 rounded-lg p-3 space-y-2">
+                        <div className="text-xs font-bold text-gray-700">+ {tx('Add new blackout', 'Agregar bloqueo')}</div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button onClick={() => update('type', 'closed')}
+                                className={`py-2 rounded-md text-xs font-bold border ${form.type === 'closed' ? 'bg-gray-700 text-white border-gray-700' : 'bg-white border-gray-300 text-gray-600'}`}>
+                                🚫 {tx('Closed', 'Cerrado')}
+                            </button>
+                            <button onClick={() => update('type', 'no_timeoff')}
+                                className={`py-2 rounded-md text-xs font-bold border ${form.type === 'no_timeoff' ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-gray-300 text-gray-600'}`}>
+                                🛑 {tx('No PTO', 'Sin PTO')}
+                            </button>
+                        </div>
+                        <input type="date" value={form.date} onChange={e => update('date', e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        <select value={form.location} onChange={e => update('location', e.target.value)}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                            <option value="both">{LOCATION_LABELS.both}</option>
+                            <option value="webster">{LOCATION_LABELS.webster}</option>
+                            <option value="maryland">{LOCATION_LABELS.maryland}</option>
+                        </select>
+                        <input type="text" value={form.reason} onChange={e => update('reason', e.target.value)}
+                            placeholder={tx('Reason (e.g. Christmas Day)', 'Razón (ej. Navidad)')}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        <button onClick={() => canSubmit && onAdd(form)} disabled={!canSubmit}
+                            className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-mint-700 hover:bg-mint-800' : 'bg-gray-300'}`}>
+                            {tx('Add Blackout', 'Agregar Bloqueo')}
+                        </button>
+                    </div>
+
+                    {/* Upcoming list */}
+                    {upcoming.length > 0 && (
+                        <div>
+                            <div className="text-xs font-bold text-gray-700 mb-1">{tx('Upcoming', 'Próximos')}</div>
+                            <div className="space-y-1">
+                                {upcoming.map(b => (
+                                    <BlockRow key={b.id} block={b} onRemove={onRemove} isEn={isEn} />
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Past list (collapsed) */}
+                    {past.length > 0 && (
+                        <details>
+                            <summary className="text-xs font-bold text-gray-500 cursor-pointer">{tx('Past', 'Pasados')} ({past.length})</summary>
+                            <div className="space-y-1 mt-1 opacity-60">
+                                {past.map(b => (
+                                    <BlockRow key={b.id} block={b} onRemove={onRemove} isEn={isEn} />
+                                ))}
+                            </div>
+                        </details>
+                    )}
+                </div>
+
+                <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
+                    <button onClick={onClose} className="w-full py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Done', 'Listo')}</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function BlockRow({ block, onRemove, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const isClosed = block.type === 'closed';
+    return (
+        <div className={`flex items-center justify-between gap-2 p-2 rounded border text-xs ${isClosed ? 'bg-gray-100 border-gray-300' : 'bg-amber-50 border-amber-300'}`}>
+            <div className="min-w-0 flex-1">
+                <div className="font-bold text-gray-800">
+                    {isClosed ? '🚫' : '🛑'} {block.date} · {LOCATION_LABELS[block.location] || block.location}
+                </div>
+                <div className="text-gray-600">
+                    {isClosed ? tx('Closed', 'Cerrado') : tx('No time off', 'Sin tiempo libre')}
+                    {block.reason && <span className="ml-2 italic">— {block.reason}</span>}
+                </div>
+            </div>
+            <button onClick={() => onRemove(block.id)}
+                className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
         </div>
     );
 }
