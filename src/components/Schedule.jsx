@@ -765,6 +765,141 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Printable week (landscape HTML page in a new window) ──
+    // Builds a self-contained HTML document with the full week grid laid out
+    // for letter-sized paper (landscape). Replaces window.print() of the live
+    // app, which was just a screenshot of the responsive layout.
+    const handlePrintWeek = () => {
+        const dayLabels = isEn ? DAYS_EN : DAYS_ES;
+        const days = [0,1,2,3,4,5,6].map(i => addDays(weekStart, i));
+        const today = toDateStr(new Date());
+        const sideLabel = side === 'foh' ? 'Front of House' : 'Back of House';
+        const locLabel = LOCATION_LABELS[storeLocation] || storeLocation;
+        const weekRange = `${days[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${days[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+
+        // Build cell HTML for each staff/day
+        const escape = (s) => String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        const shiftsByCell = new Map();
+        for (const sh of visibleShifts) {
+            if (sh.published === false) continue; // skip drafts
+            const key = `${sh.staffName}|${sh.date}`;
+            if (!shiftsByCell.has(key)) shiftsByCell.set(key, []);
+            shiftsByCell.get(key).push(sh);
+        }
+        const rowsToShow = staffSummary.filter(s => s.shiftCount > 0); // only scheduled
+
+        let bodyRows = '';
+        for (const s of rowsToShow) {
+            let cells = '';
+            for (const d of days) {
+                const dStr = toDateStr(d);
+                const cellShifts = (shiftsByCell.get(`${s.name}|${dStr}`) || [])
+                    .sort((a,b) => (a.startTime||'').localeCompare(b.startTime||''));
+                const cellOnPto = isStaffOffOn(s.name, dStr);
+                const cellClosed = dateClosed(dStr);
+                const isToday = dStr === today;
+                let cellHtml = '';
+                if (cellClosed) cellHtml = '<div class="closed">CLOSED</div>';
+                else if (cellOnPto && cellShifts.length === 0) cellHtml = '<div class="pto">🌴 PTO</div>';
+                else if (cellShifts.length === 0) cellHtml = '<div class="empty">—</div>';
+                else cellHtml = cellShifts.map(sh => {
+                    const hrs = hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                    return `<div class="shift">
+                        <b>${escape(formatTime12h(sh.startTime))}–${escape(formatTime12h(sh.endTime))}</b>
+                        <span class="hrs">${escape(formatHours(hrs))}</span>
+                        ${sh.isShiftLead ? '<span class="lead">🛡️</span>' : ''}
+                        ${sh.isDouble ? '<span class="dbl">⏱</span>' : ''}
+                        ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
+                    </div>`;
+                }).join('');
+                cells += `<td class="${isToday ? 'today' : ''} ${cellClosed ? 'closed-cell' : ''}">${cellHtml}</td>`;
+            }
+            const hoursClass = s.totalHours >= HOURS_YELLOW_MAX ? 'h-red' : s.totalHours >= HOURS_GREEN_MAX ? 'h-yellow' : 'h-green';
+            bodyRows += `<tr>
+                <td class="staff-cell">
+                    <div class="staff-name">${escape(s.name)}${s.shiftLead ? ' 🛡️' : ''}${s.isMinor ? ' 🔑' : ''}</div>
+                    <div class="staff-meta">${escape(s.role || '')}</div>
+                    <div class="hours ${hoursClass}">${escape(formatHours(s.totalHours))}</div>
+                </td>
+                ${cells}
+            </tr>`;
+        }
+
+        const headerRow = `<tr>
+            <th class="staff-cell">${isEn ? 'Staff' : 'Personal'}</th>
+            ${days.map((d, i) => {
+                const dStr = toDateStr(d);
+                const isToday = dStr === today;
+                const dayBlocks = (blocksByDate.get(dStr) || []);
+                const isClosed = dayBlocks.some(b => b.type === 'closed');
+                return `<th class="${isToday ? 'today' : ''} ${isClosed ? 'closed-cell' : ''}">
+                    <div class="dow">${escape(dayLabels[i])}</div>
+                    <div class="dnum">${d.getDate()}</div>
+                    ${isClosed ? '<div class="closed">🚫 CLOSED</div>' : ''}
+                </th>`;
+            }).join('')}
+        </tr>`;
+
+        const html = `<!DOCTYPE html><html><head>
+<meta charset="utf-8">
+<title>DD Mau Schedule — ${escape(weekRange)} — ${escape(sideLabel)}</title>
+<style>
+    @page { size: letter landscape; margin: 0.4in; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; color: #1f2937; }
+    .header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 2px solid #255a37; }
+    h1 { font-size: 18px; margin: 0; color: #255a37; }
+    .subhead { font-size: 11px; color: #4b5563; }
+    table { width: 100%; border-collapse: collapse; font-size: 9px; }
+    th, td { border: 1px solid #d1d5db; padding: 3px; vertical-align: top; }
+    th { background: #f3f4f6; text-align: left; font-weight: 600; }
+    th.today, td.today { background: #ecfdf5; }
+    th.closed-cell, td.closed-cell { background: #e5e7eb; }
+    .staff-cell { width: 14%; min-width: 90px; background: #f9fafb !important; }
+    .staff-name { font-weight: 700; font-size: 10px; }
+    .staff-meta { font-size: 8px; color: #6b7280; margin-top: 1px; }
+    .hours { display: inline-block; margin-top: 2px; padding: 1px 5px; border-radius: 8px; font-size: 9px; font-weight: 700; border: 1px solid; }
+    .h-green { background: #d1fae5; border-color: #6ee7b7; color: #065f46; }
+    .h-yellow { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+    .h-red { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+    .dow { font-size: 9px; text-transform: uppercase; color: #6b7280; }
+    .dnum { font-size: 14px; font-weight: 700; color: #1f2937; }
+    .shift { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 3px; padding: 2px 4px; margin-bottom: 2px; }
+    .shift b { font-size: 9px; }
+    .shift .hrs { display: inline-block; margin-left: 4px; font-size: 8px; opacity: 0.7; }
+    .shift .notes { font-size: 8px; font-style: italic; color: #4b5563; margin-top: 1px; }
+    .empty { color: #d1d5db; text-align: center; }
+    .pto { color: #92400e; text-align: center; font-size: 8px; font-weight: 700; padding: 8px 0; }
+    .closed { color: #6b7280; text-align: center; font-size: 8px; font-weight: 700; padding: 8px 0; }
+    .footer { margin-top: 8px; font-size: 8px; color: #6b7280; display: flex; justify-content: space-between; }
+    @media print { .noprint { display: none; } }
+</style>
+</head><body>
+<div class="header">
+    <h1>📅 DD Mau Schedule — ${escape(sideLabel)}</h1>
+    <div class="subhead">${escape(weekRange)} · ${escape(locLabel)}${personFilter ? ` · ${escape(personFilter)}` : ''}</div>
+</div>
+<table>
+    <thead>${headerRow}</thead>
+    <tbody>${bodyRows || `<tr><td colspan="8" style="text-align:center;padding:30px;color:#9ca3af">No published shifts.</td></tr>`}</tbody>
+</table>
+<div class="footer">
+    <span>Drafts excluded. Closed dates shown in grey. Today highlighted in mint.</span>
+    <span>Printed ${new Date().toLocaleString()}</span>
+</div>
+<script>setTimeout(() => window.print(), 300);</script>
+</body></html>`;
+
+        const w = window.open('', '_blank', 'width=1100,height=850');
+        if (!w) {
+            alert(tx('Pop-up blocked. Allow pop-ups for this site to print.', 'Ventana emergente bloqueada. Permite ventanas emergentes para imprimir.'));
+            return;
+        }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+    };
+
     // ── ICS calendar export (current view's shifts → .ics file) ──
     // Phase 4: each scheduled shift becomes a VEVENT. Filtered same as the view
     // (location + side + person filter). Imports cleanly into Apple Calendar,
@@ -1103,10 +1238,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         <option key={s.id || s.name} value={s.name}>{s.name}</option>
                     ))}
                 </select>
-                <button onClick={() => window.print()}
-                    title={tx('Print this view', 'Imprimir esta vista')}
+                <button onClick={handlePrintWeek}
+                    title={tx('Print full week as one-page calendar', 'Imprimir semana completa en una página')}
                     className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
-                    🖨 {tx('Print', 'Imprimir')}
+                    🖨 {tx('Print Week', 'Imprimir Semana')}
                 </button>
                 <button onClick={handleExportIcs}
                     title={tx('Download .ics — import into Apple/Google/Outlook calendar', 'Descargar .ics — importar a calendario')}
@@ -1124,6 +1259,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     className="px-3 py-2 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold hover:bg-purple-200 border border-purple-300">
                     🗓 {tx('My Avail', 'Mi Dispon.')}
                 </button>
+                <button onClick={() => setShowTimeOffModal(true)}
+                    title={tx('See all time-off requests', 'Ver todas las solicitudes de tiempo libre')}
+                    className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
+                    🌴 {tx('All PTO', 'Todo PTO')}
+                </button>
                 {canEdit && (
                     <>
                         <button onClick={handlePublishDrafts}
@@ -1140,11 +1280,6 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             title={tx('Copy last week into this week as drafts', 'Copiar semana pasada como borradores')}
                             className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
                             📋 {tx('Copy ⏪', 'Copiar ⏪')}
-                        </button>
-                        <button onClick={() => setShowTimeOffModal(true)}
-                            title={tx('Time-off list', 'Lista de tiempo libre')}
-                            className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-bold hover:bg-amber-700">
-                            🌴 {tx('PTO List', 'Lista PTO')}
                         </button>
                         <button onClick={() => setShowBlockModal(true)}
                             title={tx('Manage closed dates / no-time-off dates', 'Gestionar fechas cerradas / sin tiempo libre')}
@@ -1292,7 +1427,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     isEn={isEn}
                 />
             )}
-            {showTimeOffModal && canEdit && (
+            {showTimeOffModal && (
                 <TimeOffModal
                     onClose={() => setShowTimeOffModal(false)}
                     onAdd={handleAddTimeOff}
@@ -1300,6 +1435,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     entries={timeOff}
                     staffList={staffList}
                     isEn={isEn}
+                    canEdit={canEdit}
                 />
             )}
             {showPtoRequestModal && (
@@ -2199,7 +2335,7 @@ function BlockRow({ block, onRemove, isEn }) {
 
 // ── TimeOffModal ───────────────────────────────────────────────────────────
 // Phase 2: admin-entered. Phase 3 will add staff self-serve form + manager queue.
-function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn }) {
+function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canEdit }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
     const [form, setForm] = useState({
@@ -2222,9 +2358,12 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn }) {
                     <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                    <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2 border border-gray-200">
-                        {tx("Phase 2: managers add time-off on behalf of staff. Auto-fill respects approved time-off when generating shifts.", "Fase 2: los gerentes agregan tiempo libre por el personal. Auto-rellenar respeta el tiempo libre aprobado al generar turnos.")}
-                    </div>
+                    {canEdit && (
+                        <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-2 border border-gray-200">
+                            {tx("Manager-entered entries are pre-approved. Staff-submitted requests show in the pending queue at the top of the schedule.", "Las entradas del gerente quedan pre-aprobadas. Las solicitudes del personal aparecen en la cola pendiente en la parte superior del horario.")}
+                        </div>
+                    )}
+                    {canEdit && (
                     <div className="border border-gray-300 rounded-lg p-3 space-y-2">
                         <div className="text-xs font-bold text-gray-700">+ {tx("Add new entry", "Agregar entrada")}</div>
                         <select value={form.staffName} onChange={e => update("staffName", e.target.value)}
@@ -2252,6 +2391,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn }) {
                             {tx("Approve & Save", "Aprobar y Guardar")}
                         </button>
                     </div>
+                    )}
                     {upcoming.length > 0 && (
                         <div>
                             <div className="text-xs font-bold text-gray-700 mb-1">{tx("Upcoming", "Próximos")}</div>
@@ -2261,9 +2401,16 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn }) {
                                         <div className="min-w-0 flex-1">
                                             <div className="font-bold text-gray-800">{e.staffName}</div>
                                             <div className="text-gray-600">{e.startDate}{e.endDate && e.endDate !== e.startDate ? ` → ${e.endDate}` : ""}{e.reason ? ` · ${e.reason}` : ""}</div>
+                                            {e.status && e.status !== "approved" && (
+                                                <div className="text-[10px] mt-0.5 font-bold uppercase">
+                                                    {e.status === "pending" ? `⏳ ${tx("pending", "pendiente")}` : `❌ ${tx("denied", "negado")}`}
+                                                </div>
+                                            )}
                                         </div>
-                                        <button onClick={() => onRemove(e.id)}
-                                            className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                        {canEdit && (
+                                            <button onClick={() => onRemove(e.id)}
+                                                className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -2279,8 +2426,10 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn }) {
                                             <div className="font-bold text-gray-800">{e.staffName}</div>
                                             <div className="text-gray-600">{e.startDate}{e.endDate && e.endDate !== e.startDate ? ` → ${e.endDate}` : ""}{e.reason ? ` · ${e.reason}` : ""}</div>
                                         </div>
-                                        <button onClick={() => onRemove(e.id)}
-                                            className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                        {canEdit && (
+                                            <button onClick={() => onRemove(e.id)}
+                                                className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                        )}
                                     </div>
                                 ))}
                             </div>
