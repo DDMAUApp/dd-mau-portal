@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, collection, query, where, orderBy, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, collection, query, where, onSnapshot, setDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
 
 // Note: Requires Chart.js or similar for charting
@@ -43,15 +43,30 @@ export default function LaborDashboard({ language, storeLocation }) {
         return () => unsubLabor();
     }, [storeLocation]);
 
-    // Listen to today's labor history (hourly snapshots)
+    // Listen to today's labor history (hourly snapshots).
+    //
+    // No server-side orderBy('timestamp'): combined with where('date', ...)
+    // it requires a composite Firestore index. Without that index the
+    // listener errors silently and the dashboard shows nothing — same
+    // trap that bit the Tardies tracker. Sort client-side instead; the
+    // dataset is at most ~24 entries (hourly snapshots for one day).
     useEffect(() => {
         const today = new Date();
         const todayKey = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
-        const unsubHistory = onSnapshot(query(collection(db, "laborHistory_" + storeLocation), where("date", "==", todayKey), orderBy("timestamp", "asc")), (snap) => {
-            const entries = [];
-            snap.forEach(doc => entries.push(doc.data()));
-            setLaborHistory(entries);
-        });
+        const unsubHistory = onSnapshot(
+            query(collection(db, "laborHistory_" + storeLocation), where("date", "==", todayKey)),
+            (snap) => {
+                const entries = [];
+                snap.forEach(doc => entries.push(doc.data()));
+                entries.sort((a, b) => {
+                    const ta = a.timestamp?.toMillis ? a.timestamp.toMillis() : (a.timestamp || 0);
+                    const tb = b.timestamp?.toMillis ? b.timestamp.toMillis() : (b.timestamp || 0);
+                    return ta - tb;
+                });
+                setLaborHistory(entries);
+            },
+            (err) => { console.error("Labor history snapshot error:", err); }
+        );
         return () => unsubHistory();
     }, [storeLocation]);
 
