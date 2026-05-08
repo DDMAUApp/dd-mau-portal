@@ -976,6 +976,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const skipped = [];
         for (const rule of recurringShifts) {
             if (!rule.staffName || !rule.startTime || !rule.endTime) continue;
+            // Bi-weekly cadence: anchor off the rule's validFrom week. The rule
+            // is active only on weeks where (weeksSinceAnchor % 2) === 0.
+            if (rule.cadence === 'biweekly') {
+                const anchorDate = parseLocalDate(rule.validFrom);
+                if (anchorDate) {
+                    const anchorWeek = startOfWeek(anchorDate);
+                    const diffMs = weekStart.getTime() - anchorWeek.getTime();
+                    const weeksSince = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
+                    if (weeksSince < 0 || (weeksSince % 2) !== 0) {
+                        skipped.push(`${rule.staffName}: bi-weekly off-week`);
+                        continue;
+                    }
+                }
+            }
             const days = rule.daysOfWeek || [];
             for (let i = 0; i < 7; i++) {
                 const date = addDays(weekStart, i);
@@ -4305,19 +4319,49 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
     const startNewRule = () => setEditing({
         staffName: "",
         daysOfWeek: [],
-        startTime: "09:00",
+        startTime: "10:00",
         endTime: "15:00",
         location: storeLocation && storeLocation !== "both" ? storeLocation : "webster",
         validFrom: toDateStr(weekStart),
         validUntil: "",
         isShiftLead: false,
         isDouble: false,
+        cadence: "weekly", // 'weekly' or 'biweekly' — biweekly anchors off validFrom
     });
     const update = (k, v) => setEditing(r => ({ ...r, [k]: v }));
     const toggleDay = (d) => setEditing(r => ({
         ...r,
         daysOfWeek: r.daysOfWeek.includes(d) ? r.daysOfWeek.filter(x => x !== d) : [...r.daysOfWeek, d],
     }));
+    // Quick day-group presets — one tap to fill the days array.
+    const setDayGroup = (groupId) => setEditing(r => {
+        const groups = {
+            all: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+            weekdays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+            weekends: ['sat', 'sun'],
+            none: [],
+        };
+        return { ...r, daysOfWeek: groups[groupId] || [] };
+    });
+    const dayGroupActive = (groupId) => {
+        if (!editing) return false;
+        const cur = new Set(editing.daysOfWeek || []);
+        if (groupId === 'all') return cur.size === 7;
+        if (groupId === 'weekdays') return cur.size === 5 && ['mon','tue','wed','thu','fri'].every(d => cur.has(d));
+        if (groupId === 'weekends') return cur.size === 2 && cur.has('sat') && cur.has('sun');
+        return false;
+    };
+    // DD Mau time presets for recurring rules — same vocabulary as Add Shift.
+    // "All day" = 10–8 with isDouble = true (1h unpaid break per M2 L2 policy).
+    const TIME_PRESETS = [
+        { label: 'All day (10–8)', start: '10:00', end: '20:00', isDouble: true },
+        { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
+        { label: '3–8',  start: '15:00', end: '20:00', isDouble: false },
+        { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
+        { label: '12–7', start: '12:00', end: '19:00', isDouble: false },
+    ];
+    const isTimePresetActive = (p) => editing && editing.startTime === p.start && editing.endTime === p.end && !!editing.isDouble === !!p.isDouble;
+    const applyTimePreset = (p) => setEditing(r => ({ ...r, startTime: p.start, endTime: p.end, isDouble: !!p.isDouble }));
     const canSave = editing && editing.staffName && editing.daysOfWeek.length > 0 && editing.startTime && editing.endTime && editing.startTime < editing.endTime;
     const sortedStaff = [...(staffList || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return (
@@ -4345,11 +4389,67 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                             </select>
                             <div>
                                 <label className="text-[10px] font-bold text-gray-600 block mb-1">{tx("Days of week", "Días de la semana")}</label>
+                                {/* Quick day-group buttons */}
+                                <div className="grid grid-cols-4 gap-1 mb-1">
+                                    <button onClick={() => setDayGroup('all')}
+                                        className={`py-1.5 rounded text-[10px] font-bold border ${dayGroupActive('all') ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-700 border-gray-300 hover:border-cyan-400"}`}>
+                                        {tx("Every day", "Todos los días")}
+                                    </button>
+                                    <button onClick={() => setDayGroup('weekdays')}
+                                        className={`py-1.5 rounded text-[10px] font-bold border ${dayGroupActive('weekdays') ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-700 border-gray-300 hover:border-cyan-400"}`}>
+                                        {tx("Weekdays", "Lun–Vie")}
+                                    </button>
+                                    <button onClick={() => setDayGroup('weekends')}
+                                        className={`py-1.5 rounded text-[10px] font-bold border ${dayGroupActive('weekends') ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-700 border-gray-300 hover:border-cyan-400"}`}>
+                                        {tx("Weekends", "Sáb–Dom")}
+                                    </button>
+                                    <button onClick={() => setDayGroup('none')}
+                                        className="py-1.5 rounded text-[10px] font-bold border bg-white text-gray-500 border-gray-300 hover:border-red-400">
+                                        {tx("Clear", "Limpiar")}
+                                    </button>
+                                </div>
                                 <div className="grid grid-cols-7 gap-1">
                                     {DAYS.map(d => (
                                         <button key={d.id} onClick={() => toggleDay(d.id)}
                                             className={`py-1.5 rounded text-[10px] font-bold border ${editing.daysOfWeek.includes(d.id) ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-600 border-gray-300"}`}>
                                             {tx(d.labelEn, d.labelEs)}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            {/* Cadence — every week or every other week. Bi-weekly anchors off validFrom. */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-600 block mb-1">{tx("Repeat", "Repetir")}</label>
+                                <div className="grid grid-cols-2 gap-1">
+                                    <button onClick={() => update("cadence", "weekly")}
+                                        className={`py-1.5 rounded text-[10px] font-bold border ${(editing.cadence || "weekly") === "weekly" ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-700 border-gray-300"}`}>
+                                        🔁 {tx("Every week", "Cada semana")}
+                                    </button>
+                                    <button onClick={() => update("cadence", "biweekly")}
+                                        className={`py-1.5 rounded text-[10px] font-bold border ${editing.cadence === "biweekly" ? "bg-cyan-600 text-white border-cyan-600" : "bg-white text-gray-700 border-gray-300"}`}>
+                                        🔂 {tx("Every other week", "Quincenal")}
+                                    </button>
+                                </div>
+                                {editing.cadence === "biweekly" && (
+                                    <p className="text-[10px] text-cyan-700 mt-1">
+                                        ⓘ {tx(`Active starting the week of ${editing.validFrom || "—"}, then every 2 weeks.`,
+                                              `Activa desde la semana de ${editing.validFrom || "—"}, luego cada 2 semanas.`)}
+                                    </p>
+                                )}
+                            </div>
+                            {/* Time presets — same DD Mau set as Add Shift */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-600 block mb-1">{tx("Quick presets", "Presets rápidos")}</label>
+                                <div className="flex flex-wrap gap-1">
+                                    {TIME_PRESETS.map(p => (
+                                        <button key={p.label} type="button"
+                                            onClick={() => applyTimePreset(p)}
+                                            className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
+                                                isTimePresetActive(p)
+                                                    ? 'bg-cyan-600 text-white border-cyan-600'
+                                                    : 'bg-white text-gray-700 border-gray-300 hover:border-cyan-400'
+                                            }`}>
+                                            {p.label}
                                         </button>
                                     ))}
                                 </div>
@@ -4365,6 +4465,16 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                                     <input type="time" value={editing.endTime} onChange={e => update("endTime", e.target.value)}
                                         className="w-full border border-gray-300 rounded px-2 py-1 text-sm" />
                                 </div>
+                            </div>
+                            {/* Double-shift toggle — exposed because "All day" preset depends on it */}
+                            <div className="flex items-center justify-between bg-white rounded p-2 border border-gray-200">
+                                <div>
+                                    <div className="text-[11px] font-bold text-gray-700">{tx("Double shift (1h unpaid break)", "Turno doble (1h descanso)")}</div>
+                                </div>
+                                <button onClick={() => update("isDouble", !editing.isDouble)}
+                                    className={`w-10 h-5 rounded-full relative transition ${editing.isDouble ? "bg-blue-600" : "bg-gray-300"}`}>
+                                    <div className={`w-4 h-4 bg-white rounded-full shadow absolute top-0.5 transition ${editing.isDouble ? "translate-x-5" : "translate-x-0.5"}`} />
+                                </button>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 <div>
@@ -4402,7 +4512,15 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                             {rules.map(r => (
                                 <div key={r.id} className="p-2 rounded border border-gray-200 bg-white text-xs flex items-center justify-between gap-2">
                                     <div className="flex-1 min-w-0">
-                                        <div className="font-bold text-gray-800">{r.staffName}</div>
+                                        <div className="font-bold text-gray-800">
+                                            {r.staffName}
+                                            {r.cadence === "biweekly" && (
+                                                <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded bg-purple-100 text-purple-700">🔂 {tx("Bi-weekly", "Quincenal")}</span>
+                                            )}
+                                            {r.isDouble && (
+                                                <span className="ml-1 text-[9px] font-bold px-1 py-0.5 rounded bg-blue-100 text-blue-700">⏱ {tx("Double", "Doble")}</span>
+                                            )}
+                                        </div>
                                         <div className="text-[10px] text-gray-600">
                                             {(r.daysOfWeek || []).map(d => DAYS.find(x => x.id === d)).filter(Boolean).map(d => isEn ? d.labelEn : d.labelEs).join(", ")}
                                             {" · "}{formatTime12h(r.startTime)}–{formatTime12h(r.endTime)}
