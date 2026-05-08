@@ -305,6 +305,48 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── 1-hour-before-shift reminders ──
+    // For each of MY upcoming published shifts in the next 24h, schedule a
+    // setTimeout to fire a browser notification 1 hour before start time.
+    // Re-scheduled whenever shifts list or permission changes.
+    // LIMITATION: if the app is fully closed (PWA killed), the timer won't
+    // fire. True closed-app push needs FCM + Cloud Function (Phase 4B).
+    useEffect(() => {
+        if (!staffName) return;
+        if (typeof Notification === 'undefined' || notifPermission !== 'granted') return;
+
+        const now = Date.now();
+        const horizon = now + 24 * 60 * 60 * 1000; // only schedule next 24h
+        const timers = [];
+        for (const sh of shifts) {
+            if (sh.staffName !== staffName) continue;
+            if (sh.published === false) continue; // skip drafts
+            if (!sh.date || !sh.startTime) continue;
+            const [sH, sM] = sh.startTime.split(':').map(Number);
+            const [y, mo, d] = sh.date.split('-').map(Number);
+            const shiftStartMs = new Date(y, mo - 1, d, sH, sM).getTime();
+            const oneHourBefore = shiftStartMs - 60 * 60 * 1000;
+            const delay = oneHourBefore - now;
+            if (delay <= 0) continue; // already past or within 1h — would've already fired
+            if (delay > horizon - now) continue; // beyond 24h, defer to a later re-render
+            const timerId = setTimeout(() => {
+                try {
+                    new Notification(tx('DD Mau — Shift in 1 hour', 'DD Mau — Turno en 1 hora'), {
+                        body: tx(
+                            `Your shift starts at ${formatTime12h(sh.startTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`,
+                            `Tu turno empieza a las ${formatTime12h(sh.startTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`,
+                        ),
+                        icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
+                        tag: `shift-reminder-${sh.id}`, // OS dedupes by tag
+                        requireInteraction: false,
+                    });
+                } catch {}
+            }, delay);
+            timers.push(timerId);
+        }
+        return () => { timers.forEach(clearTimeout); };
+    }, [staffName, shifts, notifPermission, isEn]);
+
     // Helper — write a notification doc. Silently swallows errors so a notify
     // failure never blocks the underlying action. Multiple recipients = multiple
     // calls (caller maps).
