@@ -490,26 +490,53 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const dateClosed = (dateStr) => (blocksByDate.get(dateStr) || []).some(b => b.type === 'closed');
 
+    // ── Derived: which staff names have shifts on the CURRENT side this week ──
+    // A FOH staff with one BOH shift this week appears in BOH view too (cross-side).
+    // Uses shift.side when present (new shifts) and falls back to the staff's
+    // home side for legacy shifts that don't have a `side` field yet.
+    const staffByName = useMemo(() => {
+        const m = new Map();
+        for (const s of (staffList || [])) m.set(s.name, s);
+        return m;
+    }, [staffList]);
+
+    const crossSideNames = useMemo(() => {
+        const set = new Set();
+        for (const sh of shifts) {
+            if (storeLocation !== 'both' && sh.location !== storeLocation) continue;
+            const shiftSide = sh.side || resolveStaffSide(staffByName.get(sh.staffName));
+            if (shiftSide === side) set.add(sh.staffName);
+        }
+        return set;
+    }, [shifts, storeLocation, side, staffByName]);
+
     // ── Derived: staff list filtered by location AND current side (FOH/BOH) ──
     // Managers + Owners + Shift Leads appear on BOTH sides automatically via isOnSide().
+    // ALSO includes any staff with a shift on this side this week (cross-side coverage).
     const sideStaff = useMemo(() => {
         if (!Array.isArray(staffList)) return [];
         return staffList.filter(s => {
             const locOk = storeLocation === 'both' || s.location === storeLocation || s.location === 'both';
-            return locOk && isOnSide(s, side);
+            if (!locOk) return false;
+            // Home side OR has any cross-side shift on the current side this week.
+            return isOnSide(s, side) || crossSideNames.has(s.name);
         });
-    }, [staffList, storeLocation, side]);
+    }, [staffList, storeLocation, side, crossSideNames]);
 
     const sideStaffNames = useMemo(() => new Set(sideStaff.map(s => s.name)), [sideStaff]);
 
     // ── Derived: shifts visible in THIS view (location + side + optional person filter) ──
+    // Filter by shift.side when present so cross-side shifts only show in the
+    // side the manager assigned them to. Legacy shifts (no side) fall back to
+    // the staff's home side.
     const visibleShifts = useMemo(() => {
         return shifts.filter(s => {
             if (storeLocation !== 'both' && s.location !== storeLocation) return false;
             if (personFilter && s.staffName !== personFilter) return false;
-            return sideStaffNames.has(s.staffName);
+            const shiftSide = s.side || resolveStaffSide(staffByName.get(s.staffName));
+            return shiftSide === side && sideStaffNames.has(s.staffName);
         });
-    }, [shifts, storeLocation, sideStaffNames, personFilter]);
+    }, [shifts, storeLocation, sideStaffNames, personFilter, side, staffByName]);
 
     // ── Derived: per-staff weekly hours summary for the current side view ──
     // Hours are calculated over ALL of this staffer's shifts (both sides) — OT
@@ -552,7 +579,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             const savedDate = parseLocalDate(shiftData.date);
             const targetWeekStart = savedDate ? startOfWeek(savedDate) : null;
             const savedStaff = (staffList || []).find(s => s.name === shiftData.staffName);
-            const savedSide = savedStaff ? resolveStaffSide(savedStaff) : 'foh';
+            // The shift's *effective* side is the explicit shift.side (set by the
+            // per-shift override in AddShiftModal) when present, else the staff's
+            // home side. This way cross-side shifts auto-jump to the right view.
+            const savedSide = shiftData.side || (savedStaff ? resolveStaffSide(savedStaff) : 'foh');
             // Jump to the right week
             if (targetWeekStart && toDateStr(targetWeekStart) !== toDateStr(weekStart)) {
                 setWeekStart(targetWeekStart);
@@ -787,6 +817,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 startTime: need.startTime,
                 endTime: need.endTime,
                 location: need.location,
+                // The slot's side determines the shift's side — even if it's
+                // a cross-side fill (FOH staff working a BOH slot, etc.).
+                side: need.side || resolveStaffSide(staffMember),
                 isShiftLead: false,
                 isDouble: false,
                 notes: need.notes || tx('From staffing need', 'De necesidad de personal'),
@@ -2360,7 +2393,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                 <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'PTO pending' : 'PTO pendiente'}</div>
                                             )}
                                             {cellShifts.map(sh => (
-                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
+                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
                                                     currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer}
                                                     draggable={canEdit} />
                                             ))}
@@ -2379,7 +2412,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     );
 }
 
-function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable }) {
+function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable }) {
     const colors = roleColors(staffRole);
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const hasWarning = warnings.length > 0;
@@ -2387,6 +2420,10 @@ function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact
     const isMine = shift.staffName === currentStaffName;
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
+    // Cross-side = this shift's side differs from the staff's home side.
+    // Shown as a small badge so managers spot it at a glance.
+    const homeSide = staffScheduleSide || (BOH_ROLE_HINTS.has(staffRole) ? 'boh' : 'foh');
+    const isCrossSide = shift.side && shift.side !== homeSide;
     // Audit trail tooltip — managers and admins long-press / hover to see who created/edited.
     const auditLines = [];
     if (shift.createdBy) auditLines.push(`Created: ${shift.createdBy}`);
@@ -2413,6 +2450,7 @@ function ShiftCube({ shift, staffRole, isMinor, canEdit, onDelete, isEn, compact
                 {shift.isDouble && <span title="Double shift" className="ml-0.5">⏱</span>}
             </div>
             {shift.published === false && <div className="text-[9px] mt-0.5 font-bold text-gray-600">📝 {isEn ? 'Draft' : 'Borrador'}</div>}
+            {isCrossSide && <div className="text-[9px] mt-0.5 font-bold text-amber-700">🔀 {isEn ? `Cross-side (${shift.side?.toUpperCase()})` : `Lado cruzado (${shift.side?.toUpperCase()})`}</div>}
             {isOffered && <div className="text-[9px] mt-0.5 font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</div>}
             {isPending && <div className="text-[9px] mt-0.5 font-bold text-purple-700">⏳ {isEn ? 'Pending swap to' : 'Cambio pendiente a'} {shift.pendingClaimBy}</div>}
             {shift.notes && !compact && (
@@ -2817,21 +2855,25 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
         startTime: prefill?.startTime || '10:00',
         endTime: prefill?.endTime || '15:00',
         location: prefill?.location && prefill.location !== 'both' ? prefill.location : (storeLocation && storeLocation !== 'both' ? storeLocation : 'webster'),
+        side: prefill?.side || null, // null = use staff default; 'foh'/'boh' = explicit override
         isShiftLead: false,
         isDouble: false,
         notes: '',
     });
 
-    // DD Mau common shift presets — pick to fill start/end (and isDouble when
-    // the preset implies a double like 10–8 with break).
+    // Resolve the staff member's default side (from their AdminPanel record).
     const selectedStaffForPresets = staffList?.find(s => s.name === form.staffName);
-    const presetSide = (() => {
-        const role = selectedStaffForPresets?.role || '';
-        const explicit = selectedStaffForPresets?.scheduleSide;
+    const staffDefaultSide = (() => {
+        if (!selectedStaffForPresets) return null;
+        const explicit = selectedStaffForPresets.scheduleSide;
         if (explicit === 'foh' || explicit === 'boh') return explicit;
-        if (BOH_ROLE_HINTS && BOH_ROLE_HINTS.has && BOH_ROLE_HINTS.has(role)) return 'boh';
+        if (BOH_ROLE_HINTS && BOH_ROLE_HINTS.has && BOH_ROLE_HINTS.has(selectedStaffForPresets.role)) return 'boh';
         return 'foh';
     })();
+    // The effective side for this shift = explicit override OR staff's default.
+    // Used to pick the right preset chip set.
+    const presetSide = form.side || staffDefaultSide || 'foh';
+    const isCrossSide = form.side && staffDefaultSide && form.side !== staffDefaultSide;
     const SHIFT_PRESETS = presetSide === 'boh'
         ? [
             { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
@@ -2879,11 +2921,49 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                             <option value="">{tx('— Select —', '— Selecciona —')}</option>
                             {eligibleStaff.map(s => (
                                 <option key={s.id || s.name} value={s.name}>
-                                    {s.name}{s.isMinor ? ' 🔑' : ''}{s.shiftLead ? ' 🛡️' : ''}
+                                    {s.name}{s.isMinor ? ' 🔑' : ''}{s.shiftLead ? ' 🛡️' : ''} · {(s.scheduleSide || (BOH_ROLE_HINTS.has(s.role) ? 'boh' : 'foh')).toUpperCase()}
                                 </option>
                             ))}
                         </select>
+                        {staffDefaultSide && (
+                            <p className="text-[10px] text-gray-500 mt-1">
+                                {tx(`Default side: ${staffDefaultSide.toUpperCase()}`, `Lado predeterminado: ${staffDefaultSide.toUpperCase()}`)}
+                            </p>
+                        )}
                     </div>
+
+                    {/* Side override — defaults to staff's home side, can flip per shift */}
+                    {form.staffName && staffDefaultSide && (
+                        <div>
+                            <label className="text-xs font-bold text-gray-700 block mb-1">
+                                {tx('Working side this shift', 'Lado de este turno')}
+                            </label>
+                            <div className="grid grid-cols-2 gap-2">
+                                <button type="button" onClick={() => updateField('side', 'foh')}
+                                    className={`py-2 rounded-lg text-sm font-bold border ${
+                                        presetSide === 'foh'
+                                            ? 'bg-teal-600 text-white border-teal-600'
+                                            : 'bg-white text-gray-700 border-gray-300'
+                                    }`}>
+                                    🧑‍💼 FOH {staffDefaultSide === 'foh' ? `(${tx('home', 'casa')})` : ''}
+                                </button>
+                                <button type="button" onClick={() => updateField('side', 'boh')}
+                                    className={`py-2 rounded-lg text-sm font-bold border ${
+                                        presetSide === 'boh'
+                                            ? 'bg-orange-600 text-white border-orange-600'
+                                            : 'bg-white text-gray-700 border-gray-300'
+                                    }`}>
+                                    🔥 BOH {staffDefaultSide === 'boh' ? `(${tx('home', 'casa')})` : ''}
+                                </button>
+                            </div>
+                            {isCrossSide && (
+                                <p className="text-[10px] text-amber-700 mt-1 font-bold">
+                                    ⚠ {tx(`Cross-side: ${form.staffName} normally works ${staffDefaultSide.toUpperCase()}.`,
+                                          `Lado cruzado: ${form.staffName} normalmente trabaja ${staffDefaultSide.toUpperCase()}.`)}
+                                </p>
+                            )}
+                        </div>
+                    )}
 
                     {/* Date */}
                     <div>
@@ -2993,7 +3073,14 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                 <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 flex gap-2">
                     <button onClick={onClose}
                         className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
-                    <button onClick={() => canSubmit && onSave(form)} disabled={!canSubmit}
+                    <button onClick={() => {
+                        if (!canSubmit) return;
+                        // If the manager never tapped the side toggle, default to
+                        // the staff's home side. This way every saved shift carries
+                        // an explicit side field.
+                        const finalSide = form.side || staffDefaultSide || 'foh';
+                        onSave({ ...form, side: finalSide });
+                    }} disabled={!canSubmit}
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-mint-700 hover:bg-mint-800' : 'bg-gray-300'}`}>
                         {tx('Save Shift', 'Guardar Turno')}
                     </button>
