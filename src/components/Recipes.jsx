@@ -203,7 +203,7 @@ export default function Recipes({ language, staffName, staffList }) {
     const [pendingAction, setPendingAction] = useState(null); // "add" | recipe object
     const [passwordInput, setPasswordInput] = useState("");
     const [passwordError, setPasswordError] = useState(false);
-    const adminUser = isAdmin(staffName);
+    const adminUser = isAdmin(staffName, staffList);
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
     const hasRecipesAccess = adminUser || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
 

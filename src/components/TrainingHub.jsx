@@ -101,7 +101,7 @@ export default function TrainingHub({ staffName, language, staffList }) {
     const isEn = language !== "es";
     const tx = (en, es) => (isEn ? en : es);
 
-    const adminUser = isAdmin(staffName);
+    const adminUser = isAdmin(staffName, staffList);
     const currentStaff = (staffList || []).find(s => s.name === staffName);
     const isLead = adminUser || !!(currentStaff?.shiftLead);
 

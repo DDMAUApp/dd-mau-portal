@@ -1,6 +1,28 @@
+// Admin identity is anchored to staff IDs, NOT names. Renaming a staff member
+// to "Andrew Shih" in the admin panel does NOT grant admin access. The IDs
+// below are the canonical owners.
+//   40 = Andrew Shih
+//   41 = Julie Shih
+export const ADMIN_IDS = [40, 41];
+
+// Legacy name-list — kept for back-compat with any code that imports it,
+// but new code should use isAdmin(name, staffList) which checks IDs.
 export const ADMIN_NAMES = ["Andrew Shih", "Julie Shih"];
 
-export function isAdmin(name) {
+// Returns true iff the staff member with this name has an ADMIN_ID.
+// Requires staffList so we can resolve name → id. If staffList is missing,
+// we fall back to the legacy name list (transitional only — every callsite
+// in the app passes staffList).
+export function isAdmin(name, staffList) {
+  if (!name) return false;
+  if (Array.isArray(staffList)) {
+    const me = staffList.find(s => s.name === name);
+    return !!me && ADMIN_IDS.includes(me.id);
+  }
+  // Fallback for legacy callers; flag in console so we find them.
+  if (typeof console !== "undefined") {
+    console.warn("isAdmin called without staffList — falling back to name match. Pass staffList for ID-anchored check.");
+  }
   return ADMIN_NAMES.includes(name);
 }
 
@@ -10,7 +32,7 @@ export function isAdmin(name) {
 // Shift Lead is NOT included (HR consultant lens: cleaner accountability if
 // only managers own scheduling).
 export function canEditSchedule(staffName, staffList) {
-  if (isAdmin(staffName)) return true;
+  if (isAdmin(staffName, staffList)) return true;
   if (!staffName || !Array.isArray(staffList)) return false;
   const me = staffList.find(s => s.name === staffName);
   if (!me) return false;

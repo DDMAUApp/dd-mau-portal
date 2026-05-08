@@ -45,7 +45,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
     const [newPrepSlowPar, setNewPrepSlowPar] = useState("");
     const [newPrepBusyPar, setNewPrepBusyPar] = useState("");
 
-    const currentIsManager = isAdmin(staffName) || (staffList || []).some(s => s.name === staffName && (s.role === "manager" || s.role === "admin"));
+    const currentIsManager = isAdmin(staffName, staffList) || (staffList || []).some(s => s.name === staffName && (s.role === "manager" || s.role === "admin"));
 
     // Load from Firestore
     useEffect(() => {

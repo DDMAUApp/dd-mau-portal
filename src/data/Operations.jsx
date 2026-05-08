@@ -43,7 +43,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const photoInputRef = useRef(null);
 
             // Determine current user's role early
-            const currentIsAdmin = isAdmin(staffName);
+            const currentIsAdmin = isAdmin(staffName, staffList);
 
             // New checklist system {"\u{2014}"} FOH/BOH with multiple lists per side
             const staffRole = (staffList || []).find(s => s.name === staffName);

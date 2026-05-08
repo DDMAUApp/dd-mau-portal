@@ -196,7 +196,7 @@ export default function App() {
         });
         return () => unsubscribe();
     }, []);
-    const staffIsAdmin = isAdmin(staffName);
+    const staffIsAdmin = isAdmin(staffName, staffList);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
     // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
     // open the Recipes tab even when they're not at a DD Mau location.

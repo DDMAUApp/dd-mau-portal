@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin, LOCATION_LABELS } from '../data/staff';
+import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory'; 
 
@@ -139,7 +139,9 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleRemoveStaff = async (id) => {
                 const person = staffList.find(s => s.id === id);
-                if (isAdmin(person?.name)) return; // can't remove admins
+                // Block removal by ADMIN_ID (not name) so renaming an admin
+                // doesn't bypass this guard.
+                if (person && ADMIN_IDS.includes(person.id)) return;
                 const updated = staffList.filter(s => s.id !== id);
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
@@ -419,7 +421,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
-                                                        {!isAdmin(person.name) && (
+                                                        {!ADMIN_IDS.includes(person.id) && (
                                                             confirmRemoveId === person.id ? (
                                                                 <div className="flex gap-1">
                                                                     <button onClick={() => handleRemoveStaff(person.id)}
