@@ -4,6 +4,20 @@ export function isAdmin(name) {
   return ADMIN_NAMES.includes(name);
 }
 
+// Roles that can edit the schedule (create/edit/delete shifts, publish weeks).
+// Owners (isAdmin) always can. Any role title containing "Manager" also can —
+// covers "Manager", "Kitchen Manager", "Asst Manager", "Asst Kitchen Manager".
+// Shift Lead is NOT included (HR consultant lens: cleaner accountability if
+// only managers own scheduling).
+export function canEditSchedule(staffName, staffList) {
+  if (isAdmin(staffName)) return true;
+  if (!staffName || !Array.isArray(staffList)) return false;
+  const me = staffList.find(s => s.name === staffName);
+  if (!me) return false;
+  const role = (me.role || "").toLowerCase();
+  return role.includes("manager") || role === "owner";
+}
+
 export const LOCATION_LABELS = {
   webster: "Webster",
   maryland: "Maryland Heights",

@@ -13,6 +13,8 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [editOpsAccess, setEditOpsAccess] = useState(false);
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
             const [editShiftLead, setEditShiftLead] = useState(false);
+            const [editIsMinor, setEditIsMinor] = useState(false);
+            const [editScheduleSide, setEditScheduleSide] = useState("foh");
             const [showAdd, setShowAdd] = useState(false);
             const [newName, setNewName] = useState("");
             const [newRole, setNewRole] = useState("FOH");
@@ -21,6 +23,8 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [newOpsAccess, setNewOpsAccess] = useState(false);
             const [newRecipesAccess, setNewRecipesAccess] = useState(false);
             const [newShiftLead, setNewShiftLead] = useState(false);
+            const [newIsMinor, setNewIsMinor] = useState(false);
+            const [newScheduleSide, setNewScheduleSide] = useState("foh");
             const [editLocation, setEditLocation] = useState("");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
@@ -79,7 +83,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
 
             const handleSavePin = async (id) => {
                 if (editPin.length !== 4 || !/^\d{4}$/.test(editPin)) return;
-                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead } : s);
+                const updated = staffList.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide } : s);
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
                 setEditingId(null);
@@ -89,13 +93,15 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setEditOpsAccess(false);
                 setEditRecipesAccess(false);
                 setEditShiftLead(false);
+                setEditIsMinor(false);
+                setEditScheduleSide("foh");
                 showSaved();
             };
 
             const handleAddStaff = async () => {
                 if (!newName.trim() || newPin.length !== 4 || !/^\d{4}$/.test(newPin)) return;
                 const maxId = Math.max(...staffList.map(s => s.id), 0);
-                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess, shiftLead: newShiftLead };
+                const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess, shiftLead: newShiftLead, isMinor: newIsMinor, scheduleSide: newScheduleSide };
                 const updated = [...staffList, newStaff];
                 setStaffList(updated);
                 await saveStaffToFirestore(updated);
@@ -107,6 +113,8 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setNewOpsAccess(false);
                 setNewRecipesAccess(false);
                 setNewShiftLead(false);
+                setNewIsMinor(false);
+                setNewScheduleSide("foh");
                 showSaved();
             };
 
@@ -330,13 +338,37 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editShiftLead ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Menor de edad (<18)" : "Minor (under 18)"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "El programador advierte sobre límites de horas/horario" : "Scheduler warns on hour/time limits"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditIsMinor(!editIsMinor)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editIsMinor ? "bg-amber-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editIsMinor ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horario" : "Schedule Side"}</p>
+                                                        <p className="text-xs text-gray-500 mb-2">{language === "es" ? "En cuál horario aparece esta persona" : "Which schedule this person appears on"}</p>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <button onClick={() => setEditScheduleSide("foh")}
+                                                                className={`py-2 rounded-md text-xs font-bold ${editScheduleSide === "foh" ? "bg-teal-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                FOH
+                                                            </button>
+                                                            <button onClick={() => setEditScheduleSide("boh")}
+                                                                className={`py-2 rounded-md text-xs font-bold ${editScheduleSide === "boh" ? "bg-orange-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                BOH
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                     <div className="flex gap-2">
                                                         <button onClick={() => handleSavePin(person.id)}
                                                             disabled={editPin.length !== 4}
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -346,10 +378,10 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); setEditShiftLead(!!person.shiftLead); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -437,13 +469,36 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${newShiftLead ? "translate-x-7" : "translate-x-1"}`} />
                                             </button>
                                         </div>
+                                        <div className="flex items-center justify-between bg-white rounded-lg p-3 border border-gray-200">
+                                            <div>
+                                                <p className="text-sm font-bold text-gray-700">{language === "es" ? "Menor de edad (<18)" : "Minor (under 18)"}</p>
+                                                <p className="text-xs text-gray-500">{language === "es" ? "El programador advierte sobre límites de horas/horario" : "Scheduler warns on hour/time limits"}</p>
+                                            </div>
+                                            <button onClick={() => setNewIsMinor(!newIsMinor)}
+                                                className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${newIsMinor ? "bg-amber-600" : "bg-gray-300"}`}>
+                                                <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${newIsMinor ? "translate-x-7" : "translate-x-1"}`} />
+                                            </button>
+                                        </div>
+                                        <div className="bg-white rounded-lg p-3 border border-gray-200">
+                                            <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horario" : "Schedule Side"}</p>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <button onClick={() => setNewScheduleSide("foh")}
+                                                    className={`py-2 rounded-md text-xs font-bold ${newScheduleSide === "foh" ? "bg-teal-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                    FOH
+                                                </button>
+                                                <button onClick={() => setNewScheduleSide("boh")}
+                                                    className={`py-2 rounded-md text-xs font-bold ${newScheduleSide === "boh" ? "bg-orange-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                    BOH
+                                                </button>
+                                            </div>
+                                        </div>
                                         <div className="flex gap-2">
                                             <button onClick={handleAddStaff}
                                                 disabled={!newName.trim() || newPin.length !== 4}
                                                 className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                 {t("addStaff", language)}
                                             </button>
-                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(false); setNewShiftLead(false); }}
+                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(false); setNewShiftLead(false); setNewIsMinor(false); setNewScheduleSide("foh"); }}
                                                 className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                 {t("cancel", language)}
                                             </button>
