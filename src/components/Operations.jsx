@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion } from 'firebase/firestore';
-import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
+import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
@@ -31,25 +31,54 @@ const TASK_CATEGORIES = [
 const TASK_CATEGORY_BY_ID = Object.fromEntries(TASK_CATEGORIES.map(c => [c.id, c]));
 const getCategoryFor = (task) => TASK_CATEGORY_BY_ID[task?.category] || TASK_CATEGORY_BY_ID.other;
 
+// Day-of-week ANCHORED TO CHICAGO (BUSINESS_TZ), not the device's local zone.
+// Without this, a phone in HKT after Chicago-Sunday-11pm shows Monday's tasks
+// to a user whose business day is still Sunday.
+const _dowFmtChicago = new Intl.DateTimeFormat("en-US", { timeZone: BUSINESS_TZ, weekday: "short" });
+const _DOW_MAP = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+const getBusinessDow = (d = new Date()) => _DOW_MAP[_dowFmtChicago.format(d)] ?? d.getDay();
+
 // Recurrence options for tasks. Tasks with a recurrence pattern only show on
 // matching days. Default "daily" (or unset = daily) means show every day.
+// Matchers receive a Date and use the Chicago day-of-week.
 const TASK_RECURRENCE = [
     { id: "daily",     labelEn: "Every day",       labelEs: "Cada día",         match: () => true },
-    { id: "weekday",   labelEn: "Weekdays",        labelEs: "Lunes-Viernes",    match: (d) => d.getDay() >= 1 && d.getDay() <= 5 },
-    { id: "weekend",   labelEn: "Weekends",        labelEs: "Fines de semana",  match: (d) => d.getDay() === 0 || d.getDay() === 6 },
-    { id: "monday",    labelEn: "Mondays",         labelEs: "Lunes",            match: (d) => d.getDay() === 1 },
-    { id: "tuesday",   labelEn: "Tuesdays",        labelEs: "Martes",           match: (d) => d.getDay() === 2 },
-    { id: "wednesday", labelEn: "Wednesdays",      labelEs: "Miércoles",        match: (d) => d.getDay() === 3 },
-    { id: "thursday",  labelEn: "Thursdays",       labelEs: "Jueves",           match: (d) => d.getDay() === 4 },
-    { id: "friday",    labelEn: "Fridays",         labelEs: "Viernes",          match: (d) => d.getDay() === 5 },
-    { id: "saturday",  labelEn: "Saturdays",       labelEs: "Sábados",          match: (d) => d.getDay() === 6 },
-    { id: "sunday",    labelEn: "Sundays",         labelEs: "Domingos",         match: (d) => d.getDay() === 0 },
+    { id: "weekday",   labelEn: "Weekdays",        labelEs: "Lunes-Viernes",    match: (d) => { const w = getBusinessDow(d); return w >= 1 && w <= 5; } },
+    { id: "weekend",   labelEn: "Weekends",        labelEs: "Fines de semana",  match: (d) => { const w = getBusinessDow(d); return w === 0 || w === 6; } },
+    { id: "monday",    labelEn: "Mondays",         labelEs: "Lunes",            match: (d) => getBusinessDow(d) === 1 },
+    { id: "tuesday",   labelEn: "Tuesdays",        labelEs: "Martes",           match: (d) => getBusinessDow(d) === 2 },
+    { id: "wednesday", labelEn: "Wednesdays",      labelEs: "Miércoles",        match: (d) => getBusinessDow(d) === 3 },
+    { id: "thursday",  labelEn: "Thursdays",       labelEs: "Jueves",           match: (d) => getBusinessDow(d) === 4 },
+    { id: "friday",    labelEn: "Fridays",         labelEs: "Viernes",          match: (d) => getBusinessDow(d) === 5 },
+    { id: "saturday",  labelEn: "Saturdays",       labelEs: "Sábados",          match: (d) => getBusinessDow(d) === 6 },
+    { id: "sunday",    labelEn: "Sundays",         labelEs: "Domingos",         match: (d) => getBusinessDow(d) === 0 },
 ];
 const TASK_RECURRENCE_BY_ID = Object.fromEntries(TASK_RECURRENCE.map(r => [r.id, r]));
 const taskShowsToday = (task, date = new Date()) => {
     const r = task.recurrence || "daily";
     const rule = TASK_RECURRENCE_BY_ID[r] || TASK_RECURRENCE_BY_ID.daily;
     return rule.match(date);
+};
+
+// Current Chicago wall-clock minutes-since-midnight. Used by overdue/urgency
+// checks so a "2:30 PM" deadline triggers correctly regardless of the device's
+// local zone or DST state.
+const _chiTimeFmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: BUSINESS_TZ, hour12: false, hour: "2-digit", minute: "2-digit",
+});
+const getBusinessMinutesNow = (now = new Date()) => {
+    let hh = 0, mm = 0;
+    for (const p of _chiTimeFmt.formatToParts(now)) {
+        if (p.type === "hour") hh = Number(p.value);
+        if (p.type === "minute") mm = Number(p.value);
+    }
+    return (hh % 24) * 60 + mm;
+};
+const isPastTimeOfDay = (completeBy, now = new Date()) => {
+    if (!completeBy) return false;
+    const [hh, mm] = completeBy.split(":").map(Number);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return false;
+    return getBusinessMinutesNow(now) > (hh * 60 + mm);
 };
 
 // Skip-with-reason options. Picker (not free text) so we can analyze later.
@@ -1435,7 +1464,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const checkDeadlines = () => {
                 const now = new Date();
-                const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                // Use Chicago wall-clock minutes — a phone in another zone or
+                // a DST transition would otherwise mark tasks overdue too
+                // early or too late.
+                const currentMinutes = getBusinessMinutesNow(now);
                 const tasks = customTasksRef.current;
                 const ch = checksRef.current;
                 const lists = checklistListsRef.current;
@@ -1540,6 +1572,65 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 } catch (err) { console.error("Error saving checklist:", err); }
             };
 
+            // ── Granular check-key writers ────────────────────────────────
+            // The high-frequency operations (toggle complete, add comment,
+            // skip, etc.) only touch one or two keys inside `checks`. The
+            // legacy saveChecklistState writes the WHOLE doc, which means
+            // two cooks finishing tasks at the same moment race-clobber
+            // each other's check-marks. Use updateDoc with dotted paths
+            // here so each writer only mutates the keys they touched.
+            //
+            // patch = { "FOH_taskId": true, "FOH_taskId_by": "Maria", ... }
+            // value of `undefined` → deleteField() removes the key.
+            const writeCheckPatch = async (patch) => {
+                const todayKey = getTodayKey();
+                const dotted = { updatedAt: new Date().toISOString(), date: todayKey };
+                for (const k in patch) {
+                    const v = patch[k];
+                    dotted[`checks.${k}`] = v === undefined ? deleteField() : v;
+                }
+                const liveRef = doc(db, "ops", "checklists2_" + storeLocation);
+                const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
+                try {
+                    await updateDoc(liveRef, dotted);
+                } catch (e) {
+                    // Doc may not exist yet — seed it with merge.
+                    const seed = {};
+                    for (const k in patch) if (patch[k] !== undefined) seed[k] = patch[k];
+                    await setDoc(liveRef, { checks: seed, date: todayKey, version: CHECKLIST_VERSION }, { merge: true });
+                }
+                try {
+                    await updateDoc(histRef, dotted);
+                } catch (e) {
+                    // History doc for today doesn't exist yet — seed it.
+                    const seed = {};
+                    for (const k in patch) if (patch[k] !== undefined) seed[k] = patch[k];
+                    await setDoc(histRef, { checks: seed, date: new Date().toISOString(), version: CHECKLIST_VERSION }, { merge: true });
+                }
+            };
+
+            // Append to a comment array atomically. arrayUnion is what makes
+            // concurrent comments safe — two cooks adding notes at the same
+            // moment both land instead of one overwriting the other.
+            const appendCheckArrayValue = async (pKey, value) => {
+                const todayKey = getTodayKey();
+                const dotted = {
+                    [`checks.${pKey}`]: arrayUnion(value),
+                    updatedAt: new Date().toISOString(),
+                    date: todayKey,
+                };
+                const liveRef = doc(db, "ops", "checklists2_" + storeLocation);
+                const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
+                try { await updateDoc(liveRef, dotted); }
+                catch (e) {
+                    await setDoc(liveRef, { checks: { [pKey]: [value] }, date: todayKey, version: CHECKLIST_VERSION }, { merge: true });
+                }
+                try { await updateDoc(histRef, dotted); }
+                catch (e) {
+                    await setDoc(histRef, { checks: { [pKey]: [value] }, date: new Date().toISOString(), version: CHECKLIST_VERSION }, { merge: true });
+                }
+            };
+
             const assignChecklist = async (side, periodId, staffMemberName, listIdx) => {
                 const li = listIdx !== undefined ? listIdx : activeListIdx;
                 const key = li === 0 ? side + "_" + periodId : side + "_L" + li + "_" + periodId;
@@ -1612,17 +1703,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // ── Per-task comments ──
             // Stored in the same `checks` doc under key `${prefix}${taskId}_comments`
-            // as an array of {by, at, text}. So they survive in checklistHistory too.
+            // as an array of {by, at, text}. arrayUnion makes concurrent
+            // comments safe — two cooks adding notes at the same moment
+            // both land instead of one clobbering the other.
             const addTaskComment = async (taskId, text) => {
                 if (!text || !text.trim()) return;
-                const cur = checksRef.current;
                 const pKey = currentPrefix + taskId + "_comments";
-                const existing = Array.isArray(cur[pKey]) ? cur[pKey] : [];
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-                const newChecks = { ...cur, [pKey]: [...existing, { by: staffName, at: timeStr, text: text.trim(), ts: now.toISOString() }] };
-                setChecks(newChecks);
-                await saveChecklistState(newChecks, customTasksRef.current);
+                const comment = { by: staffName, at: timeStr, text: text.trim(), ts: now.toISOString() };
+                // Optimistic local update so UI shows comment instantly.
+                const cur = checksRef.current;
+                const existing = Array.isArray(cur[pKey]) ? cur[pKey] : [];
+                setChecks({ ...cur, [pKey]: [...existing, comment] });
+                await appendCheckArrayValue(pKey, comment);
             };
 
             const removeTaskComment = async (taskId, idx) => {
@@ -1631,10 +1725,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const existing = Array.isArray(cur[pKey]) ? cur[pKey] : [];
                 if (idx < 0 || idx >= existing.length) return;
                 const newArr = existing.filter((_, i) => i !== idx);
+                // Optimistic local update.
                 const newChecks = { ...cur };
                 if (newArr.length > 0) newChecks[pKey] = newArr; else delete newChecks[pKey];
                 setChecks(newChecks);
-                await saveChecklistState(newChecks, customTasksRef.current);
+                // Replace the array atomically with a dotted-path write.
+                // (arrayRemove would need exact item match; safer to overwrite.)
+                await writeCheckPatch({ [pKey]: newArr.length > 0 ? newArr : undefined });
             };
 
             const toggleCheckItem = async (taskId, parentTask) => {
@@ -1642,18 +1739,24 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const pKey = currentPrefix + taskId;
                 const newVal = !cur[pKey];
                 const newChecks = { ...cur, [pKey]: newVal };
-                // Store who completed it and when
+                const patch = { [pKey]: newVal };
                 if (newVal) {
                     const now = new Date();
                     const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
                     newChecks[pKey + "_by"] = staffName;
                     newChecks[pKey + "_at"] = timeStr;
+                    patch[pKey + "_by"] = staffName;
+                    patch[pKey + "_at"] = timeStr;
                 } else {
                     delete newChecks[pKey + "_by"];
                     delete newChecks[pKey + "_at"];
+                    patch[pKey + "_by"] = undefined;  // → deleteField
+                    patch[pKey + "_at"] = undefined;
                 }
+                // Optimistic local + granular dotted-path write so concurrent
+                // toggles by other users don't clobber each other.
                 setChecks(newChecks);
-                await saveChecklistState(newChecks, customTasksRef.current);
+                await writeCheckPatch(patch);
                 // If checking ON and the parent task has a follow-up, check if task is now complete
                 if (newVal && parentTask && parentTask.followUp && parentTask.followUp.question) {
                     const allDone = parentTask.subtasks && parentTask.subtasks.length > 0
@@ -1670,7 +1773,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setChecks(newChecks);
                 setFollowUpAnswers(prev => ({ ...prev, [taskId]: answer }));
                 setShowFollowUpFor(null);
-                await saveChecklistState(newChecks, customTasksRef.current);
+                await writeCheckPatch({ [pKey + "_followUp"]: answer });
             };
 
             // ── Skip-with-reason ──
@@ -1686,17 +1789,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
                 const newChecks = {
                     ...cur,
-                    // Force the boolean to false (un-done) so progress math is correct,
-                    // but keep the skip metadata to render ⏭ + reason.
                     [pKey]: false,
                     [pKey + "_skipped"]: reasonId,
                     [pKey + "_by"]: staffName,
                     [pKey + "_at"]: timeStr,
                 };
-                if (note) newChecks[pKey + "_skipNote"] = note;
-                else delete newChecks[pKey + "_skipNote"];
+                const patch = {
+                    [pKey]: false,
+                    [pKey + "_skipped"]: reasonId,
+                    [pKey + "_by"]: staffName,
+                    [pKey + "_at"]: timeStr,
+                };
+                if (note) { newChecks[pKey + "_skipNote"] = note; patch[pKey + "_skipNote"] = note; }
+                else { delete newChecks[pKey + "_skipNote"]; patch[pKey + "_skipNote"] = undefined; }
                 setChecks(newChecks);
-                await saveChecklistState(newChecks, customTasksRef.current);
+                await writeCheckPatch(patch);
                 setSkipPickerFor(null);
             };
 
@@ -1709,7 +1816,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 delete newChecks[pKey + "_by"];
                 delete newChecks[pKey + "_at"];
                 setChecks(newChecks);
-                await saveChecklistState(newChecks, customTasksRef.current);
+                await writeCheckPatch({
+                    [pKey + "_skipped"]: undefined,
+                    [pKey + "_skipNote"]: undefined,
+                    [pKey + "_by"]: undefined,
+                    [pKey + "_at"]: undefined,
+                });
             };
 
             // Quick-add — one-shot task creation from a single input.
@@ -1717,19 +1829,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
             //         with subtasks ["spray", "wipe", "dry"]. The first segment
             //         is the title, all subsequent `; foo` segments become subtasks.
             // Inherits the category from `categoryFilter` if it's not "all", else "other".
+            // Stable, collision-resistant ID. Date.now() alone collides if two
+            // admins click "Add" in the same millisecond, AND it's not stable
+            // when subtask order changes. Append a short random suffix.
+            const newTaskId = (sidePrefix) => sidePrefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+            const newSubtaskId = () => "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+            // Preserve existing subtask IDs when editing — only mint a new ID
+            // for genuinely new subtasks. Stops "edit reorders subtasks → all
+            // checks visually un-complete" from happening because the keys in
+            // the `checks` map are anchored to ids, not array index.
+            const reconcileSubtasks = (cleanSubs) => cleanSubs.map((s) => ({
+                id: s.id || newSubtaskId(),
+                task: s.task.trim(),
+            }));
+
             const quickAddTask = async () => {
                 const text = quickAddText.trim();
                 if (!text) return;
                 const parts = text.split(/\s*;\s*/).filter(p => p.length > 0);
                 if (parts.length === 0) return;
                 const item = {
-                    id: checklistSide + "_" + Date.now().toString(),
+                    id: newTaskId(checklistSide),
                     task: parts[0],
                 };
                 const cat = categoryFilter !== "all" ? categoryFilter : "other";
                 if (cat !== "other") item.category = cat;
                 if (parts.length > 1) {
-                    item.subtasks = parts.slice(1).map((p, i) => ({ id: item.id + "_s" + i, task: p }));
+                    item.subtasks = parts.slice(1).map((p) => ({ id: newSubtaskId(), task: p }));
                 }
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 if (!updated[checklistSide]) updated[checklistSide] = {};
@@ -1742,9 +1869,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const addChecklistTask = async () => {
                 if (!newTask.trim()) return;
-                // Include the side in the ID so a FOH and BOH task created in the same millisecond
-                // don't share the same key in the `checks` map (list-0 has no prefix for backward compat).
-                const item = { id: checklistSide + "_" + Date.now().toString(), task: newTask.trim() };
+                const item = { id: newTaskId(checklistSide), task: newTask.trim() };
                 if (newCategory && newCategory !== "other") item.category = newCategory;
                 if (newRecurrence && newRecurrence !== "daily") item.recurrence = newRecurrence;
                 if (newRequirePhoto) item.requirePhoto = true;
@@ -1758,7 +1883,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 }
                 const cleanSubs = newSubtasks.filter(s => s.task.trim());
-                if (cleanSubs.length > 0) item.subtasks = cleanSubs.map((s, i) => ({ id: item.id + "_s" + i, task: s.task.trim() }));
+                if (cleanSubs.length > 0) item.subtasks = reconcileSubtasks(cleanSubs);
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 if (!updated[checklistSide]) updated[checklistSide] = {};
                 if (!updated[checklistSide][activePeriod]) updated[checklistSide][activePeriod] = [];
@@ -1786,7 +1911,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 } else { delete item.followUp; }
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
-                if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
+                if (cleanSubs.length > 0) { item.subtasks = reconcileSubtasks(cleanSubs); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
                 setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRecurrence("daily"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
@@ -1798,29 +1923,87 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Reset the input so the same file can be reselected after a failed upload.
                 if (e.target) e.target.value = "";
                 if (!file) return;
-                // Re-entry guard: a rapid second tap (mobile Safari double-fire) must not start a parallel upload,
-                // because two parallel saveChecklistState writes both start from a stale checksRef snapshot
-                // and would clobber each other's unrelated checks.
+                // Re-entry guard: a rapid second tap (mobile Safari double-fire) must not start a parallel upload.
                 if (capturingPhoto) return;
                 setCapturingPhoto(taskId);
+                const todayKey = getTodayKey();
+                const photoRef = ref(storage, "checklist-photos/" + todayKey + "/" + taskId + "_" + Date.now() + ".jpg");
+                let uploaded = false;
                 try {
-                    const todayKey = getTodayKey();
-                    const photoRef = ref(storage, "checklist-photos/" + todayKey + "/" + taskId + "_" + Date.now() + ".jpg");
                     await uploadBytes(photoRef, file);
+                    uploaded = true;
                     const url = await getDownloadURL(photoRef);
                     const pKey = currentPrefix + taskId;
-                    const newChecks = { ...checksRef.current, [pKey + "_photo"]: url, [pKey + "_photoTime"]: new Date().toISOString() };
-                    setChecks(newChecks);
-                    await saveChecklistState(newChecks, customTasksRef.current);
-                } catch (err) { console.error("Error uploading photo:", err); alert(language === "es" ? "Error al subir foto" : "Error uploading photo"); }
+                    const photoTime = new Date().toISOString();
+                    // Optimistic local + granular dotted-path write.
+                    setChecks({
+                        ...checksRef.current,
+                        [pKey + "_photo"]: url,
+                        [pKey + "_photoTime"]: photoTime,
+                    });
+                    await writeCheckPatch({
+                        [pKey + "_photo"]: url,
+                        [pKey + "_photoTime"]: photoTime,
+                    });
+                } catch (err) {
+                    console.error("Error uploading photo:", err);
+                    // If we successfully uploaded the file but the Firestore
+                    // write failed, the storage object is orphaned (no DB
+                    // reference). Delete it so we don't accumulate dead bytes.
+                    if (uploaded) {
+                        try { await deleteObject(photoRef); }
+                        catch (cleanupErr) { console.warn("Photo orphan cleanup failed:", cleanupErr); }
+                    }
+                    alert(language === "es" ? "Error al subir foto" : "Error uploading photo");
+                }
                 setCapturingPhoto(null);
             };
 
             const deleteChecklistTask = async (idx) => {
-                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                const tasks = customTasksRef.current;
+                const removed = tasks?.[checklistSide]?.[activePeriod]?.[idx];
+                const updated = JSON.parse(JSON.stringify(tasks));
                 updated[checklistSide][activePeriod].splice(idx, 1);
                 setCustomTasks(updated);
-                await saveChecklistState(checksRef.current, updated);
+
+                // Also strip orphaned check entries (and any subtask entries +
+                // photo metadata + comments). Otherwise the manager dashboard
+                // keeps counting completions for deleted tasks, and storage
+                // photos linger.
+                if (removed) {
+                    const orphanIds = new Set();
+                    orphanIds.add(removed.id);
+                    if (Array.isArray(removed.subtasks)) {
+                        for (const s of removed.subtasks) orphanIds.add(s.id);
+                    }
+                    const cur = checksRef.current;
+                    const newChecks = { ...cur };
+                    const photoKeysToDelete = [];
+                    for (const key of Object.keys(cur)) {
+                        // Match `${currentPrefix}${taskId}` and any `_by`/`_at`/`_photo`/etc. variants.
+                        for (const tid of orphanIds) {
+                            if (key === currentPrefix + tid || key.startsWith(currentPrefix + tid + "_")) {
+                                if (key.endsWith("_photo")) photoKeysToDelete.push(cur[key]);
+                                delete newChecks[key];
+                                break;
+                            }
+                        }
+                    }
+                    setChecks(newChecks);
+                    // Clean up Firebase Storage photo objects too.
+                    for (const url of photoKeysToDelete) {
+                        try {
+                            const photoRef = ref(storage, url);
+                            await deleteObject(photoRef);
+                        } catch (e) {
+                            // URL might be expired or the storage rule denies; log & continue.
+                            console.warn("Photo cleanup failed for", url, e);
+                        }
+                    }
+                    await saveChecklistState(newChecks, updated);
+                } else {
+                    await saveChecklistState(checksRef.current, updated);
+                }
             };
 
             const resetAllChecklists = async () => {
@@ -2728,13 +2911,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             const overdue = [];
                             const ALL_TASKS = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
                             for (const t of ALL_TASKS) {
-                                if (t.completeBy) {
-                                    const isDone = isTaskComplete(t);
-                                    if (!isDone) {
-                                        const [hh, mm] = t.completeBy.split(":").map(Number);
-                                        const due = new Date(); due.setHours(hh, mm, 0, 0);
-                                        if (Date.now() > due.getTime()) overdue.push(t);
-                                    }
+                                if (t.completeBy && !isTaskComplete(t)) {
+                                    // Compare against Chicago wall-clock so devices in
+                                    // other zones don't mis-flag.
+                                    if (isPastTimeOfDay(t.completeBy)) overdue.push(t);
                                 }
                             }
                             for (const k of Object.keys(checks)) {
@@ -2859,10 +3039,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             const assignees = getAssignees(item);
 
                             // Compute urgency for flashing: "warning" (30 min before), "overdue" (past time)
+                            // Anchored to Chicago wall-clock (BUSINESS_TZ).
                             let taskUrgency = null;
                             if (item.completeBy && !taskComplete) {
-                                const now = new Date();
-                                const curMin = now.getHours() * 60 + now.getMinutes();
+                                const curMin = getBusinessMinutesNow();
                                 const [dh, dm] = item.completeBy.split(":").map(Number);
                                 const deadMin = dh * 60 + dm;
                                 if (curMin >= deadMin) taskUrgency = "overdue";
