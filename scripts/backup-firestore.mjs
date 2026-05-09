@@ -89,24 +89,30 @@ function serializeValue(v) {
     return v;
 }
 
-// ── Recursive collection dumper ──────────────────────────────────────────
-// Walks one level of subcollections per doc — that's enough for the DD Mau
-// schema (no deep nesting). If a future feature adds deeper subcollections,
-// bump the depth.
-async function dumpCollection(colRef, depth = 0, maxDepth = 3) {
+// ── Collection dumper ────────────────────────────────────────────────────
+// DD Mau's schema is flat (no document subcollections). The previous
+// implementation called listCollections() per document which sent N+1
+// requests and stalled the script on collections like laborHistory_*
+// (hundreds of hourly-snapshot docs → hundreds of needless API calls).
+//
+// Now: a single .get() per top-level collection, no per-doc probing.
+// If a future feature adds true subcollections, set DUMP_SUBCOLLECTIONS=1
+// in env to opt back into the slow recursive path.
+async function dumpCollection(colRef) {
     const snap = await colRef.get();
     const docs = [];
+    const probeSubs = process.env.DUMP_SUBCOLLECTIONS === '1';
     for (const doc of snap.docs) {
         const docOut = {
             id: doc.id,
             data: serializeValue(doc.data()),
         };
-        if (depth < maxDepth) {
+        if (probeSubs) {
             const subs = await doc.ref.listCollections();
             if (subs.length > 0) {
                 docOut.subcollections = {};
                 for (const sub of subs) {
-                    docOut.subcollections[sub.id] = await dumpCollection(sub, depth + 1, maxDepth);
+                    docOut.subcollections[sub.id] = await dumpCollection(sub);
                 }
             }
         }
