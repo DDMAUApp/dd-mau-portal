@@ -96,6 +96,24 @@ const isRoleEligible = (staffRole, roleGroupId) => {
     return group.roles.includes(staffRole);
 };
 
+// Common shift presets surfaced as one-tap chips in the empty-cell quick-add
+// flow AND as preset chips inside the full Add Shift modal. Single source of
+// truth so manager edits to either flow stay in sync.
+const SHIFT_PRESETS_FOH = [
+    { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
+    { label: '11–4', start: '11:00', end: '16:00', isDouble: false },
+    { label: '3–8',  start: '15:00', end: '20:00', isDouble: false },
+    { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
+    { label: '12–7', start: '12:00', end: '19:00', isDouble: false },
+    { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
+];
+const SHIFT_PRESETS_BOH = [
+    { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
+    { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
+    { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
+];
+const getShiftPresets = (side) => (side === 'boh' ? SHIFT_PRESETS_BOH : SHIFT_PRESETS_FOH);
+
 // Role-family color tokens for shift cubes.
 const roleColors = (role) => {
     if (!role) return { bg: 'bg-gray-100', border: 'border-gray-300', text: 'text-gray-800' };
@@ -256,6 +274,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // first show a chooser of those open slots ("fill this need?") instead of
     // jumping straight to the free-form Add Shift modal.
     const [fillSlotChooser, setFillSlotChooser] = useState(null); // { staff, dateStr, needs: [...] }
+    // Quick-add state: when a manager taps an empty cell with no matching
+    // staffing needs, instead of jumping straight into a modal we surface a
+    // chip strip of common shift presets right inside the cell. One tap on
+    // a chip = shift created. "✏️" chip falls back to the full modal for
+    // anything custom. Cleared on cell-click elsewhere or Esc.
+    const [quickAddCell, setQuickAddCell] = useState(null); // { staff, dateStr } | null
+    // Esc closes the quick-add chip strip without committing anything.
+    // Mounts once; re-checks `quickAddCell` via the closure on every keydown.
+    useEffect(() => {
+        if (!quickAddCell) return;
+        const onKey = (e) => { if (e.key === 'Escape') setQuickAddCell(null); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [quickAddCell]);
     // Day templates (reusable patterns: morning needs 3 FOH + 1 Lead + 1 Manager, etc.)
     const [scheduleTemplates, setScheduleTemplates] = useState([]);
     const [showTemplateEditor, setShowTemplateEditor] = useState(false);
@@ -2105,9 +2137,38 @@ ${dayBlocks}
                                     if (matchingNeeds.length > 0) {
                                         setFillSlotChooser({ staff, dateStr, needs: matchingNeeds });
                                     } else {
-                                        openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                                        // Show inline chip strip — one tap = shift created.
+                                        // The "✏️ custom" chip in the strip opens the full modal.
+                                        setQuickAddCell({ staff, dateStr });
                                     }
                                 }}
+                                quickAddCell={quickAddCell}
+                                onQuickAddSelect={(preset) => {
+                                    if (!quickAddCell) return;
+                                    const { staff, dateStr } = quickAddCell;
+                                    const inferredSide = resolveStaffSide(staff);
+                                    handleAddShift({
+                                        staffName: staff.name,
+                                        date: dateStr,
+                                        startTime: preset.start,
+                                        endTime: preset.end,
+                                        location: (staff.location && staff.location !== 'both')
+                                            ? staff.location
+                                            : (storeLocation !== 'both' ? storeLocation : 'webster'),
+                                        side: inferredSide,
+                                        isShiftLead: !!staff.shiftLead,
+                                        isDouble: !!preset.isDouble,
+                                        notes: '',
+                                    });
+                                    setQuickAddCell(null);
+                                }}
+                                onQuickAddCustom={() => {
+                                    if (!quickAddCell) return;
+                                    const { staff, dateStr } = quickAddCell;
+                                    setQuickAddCell(null);
+                                    openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
+                                }}
+                                onQuickAddClose={() => setQuickAddCell(null)}
                                 weekNeeds={staffingNeeds.filter(n =>
                                     n.side === side &&
                                     (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation)
@@ -2396,7 +2457,7 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds }) {
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose }) {
     // Pre-compute per-day staffing-need stats (filled / total / open) so the
     // day header can show a live countdown badge as slots get assigned.
     const needStatsByDate = useMemo(() => {
@@ -2512,7 +2573,13 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 const onPendingPTO = !onPTO && isStaffPendingOff(s.name, dStr);
                                 return (
                                     <td key={i}
-                                        onClick={() => canEdit && cellShifts.length === 0 && !closed && onCellClick(s, dStr)}
+                                        onClick={() => {
+                                            if (!canEdit || closed) return;
+                                            // Empty cell → trigger quick-add chip strip (parent
+                                            // decides whether to also fall through to slot
+                                            // chooser or full modal). Cell with shifts → no-op.
+                                            if (cellShifts.length === 0) onCellClick(s, dStr);
+                                        }}
                                         onDragOver={(e) => {
                                             if (!canEdit || closed) return;
                                             e.preventDefault(); // allow drop
@@ -2541,9 +2608,44 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     isDoubleDay={cellShifts.length >= 2}
                                                     dayShiftCount={cellShifts.length} />
                                             ))}
-                                            {canEdit && cellShifts.length === 0 && !onPTO && (
-                                                <div className="text-center text-gray-300 text-lg leading-none py-1">+</div>
-                                            )}
+                                            {canEdit && cellShifts.length === 0 && !onPTO && (() => {
+                                                // Inline quick-add chip strip — only renders when
+                                                // this cell is the active quickAddCell. Otherwise
+                                                // a faint "+" so the cell still feels tappable.
+                                                const isActive = quickAddCell
+                                                    && quickAddCell.staff?.name === s.name
+                                                    && quickAddCell.dateStr === dStr;
+                                                if (!isActive) {
+                                                    return <div className="text-center text-gray-300 text-lg leading-none py-1">+</div>;
+                                                }
+                                                const presets = getShiftPresets(resolveStaffSide(s));
+                                                return (
+                                                    <div onClick={(e) => e.stopPropagation()}
+                                                        className="space-y-1 bg-mint-50 rounded-md p-1 ring-2 ring-mint-400">
+                                                        {presets.map(p => (
+                                                            <button key={p.label} type="button"
+                                                                onClick={() => onQuickAddSelect && onQuickAddSelect(p)}
+                                                                className="w-full px-1.5 py-1 rounded bg-white border border-mint-300 text-mint-800 text-[10px] font-bold hover:bg-mint-200 active:scale-95 transition">
+                                                                {p.label}
+                                                            </button>
+                                                        ))}
+                                                        <div className="flex gap-1">
+                                                            <button type="button"
+                                                                onClick={() => onQuickAddCustom && onQuickAddCustom()}
+                                                                className="flex-1 px-1 py-1 rounded bg-blue-50 border border-blue-300 text-blue-800 text-[10px] font-bold hover:bg-blue-100 active:scale-95 transition"
+                                                                title={isEn ? 'Open full editor' : 'Abrir editor completo'}>
+                                                                ✏️
+                                                            </button>
+                                                            <button type="button"
+                                                                onClick={() => onQuickAddClose && onQuickAddClose()}
+                                                                className="flex-1 px-1 py-1 rounded bg-gray-100 border border-gray-300 text-gray-600 text-[10px] font-bold hover:bg-gray-200 active:scale-95 transition"
+                                                                title={isEn ? 'Cancel' : 'Cancelar'}>
+                                                                ✕
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                     </td>
                                 );
@@ -3063,19 +3165,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     // Used to pick the right preset chip set.
     const presetSide = form.side || staffDefaultSide || 'foh';
     const isCrossSide = form.side && staffDefaultSide && form.side !== staffDefaultSide;
-    const SHIFT_PRESETS = presetSide === 'boh'
-        ? [
-            { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
-            { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
-            { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
-        ]
-        : [
-            { label: '10–3', start: '10:00', end: '15:00', isDouble: false },
-            { label: '3–8',  start: '15:00', end: '20:00', isDouble: false },
-            { label: '4–8',  start: '16:00', end: '20:00', isDouble: false },
-            { label: '12–7', start: '12:00', end: '19:00', isDouble: false },
-            { label: '10–8 (double)', start: '10:00', end: '20:00', isDouble: true },
-        ];
+    const SHIFT_PRESETS = getShiftPresets(presetSide);
     const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end && form.isDouble === !!p.isDouble;
 
     const eligibleStaff = useMemo(() => {
