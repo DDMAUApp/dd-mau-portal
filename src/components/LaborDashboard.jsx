@@ -1,7 +1,43 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, collection, query, where, onSnapshot, setDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
+
+// SPLH = Sales Per Labor Hour. Industry-standard restaurant productivity metric:
+// every labor hour scheduled supports $X of sales. Tracking historical SPLH by
+// daypart + day-of-week tells managers whether they're staffed for typical
+// volume. Higher SPLH = more efficient (each labor hour produces more sales).
+// Lower SPLH than your historical baseline = over-staffed for the volume.
+const DAYPARTS = [
+    { id: 'lunch',  enLabel: 'Lunch',  esLabel: 'Almuerzo', startHr: 11, endHr: 14 },
+    { id: 'slow',   enLabel: 'Slow',   esLabel: 'Lento',    startHr: 14, endHr: 16 },
+    { id: 'dinner', enLabel: 'Dinner', esLabel: 'Cena',     startHr: 16, endHr: 20 },
+    { id: 'late',   enLabel: 'Late',   esLabel: 'Tarde',    startHr: 20, endHr: 23 },
+];
+const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+function dowFromKey(dateKey) {
+    if (!dateKey) return null;
+    const [y, m, d] = String(dateKey).split('-').map(Number);
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d).getDay();
+}
+function hrFromTime(timeStr) {
+    if (!timeStr) return null;
+    // Accept "HH:MM" or "H:MM AM/PM"
+    const m = String(timeStr).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const ampm = m[3]?.toUpperCase();
+    if (ampm === 'PM' && h < 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return h;
+}
+function fmtUSD(n) {
+    if (!Number.isFinite(n)) return '—';
+    return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
 
 // Note: Requires Chart.js or similar for charting
 
@@ -19,6 +55,11 @@ export default function LaborDashboard({ language, storeLocation }) {
     const [laborTarget, setLaborTarget] = useState(25); // default target %
     const [editingTarget, setEditingTarget] = useState(false);
     const [tempTarget, setTempTarget] = useState(25);
+    // Historical data for SPLH analysis — last 4 weeks of hourly snapshots.
+    // Each entry should have {date: 'YYYY-MM-DD', time: 'HH:MM', netSales,
+    // totalHours} (depending on what the labor scraper writes — we tolerate
+    // missing fields and just skip those entries from the SPLH math).
+    const [splhHistory, setSplhHistory] = useState([]);
 
     // Load labor target from Firestore
     useEffect(() => {
@@ -69,6 +110,72 @@ export default function LaborDashboard({ language, storeLocation }) {
         );
         return () => unsubHistory();
     }, [storeLocation]);
+
+    // Pull last 28 days of laborHistory for SPLH analysis. Server-side
+    // date range filter so we don't fetch the entire collection.
+    useEffect(() => {
+        const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+        const cutoffKey = cutoff.getFullYear() + "-" + String(cutoff.getMonth() + 1).padStart(2, "0") + "-" + String(cutoff.getDate()).padStart(2, "0");
+        const unsub = onSnapshot(
+            query(collection(db, "laborHistory_" + storeLocation), where("date", ">=", cutoffKey)),
+            (snap) => {
+                const arr = [];
+                snap.forEach(doc => arr.push(doc.data()));
+                setSplhHistory(arr);
+            },
+            (err) => { console.warn("SPLH history snapshot error:", err); }
+        );
+        return () => unsub();
+    }, [storeLocation]);
+
+    // Compute SPLH grid: { [dow]: { [daypartId]: { sales, hours, splh, n } } }
+    // where n = number of distinct days included (sample size for confidence).
+    const splhGrid = useMemo(() => {
+        const grid = {}; // grid[dow][daypartId] = { sales, hours, days: Set }
+        for (const e of splhHistory) {
+            const sales = Number(e.netSales);
+            const hours = Number(e.totalHours);
+            if (!Number.isFinite(sales) || !Number.isFinite(hours) || hours <= 0) continue;
+            const dow = dowFromKey(e.date);
+            const hr = hrFromTime(e.time);
+            if (dow == null || hr == null) continue;
+            const part = DAYPARTS.find(p => hr >= p.startHr && hr < p.endHr);
+            if (!part) continue;
+            if (!grid[dow]) grid[dow] = {};
+            if (!grid[dow][part.id]) grid[dow][part.id] = { sales: 0, hours: 0, days: new Set() };
+            grid[dow][part.id].sales += sales;
+            grid[dow][part.id].hours += hours;
+            grid[dow][part.id].days.add(e.date);
+        }
+        // Convert sets → counts and compute SPLH.
+        const out = {};
+        for (const dow of Object.keys(grid)) {
+            out[dow] = {};
+            for (const partId of Object.keys(grid[dow])) {
+                const cell = grid[dow][partId];
+                out[dow][partId] = {
+                    sales: cell.sales,
+                    hours: cell.hours,
+                    splh: cell.hours > 0 ? cell.sales / cell.hours : null,
+                    n: cell.days.size,
+                };
+            }
+        }
+        return out;
+    }, [splhHistory]);
+    const splhSampleCount = splhHistory.length;
+    // Today's day-of-week for highlighting + "today vs typical" callout.
+    const todayDow = new Date().getDay();
+    // Pick a tone for an SPLH cell — green = healthy productivity,
+    // amber = soft, red = very low (might be over-staffed). Thresholds are
+    // restaurant-rules-of-thumb for fast-casual; tune later when we have
+    // more data.
+    const splhTone = (s) => {
+        if (s == null) return 'bg-gray-50 text-gray-400';
+        if (s >= 120) return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+        if (s >= 80)  return 'bg-amber-50 text-amber-800 border-amber-200';
+        return 'bg-red-50 text-red-700 border-red-200';
+    };
 
     const saveTarget = async () => {
         const val = parseFloat(tempTarget);
@@ -217,6 +324,79 @@ export default function LaborDashboard({ language, storeLocation }) {
                         <div className="flex justify-end mt-1">
                             <span className="text-[10px] text-gray-400">--- {t("target", language)}: {laborTarget}%</span>
                         </div>
+                    </div>
+                )}
+
+                {/* \u2500\u2500 Historical SPLH grid (sales per labor hour by day-of-week + daypart)
+                    The "math you've been missing." Each cell shows your typical $/labor-hour
+                    for that day\u00D7daypart based on the last 4 weeks. Higher = more efficient
+                    (every labor hour produces more sales). Shows N=number of days in sample
+                    so you know how much to trust each cell. Today's row is highlighted. */}
+                {splhSampleCount > 0 && (
+                    <div className="bg-white rounded-2xl p-4 ring-1 ring-gray-200 shadow-sm">
+                        <div className="flex items-center justify-between mb-1">
+                            <h3 className="text-sm font-bold text-gray-700">
+                                \uD83D\uDCB0 {language === "es" ? "SPLH hist\u00F3rico (Ventas / hora de trabajo)" : "Historical SPLH (Sales per Labor Hour)"}
+                            </h3>
+                            <span className="text-[10px] text-gray-400">
+                                {language === "es" ? `\u00DAltimos 28 d\u00EDas \u00B7 ${splhSampleCount} muestras` : `Last 28 days \u00B7 ${splhSampleCount} samples`}
+                            </span>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mb-2">
+                            {language === "es"
+                                ? "Cada celda: d\u00F3lares de ventas por hora de mano de obra. Verde = saludable, \u00E1mbar = suave, rojo = posible exceso de personal. N = d\u00EDas en la muestra."
+                                : "Each cell: dollars of sales per labor hour. Green = healthy, amber = soft, red = possibly over-staffed. N = days in sample."}
+                        </p>
+                        <div className="overflow-x-auto -mx-2 px-2">
+                            <table className="w-full text-[11px] border-collapse">
+                                <thead>
+                                    <tr className="text-gray-500">
+                                        <th className="text-left p-1 font-semibold">{language === "es" ? "D\u00EDa" : "Day"}</th>
+                                        {DAYPARTS.map(p => (
+                                            <th key={p.id} className="text-center p-1 font-semibold whitespace-nowrap">
+                                                {language === "es" ? p.esLabel : p.enLabel}<br />
+                                                <span className="text-[9px] font-normal text-gray-400">{p.startHr}-{p.endHr}</span>
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {[0,1,2,3,4,5,6].map(dow => {
+                                        const isToday = dow === todayDow;
+                                        const labels = language === "es" ? DOW_ES : DOW_EN;
+                                        return (
+                                            <tr key={dow} className={isToday ? 'bg-indigo-50' : ''}>
+                                                <td className={`p-1 font-bold ${isToday ? 'text-indigo-700' : 'text-gray-700'}`}>
+                                                    {labels[dow]}{isToday ? ' \u2022' : ''}
+                                                </td>
+                                                {DAYPARTS.map(p => {
+                                                    const cell = splhGrid[dow]?.[p.id];
+                                                    const tone = splhTone(cell?.splh);
+                                                    return (
+                                                        <td key={p.id} className="p-1">
+                                                            <div className={`text-center rounded border ${tone}`}
+                                                                title={cell ? `${fmtUSD(cell.sales)} sales / ${cell.hours.toFixed(1)} hrs \u00B7 n=${cell.n} day${cell.n === 1 ? '' : 's'}` : 'no data'}>
+                                                                <div className="font-bold text-[12px] leading-tight py-0.5">
+                                                                    {cell?.splh != null ? fmtUSD(cell.splh) : '\u2014'}
+                                                                </div>
+                                                                {cell && (
+                                                                    <div className="text-[8px] text-gray-500 leading-none pb-0.5">n={cell.n}</div>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-2">
+                            {language === "es"
+                                ? "Pr\u00F3xima fase: comparar tu horario publicado con SPLH hist\u00F3rico para sugerir cortes/agregar personal por daypart."
+                                : "Next phase: compare your published schedule against historical SPLH to suggest cuts/adds per daypart."}
+                        </p>
                     </div>
                 )}
 
