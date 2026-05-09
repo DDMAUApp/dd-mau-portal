@@ -29,6 +29,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [editCompleteBy, setEditCompleteBy] = useState("");
             const [editAssignTo, setEditAssignTo] = useState("");
             const [editFollowUp, setEditFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
+            // One-time task: YYYY-MM-DD. When set, task only renders on that
+            // date and gets pruned at next reset. Empty = recurring (default).
+            const [editRunOnDate, setEditRunOnDate] = useState("");
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
@@ -36,6 +39,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [newCompleteBy, setNewCompleteBy] = useState("");
             const [newAssignTo, setNewAssignTo] = useState("");
             const [newFollowUp, setNewFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
+            const [newRunOnDate, setNewRunOnDate] = useState("");
             // Follow-up answers state (keyed by task id)
             const [followUpAnswers, setFollowUpAnswers] = useState({});
             const [showFollowUpFor, setShowFollowUpFor] = useState(null); // task id to show follow-up prompt
@@ -811,6 +815,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const item = { id: Date.now().toString(), task: newTask.trim() };
                 if (newRequirePhoto) item.requirePhoto = true;
                 if (newCompleteBy) item.completeBy = newCompleteBy;
+                if (newRunOnDate) item.runOnDate = newRunOnDate;
                 const newAssignArr = Array.isArray(newAssignTo) ? newAssignTo : newAssignTo ? [newAssignTo] : [];
                 if (newAssignArr.length > 0) item.assignTo = newAssignArr;
                 if (newFollowUp && newFollowUp.question.trim()) {
@@ -827,7 +832,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
+                setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setNewRunOnDate(""); setShowAddForm(false);
             };
 
             const saveChecklistEdit = async (idx) => {
@@ -837,6 +842,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
+                if (editRunOnDate) { item.runOnDate = editRunOnDate; } else { delete item.runOnDate; }
                 const assignArr = Array.isArray(editAssignTo) ? editAssignTo : editAssignTo ? [editAssignTo] : [];
                 if (assignArr.length > 0) { item.assignTo = assignArr; } else { delete item.assignTo; }
                 if (editFollowUp && editFollowUp.question.trim()) {
@@ -849,7 +855,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
-                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
+                setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null); setEditRunOnDate("");
             };
 
             // Photo capture and upload
@@ -886,8 +892,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         checks: cleanForFirestore(checksRef.current), customTasks: cleanForFirestore(customTasksRef.current), assignments: cleanForFirestore(checklistAssignments), lists: cleanForFirestore(checklistListsRef.current), date: now, savedBy: staffName
                     });
                 } catch (err) { console.error("Error saving history:", err); }
+                // Prune one-time tasks whose runOnDate is in the past — the
+                // history doc above already preserves them for audit, so it's
+                // safe to drop them from the live customTasks. Tasks for
+                // today or future stay (e.g. a Tuesday task added on Monday
+                // shouldn't disappear at Monday's reset).
+                const pruned = JSON.parse(JSON.stringify(customTasksRef.current));
+                for (const side of Object.keys(pruned)) {
+                    for (const period of Object.keys(pruned[side] || {})) {
+                        pruned[side][period] = (pruned[side][period] || []).filter(t =>
+                            !t.runOnDate || t.runOnDate >= todayKey
+                        );
+                    }
+                }
+                setCustomTasks(pruned);
                 setChecks({});
-                await saveChecklistState({}, customTasksRef.current);
+                await saveChecklistState({}, pruned);
             };
 
             const saveInventorySnapshot = async (counts, items) => {
@@ -1292,15 +1312,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const hasNoAssign = (t) => !t.assignTo || (Array.isArray(t.assignTo) && t.assignTo.length === 0);
                 // Tag each task with its original index so edit/delete still works after filtering
                 const tagged = all.map((t, i) => ({...t, _origIdx: i}));
+                // One-time tasks: hide if their runOnDate isn't today.
+                // Admin in editMode still sees them so they can manage future
+                // dated tasks (otherwise a task scheduled for next Tuesday
+                // would be invisible until that day, with no way to edit).
+                const todayKey = getTodayKey();
+                const dateFiltered = tagged.filter(t => {
+                    if (!t.runOnDate) return true; // recurring → always show
+                    if (currentIsAdmin && editMode) return true; // admin can manage
+                    return t.runOnDate === todayKey;
+                });
                 // Non-admin staff: only see tasks assigned to them or unassigned
                 if (!currentIsAdmin) {
-                    return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, staffName));
+                    return dateFiltered.filter(t => hasNoAssign(t) || isAssignedTo(t, staffName));
                 }
                 // Admin with filter active: show only tasks for that person (+ unassigned)
                 if (taskFilter) {
-                    return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, taskFilter));
+                    return dateFiltered.filter(t => hasNoAssign(t) || isAssignedTo(t, taskFilter));
                 }
-                return tagged;
+                return dateFiltered;
             };
             // Get all tasks without filtering (for stats)
             const getAllTasks = () => {
@@ -1488,6 +1518,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                 className="border border-gray-200 rounded px-2 py-1 text-xs" />
                                             {editCompleteBy && <button onClick={() => setEditCompleteBy("")} className="text-red-400 text-xs">{"\u{2715}"}</button>}
                                         </div>
+                                        {/* One-time date — leave blank for recurring */}
+                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                            <label className="text-xs font-bold text-gray-600">{"\u{1F4CC}"} {language === "es" ? "Solo este día:" : "One-time on:"}</label>
+                                            <input type="date" value={editRunOnDate} onChange={e => setEditRunOnDate(e.target.value)}
+                                                className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                            {!editRunOnDate ? (
+                                                <button type="button" onClick={() => setEditRunOnDate(getTodayKey())}
+                                                    className="text-[10px] px-2 py-0.5 rounded bg-mint-100 text-mint-700 font-bold">{language === "es" ? "Hoy" : "Today"}</button>
+                                            ) : (
+                                                <button onClick={() => setEditRunOnDate("")} className="text-red-400 text-xs">{"\u{2715}"} {language === "es" ? "Recurrente" : "Recurring"}</button>
+                                            )}
+                                        </div>
                                         {/* Assign to (always visible) */}
                                         <div className="flex items-center gap-2 mb-2">
                                             <label className="text-xs font-bold text-gray-600">{String.fromCodePoint(0x1F464)} {language === "es" ? "Asignar a:" : "Assign to:"}</label>
@@ -1576,7 +1618,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         <div className="flex items-center gap-2">
                                             <button onClick={() => saveChecklistEdit(origIdx)}
                                                 className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Guardar" : "Save"}</button>
-                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null); }}
+                                            <button onClick={() => { setEditingIdx(null); setEditSubtasks([]); setEditCompleteBy(""); setEditRunOnDate(""); setEditAssignTo([]); setEditFollowUp(null); }}
                                                 className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                         </div>
                                     </div>
@@ -1614,6 +1656,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                                             {taskUrgency === "overdue" ? "\u{1F6A8}" : "\u{23F0}"} {item.completeBy.replace(/^0/, "")}
                                                         </span>
                                                     )}
+                                                    {item.runOnDate && (() => {
+                                                        const isToday = item.runOnDate === getTodayKey();
+                                                        const isFuture = item.runOnDate > getTodayKey();
+                                                        // "May 12" style — short, no year (year is implied from "soon")
+                                                        const [yy, mm, dd] = item.runOnDate.split("-").map(Number);
+                                                        const monthShort = new Date(yy, mm - 1, dd).toLocaleString(language === "es" ? "es" : "en", { month: "short" });
+                                                        const label = isToday
+                                                            ? (language === "es" ? "Solo hoy" : "Today only")
+                                                            : `${monthShort} ${dd}`;
+                                                        return (
+                                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
+                                                                isToday ? "bg-purple-100 text-purple-700"
+                                                                : isFuture ? "bg-gray-100 text-gray-600 border border-gray-300"
+                                                                : "bg-gray-100 text-gray-400 line-through"
+                                                            }`}>
+                                                                {"\u{1F4CC}"} {label}
+                                                            </span>
+                                                        );
+                                                    })()}
                                                 </div>
                                                 {/* Assignee chips */}
                                                 {assignees.length > 0 && (
@@ -1651,7 +1712,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
-                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
+                                                <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditRunOnDate(item.runOnDate || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">{String.fromCodePoint(0x270F, 0xFE0F)}</button>
                                                 <button onClick={() => deleteChecklistTask(origIdx)}
                                                     className="p-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100">{"\u{1F5D1}"}{"\u{FE0F}"}</button>
@@ -1767,6 +1828,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         className="border border-gray-200 rounded px-2 py-1 text-xs" />
                                     {newCompleteBy && <button onClick={() => setNewCompleteBy("")} className="text-red-400 text-xs">{"\u{2715}"}</button>}
                                 </div>
+                                {/* One-time date — leave blank for recurring */}
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                    <label className="text-xs font-bold text-gray-600">{"\u{1F4CC}"} {language === "es" ? "Solo este día:" : "One-time on:"}</label>
+                                    <input type="date" value={newRunOnDate} onChange={e => setNewRunOnDate(e.target.value)}
+                                        min={getTodayKey()}
+                                        className="border border-gray-200 rounded px-2 py-1 text-xs" />
+                                    {!newRunOnDate ? (
+                                        <button type="button" onClick={() => setNewRunOnDate(getTodayKey())}
+                                            className="text-[10px] px-2 py-0.5 rounded bg-mint-100 text-mint-700 font-bold">{language === "es" ? "Hoy" : "Today"}</button>
+                                    ) : (
+                                        <button onClick={() => setNewRunOnDate("")} className="text-red-400 text-xs">{"\u{2715}"} {language === "es" ? "Recurrente" : "Recurring"}</button>
+                                    )}
+                                </div>
                                 {/* Assign to (always visible, multi-select) */}
                                 <div className="flex items-center gap-2 mb-2">
                                     <label className="text-xs font-bold text-gray-600">{String.fromCodePoint(0x1F464)} {language === "es" ? "Asignar a:" : "Assign to:"}</label>
@@ -1855,7 +1929,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 <div className="flex items-center gap-2">
                                     <button onClick={addChecklistTask}
                                         className="px-3 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg">{language === "es" ? "Agregar" : "Add"}</button>
-                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo(""); setNewFollowUp(null); }}
+                                    <button onClick={() => { setShowAddForm(false); setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewRunOnDate(""); setNewAssignTo(""); setNewFollowUp(null); }}
                                         className="px-3 py-1.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-lg">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                 </div>
                             </div>
