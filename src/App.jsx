@@ -662,13 +662,16 @@ export default function App() {
             </div>
             {/* Bottom Navigation — hidden on md+ since sidebar replaces it */}
             {/* Mobile-only version footer — sits just above the bottom nav.
-                Hidden on md+ since the desktop sidebar already shows it. */}
-            <div className="fixed bottom-20 left-0 right-0 flex justify-center md:hidden pointer-events-none">
+                Hidden on md+ since the desktop sidebar already shows it.
+                z-30 so it covers sticky-left table cells (which use z-10
+                inside Schedule's grid view) — without this, long staff
+                lists rendered the bottom names ON TOP of the nav. */}
+            <div className="fixed bottom-20 left-0 right-0 flex justify-center md:hidden pointer-events-none z-30">
                 <div className="bg-white/80 backdrop-blur rounded-full shadow-sm pointer-events-auto">
                     <AppVersion language={language} />
                 </div>
             </div>
-            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow md:hidden bottom-nav-safe">
+            <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow md:hidden bottom-nav-safe z-30">
                 <div className="max-w-lg mx-auto flex justify-around items-center h-20">
                     {[
                         { tab: "home", icon: "🏠", label: t("home", language) },
