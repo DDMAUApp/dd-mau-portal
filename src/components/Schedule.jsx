@@ -628,6 +628,63 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
     }, [sideStaff, shifts, visibleShifts, storeLocation]);
 
+    // ── Hours scoreboard ─────────────────────────────────────────────
+    // Live, both-sides-at-once roll-up of scheduled vs target hours so a
+    // manager building a week sees over/under signals BEFORE publishing.
+    // Replaces the "labor cost %" idea — that needed wage data we don't
+    // have. This uses only targetHours which already exists per staff.
+    const hoursScoreboard = useMemo(() => {
+        if (!Array.isArray(staffList)) return null;
+        const locStaff = staffList.filter(s =>
+            storeLocation === 'both' || s.location === storeLocation || s.location === 'both'
+        );
+        // Per-staff weekly hours across BOTH sides — week is the visible week.
+        const weekStartStr = toDateStr(weekStart);
+        const weekEndStr = toDateStr(addDays(weekStart, 7));
+        const sumHoursForStaff = (staffName) => {
+            const myShifts = shifts.filter(sh =>
+                sh.staffName === staffName &&
+                sh.date >= weekStartStr && sh.date < weekEndStr &&
+                (storeLocation === 'both' || sh.location === storeLocation));
+            const byDate = new Map();
+            for (const sh of myShifts) {
+                const arr = byDate.get(sh.date) || [];
+                arr.push(sh);
+                byDate.set(sh.date, arr);
+            }
+            return Array.from(byDate.values()).reduce((sum, ds) => sum + dayPaidHours(ds), 0);
+        };
+
+        const computeFor = (sideId) => {
+            const list = locStaff.filter(s => resolveStaffSide(s) === sideId);
+            let scheduled = 0, target = 0;
+            const perStaff = [];
+            for (const s of list) {
+                const sh = sumHoursForStaff(s.name);
+                const tg = Number(s.targetHours) || 0;
+                scheduled += sh;
+                target += tg;
+                perStaff.push({ name: s.name, scheduled: sh, target: tg, gap: sh - tg });
+            }
+            // Top under = most hours below target (ignore staff with no target — can't be "under").
+            const under = perStaff
+                .filter(p => p.target > 0 && p.gap < 0)
+                .sort((a, b) => a.gap - b.gap)
+                .slice(0, 3);
+            // Top over = most hours above target (any staff).
+            const over = perStaff
+                .filter(p => p.gap > 2) // ignore noise — only flag >2h over
+                .sort((a, b) => b.gap - a.gap)
+                .slice(0, 3);
+            return { scheduled, target, under, over, count: list.length };
+        };
+
+        return {
+            foh: computeFor('foh'),
+            boh: computeFor('boh'),
+        };
+    }, [staffList, shifts, weekStart, storeLocation]);
+
     // ── Handlers ──
     const handleAddShift = async (shiftData) => {
         try {
@@ -2129,6 +2186,7 @@ ${dayBlocks}
                     {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
                     {viewMode === 'grid' && (
                         <>
+                            <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
                             <WeeklyGrid
                                 weekStart={weekStart}
                                 staffSummary={staffSummary}
@@ -2477,6 +2535,64 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
             </div>
             <button onClick={() => setWeekStart(addDays(weekStart, 7))}
                 className="w-9 h-9 rounded-md bg-white text-mint-700 font-bold shadow-sm hover:bg-mint-100 print:hidden">›</button>
+        </div>
+    );
+}
+
+// HoursScoreboard — sticky-ish panel above the grid showing both sides'
+// scheduled-vs-target totals + who's most under or most over. The point is
+// to make over/under signals visible BEFORE the manager publishes a draft,
+// not after staff start complaining about hours.
+function HoursScoreboard({ scoreboard, side, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    if (!scoreboard) return null;
+    const cell = (label, data, isActive) => {
+        const pct = data.target > 0 ? Math.round((data.scheduled / data.target) * 100) : null;
+        // Color thresholds:
+        //   <80%  amber   (under-staffed for the team's appetite)
+        //   80-104% green (healthy)
+        //   105-114% amber (creeping into OT)
+        //   115%+ red    (over budget — likely OT exposure)
+        const tone =
+            pct == null   ? 'bg-gray-50 border-gray-200 text-gray-600'
+          : pct < 80      ? 'bg-amber-50 border-amber-300 text-amber-900'
+          : pct <= 104    ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+          : pct <= 114    ? 'bg-amber-50 border-amber-400 text-amber-900'
+          :                 'bg-red-50 border-red-300 text-red-900';
+        return (
+            <div className={`flex-1 min-w-[140px] rounded-lg border-2 px-3 py-2 ${tone} ${isActive ? 'ring-2 ring-mint-500' : ''}`}>
+                <div className="text-[10px] font-bold uppercase opacity-80">{label}</div>
+                <div className="text-base font-bold leading-tight">
+                    {formatHours(data.scheduled)}
+                    {data.target > 0 && <span className="text-xs opacity-70"> / {formatHours(data.target)}</span>}
+                    {pct != null && <span className="text-xs opacity-70 ml-1">({pct}%)</span>}
+                </div>
+                {/* Under/over chips — quick "who needs hours" + "who's at OT risk" */}
+                {(data.under.length > 0 || data.over.length > 0) && (
+                    <div className="mt-1 flex flex-wrap gap-1">
+                        {data.under.map(p => (
+                            <span key={'u-' + p.name} className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold"
+                                title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target`,
+                                         `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo`)}>
+                                ↓ {p.name.split(' ')[0]} {formatHours(p.gap)}
+                            </span>
+                        ))}
+                        {data.over.map(p => (
+                            <span key={'o-' + p.name} className="text-[9px] px-1 py-0.5 rounded bg-red-100 text-red-900 border border-red-300 font-bold"
+                                title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target — over by ${formatHours(p.gap)}`,
+                                         `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo — sobre por ${formatHours(p.gap)}`)}>
+                                ↑ {p.name.split(' ')[0]} +{formatHours(p.gap)}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    };
+    return (
+        <div className="mb-2 flex flex-wrap gap-2 print:hidden">
+            {cell(tx('FOH this week', 'FOH esta semana'), scoreboard.foh, side === 'foh')}
+            {cell(tx('BOH this week', 'BOH esta semana'), scoreboard.boh, side === 'boh')}
         </div>
     );
 }
