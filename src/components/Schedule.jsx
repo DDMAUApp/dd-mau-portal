@@ -695,6 +695,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Source = shift cube (draggable). Target = grid cell.
     // Also supports Alt-drag (or shift-drag) to COPY instead of move — Phase 2B
     // could expose a UI hint. For now: plain drag = move.
+    // Inline-edit a shift's start/end times from the cube itself — no modal.
+    // Validates: end > start, both present. Other edits (assignee, role,
+    // notes, double-flag, location, etc.) still go through the full modal.
+    const handleUpdateShiftTimes = async (shiftId, startTime, endTime) => {
+        if (!canEdit) return;
+        if (!startTime || !endTime) return;
+        if (endTime <= startTime) {
+            alert(tx('End time must be after start time.', 'La hora de fin debe ser después del inicio.'));
+            return;
+        }
+        try {
+            await updateDoc(doc(db, 'shifts', shiftId), {
+                startTime,
+                endTime,
+                updatedAt: serverTimestamp(),
+                updatedBy: staffName,
+            });
+        } catch (e) {
+            console.error('Update shift times failed:', e);
+            alert(tx('Could not update times: ', 'No se pudieron actualizar los horarios: ') + e.message);
+        }
+    };
+
     const handleDropShift = async (shiftId, newStaffName, newDate) => {
         if (!canEdit) return;
         const shift = shifts.find(s => s.id === shiftId);
@@ -2180,6 +2203,7 @@ ${dayBlocks}
                                 onCancelOffer={handleCancelOffer}
                                 blocksByDate={blocksByDate}
                                 onDropShift={handleDropShift}
+                                onUpdateShiftTimes={handleUpdateShiftTimes}
                                 isStaffOffOn={isStaffOffOn}
                                 timeOff={timeOff}
                                 onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
@@ -2457,7 +2481,7 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose }) {
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes }) {
     // Pre-compute per-day staffing-need stats (filled / total / open) so the
     // day header can show a live countdown badge as slots get assigned.
     const needStatsByDate = useMemo(() => {
@@ -2606,7 +2630,8 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer}
                                                     draggable={canEdit}
                                                     isDoubleDay={cellShifts.length >= 2}
-                                                    dayShiftCount={cellShifts.length} />
+                                                    dayShiftCount={cellShifts.length}
+                                                    onUpdateShiftTimes={onUpdateShiftTimes} />
                                             ))}
                                             {canEdit && cellShifts.length === 0 && !onPTO && (() => {
                                                 // Inline quick-add chip strip — only renders when
@@ -2658,10 +2683,35 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     );
 }
 
-function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount }) {
+function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes }) {
     const colors = roleColors(staffRole);
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const hasWarning = warnings.length > 0;
+    // Inline time-edit state — tap the time text to morph into two time
+    // inputs + Save / Cancel. Saves via onUpdateShiftTimes, no modal.
+    // Falls through to the static time text if either canEdit is false or
+    // the parent didn't pass an updater.
+    const [editingTimes, setEditingTimes] = useState(false);
+    const [draftStart, setDraftStart] = useState(shift.startTime || '');
+    const [draftEnd, setDraftEnd] = useState(shift.endTime || '');
+    const beginTimeEdit = (e) => {
+        if (!canEdit || !onUpdateShiftTimes) return;
+        e.stopPropagation();
+        setDraftStart(shift.startTime || '');
+        setDraftEnd(shift.endTime || '');
+        setEditingTimes(true);
+    };
+    const commitTimeEdit = async () => {
+        if (!editingTimes) return;
+        // No-op if unchanged (avoids a needless write).
+        if (draftStart === shift.startTime && draftEnd === shift.endTime) {
+            setEditingTimes(false);
+            return;
+        }
+        await onUpdateShiftTimes(shift.id, draftStart, draftEnd);
+        setEditingTimes(false);
+    };
+    const cancelTimeEdit = () => setEditingTimes(false);
     // Raw shift hours — when this is one of two shifts on the same day, we
     // DON'T subtract the break here (the deduction happens once at the day
     // level in dayPaidHours). The badge below explains that to the user.
@@ -2697,7 +2747,32 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDe
             }}
             title={auditLines.join('\n') || undefined}
             className={`schedule-shift-cube relative rounded ${shift.published === false ? 'border-2 border-dashed border-gray-400 opacity-75' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 opacity-80' : ''} ${isPending ? 'ring-2 ring-purple-400' : ''} ${colors.bg} ${colors.text} px-1.5 py-1 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}>
-            <div className="font-bold">{formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}</div>
+            {editingTimes ? (
+                <div onClick={(e) => e.stopPropagation()} className="space-y-1">
+                    <div className="flex items-center gap-1">
+                        <input type="time" value={draftStart}
+                            onChange={(e) => setDraftStart(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') commitTimeEdit(); if (e.key === 'Escape') cancelTimeEdit(); }}
+                            className="w-full px-1 py-0.5 text-[10px] border border-gray-300 rounded" />
+                        <input type="time" value={draftEnd}
+                            onChange={(e) => setDraftEnd(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') commitTimeEdit(); if (e.key === 'Escape') cancelTimeEdit(); }}
+                            className="w-full px-1 py-0.5 text-[10px] border border-gray-300 rounded" />
+                    </div>
+                    <div className="flex gap-1">
+                        <button onClick={commitTimeEdit}
+                            className="flex-1 py-0.5 rounded bg-mint-600 text-white text-[10px] font-bold hover:bg-mint-700">✓ {isEn ? 'Save' : 'Guardar'}</button>
+                        <button onClick={cancelTimeEdit}
+                            className="px-2 py-0.5 rounded bg-gray-200 text-gray-700 text-[10px] font-bold hover:bg-gray-300">✕</button>
+                    </div>
+                </div>
+            ) : (
+                <button type="button" onClick={beginTimeEdit}
+                    title={canEdit && onUpdateShiftTimes ? (isEn ? 'Tap to edit times' : 'Toca para editar horas') : undefined}
+                    className={`block w-full text-left font-bold ${canEdit && onUpdateShiftTimes ? 'hover:underline cursor-text' : ''}`}>
+                    {formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}
+                </button>
+            )}
             <div className="opacity-80">
                 {formatHours(hours)}
                 {shift.isShiftLead && <span title="Shift Lead this shift" className="ml-0.5">🛡️</span>}
