@@ -198,8 +198,8 @@ export const MENU_DATA = [
     {
         category: "Drinks",
         categoryEs: "Bebidas",
-        note: "Boba milk teas use a creamer labeled 'non-dairy' that CONTAINS milk derivatives (sodium caseinate + lactose) — NOT safe for milk allergies. Oat, soy, or almond milk available on request as the only allergy-safe alternatives (almond = tree nut). Boba pearls are typically allergen-free. Plain teas without milk are vegan + allergen-clean.",
-        noteEs: "Los boba milk teas usan una crema etiquetada 'non-dairy' que CONTIENE derivados lácteos (caseinato de sodio + lactosa) — NO segura para alergia a leche. Leche de avena, soya o almendra disponibles como únicas alternativas seguras (almendra = fruto seco). Las perlas de boba son típicamente sin alérgenos. Tés sin leche son veganos.",
+        note: "Boba milk teas use a creamer labeled 'non-dairy' that CONTAINS milk derivatives (sodium caseinate + lactose) — NOT safe for milk allergies. Fruit teas are SAFE for milk allergies — they're built on a separate path and never touch the creamer. Oat, soy, or almond milk teas also available as alternatives (almond = tree nut). Boba pearls are typically allergen-free.",
+        noteEs: "Los boba milk teas usan una crema etiquetada 'non-dairy' que CONTIENE derivados lácteos (caseinato de sodio + lactosa) — NO segura para alergia a leche. Los fruit teas SÍ son seguros para alergia a leche — se arman por separado y nunca tocan la crema. Milk teas con leche de avena, soya o almendra también disponibles (almendra = fruto seco). Las perlas de boba son típicamente sin alérgenos.",
         items: [
             { nameEn: "Lychee Limeade", price: "$6", descEn: "Lychee + lime + soda.", descEs: "Lychee + lima + soda.", allergens: "(none)", vegan: true, glutenFree: true },
             { nameEn: "Matcha Green Tea Latte", price: "$8", descEn: "Real milk default. Oat / soy / almond available. Strawberry / mango / blueberry +$1.", descEs: "Leche real por defecto. Avena / soya / almendra disponible. Fresa / mango / arándano +$1.", allergens: "Dairy (default). Sub oat / soy / almond (almond = tree nut).", popular: true },
