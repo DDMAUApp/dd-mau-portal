@@ -1115,6 +1115,22 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         className={`w-8 h-8 rounded text-sm font-bold border ${s.isMinor ? "bg-amber-500 text-white border-amber-600" : "bg-white text-gray-300 border-gray-300"}`}>
                                                         🔑
                                                     </button>
+                                                    {/* Per-row Recipes access toggle. Opt-out semantics: undefined or
+                                                        true = granted (default), false = blocked. Mint green when ON,
+                                                        gray when OFF. Lets admins quickly take recipes away from a
+                                                        specific person from the bulk view. */}
+                                                    {(() => {
+                                                        const rec = s.recipesAccess !== false;
+                                                        return (
+                                                            <button onClick={() => handleBulkUpdate(s.id, { recipesAccess: !rec })}
+                                                                title={language === "es"
+                                                                    ? (rec ? "Acceso a recetas: ACTIVO (clic para quitar)" : "Acceso a recetas: BLOQUEADO (clic para conceder)")
+                                                                    : (rec ? "Recipes access: ON (click to revoke)" : "Recipes access: OFF (click to grant)")}
+                                                                className={`w-8 h-8 rounded text-sm border ${rec ? "bg-mint-100 text-mint-700 border-mint-300" : "bg-gray-200 text-gray-400 border-gray-300 line-through"}`}>
+                                                                🧑‍🍳
+                                                            </button>
+                                                        );
+                                                    })()}
                                                     <input type="number" min="0" max="80" step="1"
                                                         value={s.targetHours || 0}
                                                         onChange={e => handleBulkUpdate(s.id, { targetHours: Number(e.target.value) || 0 })}
