@@ -1,9 +1,16 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, setDoc } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { MASTER_RECIPES } from '../data/masterRecipes';
+
+// Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
+const REPIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+// Auto-collapse — after this many ms of no activity, expanded recipe closes.
+const AUTO_COLLAPSE_MS = 90 * 1000; // 90s
+// DevTools heuristic — if outerHeight - innerHeight grows past this, assume devtools panel opened.
+const DEVTOOLS_THRESHOLD = 200;
 
 // Editing is gated on isAdmin (Andrew/Julie) — no shared password.
 // Previously a hardcoded RECIPE_PASSWORD was checked client-side, which
@@ -143,16 +150,27 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
     );
 }
 
-export default function Recipes({ language, staffName, staffList }) {
+export default function Recipes({ language, staffName, staffList, storeLocation, isAtDDMau, geoChecking, geoError }) {
     const [expandedRecipe, setExpandedRecipe] = useState(null);
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
-    // Screenshot protection — blur recipes when app loses focus.
-    // Hooks MUST be declared at the top, before any conditional returns
-    // (access-denied / password prompt) — otherwise React's hook order
-    // shifts on the render after unlock and the Edit/Add form never mounts.
+    // Screenshot protection — blur recipes when app loses focus or when devtools
+    // appears to be open. Hooks MUST be declared at the top, before any
+    // conditional returns — otherwise React's hook order shifts on the render
+    // after unlock and the Edit/Add form never mounts.
     const [screenBlurred, setScreenBlurred] = useState(false);
+    // Re-PIN gate — when stale, all recipes are blurred until staff re-enters
+    // their own PIN. Counts: time since last successful unlock.
+    const [lastUnlockAt, setLastUnlockAt] = useState(() => Date.now());
+    const [pinPromptOpen, setPinPromptOpen] = useState(false);
+    const [pinInput, setPinInput] = useState('');
+    const [pinError, setPinError] = useState('');
+    // Pending-recipe-id we tried to expand right before the PIN prompt fired.
+    // We re-open it after a successful unlock so the user doesn't lose context.
+    const [pendingExpandId, setPendingExpandId] = useState(null);
+    const autoCollapseTimerRef = useRef(null);
+
     useEffect(() => {
         const handleVisChange = () => {
             if (document.hidden) setScreenBlurred(true);
@@ -169,6 +187,45 @@ export default function Recipes({ language, staffName, staffList }) {
             window.removeEventListener('focus', handleFocus);
         };
     }, []);
+
+    // DevTools heuristic — when the user pops open Chrome/Safari inspector at
+    // the bottom or side, the viewport's outerHeight/innerHeight gap widens.
+    // Not bulletproof (undocked devtools window won't trigger; mobile Safari
+    // remote-debug can't be detected at all), but catches the casual "open
+    // inspector and copy text" path. Polled every 1s.
+    useEffect(() => {
+        const check = () => {
+            const widthDelta = (window.outerWidth || 0) - (window.innerWidth || 0);
+            const heightDelta = (window.outerHeight || 0) - (window.innerHeight || 0);
+            if (widthDelta > DEVTOOLS_THRESHOLD || heightDelta > DEVTOOLS_THRESHOLD) {
+                setScreenBlurred(true);
+            }
+        };
+        const id = setInterval(check, 1000);
+        return () => clearInterval(id);
+    }, []);
+
+    // Auto-collapse — close the open recipe after 90s of no scroll/touch/click.
+    // Reduces the "phone left face-up on the prep counter" attack window.
+    useEffect(() => {
+        if (!expandedRecipe) {
+            if (autoCollapseTimerRef.current) clearTimeout(autoCollapseTimerRef.current);
+            return;
+        }
+        const reset = () => {
+            if (autoCollapseTimerRef.current) clearTimeout(autoCollapseTimerRef.current);
+            autoCollapseTimerRef.current = setTimeout(() => {
+                setExpandedRecipe(null);
+            }, AUTO_COLLAPSE_MS);
+        };
+        reset();
+        const events = ['scroll', 'touchstart', 'touchmove', 'mousemove', 'click', 'keydown'];
+        events.forEach(ev => window.addEventListener(ev, reset, { passive: true }));
+        return () => {
+            if (autoCollapseTimerRef.current) clearTimeout(autoCollapseTimerRef.current);
+            events.forEach(ev => window.removeEventListener(ev, reset));
+        };
+    }, [expandedRecipe]);
 
     // Scale ingredient quantities. Handles:
     //   - Plain integers, decimals: "12", "12.5"
@@ -241,6 +298,78 @@ export default function Recipes({ language, staffName, staffList }) {
     // staff at "access denied" after they click a visible link. Edit and
     // delete remain admin-only (gated separately in requestEdit/Delete).
     const hasRecipesAccess = adminUser || !currentStaffRecord || currentStaffRecord.recipesAccess !== false;
+
+    // Geofence gate. Admin bypasses (so Andrew/Julie can review recipes
+    // anywhere). Off-premises = hard block. Permission-denied / unavailable
+    // falls back to ALLOW so that staff who decline the location prompt
+    // aren't permanently locked out — but still gets logged so we can spot
+    // the pattern in the audit trail.
+    const geoAllowed = adminUser || isAtDDMau || (geoError && geoError !== null);
+    const geoStatusKind = adminUser
+        ? 'admin'
+        : geoChecking ? 'checking'
+        : isAtDDMau ? 'inside'
+        : geoError === 'denied' ? 'denied'
+        : geoError ? 'error'
+        : 'outside';
+
+    // Re-PIN — if it's been > REPIN_INTERVAL_MS since last unlock, the next
+    // expand attempt is intercepted and a PIN prompt shown.
+    const stalePin = (Date.now() - lastUnlockAt) > REPIN_INTERVAL_MS;
+    const requestExpand = (recipeId) => {
+        // Already open → just close it, no PIN needed.
+        if (expandedRecipe === recipeId) {
+            setExpandedRecipe(null);
+            return;
+        }
+        if (stalePin) {
+            setPendingExpandId(recipeId);
+            setPinInput('');
+            setPinError('');
+            setPinPromptOpen(true);
+            return;
+        }
+        setExpandedRecipe(recipeId);
+    };
+    const submitPin = () => {
+        const expected = String(currentStaffRecord?.pin || '').trim();
+        if (!expected) {
+            // No PIN on record (e.g. local DEFAULT_STAFF entry) — allow but log.
+            setLastUnlockAt(Date.now());
+            setPinPromptOpen(false);
+            if (pendingExpandId != null) setExpandedRecipe(pendingExpandId);
+            setPendingExpandId(null);
+            return;
+        }
+        if (String(pinInput).trim() === expected) {
+            setLastUnlockAt(Date.now());
+            setPinPromptOpen(false);
+            if (pendingExpandId != null) setExpandedRecipe(pendingExpandId);
+            setPendingExpandId(null);
+            setPinInput('');
+            setPinError('');
+        } else {
+            setPinError(language === 'es' ? 'PIN incorrecto' : 'Wrong PIN');
+        }
+    };
+
+    // View logging. On every successful expand, write to recipe_views.
+    // Admins are logged too — useful for "did Julie open Lo Mein this week".
+    useEffect(() => {
+        if (!expandedRecipe) return;
+        const r = recipes.find(rr => rr.id === expandedRecipe);
+        if (!r) return;
+        addDoc(collection(db, 'recipe_views'), {
+            staffName: staffName || 'unknown',
+            recipeId: expandedRecipe,
+            recipeTitle: r.titleEn || '',
+            isAdmin: !!adminUser,
+            storeLocation: storeLocation || '',
+            geoStatus: geoStatusKind,
+            userAgent: typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '',
+            viewedAt: serverTimestamp(),
+        }).catch(err => console.warn('recipe view log failed:', err));
+    }, [expandedRecipe, recipes, staffName, adminUser, storeLocation, geoStatusKind]);
 
     // Load recipes from Firestore
     useEffect(() => {
@@ -356,6 +485,27 @@ export default function Recipes({ language, staffName, staffList }) {
         );
     }
 
+    // Geofence gate — admin bypasses, geo-error allows, off-premises blocks.
+    if (!geoAllowed) {
+        return (
+            <div className="p-4 pb-bottom-nav">
+                <div className="max-w-sm mx-auto mt-16 text-center">
+                    <div className="text-6xl mb-4">📍</div>
+                    <h2 className="text-xl font-bold text-gray-800 mb-2">
+                        {language === "es" ? "Solo en el restaurante" : "On-premises only"}
+                    </h2>
+                    <p className="text-gray-500 text-sm">
+                        {geoChecking
+                            ? (language === "es" ? "Verificando ubicación..." : "Checking your location...")
+                            : (language === "es"
+                                ? "Las recetas están disponibles solo cuando estás en DD Mau Webster Groves o Maryland Heights."
+                                : "Recipes are available only while you're at DD Mau Webster Groves or Maryland Heights.")}
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     if (editMode) {
         return <RecipeForm
             language={language}
@@ -365,8 +515,71 @@ export default function Recipes({ language, staffName, staffList }) {
         />;
     }
 
+    // Status pill copy — visible at top of Recipes so staff sees the geofence is live.
+    const pillTone = {
+        admin:    'bg-purple-50 text-purple-700 border-purple-200',
+        inside:   'bg-green-50 text-green-700 border-green-200',
+        checking: 'bg-gray-50 text-gray-600 border-gray-200',
+        denied:   'bg-amber-50 text-amber-700 border-amber-200',
+        error:    'bg-amber-50 text-amber-700 border-amber-200',
+        outside:  'bg-red-50 text-red-700 border-red-200',
+    }[geoStatusKind];
+    const pillCopy = (() => {
+        if (geoStatusKind === 'admin')    return language === 'es' ? '🔑 Admin · acceso completo' : '🔑 Admin · full access';
+        if (geoStatusKind === 'inside')   return language === 'es' ? '📍 En el restaurante ✓' : '📍 At the restaurant ✓';
+        if (geoStatusKind === 'checking') return language === 'es' ? '📍 Verificando ubicación...' : '📍 Checking location...';
+        if (geoStatusKind === 'denied')   return language === 'es' ? '📍 Permiso denegado · acceso permitido pero registrado' : '📍 Location denied · allowed but logged';
+        if (geoStatusKind === 'error')    return language === 'es' ? '📍 Ubicación no disponible · acceso permitido pero registrado' : '📍 Location unavailable · allowed but logged';
+        return language === 'es' ? '📍 Fuera del restaurante' : '📍 Off-premises';
+    })();
+    // Watermark — staff name + today's date burned in. Makes screenshot reposts self-incriminating.
+    const watermarkText = (() => {
+        const d = new Date();
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mm = String(d.getMinutes()).padStart(2, '0');
+        return `${staffName || 'unknown'} · ${y}-${m}-${day} ${hh}:${mm}`;
+    })();
+
     return (
         <div className={`p-4 pb-bottom-nav recipe-protected ${screenBlurred ? "screen-blur" : ""}`} onContextMenu={e => e.preventDefault()}>
+            {pinPromptOpen && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+                    <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3">
+                        <h3 className="text-base font-bold text-mint-700">🔐 {language === 'es' ? 'Ingresa tu PIN' : 'Enter your PIN'}</h3>
+                        <p className="text-xs text-gray-600">
+                            {language === 'es'
+                                ? 'Por seguridad, ingresa tu PIN cada 5 minutos para abrir una receta.'
+                                : 'For security, re-enter your PIN every 5 minutes to open a recipe.'}
+                        </p>
+                        <input
+                            type="password"
+                            inputMode="numeric"
+                            autoFocus
+                            value={pinInput}
+                            onChange={(e) => { setPinInput(e.target.value); setPinError(''); }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') submitPin(); }}
+                            className="w-full border border-gray-300 rounded px-3 py-2 text-center text-xl tracking-widest"
+                            placeholder="••••" />
+                        {pinError && <p className="text-xs text-red-600 text-center">{pinError}</p>}
+                        <div className="flex gap-2">
+                            <button onClick={() => { setPinPromptOpen(false); setPendingExpandId(null); setPinInput(''); }}
+                                className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold">
+                                {language === 'es' ? 'Cancelar' : 'Cancel'}
+                            </button>
+                            <button onClick={submitPin}
+                                className="flex-1 py-2 rounded-lg bg-mint-700 text-white text-sm font-bold">
+                                {language === 'es' ? 'Desbloquear' : 'Unlock'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            <div className={`mb-2 inline-flex items-center gap-2 text-[11px] font-bold px-2 py-1 rounded-full border ${pillTone}`}>
+                {pillCopy}
+            </div>
             <div className="flex items-center justify-between mb-2">
                 <h2 className="text-2xl font-bold text-mint-700">🧑‍🍳 {t("recipesTitle", language)}</h2>
                 {adminUser && (
@@ -387,8 +600,8 @@ export default function Recipes({ language, staffName, staffList }) {
             </div>
             <p className="text-xs text-gray-500 mb-4 bg-red-50 border border-red-200 rounded-lg p-2">
                 🔒 {language === "es"
-                    ? "CONFIDENCIAL — Estas recetas son propiedad de DD Mau. No tomes capturas de pantalla, fotos ni compartas fuera del restaurante. Tu nombre está registrado en cada vista."
-                    : "CONFIDENTIAL — These recipes are DD Mau property. Do not screenshot, photograph, or share outside the restaurant. Your name is logged on every view."}
+                    ? "CONFIDENCIAL — Recetas propiedad de DD Mau. No tomes capturas, fotos ni compartas. Cada vista (quién, cuándo, dónde) queda registrada para auditoría. Las capturas tienen una marca de agua con tu nombre."
+                    : "CONFIDENTIAL — DD Mau property. No screenshots, photos, or sharing. Every view (who, when, where) is logged for audit. Screenshots are watermarked with your name."}
             </p>
 
             {recipes.map(recipe => {
@@ -397,7 +610,7 @@ export default function Recipes({ language, staffName, staffList }) {
                     <div key={recipe.id} className="mb-3 bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
                         <div
                             className="p-4 cursor-pointer bg-gradient-to-r from-amber-50 to-white"
-                            onClick={() => setExpandedRecipe(isExpanded ? null : recipe.id)}
+                            onClick={() => requestExpand(recipe.id)}
                         >
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
@@ -414,7 +627,7 @@ export default function Recipes({ language, staffName, staffList }) {
                         </div>
 
                         {isExpanded && (
-                            <div className="border-t border-gray-200 p-4 recipe-watermark overflow-hidden" data-watermark={staffName}>
+                            <div className="border-t border-gray-200 p-4 recipe-watermark overflow-hidden" data-watermark={watermarkText}>
                                 {adminUser && (
                                     <div className="flex gap-2 mb-3">
                                         <button onClick={(e) => { e.stopPropagation(); requestEdit(recipe); }} className="text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-full font-bold border border-amber-300">

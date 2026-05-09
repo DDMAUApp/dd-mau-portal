@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
@@ -41,6 +41,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Two-step confirmation for the System Refresh broadcast.
             // First tap arms the button; second tap (within 10s) fires it.
             const [confirmingRefresh, setConfirmingRefresh] = useState(false);
+            // Recipe view audit log — most recent N opens. Used in the
+            // "Recipe Audit" panel below; collected by Recipes.jsx on every
+            // accordion expand.
+            const [recipeViews, setRecipeViews] = useState([]);
+            const [showAllViews, setShowAllViews] = useState(false);
+            // Heavy history panels are collapsed by default — they were
+            // dominating the admin page and forcing people to scroll past
+            // hundreds of rows to reach the more important controls.
+            const [checklistHistoryExpanded, setChecklistHistoryExpanded] = useState(false);
+            const [inventoryHistoryExpanded, setInventoryHistoryExpanded] = useState(false);
             useEffect(() => {
                 if (!confirmingRefresh) return;
                 const t = setTimeout(() => setConfirmingRefresh(false), 10000);
@@ -203,6 +213,22 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 return () => unsub();
             }, []);
 
+            // Recipe view audit — last 200. Sorted client-side because
+            // serverTimestamp() can be momentarily null on the writer's
+            // own snapshot before round-trip; we sort by it once it lands.
+            useEffect(() => {
+                const unsub = onSnapshot(
+                    query(collection(db, "recipe_views"), orderBy("viewedAt", "desc"), limit(200)),
+                    (snap) => {
+                        const arr = [];
+                        snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+                        setRecipeViews(arr);
+                    },
+                    (err) => { console.warn("Error loading recipe views:", err); }
+                );
+                return () => unsub();
+            }, []);
+
             const updateRequestStatus = async (reqId, newStatus) => {
                 try {
                     const updates = { status: newStatus, updatedAt: new Date().toISOString() };
@@ -222,6 +248,53 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     setAdminNote("");
                     showSaved();
                 } catch (err) { console.error("Error adding note:", err); }
+            };
+
+            // Delete a single maintenance request. Hard delete — no archive.
+            // Confirm prompt because this is permanent.
+            const deleteMaintenanceRequest = async (reqId) => {
+                if (!confirm(language === "es"
+                    ? "¿Eliminar esta solicitud permanentemente?"
+                    : "Delete this request permanently?")) return;
+                try {
+                    await deleteDoc(doc(db, "maintenanceRequests", reqId));
+                    showSaved();
+                } catch (err) {
+                    console.error("Error deleting request:", err);
+                    alert((language === "es" ? "Error al eliminar: " : "Delete failed: ") + (err.message || err));
+                }
+            };
+
+            // Bulk-clear: delete every "completed" or "declined" request
+            // (optionally restricted to the active maintenance filter). Two-step
+            // confirm — staff lose audit trail. Uses a Firestore batch (max 500
+            // ops) so cleanup is atomic.
+            const clearOldMaintenanceRequests = async () => {
+                const targets = filteredMaintenance.filter(r => r.status === "completed" || r.status === "declined");
+                if (targets.length === 0) {
+                    alert(language === "es"
+                        ? "No hay solicitudes completadas o rechazadas para eliminar."
+                        : "No completed/declined requests to delete.");
+                    return;
+                }
+                const msg = language === "es"
+                    ? `Eliminar permanentemente ${targets.length} solicitud(es) completadas/rechazadas? No se puede deshacer.`
+                    : `Permanently delete ${targets.length} completed/declined request(s)? Cannot be undone.`;
+                if (!confirm(msg)) return;
+                try {
+                    // Chunk into batches of 450 to stay safely under Firestore's 500-op cap.
+                    for (let i = 0; i < targets.length; i += 450) {
+                        const chunk = targets.slice(i, i + 450);
+                        const batch = writeBatch(db);
+                        chunk.forEach(r => batch.delete(doc(db, "maintenanceRequests", r.id)));
+                        await batch.commit();
+                    }
+                    alert((language === "es" ? "Eliminadas: " : "Deleted: ") + targets.length);
+                    showSaved();
+                } catch (err) {
+                    console.error("Error clearing requests:", err);
+                    alert((language === "es" ? "Error: " : "Error: ") + (err.message || err));
+                }
             };
 
             const saveStaffToFirestore = async (updatedList) => {
@@ -347,7 +420,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
                         {maintenanceExpanded && (
                             <div className="mt-2 space-y-2">
-                                <div className="flex gap-1 justify-center">
+                                <div className="flex gap-1 justify-center flex-wrap">
                                     {[{k:"all",en:"All Locations",es:"Todas"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
                                         <button key={f.k} onClick={() => setMaintFilter(f.k)}
                                             className={`px-3 py-1 rounded-full text-xs font-bold border transition ${maintFilter === f.k ? "bg-red-600 text-white border-red-600" : "bg-white text-red-600 border-red-300 hover:bg-red-50"}`}>
@@ -356,6 +429,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         </button>
                                     ))}
                                 </div>
+                                {/* Bulk-clear: deletes every completed/declined request in the
+                                    current filter. Shown only when there's something to delete. */}
+                                {filteredMaintenance.some(r => r.status === "completed" || r.status === "declined") && (
+                                    <div className="flex justify-center">
+                                        <button onClick={clearOldMaintenanceRequests}
+                                            className="text-xs font-bold px-3 py-1 rounded-full border border-red-300 text-red-600 bg-white hover:bg-red-50">
+                                            🗑️ {language === "es"
+                                                ? `Limpiar completadas/rechazadas (${filteredMaintenance.filter(r => r.status === "completed" || r.status === "declined").length})`
+                                                : `Clear completed/declined (${filteredMaintenance.filter(r => r.status === "completed" || r.status === "declined").length})`}
+                                        </button>
+                                    </div>
+                                )}
                                 {filteredMaintenance.length === 0 ? (
                                     <p className="text-center text-gray-400 text-sm py-4">{language === "es" ? "No hay solicitudes" : "No requests yet"}</p>
                                 ) : <div className="md:grid md:grid-cols-2 md:gap-2 space-y-2 md:space-y-0">{filteredMaintenance.map(req => {
@@ -426,6 +511,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             </button>
                                                         )}
                                                     </div>
+                                                    {/* Permanent delete — separate row so it's not adjacent to "Done"
+                                                        (avoids accidental misclick). Confirms via deleteMaintenanceRequest. */}
+                                                    <button onClick={() => deleteMaintenanceRequest(req.id)}
+                                                        className="w-full py-1.5 bg-white border border-red-300 text-red-600 rounded text-xs font-bold hover:bg-red-50">
+                                                        🗑️ {language === "es" ? "Eliminar permanentemente" : "Delete permanently"}
+                                                    </button>
                                                 </div>
                                             )}
                                         </div>
@@ -735,22 +826,44 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         )}
                     </div>
 
-                    {/* Checklist History Section */}
+                    {/* Checklist History Section — collapsed by default. The
+                        rendered list is hundreds of rows long; mounting it on
+                        every Admin visit pushed the more important controls way
+                        below the fold. Now: header bar opens / closes; the
+                        component itself is unmounted while collapsed so its
+                        Firestore subscription doesn't run when nobody's looking. */}
                     <div className="mt-8 pt-6 border-t-2 border-gray-200">
-                        <h3 className="text-xl font-bold text-mint-700 mb-1">📋 {language === "es" ? "Historial de Listas" : "Checklist History"}</h3>
-                        <p className="text-xs text-gray-500 mb-4">{language === "es"
-                            ? "Revisa las listas de apertura y cierre de días anteriores"
-                            : "Review opening and closing checklists from previous days"}</p>
-                        <ChecklistHistory language={language} storeLocation={storeLocation} />
+                        <button onClick={() => setChecklistHistoryExpanded(v => !v)}
+                            className="w-full flex items-center justify-between text-left">
+                            <div>
+                                <h3 className="text-xl font-bold text-mint-700 mb-1">📋 {language === "es" ? "Historial de Listas" : "Checklist History"}</h3>
+                                <p className="text-xs text-gray-500">{language === "es"
+                                    ? "Revisa las listas de apertura y cierre de días anteriores"
+                                    : "Review opening and closing checklists from previous days"}</p>
+                            </div>
+                            <span className="text-gray-400 text-xl ml-2">{checklistHistoryExpanded ? "▼" : "▶"}</span>
+                        </button>
+                        {checklistHistoryExpanded && (
+                            <div className="mt-3"><ChecklistHistory language={language} storeLocation={storeLocation} /></div>
+                        )}
                     </div>
 
-                    {/* Inventory History Section */}
+                    {/* Inventory History Section — collapsed by default for the
+                        same reason as Checklist History. */}
                     <div className="mt-8 pt-6 border-t-2 border-gray-200">
-                        <h3 className="text-xl font-bold text-mint-700 mb-1">📦 {language === "es" ? "Historial de Inventario" : "Inventory History"}</h3>
-                        <p className="text-xs text-gray-500 mb-4">{language === "es"
-                            ? "Revisa los conteos de inventario de días anteriores. Los cambios vs el día anterior se muestran en verde/rojo."
-                            : "Review inventory counts from previous days. Changes vs the prior day are shown in green/red."}</p>
-                        <InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} />
+                        <button onClick={() => setInventoryHistoryExpanded(v => !v)}
+                            className="w-full flex items-center justify-between text-left">
+                            <div>
+                                <h3 className="text-xl font-bold text-mint-700 mb-1">📦 {language === "es" ? "Historial de Inventario" : "Inventory History"}</h3>
+                                <p className="text-xs text-gray-500">{language === "es"
+                                    ? "Revisa los conteos de inventario de días anteriores. Los cambios vs el día anterior se muestran en verde/rojo."
+                                    : "Review inventory counts from previous days. Changes vs the prior day are shown in green/red."}</p>
+                            </div>
+                            <span className="text-gray-400 text-xl ml-2">{inventoryHistoryExpanded ? "▼" : "▶"}</span>
+                        </button>
+                        {inventoryHistoryExpanded && (
+                            <div className="mt-3"><InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} /></div>
+                        )}
                     </div>
 
                     {/* ── Availability Editor Modal ── */}
@@ -1022,6 +1135,87 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             className="w-full py-2 rounded-lg bg-purple-700 text-white font-bold">{language === "es" ? "Listo" : "Done"}</button>
                                     </div>
                                 </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* ── RECIPE AUDIT — who opened what, when, where ────────────────
+                        Real audit trail backing the "Your name is logged on every
+                        view" disclaimer in Recipes.jsx. Each accordion expand writes
+                        to /recipe_views {staffName, recipeTitle, viewedAt, geoStatus,
+                        userAgent}. If a recipe ever leaks, we have a starting point. */}
+                    {(() => {
+                        const shown = showAllViews ? recipeViews : recipeViews.slice(0, 25);
+                        const fmtTime = (ts) => {
+                            if (!ts) return '—';
+                            try {
+                                const d = ts.toDate ? ts.toDate() : new Date(ts);
+                                return d.toLocaleString(language === 'es' ? 'es' : 'en', {
+                                    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                                });
+                            } catch { return '—'; }
+                        };
+                        const geoBadge = (k) => {
+                            if (k === 'inside')   return { c: 'bg-green-100 text-green-700',  t: language === 'es' ? 'En tienda' : 'In-store' };
+                            if (k === 'admin')    return { c: 'bg-purple-100 text-purple-700', t: 'Admin' };
+                            if (k === 'denied')   return { c: 'bg-amber-100 text-amber-700',  t: language === 'es' ? 'GPS denegado' : 'GPS denied' };
+                            if (k === 'error')    return { c: 'bg-amber-100 text-amber-700',  t: language === 'es' ? 'GPS error' : 'GPS err' };
+                            if (k === 'outside')  return { c: 'bg-red-100 text-red-700',      t: language === 'es' ? 'Fuera' : 'Off-prem' };
+                            return { c: 'bg-gray-100 text-gray-600', t: '—' };
+                        };
+                        return (
+                            <div className="mt-6 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xl">🔍</span>
+                                        <h3 className="text-base font-bold text-gray-800">
+                                            {language === 'es' ? 'Auditoría de recetas' : 'Recipe view audit'}
+                                        </h3>
+                                    </div>
+                                    <span className="text-[10px] text-gray-400">{recipeViews.length} {language === 'es' ? 'recientes' : 'recent'}</span>
+                                </div>
+                                <p className="text-[11px] text-gray-500 mb-3">
+                                    {language === 'es'
+                                        ? 'Cada vez que alguien abre una receta queda registrado: quién, qué, cuándo y desde dónde.'
+                                        : 'Every time anyone opens a recipe it\'s logged: who, what, when, and from where.'}
+                                </p>
+                                {recipeViews.length === 0 ? (
+                                    <p className="text-xs text-gray-400 italic">{language === 'es' ? 'Sin vistas registradas todavía.' : 'No views recorded yet.'}</p>
+                                ) : (
+                                    <div className="overflow-x-auto -mx-2">
+                                        <table className="w-full text-[11px]">
+                                            <thead>
+                                                <tr className="text-gray-500 border-b">
+                                                    <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Hora' : 'Time'}</th>
+                                                    <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Empleado' : 'Staff'}</th>
+                                                    <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Receta' : 'Recipe'}</th>
+                                                    <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Ubicación' : 'Location'}</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {shown.map(v => {
+                                                    const g = geoBadge(v.geoStatus);
+                                                    return (
+                                                        <tr key={v.id} className="border-b last:border-0">
+                                                            <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{fmtTime(v.viewedAt)}</td>
+                                                            <td className="px-2 py-1 text-gray-800 font-medium">{v.staffName || '—'}</td>
+                                                            <td className="px-2 py-1 text-gray-700">{v.recipeTitle || `#${v.recipeId}`}</td>
+                                                            <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded ${g.c} font-semibold`}>{g.t}</span></td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                                {recipeViews.length > 25 && (
+                                    <button onClick={() => setShowAllViews(s => !s)}
+                                        className="mt-2 text-[11px] font-bold text-mint-700">
+                                        {showAllViews
+                                            ? (language === 'es' ? 'Mostrar menos' : 'Show less')
+                                            : (language === 'es' ? `Ver todas (${recipeViews.length})` : `View all (${recipeViews.length})`)}
+                                    </button>
+                                )}
                             </div>
                         );
                     })()}

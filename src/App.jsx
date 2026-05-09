@@ -595,10 +595,7 @@ export default function App() {
                                         <div style={{width: "44px", height: "44px", background: "#374151", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🔒</div>
                                         <p style={{fontSize: "13px", fontWeight: 700, color: "#6b7280", margin: 0}}>{t("recipesTitle", language)}</p>
                                         <p style={{fontSize: "10px", color: "#4b5563", margin: "2px 0 0"}}>
-                                            {geoChecking ? (language === "es" ? "Verificando..." : "Checking...") :
-                                             geoError === "denied" ? (language === "es" ? "Ubicacion denegada" : "Location denied") :
-                                             geoError ? (language === "es" ? "No disponible" : "Unavailable") :
-                                             (language === "es" ? "Solo en DD Mau" : "In-store only")}
+                                            {language === "es" ? "Acceso por administrador" : "Admin access required"}
                                         </p>
                                     </div>
                                 )}
@@ -649,7 +646,7 @@ export default function App() {
                         {activeTab === "operations" && hasOpsAccess && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />}
-                        {activeTab === "recipes" && hasRecipesAccess && <Recipes language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "recipes" && hasRecipesAccess && <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} />}
                         {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}

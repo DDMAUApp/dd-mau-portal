@@ -66,33 +66,33 @@ body {
 }
 
 .recipe-watermark::before {
-    content: attr(data-watermark) " \00B7  " attr(data-watermark) " \00B7  " attr(data-watermark);
+    content: attr(data-watermark) "   \00B7   " attr(data-watermark);
     position: absolute;
-    top: 20%;
-    left: -10%;
-    transform: rotate(-25deg);
-    font-size: 1.4rem;
+    top: 15%;
+    left: -20%;
+    transform: rotate(-22deg);
+    font-size: 1.05rem;
     font-weight: 800;
-    color: rgba(0,0,0,0.06);
+    color: rgba(0,0,0,0.075);
     white-space: nowrap;
     pointer-events: none;
     z-index: 1;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
 }
 
 .recipe-watermark::after {
-    content: attr(data-watermark) " \00B7  " attr(data-watermark) " \00B7  " attr(data-watermark);
+    content: attr(data-watermark) "   \00B7   " attr(data-watermark);
     position: absolute;
-    top: 60%;
-    left: -5%;
-    transform: rotate(-25deg);
-    font-size: 1.4rem;
+    top: 55%;
+    left: -15%;
+    transform: rotate(-22deg);
+    font-size: 1.05rem;
     font-weight: 800;
-    color: rgba(0,0,0,0.06);
+    color: rgba(0,0,0,0.075);
     white-space: nowrap;
     pointer-events: none;
     z-index: 1;
-    letter-spacing: 0.1em;
+    letter-spacing: 0.08em;
 }
 
 .screen-blur {
