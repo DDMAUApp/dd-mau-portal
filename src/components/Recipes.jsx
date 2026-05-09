@@ -9,8 +9,6 @@ import { MASTER_RECIPES } from '../data/masterRecipes';
 const REPIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 // Auto-collapse — after this many ms of no activity, expanded recipe closes.
 const AUTO_COLLAPSE_MS = 90 * 1000; // 90s
-// DevTools heuristic — if outerHeight - innerHeight grows past this, assume devtools panel opened.
-const DEVTOOLS_THRESHOLD = 200;
 // "Quick blur" window — iOS taking a screenshot causes a brief blur → focus
 // pattern (the system grabs focus to show the screenshot thumbnail). If a
 // blur event is followed by focus inside this window, we count it as a
@@ -161,13 +159,13 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
-    // Screenshot protection — blur recipes when app loses focus or when devtools
-    // appears to be open. Hooks MUST be declared at the top, before any
-    // conditional returns — otherwise React's hook order shifts on the render
-    // after unlock and the Edit/Add form never mounts.
-    const [screenBlurred, setScreenBlurred] = useState(false);
-    // Re-PIN gate — when stale, all recipes are blurred until staff re-enters
-    // their own PIN. Counts: time since last successful unlock.
+    // Auto-blur was removed (2026-05-09): on iOS the URL bar collapsing on
+    // input focus, and the soft-keyboard appearing in the recipe editor,
+    // both trip the blur/focus and devtools heuristics. Result: the page
+    // would blur out mid-typing (e.g. when entering "1/3" in a quantity
+    // field). Watermark + view logging + screenshot-shortcut COUNTS still
+    // apply — we just don't visually blur the page anymore.
+    // Re-PIN gate — counts time since last successful unlock.
     const [lastUnlockAt, setLastUnlockAt] = useState(() => Date.now());
     const [pinPromptOpen, setPinPromptOpen] = useState(false);
     const [pinInput, setPinInput] = useState('');
@@ -176,40 +174,6 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // We re-open it after a successful unlock so the user doesn't lose context.
     const [pendingExpandId, setPendingExpandId] = useState(null);
     const autoCollapseTimerRef = useRef(null);
-
-    useEffect(() => {
-        const handleVisChange = () => {
-            if (document.hidden) setScreenBlurred(true);
-            else setTimeout(() => setScreenBlurred(false), 300);
-        };
-        const handleBlur = () => setScreenBlurred(true);
-        const handleFocus = () => setTimeout(() => setScreenBlurred(false), 300);
-        document.addEventListener('visibilitychange', handleVisChange);
-        window.addEventListener('blur', handleBlur);
-        window.addEventListener('focus', handleFocus);
-        return () => {
-            document.removeEventListener('visibilitychange', handleVisChange);
-            window.removeEventListener('blur', handleBlur);
-            window.removeEventListener('focus', handleFocus);
-        };
-    }, []);
-
-    // DevTools heuristic — when the user pops open Chrome/Safari inspector at
-    // the bottom or side, the viewport's outerHeight/innerHeight gap widens.
-    // Not bulletproof (undocked devtools window won't trigger; mobile Safari
-    // remote-debug can't be detected at all), but catches the casual "open
-    // inspector and copy text" path. Polled every 1s.
-    useEffect(() => {
-        const check = () => {
-            const widthDelta = (window.outerWidth || 0) - (window.innerWidth || 0);
-            const heightDelta = (window.outerHeight || 0) - (window.innerHeight || 0);
-            if (widthDelta > DEVTOOLS_THRESHOLD || heightDelta > DEVTOOLS_THRESHOLD) {
-                setScreenBlurred(true);
-            }
-        };
-        const id = setInterval(check, 1000);
-        return () => clearInterval(id);
-    }, []);
 
     // Auto-collapse — close the open recipe after 90s of no scroll/touch/click.
     // Reduces the "phone left face-up on the prep counter" attack window.
@@ -469,11 +433,10 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                         lastScreenshotShortcutAt: serverTimestamp(),
                     }).catch(() => {});
                 }
-                // Also blur the page so even if the OS captures, the recipe
-                // is hidden behind a blur in that capture (best-effort — the
-                // shortcut may capture the pre-blur frame).
-                setScreenBlurred(true);
-                setTimeout(() => setScreenBlurred(false), 800);
+                // (Was: briefly blur the page on screenshot shortcut. Removed
+                // because the same visual blur was tripping during normal
+                // typing on iOS. The shortcut press itself is still LOGGED
+                // to the audit panel even without the blur.)
             }
         };
 
@@ -660,7 +623,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     })();
 
     return (
-        <div className={`p-4 pb-bottom-nav recipe-protected ${screenBlurred ? "screen-blur" : ""}`} onContextMenu={e => e.preventDefault()}>
+        <div className="p-4 pb-bottom-nav recipe-protected" onContextMenu={e => e.preventDefault()}>
             {pinPromptOpen && (
                 <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
                     <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3">
