@@ -280,6 +280,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // a chip = shift created. "✏️" chip falls back to the full modal for
     // anything custom. Cleared on cell-click elsewhere or Esc.
     const [quickAddCell, setQuickAddCell] = useState(null); // { staff, dateStr } | null
+    // Publish preview modal — opened by the "Publish drafts" button. Holds
+    // the precomputed list of drafts + audit warnings so the manager can
+    // SEE every shift before it goes live (vs the old native confirm()
+    // dialog that just showed a count).
+    const [publishPreview, setPublishPreview] = useState(null);
     // Esc closes the quick-add chip strip without committing anything.
     // Mounts once; re-checks `quickAddCell` via the closure on every keydown.
     useEffect(() => {
@@ -1677,16 +1682,17 @@ ${dayBlocks}
     };
 
     // ── Phase 3: bulk publish drafts in current week + side ──
-    const handlePublishDrafts = async () => {
+    // Step 1 of publish — collect the drafts + audit, open the preview modal.
+    // The actual write happens in confirmPublishDrafts after the manager
+    // sees what they're about to publish (and can cancel if anything
+    // looks wrong).
+    const handlePublishDrafts = () => {
         if (!canEdit) return;
         const drafts = visibleShifts.filter(s => s.published === false);
         if (drafts.length === 0) {
             alert(tx('No drafts to publish.', 'Sin borradores para publicar.'));
             return;
         }
-        // Audit any open / over-filled staffing needs for this week + side and surface
-        // them in the confirm dialog. The user can still publish — it's a warning,
-        // not a block — but they're aware of gaps before staff get notified.
         const weekStartStr = toDateStr(weekStart);
         const weekEndStr = toDateStr(addDays(weekStart, 7));
         const relevantNeeds = staffingNeeds.filter(n =>
@@ -1695,24 +1701,13 @@ ${dayBlocks}
         );
         const underFilled = relevantNeeds.filter(n => (n.filledStaff || []).length < (n.count || 0));
         const overFilled = relevantNeeds.filter(n => (n.filledStaff || []).length > (n.count || 0));
-        let warningMsg = '';
-        if (underFilled.length > 0) {
-            warningMsg += '\n\n⚠️ ' + tx(`${underFilled.length} need(s) UNDER-FILLED:`, `${underFilled.length} necesidad(es) SIN COMPLETAR:`);
-            for (const n of underFilled.slice(0, 5)) {
-                warningMsg += `\n  · ${n.date} ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}: ${(n.filledStaff || []).length}/${n.count}`;
-            }
-            if (underFilled.length > 5) warningMsg += `\n  · ${tx(`...and ${underFilled.length - 5} more`, `...y ${underFilled.length - 5} más`)}`;
-        }
-        if (overFilled.length > 0) {
-            warningMsg += '\n\n⚠️ ' + tx(`${overFilled.length} need(s) OVER-FILLED:`, `${overFilled.length} necesidad(es) EXCEDIDAS:`);
-            for (const n of overFilled.slice(0, 5)) {
-                warningMsg += `\n  · ${n.date} ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}: ${(n.filledStaff || []).length}/${n.count}`;
-            }
-        }
-        if (!confirm(tx(
-            `Publish ${drafts.length} draft shift(s) for ${side === 'foh' ? 'FOH' : 'BOH'} this week?${warningMsg}`,
-            `¿Publicar ${drafts.length} turno(s) borrador para ${side === 'foh' ? 'FOH' : 'BOH'} esta semana?${warningMsg}`,
-        ))) return;
+        setPublishPreview({ drafts, underFilled, overFilled });
+    };
+
+    // Step 2 of publish — runs when the manager confirms in the preview modal.
+    const confirmPublishDrafts = async () => {
+        if (!publishPreview) return;
+        const { drafts } = publishPreview;
         try {
             const batch = writeBatch(db);
             for (const s of drafts) {
@@ -1724,6 +1719,7 @@ ${dayBlocks}
                 });
             }
             await batch.commit();
+            setPublishPreview(null);
             alert(tx(`✅ Published ${drafts.length} shifts.`, `✅ Se publicaron ${drafts.length} turnos.`));
             // Notify each staffer whose shifts were published — one notification per person.
             const byStaff = new Map();
@@ -2452,6 +2448,26 @@ ${dayBlocks}
                         openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
                     }}
                     isEn={isEn}
+                />
+            )}
+            {publishPreview && canEdit && (
+                <PublishPreviewModal
+                    preview={publishPreview}
+                    side={side}
+                    weekStart={weekStart}
+                    isEn={isEn}
+                    onCancel={() => setPublishPreview(null)}
+                    onConfirm={confirmPublishDrafts}
+                    onRemoveDraft={async (shiftId) => {
+                        // Manager spotted a bad draft in the preview — let them
+                        // delete it without leaving the modal. The list re-renders
+                        // immediately because the preview is recomputed from
+                        // visibleShifts (snapshot listener handles it).
+                        await handleDeleteShift(shiftId);
+                        setPublishPreview(prev => prev
+                            ? { ...prev, drafts: prev.drafts.filter(d => d.id !== shiftId) }
+                            : null);
+                    }}
                 />
             )}
             {showTemplateEditor && canEdit && (
@@ -4567,6 +4583,144 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
 // When manager clicks "+" on a staff cell and there are open slots that staff
 // can fill, this modal pops up first. Shows the matching slots with one-tap
 // "Assign here" buttons, plus a "custom shift instead" fallback.
+// Preview modal that pops before the actual publish write. Shows every
+// draft about to go live grouped by day, with staffing-need warnings up
+// top, and lets the manager remove a bad-looking draft inline before
+// pulling the trigger. Replaces the old native confirm() dialog which
+// just showed a count.
+function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfirm, onRemoveDraft }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const { drafts, underFilled, overFilled } = preview;
+    // Group drafts by day so the manager can scan day-by-day. Sun→Sat order
+    // matches the rest of the UI.
+    const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
+    const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
+    const draftsByDate = useMemo(() => {
+        const map = new Map();
+        for (const d of drafts) {
+            const arr = map.get(d.date) || [];
+            arr.push(d);
+            map.set(d.date, arr);
+        }
+        // Sort each day's drafts by start time so the read order matches the grid.
+        for (const arr of map.values()) {
+            arr.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+        }
+        return map;
+    }, [drafts]);
+
+    const sideLabel = side === 'foh' ? 'FOH' : 'BOH';
+    const totalHours = drafts.reduce(
+        (s, d) => s + hoursBetween(d.startTime, d.endTime, !!d.isDouble), 0);
+
+    return (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                {/* Header */}
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-bold text-mint-700">
+                            📋 {tx('Publish drafts — preview', 'Publicar borradores — vista previa')}
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                            {tx(`${drafts.length} shift${drafts.length === 1 ? '' : 's'} · ${formatHours(totalHours)} · ${sideLabel} · week of ${toDateStr(weekStart)}`,
+                                `${drafts.length} turno${drafts.length === 1 ? '' : 's'} · ${formatHours(totalHours)} · ${sideLabel} · semana del ${toDateStr(weekStart)}`)}
+                        </p>
+                    </div>
+                    <button onClick={onCancel}
+                        className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                </div>
+
+                {/* Body */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {/* Staffing-need warnings — same audit as before, formatted properly */}
+                    {(underFilled.length > 0 || overFilled.length > 0) && (
+                        <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-3 space-y-2 text-xs">
+                            {underFilled.length > 0 && (
+                                <div>
+                                    <div className="font-bold text-amber-900 mb-1">
+                                        ⚠️ {tx(`${underFilled.length} need(s) UNDER-FILLED`, `${underFilled.length} necesidad(es) SIN COMPLETAR`)}
+                                    </div>
+                                    <ul className="space-y-0.5 ml-4 text-amber-900">
+                                        {underFilled.slice(0, 6).map(n => (
+                                            <li key={n.id}>· {n.date} {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}: <b>{(n.filledStaff || []).length}/{n.count}</b></li>
+                                        ))}
+                                        {underFilled.length > 6 && <li className="text-amber-700">…+{underFilled.length - 6} {tx('more', 'más')}</li>}
+                                    </ul>
+                                </div>
+                            )}
+                            {overFilled.length > 0 && (
+                                <div>
+                                    <div className="font-bold text-amber-900 mb-1">
+                                        ⚠️ {tx(`${overFilled.length} need(s) OVER-FILLED`, `${overFilled.length} necesidad(es) EXCEDIDAS`)}
+                                    </div>
+                                    <ul className="space-y-0.5 ml-4 text-amber-900">
+                                        {overFilled.slice(0, 6).map(n => (
+                                            <li key={n.id}>· {n.date} {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}: <b>{(n.filledStaff || []).length}/{n.count}</b></li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {/* Drafts grouped by day */}
+                    {drafts.length === 0 ? (
+                        <p className="text-center text-gray-400 text-sm py-8">{tx('All drafts removed.', 'Todos los borradores eliminados.')}</p>
+                    ) : (
+                        days.map((d, i) => {
+                            const dStr = toDateStr(d);
+                            const dayDrafts = draftsByDate.get(dStr) || [];
+                            if (dayDrafts.length === 0) return null;
+                            const dayHours = dayDrafts.reduce(
+                                (s, sh) => s + hoursBetween(sh.startTime, sh.endTime, !!sh.isDouble), 0);
+                            return (
+                                <div key={i} className="rounded-lg border border-gray-200 overflow-hidden">
+                                    <div className="bg-gray-50 px-3 py-1.5 flex items-center justify-between">
+                                        <div className="text-xs font-bold text-gray-700">
+                                            {dayLabelsFull[d.getDay()]} · {d.getMonth() + 1}/{d.getDate()}
+                                        </div>
+                                        <div className="text-[10px] text-gray-500 font-bold">
+                                            {dayDrafts.length} {tx(dayDrafts.length === 1 ? 'shift' : 'shifts', dayDrafts.length === 1 ? 'turno' : 'turnos')} · {formatHours(dayHours)}
+                                        </div>
+                                    </div>
+                                    <ul className="divide-y divide-gray-100">
+                                        {dayDrafts.map(sh => (
+                                            <li key={sh.id} className="px-3 py-1.5 flex items-center gap-2 text-xs">
+                                                <span className="font-bold text-gray-800 flex-1 truncate">{sh.staffName}</span>
+                                                <span className="text-gray-600 whitespace-nowrap">{formatTime12h(sh.startTime)}–{formatTime12h(sh.endTime)}</span>
+                                                {sh.isDouble && <span title="Double">⏱</span>}
+                                                {sh.isShiftLead && <span title="Shift Lead">🛡️</span>}
+                                                <button onClick={() => onRemoveDraft(sh.id)}
+                                                    title={tx('Remove this draft (will not publish)', 'Quitar este borrador (no se publica)')}
+                                                    className="ml-1 px-1.5 py-0.5 rounded bg-red-50 border border-red-200 text-red-700 text-[10px] font-bold hover:bg-red-100">
+                                                    ✕
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            );
+                        })
+                    )}
+                </div>
+
+                {/* Footer */}
+                <div className="border-t border-gray-200 p-4 flex items-center gap-2">
+                    <button onClick={onCancel}
+                        className="flex-1 sm:flex-initial px-4 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm font-bold hover:bg-gray-300">
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
+                    <button onClick={onConfirm}
+                        disabled={drafts.length === 0}
+                        className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold text-white ${drafts.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-mint-700 hover:bg-mint-800'}`}>
+                        ✓ {tx(`Publish ${drafts.length} draft${drafts.length === 1 ? '' : 's'}`, `Publicar ${drafts.length} borrador${drafts.length === 1 ? '' : 'es'}`)}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     const { staff, dateStr, needs } = chooser;
