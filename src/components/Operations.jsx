@@ -12,8 +12,16 @@ import SauceLogBohBanner from './SauceLogBohBanner';
 import { toast } from '../toast';
 
 // Constants
+// Time-period concept (morning/afternoon/night) was tried and abandoned — only
+// "all" remains. We keep the single-period TIME_PERIODS array so the data
+// shape stays compatible (customTasks[side]["all"]) and the foreach loops
+// that walk it stay correct. Hoisted out of the component so React doesn't
+// re-allocate them on every render.
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
+const PERIOD_KEY = "all"; // the only period that ever exists
 const DEFAULT_CHECKLIST_TASKS = { FOH: { all: [] }, BOH: { all: [] } };
+const DEFAULT_LISTS = { FOH: [{ id: "FOH_0", assignee: "" }], BOH: [{ id: "BOH_0", assignee: "" }] };
+const FOH_ROLES_LIST = ["FOH", "Manager", "Owner", "Shift Lead", "Marketing"];
 const CHECKLIST_VERSION = 2;
 const BUSINESS_TZ = "America/Chicago";
 
@@ -177,8 +185,10 @@ const itemMatchesSearch = (item, searchLower) => {
 
 export default function Operations({ language, staffList, staffName, storeLocation }) {
 
-            const [passwordEntered, setPasswordEntered] = useState(false);
-            const [password, setPassword] = useState("");
+            // (Removed 2026-05-09) passwordEntered / password / handlePasswordSubmit
+            // — leftover from the shared-password Operations gate. Replaced by the
+            // hasOpsAccess opt-in toggle (admin or per-staff opsAccess === true).
+            // Nothing references these any more; commit history preserves them.
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
             // Counts for vendor-only items that aren't matched to a master inventory item.
@@ -229,7 +239,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
             const staffSide = staffIsFOH ? "FOH" : "BOH";
             const [checklistSide, setChecklistSide] = useState(currentIsAdmin ? "FOH" : staffSide);
-            const [activePeriod, setActivePeriod] = useState("all");
+            // (Removed 2026-05-09) PERIOD_KEY state — was always "all", setter
+            // was never called. Direct usages below replaced with PERIOD_KEY.
             const [checks, setChecksRaw] = useState({});
             const checksRef = useRef(checks);
             const setChecks = (val) => { checksRef.current = val; setChecksRaw(val); };
@@ -244,7 +255,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const checklistAssignmentsRef = useRef({});
             const setChecklistAssignments = (val) => { checklistAssignmentsRef.current = val; setChecklistAssignmentsRaw(val); };
             // Multi-list: { FOH: [{id:"FOH_0", assignee:""}], BOH: [{id:"BOH_0", assignee:""}] }
-            const DEFAULT_LISTS = { FOH: [{ id: "FOH_0", assignee: "" }], BOH: [{ id: "BOH_0", assignee: "" }] };
+            // DEFAULT_LISTS now lives at module scope (top of file) to avoid
+            // re-allocating the literal on every render.
             const [checklistLists, setChecklistListsRaw] = useState(DEFAULT_LISTS);
             const checklistListsRef = useRef(checklistLists);
             const setChecklistLists = (val) => { checklistListsRef.current = val; setChecklistListsRaw(val); };
@@ -360,9 +372,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Labor percentage state (admin-only, from Toast scraper)
             const [laborData, setLaborData] = useState(null);
-            const FOH_ROLES = useMemo(() => ["FOH", "Manager", "Owner", "Shift Lead", "Marketing"], []);
-            const bohStaff = useMemo(() => (staffList || []).filter(s => s.role && !FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both")), [staffList, storeLocation, FOH_ROLES]);
-            const fohStaff = useMemo(() => (staffList || []).filter(s => FOH_ROLES.includes(s.role) && (s.location === storeLocation || s.location === "both")), [staffList, storeLocation, FOH_ROLES]);
+            // FOH_ROLES_LIST hoisted to module scope so the useMemo dep array
+            // doesn't churn on every render. fohStaff was unused — removed.
+            const bohStaff = useMemo(
+                () => (staffList || []).filter(s => s.role && !FOH_ROLES_LIST.includes(s.role) && (s.location === storeLocation || s.location === "both")),
+                [staffList, storeLocation]
+            );
 
             // ── Memoized inventory lookup + Sysco price matching ──
             // Vendor match overrides + categories (Firestore-backed, see useEffect below).
@@ -1687,7 +1702,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Per-task assignment: toggle a staff member on/off a task's assignTo array
             const toggleTaskAssignee = async (taskIdx, staffMemberName) => {
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
-                const item = updated[checklistSide][activePeriod][taskIdx];
+                const item = updated[checklistSide][PERIOD_KEY][taskIdx];
                 let current = [];
                 if (item.assignTo) {
                     current = Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo];
@@ -1727,17 +1742,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setChecklistAssignments(newAssignments);
                 setActiveListIdx(Math.min(activeListIdx, updatedLists[side].length - 1));
                 await saveChecklistState(newChecks, customTasksRef.current, newAssignments, updatedLists);
-            };
-
-            const handlePasswordSubmit = (e) => {
-                e.preventDefault();
-                // Validate PIN against manager/admin staff list instead of hardcoded password
-                const matchedStaff = (staffList || []).find(s => String(s.pin) === String(password));
-                if (matchedStaff && (matchedStaff.role === "admin" || matchedStaff.role === "manager")) {
-                    setPasswordEntered(true); setPassword("");
-                } else {
-                    toast(language === "es" ? "PIN de gerente incorrecto" : "Incorrect manager PIN");
-                }
             };
 
             // ── Per-task comments ──
@@ -1899,8 +1903,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 if (!updated[checklistSide]) updated[checklistSide] = {};
-                if (!updated[checklistSide][activePeriod]) updated[checklistSide][activePeriod] = [];
-                updated[checklistSide][activePeriod].push(item);
+                if (!updated[checklistSide][PERIOD_KEY]) updated[checklistSide][PERIOD_KEY] = [];
+                updated[checklistSide][PERIOD_KEY].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
                 setQuickAddText("");
@@ -1925,8 +1929,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (cleanSubs.length > 0) item.subtasks = reconcileSubtasks(cleanSubs);
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 if (!updated[checklistSide]) updated[checklistSide] = {};
-                if (!updated[checklistSide][activePeriod]) updated[checklistSide][activePeriod] = [];
-                updated[checklistSide][activePeriod].push(item);
+                if (!updated[checklistSide][PERIOD_KEY]) updated[checklistSide][PERIOD_KEY] = [];
+                updated[checklistSide][PERIOD_KEY].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
                 setNewTask(""); setNewCategory("other"); setNewRecurrence("daily"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
@@ -1935,7 +1939,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const saveChecklistEdit = async (idx) => {
                 if (!editTask.trim()) return;
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
-                const item = updated[checklistSide][activePeriod][idx];
+                const item = updated[checklistSide][PERIOD_KEY][idx];
                 item.task = editTask.trim();
                 if (editCategory && editCategory !== "other") { item.category = editCategory; } else { delete item.category; }
                 if (editRecurrence && editRecurrence !== "daily") { item.recurrence = editRecurrence; } else { delete item.recurrence; }
@@ -2000,9 +2004,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const deleteChecklistTask = async (idx) => {
                 const tasks = customTasksRef.current;
-                const removed = tasks?.[checklistSide]?.[activePeriod]?.[idx];
+                const removed = tasks?.[checklistSide]?.[PERIOD_KEY]?.[idx];
                 const updated = JSON.parse(JSON.stringify(tasks));
-                updated[checklistSide][activePeriod].splice(idx, 1);
+                updated[checklistSide][PERIOD_KEY].splice(idx, 1);
                 setCustomTasks(updated);
 
                 // Also strip orphaned check entries (and any subtask entries +
@@ -2759,7 +2763,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             const getCurrentTasks = () => {
-                const all = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                const all = (customTasks[checklistSide] && customTasks[checklistSide][PERIOD_KEY]) || [];
                 const hasNoAssign = (t) => !t.assignTo || (Array.isArray(t.assignTo) && t.assignTo.length === 0);
                 // Tag each task with its original index so edit/delete still works after filtering
                 let tagged = all.map((t, i) => ({...t, _origIdx: i}));
@@ -2786,7 +2790,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Per-category counts for the filter chip badges
             const getCategoryCounts = () => {
-                const all = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                const all = (customTasks[checklistSide] && customTasks[checklistSide][PERIOD_KEY]) || [];
                 const counts = { all: all.length };
                 for (const c of TASK_CATEGORIES) counts[c.id] = 0;
                 for (const t of all) counts[t.category || "other"] = (counts[t.category || "other"] || 0) + 1;
@@ -2794,7 +2798,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
             // Get all tasks without filtering (for stats)
             const getAllTasks = () => {
-                return (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                return (customTasks[checklistSide] && customTasks[checklistSide][PERIOD_KEY]) || [];
             };
 
             // Count all checkable items (tasks + subtasks) for completion stats
@@ -2935,7 +2939,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
             const renderChecklist = () => {
                 const tasks = getCurrentTasks();
                 const allTasks = getAllTasks();
-                const periodStats = getPeriodStats(checklistSide, activePeriod);
+                const periodStats = getPeriodStats(checklistSide, PERIOD_KEY);
                 const overallStats = getCompletionStats(checklistSide);
 
                 return (
@@ -3000,7 +3004,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             // Iterates all known checks and groups by who finished each.
                             const scoreboard = new Map();
                             const overdue = [];
-                            const ALL_TASKS = (customTasks[checklistSide] && customTasks[checklistSide][activePeriod]) || [];
+                            const ALL_TASKS = (customTasks[checklistSide] && customTasks[checklistSide][PERIOD_KEY]) || [];
                             for (const t of ALL_TASKS) {
                                 if (t.completeBy && !isTaskComplete(t)) {
                                     // Compare against Chicago wall-clock so devices in
