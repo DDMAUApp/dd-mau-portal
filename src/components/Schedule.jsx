@@ -2258,6 +2258,8 @@ ${dayBlocks}
                     isStaffOffOn={isStaffOffOn}
                     isEn={isEn}
                     requiredRoleGroup={fillingNeed?.roleGroup || null}
+                    slotStart={fillingNeed?.startTime || null}
+                    slotEnd={fillingNeed?.endTime || null}
                     onSchedule={(staff) => {
                         // If we're filling a staffing need, create the shift via the
                         // need handler (so the slot is marked filled). Otherwise it's
@@ -3683,7 +3685,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
 // by current weekly hours so the manager can pick the lowest-hours person to
 // avoid pushing anyone into OT. Tap any name to jump straight into the
 // Add Shift modal pre-filled for that staff + date.
-function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup }) {
+function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup, slotStart, slotEnd }) {
     const tx = (en, es) => (isEn ? en : es);
     const date = parseLocalDate(dateStr);
     const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -3710,9 +3712,18 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                 weeklyHours += dayPaidHours(myShifts);
             }
         }
-        // Already scheduled this day?
-        const alreadyOnDay = shifts.some(sh => sh.staffName === s.name && sh.date === dateStr
+        // Same-day shifts (raw list) so we can distinguish "real conflict"
+        // (overlapping time) from "double-shift opportunity" (non-overlapping).
+        const sameDayShifts = shifts.filter(sh => sh.staffName === s.name && sh.date === dateStr
             && (storeLocation === 'both' || sh.location === storeLocation));
+        // Time overlap check — only meaningful if the slot has a time range.
+        // No range (free day-header click) → we can't know, so don't treat
+        // any existing shift as a hard conflict. Manager wants doubles to
+        // be allowed: morning shift + evening pickup should both fly here.
+        const hasOverlap = (slotStart && slotEnd) ? sameDayShifts.some(sh =>
+            !(sh.endTime <= slotStart || sh.startTime >= slotEnd)
+        ) : false;
+        const isDoubleDay = sameDayShifts.length > 0 && !hasOverlap;
         // Availability for this weekday
         const dayAvail = (s.availability || {})[dayKey];
         const availableThisDay = dayAvail && dayAvail.available !== false && dayAvail.from && dayAvail.to;
@@ -3722,10 +3733,10 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
         let status = 'available';
         let reason = '';
         if (onPto) { status = 'pto'; reason = tx('on time-off', 'tiempo libre'); }
-        else if (alreadyOnDay) { status = 'scheduled'; reason = tx('already scheduled', 'ya programado'); }
+        else if (hasOverlap) { status = 'scheduled'; reason = tx('time overlaps existing shift', 'choca con turno existente'); }
         else if (!availableThisDay) { status = 'unavailable'; reason = tx('not available this day', 'no disponible este día'); }
 
-        return { ...s, weeklyHours, status, reason, dayAvail };
+        return { ...s, weeklyHours, status, reason, dayAvail, sameDayShifts, isDoubleDay };
     });
 
     // Sort: available first, then by weekly hours ascending (lowest → best candidate)
@@ -3768,16 +3779,28 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                                 {available.map(r => (
                                     <button key={r.id || r.name}
                                         onClick={() => onSchedule(r)}
-                                        className="w-full flex items-center justify-between gap-2 p-2 rounded-lg border bg-white hover:bg-mint-50 hover:border-mint-300 text-left">
+                                        className={`w-full flex items-center justify-between gap-2 p-2 rounded-lg border text-left ${
+                                            r.isDoubleDay
+                                                ? 'bg-blue-50 border-blue-300 hover:bg-blue-100'
+                                                : 'bg-white hover:bg-mint-50 hover:border-mint-300'
+                                        }`}>
                                         <div className="min-w-0 flex-1">
                                             <div className="font-bold text-gray-800 truncate flex items-center gap-1">
                                                 {r.name}
                                                 {r.shiftLead && <span title="Shift Lead">🛡️</span>}
                                                 {r.isMinor && <span title="Minor">🔑</span>}
+                                                {r.isDoubleDay && (
+                                                    <span className="ml-1 px-1.5 py-0.5 rounded-full bg-blue-600 text-white text-[9px] font-bold whitespace-nowrap" title={tx('Already has a shift today — this would be a double', 'Ya tiene turno hoy — sería un doble')}>
+                                                        🔁 {tx('double', 'doble')}
+                                                    </span>
+                                                )}
                                             </div>
                                             <div className="text-[10px] text-gray-500">
                                                 {r.role} · {tx('Avail', 'Disp')} {r.dayAvail?.from}–{r.dayAvail?.to}
                                                 {r.targetHours ? ` · ${tx('target', 'objetivo')} ${r.targetHours}h` : ''}
+                                                {r.isDoubleDay && r.sameDayShifts.length > 0 && (
+                                                    <> · {tx('has', 'tiene')} {r.sameDayShifts.map(sh => `${sh.startTime}–${sh.endTime}`).join(', ')}</>
+                                                )}
                                             </div>
                                         </div>
                                         <span className={`flex-shrink-0 px-2 py-1 rounded border text-[11px] font-bold ${hoursColor(r.weeklyHours)}`}>
