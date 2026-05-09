@@ -8,6 +8,7 @@ import { enableFcmPush, onForegroundMessage } from './messaging';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
+import AppVersion from './components/AppVersion';
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
@@ -159,6 +160,35 @@ export default function App() {
     useEffect(() => { SS.set("activeLocation", activeLocation); }, [activeLocation]);
     useEffect(() => { SS.set("language", language); }, [language]);
     useEffect(() => { SS.set("activeTab", activeTab); }, [activeTab]);
+    // ── Force-refresh broadcast ──────────────────────────────────────
+    // Subscribes to /config/forceRefresh. When admin clicks the
+    // "System Refresh" button, that doc's `triggeredAt` timestamp jumps.
+    // Every active client sees the change in <1s and force-refreshes,
+    // pulling the newest deployed build. Devices that are CLOSED pick
+    // up the new build via the static service worker on next open.
+    //
+    // Baseline-stamp pattern prevents an infinite loop: the FIRST time
+    // we see a value (page load), we just remember it. Only LATER
+    // changes trigger the refresh.
+    useEffect(() => {
+        const ref = doc(db, 'config', 'forceRefresh');
+        let baseline = null;
+        const unsub = onSnapshot(ref, (snap) => {
+            const data = snap.exists() ? snap.data() : null;
+            const ts = data?.triggeredAt;
+            const ms = ts && typeof ts.toMillis === 'function' ? ts.toMillis() : 0;
+            if (baseline === null) {
+                baseline = ms; // first snapshot — remember and bail
+                return;
+            }
+            if (ms > baseline) {
+                baseline = ms;
+                console.warn('System refresh broadcast received — refreshing.');
+                forceRefresh();
+            }
+        }, (err) => { console.warn('forceRefresh listener error:', err); });
+        return () => unsub();
+    }, []);
     const { isAtDDMau, checking: geoChecking, error: geoError } = useGeofence();
     const updateAvailable = useVersionCheck();
     // Mobile pull-down-to-refresh — bypasses the cached SW and forces the
@@ -465,6 +495,9 @@ export default function App() {
                         className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-bold bg-white/10 text-white hover:bg-white/15">
                         🚪 {t("logout", language)}
                     </button>
+                    <div className="pt-2 mt-2 border-t border-white/10 text-center">
+                        <AppVersion language={language} className="text-white/40 hover:text-white/70" />
+                    </div>
                 </div>
             </aside>
 
@@ -631,6 +664,13 @@ export default function App() {
             </div>
             </div>
             {/* Bottom Navigation — hidden on md+ since sidebar replaces it */}
+            {/* Mobile-only version footer — sits just above the bottom nav.
+                Hidden on md+ since the desktop sidebar already shows it. */}
+            <div className="fixed bottom-20 left-0 right-0 flex justify-center md:hidden pointer-events-none">
+                <div className="bg-white/80 backdrop-blur rounded-full shadow-sm pointer-events-auto">
+                    <AppVersion language={language} />
+                </div>
+            </div>
             <nav className="fixed bottom-0 left-0 right-0 bg-white border-t-2 border-gray-200 navbar-shadow md:hidden bottom-nav-safe">
                 <div className="max-w-lg mx-auto flex justify-around items-center h-20">
                     {[

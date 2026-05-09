@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit } from 'firebase/firestore';
+import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
@@ -38,6 +38,29 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [bulkSearch, setBulkSearch] = useState("");
             const [bulkFilter, setBulkFilter] = useState("all"); // all | untagged | foh | boh
+            // Two-step confirmation for the System Refresh broadcast.
+            // First tap arms the button; second tap (within 10s) fires it.
+            const [confirmingRefresh, setConfirmingRefresh] = useState(false);
+            useEffect(() => {
+                if (!confirmingRefresh) return;
+                const t = setTimeout(() => setConfirmingRefresh(false), 10000);
+                return () => clearTimeout(t);
+            }, [confirmingRefresh]);
+            const handleSystemRefresh = async () => {
+                try {
+                    await setDoc(doc(db, "config", "forceRefresh"), {
+                        triggeredAt: serverTimestamp(),
+                        triggeredBy: staffName,
+                    });
+                    setConfirmingRefresh(false);
+                    alert(language === "es"
+                        ? "✓ Refresco enviado. Cada dispositivo activo se actualizará en segundos."
+                        : "✓ Broadcast sent. Every active device will refresh within seconds.");
+                } catch (e) {
+                    console.error("System refresh broadcast failed:", e);
+                    alert((language === "es" ? "Error: " : "Error: ") + e.message);
+                }
+            };
 
             // Centralized BOH role inference — same vocabulary as Schedule.jsx,
             // duplicated here so AdminPanel doesn't take a Schedule import.
@@ -1002,6 +1025,52 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+
+                    {/* ── DANGER ZONE — System Refresh broadcast ────────────────────
+                        Writes a timestamp to /config/forceRefresh. Every active
+                        client subscribes to that doc in App.jsx and force-refreshes
+                        on change. Use SPARINGLY — interrupts every staff member
+                        mid-action. Reserved for production breakage / critical fixes. */}
+                    <div className="mt-8 mb-4 border-2 border-red-300 rounded-xl bg-red-50 p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="text-2xl">⚠️</span>
+                            <h3 className="text-base font-bold text-red-900 uppercase tracking-wide">
+                                {language === "es" ? "Zona Peligrosa" : "Danger Zone"}
+                            </h3>
+                        </div>
+                        <p className="text-xs text-red-900 mb-3">
+                            {language === "es"
+                                ? "El refresco del sistema obliga a TODOS los dispositivos activos a recargar inmediatamente. Cualquier persona en medio de algo perderá su trabajo no guardado. Úsalo solo para fallas reales o correcciones críticas."
+                                : "System Refresh forces EVERY active device to reload immediately. Anyone mid-action will lose unsaved work. Use only for real production breakage or critical fixes."}
+                        </p>
+                        {!confirmingRefresh ? (
+                            <button onClick={() => setConfirmingRefresh(true)}
+                                className="w-full py-3 rounded-lg bg-red-600 text-white text-sm font-bold uppercase tracking-wide hover:bg-red-700 active:scale-[0.99] transition shadow-lg shadow-red-200">
+                                🚨 {language === "es" ? "Refresco del Sistema" : "System Refresh"}
+                            </button>
+                        ) : (
+                            <div className="space-y-2">
+                                <div className="bg-red-700 text-white rounded-lg p-3 text-center text-sm font-bold animate-pulse">
+                                    {language === "es"
+                                        ? "¿Estás SEGURO? Esto interrumpirá a todos los dispositivos activos."
+                                        : "Are you SURE? This will interrupt every active device."}
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button onClick={() => setConfirmingRefresh(false)}
+                                        className="py-3 rounded-lg bg-gray-200 text-gray-800 text-sm font-bold hover:bg-gray-300">
+                                        {language === "es" ? "Cancelar" : "Cancel"}
+                                    </button>
+                                    <button onClick={handleSystemRefresh}
+                                        className="py-3 rounded-lg bg-red-700 text-white text-sm font-bold uppercase tracking-wide hover:bg-red-800 shadow-lg">
+                                        ✓ {language === "es" ? "Confirmar Refresco" : "Confirm Refresh"}
+                                    </button>
+                                </div>
+                                <p className="text-[10px] text-red-700 text-center">
+                                    {language === "es" ? "Auto-cancelar en 10 segundos." : "Auto-cancels in 10 seconds."}
+                                </p>
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         }
