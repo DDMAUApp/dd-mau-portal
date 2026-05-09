@@ -198,16 +198,16 @@ export const MENU_DATA = [
     {
         category: "Drinks",
         categoryEs: "Bebidas",
-        note: "Oat / soy milk available on request. Boba pearls are typically allergen-free. Tea-based drinks without milk are vegan + allergen-clean.",
-        noteEs: "Leche de avena/soya disponible. Las perlas de boba son típicamente sin alérgenos. Tés sin leche son veganos.",
+        note: "Boba milk teas use a creamer labeled 'non-dairy' that CONTAINS milk derivatives (sodium caseinate + lactose) — NOT safe for milk allergies. Oat, soy, or almond milk available on request as the only allergy-safe alternatives (almond = tree nut). Boba pearls are typically allergen-free. Plain teas without milk are vegan + allergen-clean.",
+        noteEs: "Los boba milk teas usan una crema etiquetada 'non-dairy' que CONTIENE derivados lácteos (caseinato de sodio + lactosa) — NO segura para alergia a leche. Leche de avena, soya o almendra disponibles como únicas alternativas seguras (almendra = fruto seco). Las perlas de boba son típicamente sin alérgenos. Tés sin leche son veganos.",
         items: [
             { nameEn: "Lychee Limeade", price: "$6", descEn: "Lychee + lime + soda.", descEs: "Lychee + lima + soda.", allergens: "(none)", vegan: true, glutenFree: true },
-            { nameEn: "Matcha Green Tea Latte", price: "$8", descEn: "Strawberry / mango / blueberry +$1.", descEs: "Fresa / mango / arándano +$1.", allergens: "Dairy (default — sub oat/soy)", popular: true },
+            { nameEn: "Matcha Green Tea Latte", price: "$8", descEn: "Real milk default. Oat / soy / almond available. Strawberry / mango / blueberry +$1.", descEs: "Leche real por defecto. Avena / soya / almendra disponible. Fresa / mango / arándano +$1.", allergens: "Dairy (default). Sub oat / soy / almond (almond = tree nut).", popular: true },
             { nameEn: "Vietnamese Coffee", price: "$6", descEn: "Strong coffee + condensed milk.", descEs: "Café fuerte + leche condensada.", allergens: "Dairy", popular: true },
-            { nameEn: "Thai Iced Tea", price: "$6", descEn: "Spiced black tea + condensed milk.", descEs: "Té negro especiado + leche condensada.", allergens: "Dairy", popular: true },
-            { nameEn: "Masala Chai", price: "$6", descEn: "Spiced milk tea.", descEs: "Té con especias y leche.", allergens: "Dairy" },
+            { nameEn: "Thai Iced Tea", price: "$6", descEn: "Spiced black tea. Made with condensed milk by default; oat / soy / almond available.", descEs: "Té negro especiado. Con leche condensada por defecto; avena / soya / almendra disponible.", allergens: "Dairy (default). Sub oat / soy / almond (almond = tree nut).", popular: true },
+            { nameEn: "Masala Chai", price: "$6", descEn: "Spiced milk tea. Real milk default; oat / soy / almond available.", descEs: "Té con especias y leche. Leche real por defecto; avena / soya / almendra disponible.", allergens: "Dairy (default). Sub oat / soy / almond (almond = tree nut)." },
             { nameEn: "Seasonal Hot Teas", price: "$6", descEn: "Rotating selection.", descEs: "Selección rotativa.", allergens: "(varies)", vegan: true, glutenFree: true },
-            { nameEn: "Boba Teas", price: "$6.50", descEn: "9 flavors. Tapioca pearls.", descEs: "9 sabores. Perlas de tapioca.", allergens: "Dairy (most flavors)" },
+            { nameEn: "Boba Milk Teas", price: "$6.50", descEn: "9 flavors. Creamer labeled 'non-dairy' but contains MILK derivatives (sodium caseinate + lactose) — NOT safe for milk allergies. Sub oat / soy / almond on request.", descEs: "9 sabores. Crema 'non-dairy' pero contiene derivados LÁCTEOS (caseinato + lactosa) — NO segura para alergia a leche. Sustituye avena / soya / almendra.", allergens: "Milk (creamer contains caseinate + lactose). Sub oat / soy / almond (almond = tree nut)." },
         ],
     },
 
