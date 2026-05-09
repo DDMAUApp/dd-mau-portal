@@ -204,7 +204,12 @@ export default function Recipes({ language, staffName, staffList }) {
     };
     const adminUser = isAdmin(staffName, staffList);
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
-    const hasRecipesAccess = adminUser || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
+    // Opt-out semantics: every staff has VIEW access by default; admin can
+    // flip recipesAccess to false to revoke a specific person. Must match
+    // the same check in App.jsx (link visibility) so we don't dead-end
+    // staff at "access denied" after they click a visible link. Edit and
+    // delete remain admin-only (gated separately in requestEdit/Delete).
+    const hasRecipesAccess = adminUser || !currentStaffRecord || currentStaffRecord.recipesAccess !== false;
 
     // Load recipes from Firestore
     useEffect(() => {
