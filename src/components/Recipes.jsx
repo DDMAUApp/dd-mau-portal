@@ -4,6 +4,7 @@ import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction,
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { MASTER_RECIPES } from '../data/masterRecipes';
+import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllergens } from '../data/allergens';
 import { toast } from '../toast';
 
 // Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
@@ -29,9 +30,16 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
         titleEn: "", titleEs: "", emoji: "🍽️", category: "",
         prepTimeEn: "", cookTimeEn: "",
         yieldsEn: "", yieldsEs: "",
+        allergens: [],
         ingredientsEn: [""], ingredientsEs: [""],
         instructionsEn: [""], instructionsEs: [""]
     });
+    const toggleAllergen = (code) => {
+        setForm(prev => {
+            const cur = Array.isArray(prev.allergens) ? prev.allergens : [];
+            return { ...prev, allergens: cur.includes(code) ? cur.filter(c => c !== code) : [...cur, code] };
+        });
+    };
 
     const updateField = (field, val) => setForm(prev => ({ ...prev, [field]: val }));
     const updateListItem = (field, idx, val) => {
@@ -133,6 +141,27 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
                 </div>
 
                 <div className="border-t pt-3 mt-3">
+                    <h3 className="font-bold text-sm text-amber-800 mb-2">⚠️ {language === "es" ? "Alérgenos" : "Allergens"}</h3>
+                    <p className="text-[10px] text-gray-500 mb-2">
+                        {language === "es"
+                            ? "Toca para activar/desactivar. Esta lista aparece como banner en la receta."
+                            : "Tap to toggle. This list shows as a banner on the recipe card."}
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                        {ALLERGEN_ORDER.map(code => {
+                            const active = (form.allergens || []).includes(code);
+                            return (
+                                <button key={code} type="button"
+                                    onClick={() => toggleAllergen(code)}
+                                    className={`text-[11px] font-bold px-2 py-1 rounded-full border ${active ? allergenTone(code) : 'bg-white text-gray-400 border-gray-300'}`}>
+                                    {allergenEmoji(code)} {allergenLabel(code, language)}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="border-t pt-3 mt-3">
                     <h3 className="font-bold text-sm text-amber-800 mb-2">📝 {t("ingredients", language)}</h3>
                     {renderListEditor("ingredientsEn", language === "es" ? "Inglés" : "English")}
                     {renderListEditor("ingredientsEs", language === "es" ? "Español" : "Spanish")}
@@ -160,6 +189,11 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
+    // Reverse-lookup: when set, recipes containing this allergen get a strong
+    // visual warning (red border + 🚫 chip) so cashiers/cooks scanning for
+    // "what's safe for a peanut allergy?" can see at a glance which recipes
+    // to avoid. Empty = no filter.
+    const [avoidAllergen, setAvoidAllergen] = useState('');
     // Raw text the user has typed in the per-recipe Custom multiplier input.
     // We commit (parseQuantity → setRecipeMultipliers) on blur/Enter so that
     // mid-typing characters like "1/" don't snap to a preset. Without this,
@@ -769,10 +803,53 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                     : "CONFIDENTIAL — DD Mau property. Every view is logged (who, when, where). Screenshot attempts are also logged. Screenshots are watermarked with your name and timestamp."}
             </p>
 
+            {/* Allergen reverse-lookup toolbar. Cashier flow: a guest says
+                "I have a peanut allergy" → tap the 🥜 chip → every recipe
+                with peanut highlights red and shows a 🚫 banner. Tap again
+                to clear. Solves the "is X safe?" question in one tap. */}
+            <div className="mb-4 bg-white border border-gray-200 rounded-lg p-2">
+                <div className="text-[11px] font-bold text-gray-700 mb-1">
+                    🚫 {language === "es" ? "Evitar alérgeno (toca para resaltar):" : "Avoid allergen (tap to highlight):"}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                    {ALLERGEN_ORDER.map(code => {
+                        const active = avoidAllergen === code;
+                        return (
+                            <button key={code}
+                                onClick={() => setAvoidAllergen(active ? '' : code)}
+                                className={`text-[10px] font-bold px-2 py-1 rounded-full border ${active ? 'bg-red-600 text-white border-red-700' : allergenTone(code)}`}>
+                                {allergenEmoji(code)} {allergenLabel(code, language)}
+                            </button>
+                        );
+                    })}
+                    {avoidAllergen && (
+                        <button onClick={() => setAvoidAllergen('')}
+                            className="text-[10px] font-bold px-2 py-1 rounded-full bg-gray-200 text-gray-700">
+                            ✕ {language === "es" ? "Limpiar" : "Clear"}
+                        </button>
+                    )}
+                </div>
+                {avoidAllergen && (() => {
+                    const flagged = recipes.filter(r => Array.isArray(r.allergens) && r.allergens.includes(avoidAllergen));
+                    return (
+                        <p className="text-[10px] text-red-700 font-bold mt-2">
+                            {language === "es"
+                                ? `${flagged.length} receta${flagged.length === 1 ? '' : 's'} contiene${flagged.length === 1 ? '' : 'n'} ${allergenLabel(avoidAllergen, language)}. Resaltadas en rojo.`
+                                : `${flagged.length} recipe${flagged.length === 1 ? '' : 's'} contain${flagged.length === 1 ? 's' : ''} ${allergenLabel(avoidAllergen, language)}. Highlighted in red.`}
+                        </p>
+                    );
+                })()}
+            </div>
+
             {recipes.map(recipe => {
                 const isExpanded = expandedRecipe === recipe.id;
+                // Reverse-lookup hit: this recipe contains the allergen the
+                // user is filtering against. Card gets a red border + a 🚫
+                // chip on the closed header so it pops without expansion.
+                const containsAvoided = avoidAllergen && Array.isArray(recipe.allergens) && recipe.allergens.includes(avoidAllergen);
+                const sortedAllergens = sortAllergens(recipe.allergens);
                 return (
-                    <div key={recipe.id} className="mb-3 bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
+                    <div key={recipe.id} className={`mb-3 bg-white rounded-lg border-2 overflow-hidden ${containsAvoided ? 'border-red-500 ring-2 ring-red-200' : 'border-gray-200'}`}>
                         <div
                             className="p-4 cursor-pointer bg-gradient-to-r from-amber-50 to-white"
                             onClick={() => requestExpand(recipe.id)}
@@ -780,19 +857,65 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-3">
                                     <span className="text-3xl">{recipe.emoji}</span>
-                                    <div>
+                                    <div className="min-w-0">
                                         <h3 className="font-bold text-amber-800">
                                             {language === "es" ? (recipe.titleEs || recipe.titleEn) : recipe.titleEn}
                                         </h3>
                                         <p className="text-xs text-gray-500">{recipe.category}</p>
+                                        {/* Compact allergen preview row on closed card. */}
+                                        {sortedAllergens.length > 0 && (
+                                            <div className="flex flex-wrap gap-0.5 mt-1">
+                                                {sortedAllergens.slice(0, 5).map(code => (
+                                                    <span key={code} title={allergenLabel(code, language)} className="text-[9px] leading-none">{allergenEmoji(code)}</span>
+                                                ))}
+                                                {sortedAllergens.length > 5 && <span className="text-[9px] text-gray-500">+{sortedAllergens.length - 5}</span>}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
-                                <span className={`text-lg transition-transform ${isExpanded ? "rotate-180" : ""}`}>▼</span>
+                                <div className="flex items-center gap-2">
+                                    {containsAvoided && (
+                                        <span className="text-[10px] font-bold px-2 py-1 rounded-full bg-red-600 text-white whitespace-nowrap">
+                                            🚫 {allergenEmoji(avoidAllergen)}
+                                        </span>
+                                    )}
+                                    <span className={`text-lg transition-transform ${isExpanded ? "rotate-180" : ""}`}>▼</span>
+                                </div>
                             </div>
                         </div>
 
                         {isExpanded && (
                             <div className="border-t border-gray-200 p-4 recipe-watermark overflow-hidden" data-watermark={watermarkText}>
+                                {/* PROMINENT allergen banner — sits at the very top of the
+                                    expanded recipe so cooks see it before scrolling to
+                                    ingredients. Color-coded chips per allergen. If the
+                                    recipe is currently flagged by the avoid filter, an
+                                    extra red strip appears above. */}
+                                {containsAvoided && (
+                                    <div className="mb-2 bg-red-600 text-white text-xs font-bold px-3 py-2 rounded-lg flex items-center gap-2">
+                                        🚫 {language === "es"
+                                            ? `Esta receta contiene ${allergenLabel(avoidAllergen, language).toUpperCase()}. NO servir a clientes con esta alergia.`
+                                            : `This recipe contains ${allergenLabel(avoidAllergen, language).toUpperCase()}. DO NOT serve to guests with this allergy.`}
+                                    </div>
+                                )}
+                                {sortedAllergens.length > 0 ? (
+                                    <div className="mb-3 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                                        <div className="text-[10px] font-bold text-amber-900 uppercase mb-1 tracking-wide">
+                                            ⚠️ {language === "es" ? "Alérgenos" : "Allergens"}
+                                        </div>
+                                        <div className="flex flex-wrap gap-1">
+                                            {sortedAllergens.map(code => (
+                                                <span key={code} className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${allergenTone(code)}`}>
+                                                    {allergenEmoji(code)} {allergenLabel(code, language)}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="mb-3 bg-green-50 border border-green-200 rounded-lg p-2 text-[11px] font-bold text-green-800">
+                                        ✅ {language === "es" ? "Sin alérgenos principales registrados." : "No major allergens recorded."}
+                                    </div>
+                                )}
                                 {adminUser && (
                                     <div className="flex gap-2 mb-3">
                                         <button onClick={(e) => { e.stopPropagation(); requestEdit(recipe); }} className="text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-full font-bold border border-amber-300">

@@ -12,6 +12,7 @@ export const MASTER_RECIPES = [
         titleEs: "Vinagreta Vietnamita",
         prepTimeEn: "20 min",
         cookTimeEn: "—",
+        allergens: ['fish', 'msg'],
         yieldsEn: "Big batch — measure in cups (1 bowl = 4 cups)",
         yieldsEs: "Lote grande — medir en tazas (1 tazón = 4 tazas)",
         ingredientsEn: [
@@ -60,6 +61,7 @@ export const MASTER_RECIPES = [
         titleEs: "Vinagreta Vietnamita Vegana",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: [],
         yieldsEn: "1 × 6-quart container",
         yieldsEs: "1 recipiente de 6 cuartos",
         ingredientsEn: [
@@ -96,6 +98,7 @@ export const MASTER_RECIPES = [
         titleEs: "Salsa de Mantequilla de Maní",
         prepTimeEn: "15 min",
         cookTimeEn: "10 min",
+        allergens: ['peanut', 'soy', 'wheat'],
         yieldsEn: "16 qt bucket · lasts 3–7 days",
         yieldsEs: "Balde de 16 cuartos · dura 3–7 días",
         ingredientsEn: [
@@ -140,6 +143,7 @@ export const MASTER_RECIPES = [
         titleEs: "Salsa de Mantequilla de Maní Picante",
         prepTimeEn: "5 min",
         cookTimeEn: "—",
+        allergens: ['peanut', 'soy', 'wheat'],
         yieldsEn: "6 qt bucket · lasts 3–5 days",
         yieldsEs: "Balde de 6 cuartos · dura 3–5 días",
         ingredientsEn: [
@@ -168,6 +172,7 @@ export const MASTER_RECIPES = [
         titleEs: "Salsa Hoisin",
         prepTimeEn: "10 min",
         cookTimeEn: "10 min",
+        allergens: ['soy', 'wheat', 'peanut'],
         yieldsEn: "12 qt bucket · lasts 3–7 days",
         yieldsEs: "Balde de 12 cuartos · dura 3–7 días",
         ingredientsEn: [
@@ -210,6 +215,7 @@ export const MASTER_RECIPES = [
         titleEs: "Aderezo DD",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['eggs', 'milk'],
         yieldsEn: "BASE — 12 yolks. Use the multiplier (above) to scale: ×5 = standard production batch.",
         yieldsEs: "BASE — 12 yemas. Usa el multiplicador (arriba) para escalar: ×5 = lote de producción estándar.",
         ingredientsEn: [
@@ -244,6 +250,7 @@ export const MASTER_RECIPES = [
         titleEs: "Aderezo DD Picante",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['eggs', 'milk'],
         yieldsEn: "BASE — 12 yolks. Use the multiplier (above) to scale: ×5 = standard production batch.",
         yieldsEs: "BASE — 12 yemas. Usa el multiplicador (arriba) para escalar: ×5 = lote de producción estándar.",
         ingredientsEn: [
@@ -282,6 +289,7 @@ export const MASTER_RECIPES = [
         titleEs: "Mayonesa",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['eggs'],
         yieldsEn: "BASE — 12 yolks. Use the multiplier (above) to scale: ×2 = standard production batch.",
         yieldsEs: "BASE — 12 yemas. Usa el multiplicador (arriba) para escalar: ×2 = lote de producción estándar.",
         ingredientsEn: [
@@ -316,6 +324,7 @@ export const MASTER_RECIPES = [
         titleEs: "Aderezo Ranch",
         prepTimeEn: "10 min + 1 hr rest",
         cookTimeEn: "—",
+        allergens: ['eggs', 'milk'],
         yieldsEn: "Standard batch",
         yieldsEs: "Lote estándar",
         ingredientsEn: [
@@ -358,6 +367,7 @@ export const MASTER_RECIPES = [
         titleEs: "Salsa Dulce de Ajo para Alitas",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['soy', 'wheat'],
         yieldsEn: "Big batch — pairs with Chicken Wings",
         yieldsEs: "Lote grande — combina con las alitas de pollo",
         ingredientsEn: [
@@ -386,6 +396,7 @@ export const MASTER_RECIPES = [
         titleEs: "Salsa Lo Mein",
         prepTimeEn: "15 min",
         cookTimeEn: "—",
+        allergens: ['soy', 'wheat', 'sesame', 'msg'],
         yieldsEn: "Big batch",
         yieldsEs: "Lote grande",
         ingredientsEn: [
@@ -432,6 +443,7 @@ export const MASTER_RECIPES = [
         titleEs: "Sazón para Arroz Frito",
         prepTimeEn: "5 min",
         cookTimeEn: "—",
+        allergens: ['msg'],
         yieldsEn: "Bus tub · stored in dry storage",
         yieldsEs: "Bus tub · se guarda en el almacén seco",
         ingredientsEn: [
@@ -460,6 +472,7 @@ export const MASTER_RECIPES = [
         titleEs: "Salsa de Soya para Arroz Frito",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['soy', 'wheat'],
         yieldsEn: "3 × 5-gallon buckets · lasts 10–14 days",
         yieldsEs: "3 baldes de 5 galones · dura 10–14 días",
         ingredientsEn: [
@@ -492,6 +505,7 @@ export const MASTER_RECIPES = [
         titleEs: "Encurtidos (Carrot & Daikon)",
         prepTimeEn: "30 min + 2 days pickle time",
         cookTimeEn: "—",
+        allergens: [],
         yieldsEn: "1 big bus tub · lasts 3–5 days · pickle 2 days first",
         yieldsEs: "1 bus tub grande · dura 3–5 días · curtir 2 días antes",
         ingredientsEn: [
@@ -540,6 +554,7 @@ export const MASTER_RECIPES = [
         titleEs: "Marinado de Hierba Limón para Carnes (Pollo, Cerdo, Res)",
         prepTimeEn: "20 min",
         cookTimeEn: "—",
+        allergens: ['fish', 'soy', 'msg', 'sesame'],
         yieldsEn: "Marinates 2 × 5 gallons of meat",
         yieldsEs: "Marina 2 × 5 galones de carne",
         ingredientsEn: [
@@ -586,6 +601,7 @@ export const MASTER_RECIPES = [
         titleEs: "Camarón con Hierba Limón — Lote Pequeño",
         prepTimeEn: "15 min",
         cookTimeEn: "—",
+        allergens: ['fish', 'shell', 'soy', 'msg'],
         yieldsEn: "2 bags · lasts 1 day or less",
         yieldsEs: "2 bolsas · dura 1 día o menos",
         ingredientsEn: [
@@ -620,6 +636,7 @@ export const MASTER_RECIPES = [
         titleEs: "Marinado de Camarón con Hierba Limón — Lote Grande",
         prepTimeEn: "20 min",
         cookTimeEn: "—",
+        allergens: ['fish', 'shell', 'soy', 'msg'],
         yieldsEn: "Larger prep volume",
         yieldsEs: "Volumen de prep mayor",
         ingredientsEn: [
@@ -654,6 +671,7 @@ export const MASTER_RECIPES = [
         titleEs: "Marinado de Carne Vegana",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['soy', 'wheat', 'peanut', 'sesame'],
         yieldsEn: "Equal-parts base · uses 'measure' (hoisin can or 2-qt cup)",
         yieldsEs: "Base de partes iguales · usa la medida (lata de hoisin o taza de 2 cuartos)",
         ingredientsEn: [
@@ -686,6 +704,7 @@ export const MASTER_RECIPES = [
         titleEs: "Cómo Preparar la Carne Vegana",
         prepTimeEn: "1 hr soak + 30 min",
         cookTimeEn: "—",
+        allergens: ['soy', 'wheat'],
         yieldsEn: "1 case vegan beef",
         yieldsEs: "1 caja de carne vegana",
         ingredientsEn: [
@@ -728,6 +747,7 @@ export const MASTER_RECIPES = [
         titleEs: "Marinado de Pollo y Carne para Arroz Frito",
         prepTimeEn: "15 min",
         cookTimeEn: "—",
+        allergens: ['fish', 'soy', 'msg'],
         yieldsEn: "Marinates 2 × 5 gallons of meat",
         yieldsEs: "Marina 2 × 5 galones de carne",
         ingredientsEn: [
@@ -770,6 +790,7 @@ export const MASTER_RECIPES = [
         titleEs: "Marinado de Tofu",
         prepTimeEn: "5 min",
         cookTimeEn: "—",
+        allergens: ['soy', 'wheat', 'sesame'],
         yieldsEn: "1 × 6-quart container",
         yieldsEs: "1 recipiente de 6 cuartos",
         ingredientsEn: [
@@ -804,6 +825,7 @@ export const MASTER_RECIPES = [
         titleEs: "Cerdo Asado",
         prepTimeEn: "20 min + overnight marinate",
         cookTimeEn: "3 hours (1½ each side at 350°F)",
+        allergens: ['soy', 'wheat', 'msg'],
         yieldsEn: "Bulk dry rub (16 qt) + per-roast soy dip",
         yieldsEs: "Sazón seca a granel (16 cuartos) + remojo de soya por asado",
         ingredientsEn: [
@@ -846,6 +868,7 @@ export const MASTER_RECIPES = [
         titleEs: "Sazón Cajún para Salmón",
         prepTimeEn: "10 min",
         cookTimeEn: "—",
+        allergens: ['fish'],
         yieldsEn: "Production batch · ~12 cups total",
         yieldsEs: "Lote de producción · ~12 tazas en total",
         ingredientsEn: [
@@ -890,6 +913,7 @@ export const MASTER_RECIPES = [
         titleEs: "Sazón de Pimienta y Chile Tailandés",
         prepTimeEn: "30 min",
         cookTimeEn: "20 min",
+        allergens: [],
         yieldsEn: "Spice blend for Thai Chili Pepper Wings",
         yieldsEs: "Mezcla de especias para alitas Thai Chili Pepper",
         ingredientsEn: [
@@ -934,6 +958,7 @@ export const MASTER_RECIPES = [
         titleEs: "Rollos Primavera Vietnamitas",
         prepTimeEn: "1.5 hours",
         cookTimeEn: "—",
+        allergens: ['eggs', 'wheat', 'soy', 'fish', 'msg'],
         yieldsEn: "1 case pork cushion meat",
         yieldsEs: "1 caja de carne de cerdo (cushion)",
         ingredientsEn: [
@@ -992,6 +1017,7 @@ export const MASTER_RECIPES = [
         titleEs: "Rollos Primavera Vegetarianos",
         prepTimeEn: "1.5 hours",
         cookTimeEn: "—",
+        allergens: ['eggs', 'wheat', 'soy'],
         yieldsEn: "1 case (50 lb) cabbage filling",
         yieldsEs: "1 caja (50 lb) de relleno de repollo",
         ingredientsEn: [
@@ -1042,6 +1068,7 @@ export const MASTER_RECIPES = [
         titleEs: "Crab Rangoons",
         prepTimeEn: "1 hour",
         cookTimeEn: "—",
+        allergens: ['eggs', 'wheat', 'milk', 'fish'],
         yieldsEn: "1 case (30 lb) Raskas cream cheese — seasoning is calibrated to this weight",
         yieldsEs: "1 caja (30 lb) de queso crema Raskas — el sazón está calibrado a este peso",
         ingredientsEn: [
@@ -1090,6 +1117,7 @@ export const MASTER_RECIPES = [
         titleEs: "Pescado Frito",
         prepTimeEn: "30 min",
         cookTimeEn: "3 min flash fry",
+        allergens: ['fish', 'wheat', 'eggs'],
         yieldsEn: "Per case of fish",
         yieldsEs: "Por caja de pescado",
         ingredientsEn: [
@@ -1132,6 +1160,7 @@ export const MASTER_RECIPES = [
         titleEs: "Alitas de Pollo",
         prepTimeEn: "20 min + 2 hr or overnight rest",
         cookTimeEn: "8–10 min fry",
+        allergens: ['wheat', 'soy'],
         yieldsEn: "Per case of chicken wings",
         yieldsEs: "Por caja de alitas de pollo",
         ingredientsEn: [
@@ -1180,6 +1209,7 @@ export const MASTER_RECIPES = [
         titleEs: "Rollos de Camarón Frito",
         prepTimeEn: "1 hour",
         cookTimeEn: "—",
+        allergens: ['shell', 'wheat', 'eggs', 'fish'],
         yieldsEn: "Per 6 blocks of 21/25 shrimp",
         yieldsEs: "Por 6 bloques de camarón 21/25",
         ingredientsEn: [
@@ -1226,6 +1256,7 @@ export const MASTER_RECIPES = [
         titleEs: "Popcorn Shrimp Vegano",
         prepTimeEn: "1 hour",
         cookTimeEn: "2 min fry",
+        allergens: ['soy', 'wheat'],
         yieldsEn: "Per 1 case of vegan shrimp",
         yieldsEs: "Por 1 caja de camarón vegano",
         ingredientsEn: [
@@ -1274,6 +1305,7 @@ export const MASTER_RECIPES = [
         titleEs: "Queso Crema Vegano",
         prepTimeEn: "15 min",
         cookTimeEn: "—",
+        allergens: ['treenut'],
         yieldsEn: "18 containers Kite Hill almond cream cheese",
         yieldsEs: "18 envases de queso crema de almendra Kite Hill",
         ingredientsEn: [
@@ -1308,6 +1340,7 @@ export const MASTER_RECIPES = [
         titleEs: "Rendimiento de Pho — 100 cuartos vs 200 cuartos",
         prepTimeEn: "Reference chart",
         cookTimeEn: "—",
+        allergens: ['fish', 'msg'],
         yieldsEn: "Yields chart for 4 broths",
         yieldsEs: "Tabla de rendimiento para los 4 caldos",
         ingredientsEn: [
@@ -1352,6 +1385,7 @@ export const MASTER_RECIPES = [
         titleEs: "Té Thai",
         prepTimeEn: "10 min",
         cookTimeEn: "2 hours",
+        allergens: ['milk'],
         yieldsEn: "Brewed concentrate (2½ gallons)",
         yieldsEs: "Concentrado preparado (2½ galones)",
         ingredientsEn: [
@@ -1384,6 +1418,7 @@ export const MASTER_RECIPES = [
         titleEs: "Café Vietnamita",
         prepTimeEn: "15 min",
         cookTimeEn: "—",
+        allergens: ['milk'],
         yieldsEn: "5-liter batch",
         yieldsEs: "Lote de 5 litros",
         ingredientsEn: [
@@ -1416,6 +1451,7 @@ export const MASTER_RECIPES = [
         titleEs: "Limonada de Lichi",
         prepTimeEn: "10 min + 30 min steep",
         cookTimeEn: "—",
+        allergens: [],
         yieldsEn: "1 pitcher",
         yieldsEs: "1 jarra",
         ingredientsEn: [
@@ -1448,6 +1484,7 @@ export const MASTER_RECIPES = [
         titleEs: "Leche Condensada de Coco",
         prepTimeEn: "5 min",
         cookTimeEn: "1–2 hours",
+        allergens: [],
         yieldsEn: "Dessert drizzle",
         yieldsEs: "Para drizzle de postre",
         ingredientsEn: [
@@ -1476,6 +1513,7 @@ export const MASTER_RECIPES = [
         titleEs: "Ganache para Churros",
         prepTimeEn: "10 min",
         cookTimeEn: "10 min",
+        allergens: ['milk'],
         yieldsEn: "For churros — pairs with Cinnamon Sugar",
         yieldsEs: "Para churros — combina con azúcar y canela",
         ingredientsEn: [
@@ -1510,6 +1548,7 @@ export const MASTER_RECIPES = [
         titleEs: "Azúcar con Canela",
         prepTimeEn: "5 min",
         cookTimeEn: "—",
+        allergens: [],
         yieldsEn: "Topping for churros",
         yieldsEs: "Para cubrir churros",
         ingredientsEn: [
