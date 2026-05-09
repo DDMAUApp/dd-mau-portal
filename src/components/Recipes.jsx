@@ -170,37 +170,68 @@ export default function Recipes({ language, staffName, staffList }) {
         };
     }, []);
 
-    // Scale ingredient quantities
+    // Scale ingredient quantities. Handles:
+    //   - Plain integers, decimals: "12", "12.5"
+    //   - ASCII fractions: "1/2", "1 1/2"
+    //   - Unicode fractions: "½", "¼", "1½", "2¾"
+    //   - Em-dash sub-bullet prefix: "— ½ cup salt" → "— 1 cup salt"
+    // Output prefers Unicode fractions for clean values (matches the rest of
+    // the book's typography). Falls back to one decimal place when nothing
+    // matches a clean fraction.
     const scaleIngredient = (text, multiplier) => {
         if (!multiplier || multiplier === 1) return text;
-        // Match leading fractions, decimals, or whole numbers (with optional fraction after)
-        return text.replace(/^(\d+\s+\d+\/\d+|\d+\/\d+|\d+\.?\d*)/, (match) => {
+        // Preserve em-dash / hyphen sub-bullet prefix used in dry-seasoning blocks.
+        const prefixMatch = text.match(/^(\s*[—–-]\s+)/);
+        const prefix = prefixMatch ? prefixMatch[0] : '';
+        const body = text.slice(prefix.length);
+        // Unicode → decimal lookup. Order = lookup priority for the reverse direction.
+        const FRAC_MAP = {
+            '½': 0.5, '¼': 0.25, '¾': 0.75,
+            '⅓': 1/3, '⅔': 2/3,
+            '⅛': 0.125, '⅜': 0.375, '⅝': 0.625, '⅞': 0.875,
+            '⅙': 1/6, '⅚': 5/6,
+            '⅕': 0.2, '⅖': 0.4, '⅗': 0.6, '⅘': 0.8,
+        };
+        const FRACS = Object.keys(FRAC_MAP).join('');
+        // Match the leading quantity (most specific first).
+        const re = new RegExp(
+            '^(\\d+\\s*[' + FRACS + ']|\\d+\\s+\\d+\\/\\d+|\\d+\\/\\d+|[' + FRACS + ']|\\d+\\.?\\d*)'
+        );
+        const replaced = body.replace(re, (match) => {
             let num;
-            if (match.includes(" ") && match.includes("/")) {
-                // Mixed number like "1 1/2"
-                const parts = match.split(" ");
-                const whole = parseFloat(parts[0]);
-                const [n, d] = parts[1].split("/").map(Number);
-                num = whole + n / d;
-            } else if (match.includes("/")) {
-                // Fraction like "1/2"
-                const [n, d] = match.split("/").map(Number);
+            const noWs = match.replace(/\s+/g, '');
+            // Mixed Unicode like "1½"
+            const mixedUni = noWs.match(new RegExp('^(\\d+)([' + FRACS + '])$'));
+            if (mixedUni) {
+                num = parseInt(mixedUni[1], 10) + FRAC_MAP[mixedUni[2]];
+            } else if (FRAC_MAP[match] !== undefined) {
+                // Lone Unicode fraction
+                num = FRAC_MAP[match];
+            } else if (match.includes(' ') && match.includes('/')) {
+                // Mixed ASCII like "1 1/2"
+                const parts = match.trim().split(/\s+/);
+                const [n, d] = parts[1].split('/').map(Number);
+                num = parseFloat(parts[0]) + n / d;
+            } else if (match.includes('/')) {
+                // ASCII fraction like "1/2"
+                const [n, d] = match.split('/').map(Number);
                 num = n / d;
             } else {
                 num = parseFloat(match);
             }
             const scaled = num * multiplier;
-            // Format nicely
-            if (scaled === Math.floor(scaled)) return scaled.toString();
-            // Check for clean fractions
-            const fracs = [[0.25, "1/4"], [0.333, "1/3"], [0.5, "1/2"], [0.667, "2/3"], [0.75, "3/4"]];
+            // Clean integer?
+            if (Math.abs(scaled - Math.round(scaled)) < 0.01) return String(Math.round(scaled));
+            // Try to express as whole + Unicode fraction.
             const whole = Math.floor(scaled);
             const dec = scaled - whole;
-            for (const [val, str] of fracs) {
-                if (Math.abs(dec - val) < 0.05) return whole > 0 ? `${whole} ${str}` : str;
+            for (const [str, val] of Object.entries(FRAC_MAP)) {
+                if (Math.abs(dec - val) < 0.02) return whole > 0 ? `${whole}${str}` : str;
             }
-            return scaled % 1 === 0 ? scaled.toString() : scaled.toFixed(1);
+            // Fallback: one decimal place.
+            return scaled.toFixed(1);
         });
+        return prefix + replaced;
     };
     const adminUser = isAdmin(staffName, staffList);
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
