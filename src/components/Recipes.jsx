@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, setDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { MASTER_RECIPES } from '../data/masterRecipes';
@@ -11,6 +11,12 @@ const REPIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
 const AUTO_COLLAPSE_MS = 90 * 1000; // 90s
 // DevTools heuristic — if outerHeight - innerHeight grows past this, assume devtools panel opened.
 const DEVTOOLS_THRESHOLD = 200;
+// "Quick blur" window — iOS taking a screenshot causes a brief blur → focus
+// pattern (the system grabs focus to show the screenshot thumbnail). If a
+// blur event is followed by focus inside this window, we count it as a
+// likely screenshot. Notifications/calls also briefly steal focus, so this
+// is a SIGNAL not a definitive detector.
+const QUICK_BLUR_MAX_MS = 1500;
 
 // Editing is gated on isAdmin (Andrew/Julie) — no shared password.
 // Previously a hardcoded RECIPE_PASSWORD was checked client-side, which
@@ -353,23 +359,133 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         }
     };
 
-    // View logging. On every successful expand, write to recipe_views.
-    // Admins are logged too — useful for "did Julie open Lo Mein this week".
+    // View logging + screenshot proxy. Each accordion expand creates ONE
+    // /recipe_views doc. The doc ref is held in viewSessionRef so that
+    // window blur / screenshot-shortcut / quick-blur events (captured below)
+    // can incrementally updateDoc the same record. On accordion close /
+    // recipe change, we stamp closedAt + final counters. One doc per view,
+    // not one per event — Firestore stays clean.
+    const viewSessionRef = useRef(null);
     useEffect(() => {
         if (!expandedRecipe) return;
         const r = recipes.find(rr => rr.id === expandedRecipe);
         if (!r) return;
-        addDoc(collection(db, 'recipe_views'), {
-            staffName: staffName || 'unknown',
-            recipeId: expandedRecipe,
-            recipeTitle: r.titleEn || '',
-            isAdmin: !!adminUser,
-            storeLocation: storeLocation || '',
-            geoStatus: geoStatusKind,
-            userAgent: typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '',
-            viewedAt: serverTimestamp(),
-        }).catch(err => console.warn('recipe view log failed:', err));
+        let cancelled = false;
+        const session = {
+            docRef: null,
+            blurCount: 0,
+            quickBlurCount: 0,    // iOS screenshot signature
+            screenshotShortcutCount: 0, // desktop Cmd+Shift+3/4/5, PrintScreen
+            lastBlurAt: 0,
+        };
+        viewSessionRef.current = session;
+        (async () => {
+            try {
+                const ref = await addDoc(collection(db, 'recipe_views'), {
+                    staffName: staffName || 'unknown',
+                    recipeId: expandedRecipe,
+                    recipeTitle: r.titleEn || '',
+                    isAdmin: !!adminUser,
+                    storeLocation: storeLocation || '',
+                    geoStatus: geoStatusKind,
+                    userAgent: typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '',
+                    viewedAt: serverTimestamp(),
+                    blurCount: 0,
+                    quickBlurCount: 0,
+                    screenshotShortcutCount: 0,
+                });
+                if (cancelled) return;
+                session.docRef = ref;
+            } catch (err) { console.warn('recipe view log failed:', err); }
+        })();
+        return () => {
+            cancelled = true;
+            // Stamp final counters + close time. Fire-and-forget; OK if it fails.
+            if (session.docRef) {
+                updateDoc(session.docRef, {
+                    closedAt: serverTimestamp(),
+                    blurCount: session.blurCount,
+                    quickBlurCount: session.quickBlurCount,
+                    screenshotShortcutCount: session.screenshotShortcutCount,
+                }).catch(err => console.warn('recipe view close-update failed:', err));
+            }
+            viewSessionRef.current = null;
+        };
     }, [expandedRecipe, recipes, staffName, adminUser, storeLocation, geoStatusKind]);
+
+    // Screenshot proxies — only active while a recipe is open.
+    //
+    // We can't directly detect screenshots on web — neither iOS nor Android
+    // expose an API. So we capture three SIGNALS and write counts back to
+    // the active view doc:
+    //
+    //   blurCount               — every focus loss while recipe is open
+    //   quickBlurCount          — blur followed by focus inside 1.5s. iOS
+    //                             screenshot causes the system to briefly
+    //                             grab focus to show the thumbnail; this
+    //                             pattern is a strong (but not perfect)
+    //                             screenshot signal. Notifications / quick
+    //                             app switches also trigger it, so admin
+    //                             treats this as suspicion, not proof.
+    //   screenshotShortcutCount — desktop only: Cmd+Shift+3/4/5 on Mac,
+    //                             PrintScreen on Win/Linux. These are
+    //                             definitive — the user pressed a known
+    //                             screenshot key combo.
+    useEffect(() => {
+        if (!expandedRecipe) return;
+        const session = viewSessionRef.current;
+        if (!session) return;
+
+        const handleBlur = () => {
+            session.blurCount += 1;
+            session.lastBlurAt = Date.now();
+            if (session.docRef) {
+                updateDoc(session.docRef, { blurCount: session.blurCount }).catch(() => {});
+            }
+        };
+        const handleFocus = () => {
+            const dt = Date.now() - (session.lastBlurAt || 0);
+            if (session.lastBlurAt && dt > 0 && dt < QUICK_BLUR_MAX_MS) {
+                session.quickBlurCount += 1;
+                if (session.docRef) {
+                    updateDoc(session.docRef, {
+                        quickBlurCount: session.quickBlurCount,
+                        lastQuickBlurAt: serverTimestamp(),
+                    }).catch(() => {});
+                }
+            }
+        };
+        const handleKey = (e) => {
+            // Mac: Cmd+Shift+3 (full), Cmd+Shift+4 (region), Cmd+Shift+5 (panel)
+            // Win/Linux: PrintScreen (and Win+Shift+S on Windows snip)
+            const isMacShortcut = e.metaKey && e.shiftKey && (e.key === '3' || e.key === '4' || e.key === '5');
+            const isPrintScreen = e.key === 'PrintScreen' || e.code === 'PrintScreen';
+            const isWinSnip = e.metaKey && e.shiftKey && (e.key === 'S' || e.key === 's');
+            if (isMacShortcut || isPrintScreen || isWinSnip) {
+                session.screenshotShortcutCount += 1;
+                if (session.docRef) {
+                    updateDoc(session.docRef, {
+                        screenshotShortcutCount: session.screenshotShortcutCount,
+                        lastScreenshotShortcutAt: serverTimestamp(),
+                    }).catch(() => {});
+                }
+                // Also blur the page so even if the OS captures, the recipe
+                // is hidden behind a blur in that capture (best-effort — the
+                // shortcut may capture the pre-blur frame).
+                setScreenBlurred(true);
+                setTimeout(() => setScreenBlurred(false), 800);
+            }
+        };
+
+        window.addEventListener('blur', handleBlur);
+        window.addEventListener('focus', handleFocus);
+        window.addEventListener('keydown', handleKey, true);
+        return () => {
+            window.removeEventListener('blur', handleBlur);
+            window.removeEventListener('focus', handleFocus);
+            window.removeEventListener('keydown', handleKey, true);
+        };
+    }, [expandedRecipe]);
 
     // Load recipes from Firestore
     useEffect(() => {
@@ -600,8 +716,8 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             </div>
             <p className="text-xs text-gray-500 mb-4 bg-red-50 border border-red-200 rounded-lg p-2">
                 🔒 {language === "es"
-                    ? "CONFIDENCIAL — Recetas propiedad de DD Mau. No tomes capturas, fotos ni compartas. Cada vista (quién, cuándo, dónde) queda registrada para auditoría. Las capturas tienen una marca de agua con tu nombre."
-                    : "CONFIDENTIAL — DD Mau property. No screenshots, photos, or sharing. Every view (who, when, where) is logged for audit. Screenshots are watermarked with your name."}
+                    ? "CONFIDENCIAL — Recetas propiedad de DD Mau. Cada vista queda registrada (quién, cuándo, dónde). Los intentos de captura de pantalla también se registran. Las capturas tienen marca de agua con tu nombre y la hora."
+                    : "CONFIDENTIAL — DD Mau property. Every view is logged (who, when, where). Screenshot attempts are also logged. Screenshots are watermarked with your name and timestamp."}
             </p>
 
             {recipes.map(recipe => {

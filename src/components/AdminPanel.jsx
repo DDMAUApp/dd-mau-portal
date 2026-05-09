@@ -1190,22 +1190,50 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Empleado' : 'Staff'}</th>
                                                     <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Receta' : 'Recipe'}</th>
                                                     <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Ubicación' : 'Location'}</th>
+                                                    <th className="text-center px-2 py-1 font-semibold" title={language === 'es' ? 'Señales sospechosas' : 'Suspicious signals'}>⚠️</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 {shown.map(v => {
                                                     const g = geoBadge(v.geoStatus);
+                                                    const sc  = v.screenshotShortcutCount || 0;
+                                                    const qb  = v.quickBlurCount || 0;
+                                                    const blr = v.blurCount || 0;
+                                                    // Highlight rows where the desktop screenshot shortcut fired
+                                                    // (definitive) OR more than 1 quick-blur happened (likely iOS
+                                                    // screenshot, allowing 1 for an incidental notification).
+                                                    const sus = sc > 0 || qb > 1;
                                                     return (
-                                                        <tr key={v.id} className="border-b last:border-0">
+                                                        <tr key={v.id} className={`border-b last:border-0 ${sus ? 'bg-red-50' : ''}`}>
                                                             <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{fmtTime(v.viewedAt)}</td>
                                                             <td className="px-2 py-1 text-gray-800 font-medium">{v.staffName || '—'}</td>
                                                             <td className="px-2 py-1 text-gray-700">{v.recipeTitle || `#${v.recipeId}`}</td>
                                                             <td className="px-2 py-1"><span className={`px-1.5 py-0.5 rounded ${g.c} font-semibold`}>{g.t}</span></td>
+                                                            <td className="px-2 py-1 text-center">
+                                                                {sc > 0 && (
+                                                                    <span title={language === 'es' ? `Atajo de captura presionado ${sc}×` : `Screenshot shortcut pressed ${sc}×`}
+                                                                        className="inline-block bg-red-200 text-red-800 px-1.5 py-0.5 rounded font-bold mr-1">📸 {sc}</span>
+                                                                )}
+                                                                {qb > 0 && (
+                                                                    <span title={language === 'es' ? `Foco rápido (probable captura iOS) ${qb}×` : `Quick focus loss (likely iOS screenshot) ${qb}×`}
+                                                                        className={`inline-block px-1.5 py-0.5 rounded font-bold mr-1 ${qb > 1 ? 'bg-amber-200 text-amber-800' : 'bg-amber-100 text-amber-700'}`}>👁 {qb}</span>
+                                                                )}
+                                                                {blr > 0 && sc === 0 && qb === 0 && (
+                                                                    <span title={language === 'es' ? `Cambió de app ${blr}×` : `App-switched ${blr}×`}
+                                                                        className="inline-block bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded">↗ {blr}</span>
+                                                                )}
+                                                            </td>
                                                         </tr>
                                                     );
                                                 })}
                                             </tbody>
                                         </table>
+                                        <div className="mt-2 text-[10px] text-gray-500 px-2 leading-relaxed">
+                                            <span className="font-semibold">{language === 'es' ? 'Leyenda:' : 'Legend:'}</span>{' '}
+                                            <span className="bg-red-200 text-red-800 px-1 rounded">📸</span> {language === 'es' ? 'atajo de captura (definitivo)' : 'screenshot shortcut (definitive)'} ·{' '}
+                                            <span className="bg-amber-200 text-amber-800 px-1 rounded">👁</span> {language === 'es' ? 'foco rápido (probable captura iOS)' : 'quick focus loss (likely iOS screenshot)'} ·{' '}
+                                            <span className="bg-gray-100 text-gray-600 px-1 rounded">↗</span> {language === 'es' ? 'cambió de app' : 'app-switched'}
+                                        </div>
                                     </div>
                                 )}
                                 {recipeViews.length > 25 && (
