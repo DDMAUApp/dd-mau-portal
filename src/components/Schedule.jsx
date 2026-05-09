@@ -236,15 +236,16 @@ const minorShiftWarnings = (shift, isEn) => {
 export default function Schedule({ staffName, language, storeLocation, staffList, setStaffList }) {
     const isEn = language !== 'es';
     const tx = (en, es) => (isEn ? en : es);
-    // Side-aware edit gate. The designated FOH scheduler can only edit FOH
-    // shifts; the designated BOH scheduler can only edit BOH. Admins edit
-    // either side. Re-derives whenever the manager toggles between sides.
-    const canEdit = canEditSchedule(staffName, staffList, side);
 
     const [shifts, setShifts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'day' | 'list'
     const [side, setSide] = useState('foh'); // 'foh' | 'boh'
+    // Side-aware edit gate. MUST be declared AFTER `side` — used to be one
+    // line before the `useState`, which threw a TDZ ReferenceError on first
+    // render of Schedule and broke the whole tab. Same class of bug as the
+    // May 2026 outage. Keep this BELOW the side useState always.
+    const canEdit = canEditSchedule(staffName, staffList, side);
     const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
     const [selectedDayIdx, setSelectedDayIdx] = useState(() => (new Date().getDay() - WEEK_START_DOW + 7) % 7);
     const [showAddModal, setShowAddModal] = useState(false);
