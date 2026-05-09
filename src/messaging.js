@@ -67,14 +67,21 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     const messaging = await getMessagingSafely();
     if (!messaging) return { ok: false, reason: "messaging-unsupported" };
 
-    // Wait for the FCM service worker to register (it lives at
-    // /firebase-messaging-sw.js by convention).
+    // Register the FCM service worker. CRITICAL: must use the deployed base
+    // path, not "/". Vite ships this site under base "/dd-mau-portal/" on
+    // GitHub Pages — registering "/firebase-messaging-sw.js" 404'd, so the
+    // SW never installed, so background pushes were silently dropped (the
+    // user only saw foreground in-app notifications when the app was open).
+    // import.meta.env.BASE_URL resolves to "/dd-mau-portal/" in production
+    // and "/" in dev, so this works in both.
+    const swUrl = (import.meta.env.BASE_URL || "/") + "firebase-messaging-sw.js";
+    const swScope = import.meta.env.BASE_URL || "/";
     let swRegistration = null;
     if ("serviceWorker" in navigator) {
         try {
-            swRegistration = await navigator.serviceWorker.register("/firebase-messaging-sw.js", { scope: "/" });
+            swRegistration = await navigator.serviceWorker.register(swUrl, { scope: swScope });
         } catch (e) {
-            console.warn("FCM service worker register failed:", e);
+            console.warn("FCM service worker register failed:", e, "url=", swUrl);
             return { ok: false, reason: "sw-register-failed" };
         }
     }

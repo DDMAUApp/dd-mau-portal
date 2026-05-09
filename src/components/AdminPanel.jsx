@@ -1265,6 +1265,64 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         );
                     })()}
 
+                    {/* ── PUSH NOTIFICATIONS DIAGNOSTIC ──────────────────────────────
+                        Quick verification panel. Shows the local SW + permission +
+                        FCM-token state, and a "Test push" button that writes a
+                        notification doc to YOU. If you receive it on your phone
+                        with the app CLOSED, end-to-end push is working. If you
+                        only receive it with the app open, the Cloud Function
+                        isn't deployed (`firebase deploy --only functions`) or
+                        background SW isn't registering (check console for
+                        "FCM service worker register failed"). */}
+                    {(() => {
+                        const me = staffList.find(s => s.name === staffName);
+                        const tokens = (me?.fcmTokens || []).length;
+                        const swSupported = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
+                        const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+                        const sendTestPush = async () => {
+                            try {
+                                const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+                                await addDoc(collection(db, 'notifications'), {
+                                    forStaff: staffName,
+                                    type: 'test',
+                                    title: language === 'es' ? '🔔 Prueba de notificación' : '🔔 Push test',
+                                    body: language === 'es'
+                                        ? `Si recibes esto con la app cerrada, el push funciona. Hora: ${new Date().toLocaleTimeString()}`
+                                        : `If you got this with the app closed, push works end-to-end. Sent ${new Date().toLocaleTimeString()}`,
+                                    createdAt: serverTimestamp(),
+                                    read: false,
+                                    createdBy: staffName,
+                                });
+                            } catch (e) {
+                                console.error('test push failed:', e);
+                            }
+                        };
+                        return (
+                            <div className="mt-6 mb-4 border border-blue-200 rounded-xl bg-blue-50 p-4">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-xl">🔔</span>
+                                    <h3 className="text-base font-bold text-blue-900">
+                                        {language === 'es' ? 'Diagnóstico de notificaciones' : 'Push notifications diagnostic'}
+                                    </h3>
+                                </div>
+                                <ul className="text-xs text-blue-900 space-y-1 mb-3">
+                                    <li><strong>{language === 'es' ? 'Service Worker:' : 'Service Worker:'}</strong> {swSupported ? '✅' : '❌'} {swSupported ? (language === 'es' ? 'soportado' : 'supported') : (language === 'es' ? 'no soportado en este dispositivo' : 'not supported on this device')}</li>
+                                    <li><strong>{language === 'es' ? 'Permiso del navegador:' : 'Browser permission:'}</strong> {perm === 'granted' ? '✅' : perm === 'denied' ? '🚫' : '⚠️'} {perm}</li>
+                                    <li><strong>{language === 'es' ? 'Tokens FCM registrados:' : 'FCM tokens registered:'}</strong> {tokens > 0 ? '✅' : '❌'} {tokens}</li>
+                                </ul>
+                                <button onClick={sendTestPush}
+                                    className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">
+                                    🧪 {language === 'es' ? 'Enviar push de prueba a mí' : 'Send test push to myself'}
+                                </button>
+                                <p className="text-[10px] text-blue-800 mt-2 leading-relaxed">
+                                    {language === 'es'
+                                        ? 'Cierra la app, luego pulsa el botón. Si recibes la notificación con la app cerrada, todo el camino funciona. Si sólo la ves al abrir la app, la Cloud Function no está desplegada o el SW falló.'
+                                        : 'Close the app, then tap the button. If the notification arrives while the app is closed, end-to-end push is working. If you only see it after opening the app, the Cloud Function isn\'t deployed or the SW failed to register.'}
+                                </p>
+                            </div>
+                        );
+                    })()}
+
                     {/* ── DANGER ZONE — System Refresh broadcast ────────────────────
                         Writes a timestamp to /config/forceRefresh. Every active
                         client subscribes to that doc in App.jsx and force-refreshes
