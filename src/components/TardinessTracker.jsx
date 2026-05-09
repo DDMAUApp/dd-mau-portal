@@ -22,6 +22,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
+import { toast } from '../toast';
 import {
     TARDY_TIERS, TARDY_REASONS, TARDY_REASON_BY_ID, TARDY_MINUTES_PRESETS,
     ROLLING_WINDOW_DAYS,
@@ -151,7 +152,7 @@ export default function TardinessTracker({ language, staffName, staffList, store
             setShowLogModal(false);
         } catch (e) {
             console.error('Log tardy failed:', e);
-            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 

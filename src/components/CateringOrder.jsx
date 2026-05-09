@@ -5,6 +5,7 @@ import { t } from '../data/translations';
 import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
 import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
+import { toast } from '../toast';
 // CateringMenuItem sub-component
 function CateringMenuItem({ item, language, onAdd, editData, onSaveEdit, onCancelEdit }) {
             // editData = { cartItem } when editing an existing cart item
@@ -713,7 +714,7 @@ export default function CateringOrder({ language, staffName }) {
             };
             const printOrder = (o) => {
                 const w = window.open('', '_blank', 'width=800,height=1100');
-                if (!w) { alert('Please allow popups to print this order, or use the Share button on your phone.'); return; }
+                if (!w) { toast('Please allow popups to print this order, or use the Share button on your phone.'); return; }
                 w.document.write(buildInvoiceHTML(o));
                 w.document.close();
                 setTimeout(() => w.print(), 300);

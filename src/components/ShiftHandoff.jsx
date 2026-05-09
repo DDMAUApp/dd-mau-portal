@@ -18,6 +18,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, updateDoc, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
+import { toast } from '../toast';
 import {
     HANDOFF_SECTIONS, HANDOFF_VERSION,
     getBusinessDateKey, handoffDocId, statusOf, statusBadge,
@@ -150,7 +151,7 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
             );
         } catch (e) {
             console.error('Submit handoff failed:', e);
-            alert(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);
+            toast(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);
         }
     };
 
@@ -178,7 +179,7 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
             }
         } catch (e) {
             console.error('Acknowledge failed:', e);
-            alert(tx('Could not acknowledge: ', 'No se pudo confirmar: ') + e.message);
+            toast(tx('Could not acknowledge: ', 'No se pudo confirmar: ') + e.message);
         }
     };
 

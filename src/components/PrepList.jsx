@@ -4,6 +4,7 @@ import { doc, setDoc, onSnapshot, query } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { isAdmin } from '../data/staff';
+import { toast } from '../toast';
 
 // Debounce helper — delays Firestore writes until tapping stops
 function useDebounce(fn, delay) {
@@ -337,7 +338,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         html += `</body></html>`;
         const w = window.open("", "_blank");
         if (!w) {
-            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+            toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
             return;
         }
         w.document.write(html);
@@ -387,7 +388,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         html += `</body></html>`;
         const w = window.open("", "_blank");
         if (!w) {
-            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+            toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
             return;
         }
         w.document.write(html);

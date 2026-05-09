@@ -9,6 +9,7 @@ import InventoryHistory from './InventoryHistory';
 import PrepList from './PrepList';
 import SauceLog from './SauceLog';
 import SauceLogBohBanner from './SauceLogBohBanner';
+import { toast } from '../toast';
 
 // Constants
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
@@ -1699,7 +1700,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (matchedStaff && (matchedStaff.role === "admin" || matchedStaff.role === "manager")) {
                     setPasswordEntered(true); setPassword("");
                 } else {
-                    alert(language === "es" ? "PIN de gerente incorrecto" : "Incorrect manager PIN");
+                    toast(language === "es" ? "PIN de gerente incorrecto" : "Incorrect manager PIN");
                 }
             };
 
@@ -1956,7 +1957,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         try { await deleteObject(photoRef); }
                         catch (cleanupErr) { console.warn("Photo orphan cleanup failed:", cleanupErr); }
                     }
-                    alert(language === "es" ? "Error al subir foto" : "Error uploading photo");
+                    toast(language === "es" ? "Error al subir foto" : "Error uploading photo");
                 }
                 setCapturingPhoto(null);
             };
@@ -2481,7 +2482,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     (a.name || "").localeCompare(b.name || ""));
 
                 if (rows.length === 0) {
-                    alert(language === "es" ? "El carrito está vacío." : "Cart is empty.");
+                    toast(language === "es" ? "El carrito está vacío." : "Cart is empty.");
                     return;
                 }
 
@@ -2623,7 +2624,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 html += `</body></html>`;
                 const w = window.open("", "_blank");
                 if (!w) {
-                    alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                    toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
                     return;
                 }
                 w.document.write(html);
@@ -2850,7 +2851,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 <script>setTimeout(() => window.print(), 300);</script>
 </body></html>`;
                 const w = window.open("", "_blank", "width=800,height=1000");
-                if (!w) { alert(language === "es" ? "Ventana bloqueada." : "Pop-up blocked."); return; }
+                if (!w) { toast(language === "es" ? "Ventana bloqueada." : "Pop-up blocked."); return; }
                 w.document.open(); w.document.write(html); w.document.close();
             };
 
@@ -3360,7 +3361,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         onClick={() => {
                                                             const w = window.open(photoUrl, "_blank");
                                                             if (!w) {
-                                                                alert(language === "es" ? "Por favor permita ventanas emergentes para ver la foto." : "Please allow pop-ups to view the photo.");
+                                                                toast(language === "es" ? "Por favor permita ventanas emergentes para ver la foto." : "Please allow pop-ups to view the photo.");
                                                             }
                                                         }} />
                                                 </div>
@@ -5482,7 +5483,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         setBreakWaveTimes(times);
                                         saveBreakPlan(plan, times);
                                     } else {
-                                        alert(language === "es" ? "No hay plan para hoy" : "No plan for today to copy");
+                                        toast(language === "es" ? "No hay plan para hoy" : "No plan for today to copy");
                                     }
                                 }}
                                     className="w-full py-2.5 rounded-xl font-bold text-sm bg-blue-50 text-blue-600 border-2 border-blue-200 hover:bg-blue-100 transition">
@@ -5871,7 +5872,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         html += `</body></html>`;
                                         const printWindow = window.open("", "_blank");
                                         if (!printWindow) {
-                                            alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                                            toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
                                             return;
                                         }
                                         printWindow.document.write(html);

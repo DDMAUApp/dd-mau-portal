@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { toast } from '../toast';
 
 export default function ToastInvoices({ language }) {
     const [invoices, setInvoices] = useState([]);
@@ -115,7 +116,7 @@ export default function ToastInvoices({ language }) {
 
         const printWindow = window.open("", "_blank", "width=700,height=900");
         if (!printWindow) {
-            alert(isEn
+            toast(isEn
                 ? "Please allow pop-ups to print invoices."
                 : "Por favor permita ventanas emergentes para imprimir facturas.");
             return;

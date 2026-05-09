@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { t } from '../data/translations';
+import { toast } from '../toast';
 
 export default function InventoryHistory({ language, customInventory: customInventoryProp, storeLocation }) {
             const [historyDates, setHistoryDates] = useState([]);
@@ -265,7 +266,7 @@ export default function InventoryHistory({ language, customInventory: customInve
                 html += `</body></html>`;
                 const win = window.open("", "_blank");
                 if (!win) {
-                    alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+                    toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
                     return;
                 }
                 win.document.write(html);

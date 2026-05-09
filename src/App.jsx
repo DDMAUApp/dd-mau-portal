@@ -9,6 +9,7 @@ import { enableFcmPush, onForegroundMessage } from './messaging';
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
+import AppToast from './components/AppToast';
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
@@ -660,6 +661,12 @@ export default function App() {
                 </Suspense>
             </div>
             </div>
+            {/* In-app toast notification stack. Mounted once at app root so
+                any module can call toast() without prop-drilling. Replaces
+                window.alert() everywhere — native alert showed
+                "ddmauapp.github.io says:" as a prefix on Chrome, which we
+                don't want staff seeing. */}
+            <AppToast />
             {/* Bottom Navigation — hidden on md+ since sidebar replaces it */}
             {/* Mobile-only version footer — sits just above the bottom nav.
                 Hidden on md+ since the desktop sidebar already shows it.

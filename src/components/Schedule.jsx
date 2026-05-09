@@ -25,6 +25,7 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
+import { toast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     setDoc, serverTimestamp, writeBatch,
@@ -751,7 +752,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // Warn about location mismatch (no auto-switch — that's an app-level setting)
             if (storeLocation !== 'both' && shiftData.location && shiftData.location !== storeLocation) {
                 setTimeout(() => {
-                    alert(tx(
+                    toast(tx(
                         `✅ Saved, but this shift is at ${LOCATION_LABELS[shiftData.location]} and you're viewing ${LOCATION_LABELS[storeLocation]}. Switch locations from the home screen to see it.`,
                         `✅ Guardado, pero este turno es en ${LOCATION_LABELS[shiftData.location]} y estás viendo ${LOCATION_LABELS[storeLocation]}. Cambia de ubicación en la pantalla de inicio para verlo.`,
                     ));
@@ -759,7 +760,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         } catch (e) {
             console.error('Add shift failed:', e);
-            alert(tx('Could not save shift: ', 'No se pudo guardar el turno: ') + e.message);
+            toast(tx('Could not save shift: ', 'No se pudo guardar el turno: ') + e.message);
         }
     };
 
@@ -770,7 +771,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await deleteDoc(doc(db, 'shifts', shiftId));
         } catch (e) {
             console.error('Delete shift failed:', e);
-            alert(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message);
+            toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message);
         }
     };
 
@@ -785,7 +786,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEdit) return;
         if (!startTime || !endTime) return;
         if (endTime <= startTime) {
-            alert(tx('End time must be after start time.', 'La hora de fin debe ser después del inicio.'));
+            toast(tx('End time must be after start time.', 'La hora de fin debe ser después del inicio.'));
             return;
         }
         try {
@@ -797,7 +798,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
         } catch (e) {
             console.error('Update shift times failed:', e);
-            alert(tx('Could not update times: ', 'No se pudieron actualizar los horarios: ') + e.message);
+            toast(tx('Could not update times: ', 'No se pudieron actualizar los horarios: ') + e.message);
         }
     };
 
@@ -809,12 +810,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (shift.staffName === newStaffName && shift.date === newDate) return;
         // Refuse to drop on a closed date.
         if (dateClosed(newDate)) {
-            alert(tx('Cannot drop on a closed date.', 'No puedes soltar en una fecha cerrada.'));
+            toast(tx('Cannot drop on a closed date.', 'No puedes soltar en una fecha cerrada.'));
             return;
         }
         // Refuse to drop on a staffer's PTO date.
         if (isStaffOffOn(newStaffName, newDate)) {
-            alert(tx(`${newStaffName} is on approved time-off that date.`, `${newStaffName} tiene tiempo libre aprobado esa fecha.`));
+            toast(tx(`${newStaffName} is on approved time-off that date.`, `${newStaffName} tiene tiempo libre aprobado esa fecha.`));
             return;
         }
         try {
@@ -825,7 +826,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
         } catch (e) {
             console.error('Drop shift failed:', e);
-            alert(tx('Could not move shift: ', 'No se pudo mover: ') + e.message);
+            toast(tx('Could not move shift: ', 'No se pudo mover: ') + e.message);
         }
     };
 
@@ -847,7 +848,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
         } catch (e) {
             console.error('Offer shift failed:', e);
-            alert(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message);
+            toast(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message);
         }
     };
 
@@ -881,7 +882,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
         } catch (e) {
             console.error('Take shift failed:', e);
-            alert(tx('Could not take shift: ', 'No se pudo tomar: ') + e.message);
+            toast(tx('Could not take shift: ', 'No se pudo tomar: ') + e.message);
         }
     };
 
@@ -908,7 +909,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 tx(`The shift on ${detail} is now yours.`, `El turno del ${detail} ahora es tuyo.`));
         } catch (e) {
             console.error('Approve failed:', e);
-            alert(tx('Could not approve: ', 'No se pudo aprobar: ') + e.message);
+            toast(tx('Could not approve: ', 'No se pudo aprobar: ') + e.message);
         }
     };
 
@@ -947,7 +948,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setShowNeedModal(false);
         } catch (e) {
             console.error('Add need failed:', e);
-            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -977,7 +978,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setEditingNeed(null);
         } catch (e) {
             console.error('Edit need failed:', e);
-            alert(tx('Could not update slot: ', 'No se pudo actualizar el espacio: ') + e.message);
+            toast(tx('Could not update slot: ', 'No se pudo actualizar el espacio: ') + e.message);
         }
     };
 
@@ -1013,7 +1014,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setAvailableForDate(null);
         } catch (e) {
             console.error('Fill need failed:', e);
-            alert(tx('Could not fill: ', 'No se pudo asignar: ') + e.message);
+            toast(tx('Could not fill: ', 'No se pudo asignar: ') + e.message);
         }
     };
 
@@ -1032,7 +1033,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 await deleteDoc(doc(db, 'shifts', shiftId));
             } catch (e) {
                 console.error('Unfill: shift delete failed, aborting prune', e);
-                alert(tx(
+                toast(tx(
                     'Could not delete the underlying shift. The slot was NOT updated. Try again or refresh.',
                     'No se pudo borrar el turno. El espacio NO se actualizó. Intenta de nuevo.'
                 ));
@@ -1049,7 +1050,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
         } catch (e) {
             console.error('Unfill: prune failed (shift already deleted)', e);
-            alert(tx(
+            toast(tx(
                 'Shift was deleted but the slot count did not refresh. Try refreshing the page.',
                 'El turno fue borrado pero el contador no se actualizó. Refresca la página.'
             ));
@@ -1083,7 +1084,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setEditingTemplate(null);
         } catch (e) {
             console.error('Save template failed:', e);
-            alert(tx('Could not save template: ', 'No se pudo guardar la plantilla: ') + e.message);
+            toast(tx('Could not save template: ', 'No se pudo guardar la plantilla: ') + e.message);
         }
     };
 
@@ -1123,10 +1124,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }
             }
             setShowApplyTemplate(false);
-            alert(tx(`✅ Applied "${tpl.name}" to ${dateStr}.`, `✅ "${tpl.name}" aplicada a ${dateStr}.`));
+            toast(tx(`✅ Applied "${tpl.name}" to ${dateStr}.`, `✅ "${tpl.name}" aplicada a ${dateStr}.`));
         } catch (e) {
             console.error('Apply template failed:', e);
-            alert(tx('Apply error: ', 'Error al aplicar: ') + e.message);
+            toast(tx('Apply error: ', 'Error al aplicar: ') + e.message);
         }
     };
 
@@ -1145,7 +1146,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         } catch (e) {
             console.error('Save recurring failed:', e);
-            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -1227,10 +1228,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         }
         if (created.length === 0) {
-            alert(tx(`No shifts generated.${skipped.length ? '\n\nSkipped:\n' + skipped.slice(0, 8).join('\n') : ''}`,
+            toast(tx(`No shifts generated.${skipped.length ? '\n\nSkipped:\n' + skipped.slice(0, 8).join('\n') : ''}`,
                 `No se generaron turnos.${skipped.length ? '\n\nOmitidos:\n' + skipped.slice(0, 8).join('\n') : ''}`));
         } else {
-            alert(tx(`✅ Generated ${created.length} draft shifts.${skipped.length ? `\n\nSkipped ${skipped.length}.` : ''}`,
+            toast(tx(`✅ Generated ${created.length} draft shifts.${skipped.length ? `\n\nSkipped ${skipped.length}.` : ''}`,
                 `✅ Se generaron ${created.length} turnos borrador.${skipped.length ? `\n\nOmitidos ${skipped.length}.` : ''}`));
         }
     };
@@ -1247,7 +1248,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setShowBlockModal(false);
         } catch (e) {
             console.error('Add block failed:', e);
-            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -1274,7 +1275,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setShowTimeOffModal(false);
         } catch (e) {
             console.error('Add time-off failed:', e);
-            alert(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -1318,7 +1319,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }
         }
         if (blockedDates.length > 0) {
-            alert(tx(
+            toast(tx(
                 `🛑 Time-off cannot be requested for these dates:\n${blockedDates.join('\n')}\n\nPlease pick different dates.`,
                 `🛑 No se puede pedir tiempo libre para estas fechas:\n${blockedDates.join('\n')}\n\nPor favor elige otras fechas.`,
             ));
@@ -1334,10 +1335,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdAt: serverTimestamp(),
             });
             setShowPtoRequestModal(false);
-            alert(tx('✅ Request submitted. A manager will review it.', '✅ Solicitud enviada. Un gerente la revisará.'));
+            toast(tx('✅ Request submitted. A manager will review it.', '✅ Solicitud enviada. Un gerente la revisará.'));
         } catch (e) {
             console.error('Submit PTO failed:', e);
-            alert(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);
+            toast(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);
         }
     };
 
@@ -1400,7 +1401,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await setDoc(doc(db, 'config', 'staff'), { list: updated });
         } catch (e) {
             console.error('Save availability failed:', e);
-            alert(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -1502,7 +1503,7 @@ ${dayBlocks}
 <script>setTimeout(() => window.print(), 300);</script>
 </body></html>`;
             const w = window.open('', '_blank', 'width=800,height=1000');
-            if (!w) { alert(tx('Pop-up blocked.', 'Ventana bloqueada.')); return; }
+            if (!w) { toast(tx('Pop-up blocked.', 'Ventana bloqueada.')); return; }
             w.document.open(); w.document.write(personHtml); w.document.close();
             return;
         }
@@ -1626,7 +1627,7 @@ ${dayBlocks}
 
         const w = window.open('', '_blank', 'width=1100,height=850');
         if (!w) {
-            alert(tx('Pop-up blocked. Allow pop-ups for this site to print.', 'Ventana emergente bloqueada. Permite ventanas emergentes para imprimir.'));
+            toast(tx('Pop-up blocked. Allow pop-ups for this site to print.', 'Ventana emergente bloqueada. Permite ventanas emergentes para imprimir.'));
             return;
         }
         w.document.open();
@@ -1641,7 +1642,7 @@ ${dayBlocks}
     const handleExportIcs = () => {
         const events = visibleShifts.filter(s => s.published !== false); // skip drafts
         if (events.length === 0) {
-            alert(tx('No published shifts to export.', 'Sin turnos publicados para exportar.'));
+            toast(tx('No published shifts to export.', 'Sin turnos publicados para exportar.'));
             return;
         }
         const pad = (n) => String(n).padStart(2, '0');
@@ -1711,7 +1712,7 @@ ${dayBlocks}
         if (!canEdit) return;
         const drafts = visibleShifts.filter(s => s.published === false);
         if (drafts.length === 0) {
-            alert(tx('No drafts to publish.', 'Sin borradores para publicar.'));
+            toast(tx('No drafts to publish.', 'Sin borradores para publicar.'));
             return;
         }
         const weekStartStr = toDateStr(weekStart);
@@ -1741,7 +1742,7 @@ ${dayBlocks}
             }
             await batch.commit();
             setPublishPreview(null);
-            alert(tx(`✅ Published ${drafts.length} shifts.`, `✅ Se publicaron ${drafts.length} turnos.`));
+            toast(tx(`✅ Published ${drafts.length} shifts.`, `✅ Se publicaron ${drafts.length} turnos.`));
             // Notify each staffer whose shifts were published — one notification per person.
             const byStaff = new Map();
             for (const s of drafts) {
@@ -1756,7 +1757,7 @@ ${dayBlocks}
             }
         } catch (e) {
             console.error('Publish failed:', e);
-            alert(tx('Publish error: ', 'Error al publicar: ') + e.message);
+            toast(tx('Publish error: ', 'Error al publicar: ') + e.message);
         }
     };
 
@@ -1784,7 +1785,7 @@ ${dayBlocks}
                 return sideStaffNames.has(sh.staffName);
             });
             if (filtered.length === 0) {
-                alert(tx('No shifts found in last week.', 'No hay turnos en la semana anterior.'));
+                toast(tx('No shifts found in last week.', 'No hay turnos en la semana anterior.'));
                 return;
             }
             if (!confirm(tx(
@@ -1820,10 +1821,10 @@ ${dayBlocks}
                     updatedAt: serverTimestamp(),
                 });
             }
-            alert(tx(`✅ Copied ${filtered.length} shifts as drafts.`, `✅ Se copiaron ${filtered.length} turnos como borradores.`));
+            toast(tx(`✅ Copied ${filtered.length} shifts as drafts.`, `✅ Se copiaron ${filtered.length} turnos como borradores.`));
         } catch (e) {
             console.error('Copy week failed:', e);
-            alert(tx('Copy error: ', 'Error al copiar: ') + e.message);
+            toast(tx('Copy error: ', 'Error al copiar: ') + e.message);
         }
     };
 
@@ -1922,7 +1923,7 @@ ${dayBlocks}
         }
 
         if (created.length === 0) {
-            alert(tx(`Nothing to schedule. Reasons:\n${skipped.slice(0, 8).join('\n')}`,
+            toast(tx(`Nothing to schedule. Reasons:\n${skipped.slice(0, 8).join('\n')}`,
                 `Nada que programar. Razones:\n${skipped.slice(0, 8).join('\n')}`));
             return;
         }
@@ -1932,12 +1933,12 @@ ${dayBlocks}
             for (const sh of created) {
                 await addDoc(collection(db, 'shifts'), sh);
             }
-            alert(tx(`✅ Auto-filled ${created.length} draft shifts.${skipped.length ? `\n\nSkipped:\n${skipped.slice(0,5).join('\n')}` : ''}`,
+            toast(tx(`✅ Auto-filled ${created.length} draft shifts.${skipped.length ? `\n\nSkipped:\n${skipped.slice(0,5).join('\n')}` : ''}`,
                 `✅ Se auto-rellenaron ${created.length} turnos borrador.${skipped.length ? `\n\nOmitidos:\n${skipped.slice(0,5).join('\n')}` : ''}`));
             setShowAutoFillModal(false);
         } catch (e) {
             console.error('Auto-fill failed:', e);
-            alert(tx('Auto-fill error: ', 'Error de auto-rellenar: ') + e.message);
+            toast(tx('Auto-fill error: ', 'Error de auto-rellenar: ') + e.message);
         }
     };
 
@@ -2226,11 +2227,11 @@ ${dayBlocks}
                                 onCellClick={(staff, dateStr) => {
                                     if (!canEdit) return;
                                     if (dateClosed(dateStr)) {
-                                        alert(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
+                                        toast(tx('Restaurant is marked closed on this date.', 'El restaurante está marcado como cerrado en esta fecha.'));
                                         return;
                                     }
                                     if (isStaffOffOn(staff.name, dateStr)) {
-                                        alert(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
+                                        toast(tx(`${staff.name} is on approved time-off for this date.`, `${staff.name} tiene tiempo libre aprobado para esta fecha.`));
                                         return;
                                     }
                                     // If there are open slots on this day that match this staff's

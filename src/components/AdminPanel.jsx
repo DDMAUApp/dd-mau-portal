@@ -5,6 +5,7 @@ import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory'; 
+import { toast } from '../toast';
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -63,12 +64,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         triggeredBy: staffName,
                     });
                     setConfirmingRefresh(false);
-                    alert(language === "es"
+                    toast(language === "es"
                         ? "✓ Refresco enviado. Cada dispositivo activo se actualizará en segundos."
                         : "✓ Broadcast sent. Every active device will refresh within seconds.");
                 } catch (e) {
                     console.error("System refresh broadcast failed:", e);
-                    alert((language === "es" ? "Error: " : "Error: ") + e.message);
+                    toast((language === "es" ? "Error: " : "Error: ") + e.message);
                 }
             };
 
@@ -97,7 +98,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     await saveStaffToFirestore(latest);
                     showSaved();
                 }
-                alert(language === "es"
+                toast(language === "es"
                     ? `✓ Etiquetados automáticamente: ${touched}.`
                     : `✓ Auto-tagged ${touched} staff from role.`);
             };
@@ -127,7 +128,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     await saveStaffToFirestore(latest);
                     showSaved();
                 }
-                alert(language === "es"
+                toast(language === "es"
                     ? `✓ Acceso a Recetas otorgado: ${touched}.`
                     : `✓ Recipes access granted to ${touched} staff.`);
             };
@@ -261,7 +262,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     showSaved();
                 } catch (err) {
                     console.error("Error deleting request:", err);
-                    alert((language === "es" ? "Error al eliminar: " : "Delete failed: ") + (err.message || err));
+                    toast((language === "es" ? "Error al eliminar: " : "Delete failed: ") + (err.message || err));
                 }
             };
 
@@ -272,7 +273,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const clearOldMaintenanceRequests = async () => {
                 const targets = filteredMaintenance.filter(r => r.status === "completed" || r.status === "declined");
                 if (targets.length === 0) {
-                    alert(language === "es"
+                    toast(language === "es"
                         ? "No hay solicitudes completadas o rechazadas para eliminar."
                         : "No completed/declined requests to delete.");
                     return;
@@ -289,11 +290,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         chunk.forEach(r => batch.delete(doc(db, "maintenanceRequests", r.id)));
                         await batch.commit();
                     }
-                    alert((language === "es" ? "Eliminadas: " : "Deleted: ") + targets.length);
+                    toast((language === "es" ? "Eliminadas: " : "Deleted: ") + targets.length);
                     showSaved();
                 } catch (err) {
                     console.error("Error clearing requests:", err);
-                    alert((language === "es" ? "Error: " : "Error: ") + (err.message || err));
+                    toast((language === "es" ? "Error: " : "Error: ") + (err.message || err));
                 }
             };
 

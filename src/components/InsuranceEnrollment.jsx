@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { toast } from '../toast';
 
 export default function InsuranceEnrollment({ language, staffName, staffList }) {
   const [loading, setLoading] = useState(true);
@@ -24,7 +25,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
       setShowAdmin(true);
       loadAllEnrollments();
     } else if (entered !== null) {
-      alert("Incorrect password.");
+      toast("Incorrect password.");
     }
   };
 
@@ -122,7 +123,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
       setExistingData({ status: "pending_review", submittedAt: now.toISOString() });
     } catch (err) {
       console.error("Error submitting enrollment:", err);
-      alert(language === "es" ? "Error al enviar" : "Error submitting form");
+      toast(language === "es" ? "Error al enviar" : "Error submitting form");
     }
     setSubmitting(false);
   };
@@ -206,7 +207,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
       downloadWorkbook(XLSX, wb, `DD_Mau_Insurance_All_${new Date().toISOString().split("T")[0]}.xlsx`);
     } catch (err) {
       console.error("Excel export error:", err);
-      alert("Error exporting Excel. Please try again.");
+      toast("Error exporting Excel. Please try again.");
     }
   };
 
@@ -276,7 +277,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
       downloadWorkbook(XLSX, wb, `DD_Mau_Insurance_${safeName.replace(/\s+/g, "_")}_${new Date().toISOString().split("T")[0]}.xlsx`);
     } catch (err) {
       console.error("Excel export error:", err);
-      alert("Error exporting Excel. Please try again.");
+      toast("Error exporting Excel. Please try again.");
     }
   };
 
@@ -328,7 +329,7 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     </div></body></html>`;
     const win = window.open("", "_blank");
     if (!win) {
-      alert(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
+      toast(language === "es" ? "Por favor permita ventanas emergentes para imprimir." : "Please allow pop-ups to print.");
       return;
     }
     win.document.write(html);

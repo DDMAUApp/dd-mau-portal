@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { toast } from '../toast';
 
 export default function ToastOrders({ language }) {
     const [orders, setOrders] = useState([]);
@@ -182,7 +183,7 @@ export default function ToastOrders({ language }) {
 
         const printWindow = window.open("", "_blank", "width=700,height=900");
         if (!printWindow) {
-            alert(isEn
+            toast(isEn
                 ? "Please allow pop-ups to print orders."
                 : "Por favor permita ventanas emergentes para imprimir pedidos.");
             return;

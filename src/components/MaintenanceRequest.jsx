@@ -3,6 +3,7 @@ import { db, storage } from '../firebase';
 import { doc, collection, query, orderBy, limit, onSnapshot, setDoc, deleteDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { t } from '../data/translations';
+import { toast } from '../toast';
 
 export default function MaintenanceRequest({ language, staffName, storeLocation }) {
             const [description, setDescription] = useState("");
@@ -91,7 +92,7 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                     setTimeout(() => setSubmitted(false), 3000);
                 } catch (err) {
                     console.error("Error submitting request:", err);
-                    alert(language === "es" ? "Error al enviar solicitud" : "Error submitting request");
+                    toast(language === "es" ? "Error al enviar solicitud" : "Error submitting request");
                 }
                 setSubmitting(false);
             };

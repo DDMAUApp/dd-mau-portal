@@ -4,6 +4,7 @@ import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, serverTimestamp
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { MASTER_RECIPES } from '../data/masterRecipes';
+import { toast } from '../toast';
 
 // Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
 const REPIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
@@ -45,7 +46,7 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
     };
 
     const handleSave = () => {
-        if (!form.titleEn.trim()) { alert(language === "es" ? "Se requiere título en inglés" : "English title is required"); return; }
+        if (!form.titleEn.trim()) { toast(language === "es" ? "Se requiere título en inglés" : "English title is required"); return; }
         const cleaned = {
             ...form,
             ingredientsEn: form.ingredientsEn.filter(s => s.trim()),
@@ -501,7 +502,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // password (their PIN already authenticated them on the home screen).
     const requestEdit = (action) => {
         if (!adminUser) {
-            alert(language === "es"
+            toast(language === "es"
                 ? "Sólo los administradores pueden editar recetas. Pídele al gerente."
                 : "Only admins can edit recipes. Ask a manager.");
             return;
@@ -510,7 +511,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     };
     const requestDelete = (recipeId) => {
         if (!adminUser) {
-            alert(language === "es"
+            toast(language === "es"
                 ? "Sólo los administradores pueden borrar recetas."
                 : "Only admins can delete recipes.");
             return;
@@ -564,7 +565,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
             adds += 1;
         }
         if (updates === 0 && adds === 0) {
-            alert(language === "es" ? "Sin cambios." : "Nothing to do.");
+            toast(language === "es" ? "Sin cambios." : "Nothing to do.");
             return;
         }
         const summary = language === "es"
@@ -574,10 +575,10 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         setRecipes(updated);
         try {
             await setDoc(doc(db, "config", "recipes"), { list: updated, updatedAt: new Date().toISOString() });
-            alert(language === "es" ? `${adds} agregadas, ${updates} actualizadas.` : `${adds} added, ${updates} updated.`);
+            toast(language === "es" ? `${adds} agregadas, ${updates} actualizadas.` : `${adds} added, ${updates} updated.`);
         } catch (err) {
             console.error("Error importing master recipes:", err);
-            alert(`Import failed: ${err.message || err}`);
+            toast(`Import failed: ${err.message || err}`);
         }
     };
 
