@@ -705,11 +705,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     }, [staffList, shifts, weekStart, storeLocation]);
 
     // ── Handlers ──
+    // Manually-added shifts default to DRAFT (published: false). Manager taps
+    // "Publish" to release the week (or this single shift) so staff get the
+    // notification. Reasoning: the publish button is useless if every Add
+    // Shift writes published=true — there's nothing to publish. (User-reported
+    // bug 2026-05-09: "added a shift, tried to publish, said no shifts to
+    // publish.") If a manager wants to push a quick mid-week add immediately,
+    // they tap Publish right after Save — the badge on the button shows N drafts.
     const handleAddShift = async (shiftData) => {
         try {
             await addDoc(collection(db, 'shifts'), {
                 ...shiftData,
-                published: true, // Phase 1: no draft state yet
+                published: false, // draft — manager hits Publish to release
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
@@ -992,7 +999,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 isShiftLead: false,
                 isDouble: false,
                 notes: need.notes || tx('From staffing need', 'De necesidad de personal'),
-                published: true,
+                published: false, // draft — same convention as handleAddShift
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
@@ -2012,19 +2019,31 @@ ${dayBlocks}
                     ))}
                 </select>
                 {/* PRIMARY (always inline, mobile + desktop) */}
-                {canEdit && (
+                {canEdit && (() => {
+                    // Count drafts visible in the current week + side so the
+                    // manager sees at-a-glance whether Publish has work to do.
+                    // Without this badge we routinely had managers tap Publish,
+                    // get the "no drafts" alert, and assume the button is broken.
+                    const draftCount = visibleShifts.filter(s => s.published === false).length;
+                    return (
                     <>
                         <button onClick={handlePublishDrafts}
                             title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores')}
-                            className="px-3 py-2 rounded-lg bg-green-600 text-white text-xs font-bold hover:bg-green-700">
+                            className={`relative px-3 py-2 rounded-lg text-xs font-bold transition ${draftCount > 0 ? 'bg-green-600 text-white hover:bg-green-700 animate-pulse' : 'bg-gray-200 text-gray-500'}`}>
                             📢 {tx('Publish', 'Publicar')}
+                            {draftCount > 0 && (
+                                <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+                                    {draftCount}
+                                </span>
+                            )}
                         </button>
                         <button onClick={() => openAddModal()}
                             className="px-3 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
                             + {tx('Shift', 'Turno')}
                         </button>
                     </>
-                )}
+                    );
+                })()}
                 <button onClick={handlePrintWeek}
                     title={tx('Print full week as one-page calendar', 'Imprimir semana')}
                     className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
