@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, addDoc } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
@@ -810,6 +810,41 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await saveChecklistState(newChecks, customTasksRef.current);
             };
 
+            // Push a notification to each assignee for a one-time task. Writes
+            // to /notifications which the dispatchNotification Cloud Function
+            // fans out via FCM to saved tokens — same pipeline shift reminders
+            // and tardy notifications use. Recurring tasks deliberately don't
+            // notify (would be daily noise); only fires when runOnDate is set.
+            const notifyOneTimeTaskAssignees = async (taskItem, recipients) => {
+                if (!taskItem?.runOnDate || !recipients || recipients.length === 0) return;
+                const isToday = taskItem.runOnDate === getTodayKey();
+                const [yy, mm, dd] = taskItem.runOnDate.split("-").map(Number);
+                const dateLabel = new Date(yy, mm - 1, dd).toLocaleString(
+                    language === "es" ? "es" : "en", { month: "short", day: "numeric" });
+                const title = language === "es"
+                    ? `Tarea asignada: ${taskItem.task}`
+                    : `Task assigned: ${taskItem.task}`;
+                const body = isToday
+                    ? (language === "es" ? "Programada para hoy" : "Scheduled for today")
+                    : (language === "es" ? `Programada para ${dateLabel}` : `Scheduled for ${dateLabel}`);
+                try {
+                    await Promise.all(recipients.map(forStaff =>
+                        addDoc(collection(db, "notifications"), {
+                            forStaff,
+                            type: "task_assigned",
+                            title,
+                            body,
+                            link: "/operations",
+                            createdAt: serverTimestamp(),
+                            read: false,
+                            createdBy: staffName,
+                            taskId: taskItem.id,
+                            runOnDate: taskItem.runOnDate,
+                        })
+                    ));
+                } catch (e) { console.warn("Task assignment notify failed (non-fatal):", e); }
+            };
+
             const addChecklistTask = async () => {
                 if (!newTask.trim()) return;
                 const item = { id: Date.now().toString(), task: newTask.trim() };
@@ -832,6 +867,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updated[checklistSide][activePeriod].push(item);
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
+                // Fire FCM-backed notification for one-time tasks with assignees.
+                // Recurring (no runOnDate) and unassigned tasks are skipped.
+                if (item.runOnDate && newAssignArr.length > 0) {
+                    notifyOneTimeTaskAssignees(item, newAssignArr);
+                }
                 setNewTask(""); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setNewRunOnDate(""); setShowAddForm(false);
             };
 
@@ -839,6 +879,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!editTask.trim()) return;
                 const updated = JSON.parse(JSON.stringify(customTasksRef.current));
                 const item = updated[checklistSide][activePeriod][idx];
+                // Snapshot prev values for notification-decision logic below.
+                const prevRunOnDate = item.runOnDate || "";
+                const prevAssignees = Array.isArray(item.assignTo)
+                    ? [...item.assignTo]
+                    : (item.assignTo ? [item.assignTo] : []);
                 item.task = editTask.trim();
                 item.requirePhoto = editRequirePhoto;
                 if (editCompleteBy) { item.completeBy = editCompleteBy; } else { delete item.completeBy; }
@@ -855,6 +900,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (cleanSubs.length > 0) { item.subtasks = cleanSubs.map((s, i) => ({ id: (item.id || idx) + "_s" + i, task: s.task.trim() })); } else { delete item.subtasks; }
                 setCustomTasks(updated);
                 await saveChecklistState(checksRef.current, updated);
+                // Notification rules for edits — only fire when:
+                //   1. Task is one-time (item.runOnDate set after edit), AND
+                //   2. Either the date moved, OR brand-new assignees were added.
+                // This avoids re-pinging people on cosmetic edits (typo fix,
+                // photo toggle change) but does ping everyone if the date
+                // shifts (so they catch the schedule change) or the only-new
+                // people if the team grew.
+                if (item.runOnDate && assignArr.length > 0) {
+                    const dateChanged = prevRunOnDate !== item.runOnDate;
+                    const addedAssignees = assignArr.filter(a => !prevAssignees.includes(a));
+                    if (dateChanged) {
+                        notifyOneTimeTaskAssignees(item, assignArr);
+                    } else if (addedAssignees.length > 0) {
+                        notifyOneTimeTaskAssignees(item, addedAssignees);
+                    }
+                }
                 setEditingIdx(null); setEditTask(""); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null); setEditRunOnDate("");
             };
 
