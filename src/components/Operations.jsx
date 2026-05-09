@@ -2769,24 +2769,24 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return true;
             };
 
-            // Check if current staff member has opsAccess permission
+            // Check if current staff member has opsAccess permission.
+            // Policy: ONLY admins or staff with opsAccess === true can enter.
+            // The shared-password backdoor was removed per the audit (any staff
+            // who knew the password could enter regardless of toggle, which
+            // defeated the whole point of the toggle).
             const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
             const hasOpsAccess = currentIsAdmin || (currentStaffRecord && currentStaffRecord.opsAccess === true);
 
-            if (!passwordEntered && !hasOpsAccess) {
+            if (!hasOpsAccess) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-mint-50 to-white p-4">
-                        <div className="bg-white rounded-lg border-2 border-mint-700 p-8 w-full max-w-sm">
-                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{"\u{1F510}"} {t("dailyOps", language)}</h2>
-                            <p className="text-gray-600 mb-6">{t("passwordProtected", language)}</p>
-                            <form onSubmit={handlePasswordSubmit}>
-                                <input type="password" placeholder={t("enterPassword", language)} value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-mint-700 mb-4" />
-                                <button type="submit" className="w-full bg-mint-700 text-white font-bold py-2 rounded-lg hover:bg-mint-800 transition">
-                                    {t("unlock", language)}
-                                </button>
-                            </form>
+                        <div className="bg-white rounded-lg border-2 border-mint-700 p-8 w-full max-w-sm text-center">
+                            <h2 className="text-2xl font-bold text-mint-700 mb-2">{"\u{1F512}"} {t("dailyOps", language)}</h2>
+                            <p className="text-gray-600">
+                                {language === "es"
+                                    ? "No tienes acceso a Operaciones. Pídele al gerente que te active el permiso."
+                                    : "You don't have access to Operations. Ask a manager to enable it for you."}
+                            </p>
                         </div>
                     </div>
                 );

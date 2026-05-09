@@ -257,10 +257,16 @@ export default function App() {
         }
     }, [staffName, staffList]);
     const staffIsAdmin = isAdmin(staffName, staffList);
-    // Per-staff recipes access flag (toggled in AdminPanel). Lets non-admin staff
-    // open the Recipes tab even when they're not at a DD Mau location.
     const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
-    const hasRecipesAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.recipesAccess === true);
+    // Recipes access — opt-OUT model. Default: every staff has access.
+    // Admin can flip recipesAccess to FALSE to revoke a specific person.
+    // (Schema migration handled by the "Grant recipes to all" button in
+    // BulkTag for staff records that pre-date this policy and still have
+    // the field unset or false.)
+    const hasRecipesAccess = staffIsAdmin || !currentStaffRecord || currentStaffRecord.recipesAccess !== false;
+    // Operations access — opt-IN model. Default: NO access. Admin must
+    // toggle opsAccess to true per staff member who needs Operations.
+    const hasOpsAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.opsAccess === true);
     // Manager-or-admin gate for HR-style features (tardiness, shift handoff).
     // "Manager" in role title catches Manager / Asst Manager / Kitchen Manager
     // / Asst Kitchen Manager. Shift Lead is intentionally NOT included —
@@ -286,7 +292,12 @@ export default function App() {
         if ((activeTab === "tardies" || activeTab === "handoff") && !isManager) {
             setActiveTab("home");
         }
-    }, [staffName, staffIsAdmin, isManager, activeTab]);
+        // operations + recipes are toggle-gated — bounce if access was revoked
+        // mid-session (admin flipped a toggle while the staff member was on
+        // that tab).
+        if (activeTab === "operations" && !hasOpsAccess) setActiveTab("home");
+        if (activeTab === "recipes" && !hasRecipesAccess) setActiveTab("home");
+    }, [staffName, staffIsAdmin, isManager, hasOpsAccess, hasRecipesAccess, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
     const handleSelectStaff = (name) => {
         setStaffName(name);
@@ -304,10 +315,12 @@ export default function App() {
         return <HomePage onSelectStaff={handleSelectStaff} language={language} staffList={staffList} />;
     }
     // Sidebar nav items — all tabs accessible at desktop. Conditional ones gated.
+    // Operations is opt-in (admin or opsAccess === true) so we hide the link
+    // entirely for non-access staff — they shouldn't see a tab they can't use.
     const sidebarPrimary = [
         { tab: "home",       icon: "🏠", labelEn: "Home",       labelEs: "Inicio" },
         { tab: "training",   icon: "📚", labelEn: "Training",   labelEs: "Capacitación" },
-        { tab: "operations", icon: "📋", labelEn: "Operations", labelEs: "Operaciones" },
+        ...(hasOpsAccess ? [{ tab: "operations", icon: "📋", labelEn: "Operations", labelEs: "Operaciones" }] : []),
         { tab: "menu",       icon: "🍜", labelEn: "Menu",       labelEs: "Menú" },
         { tab: "schedule",   icon: "📅", labelEn: "Schedule",   labelEs: "Horario" },
     ];
@@ -414,7 +427,7 @@ export default function App() {
                             </button>
                         );
                     })()}
-                    {(isAtDDMau || hasRecipesAccess) && renderSidebarBtn({ tab: "recipes", icon: "🧑‍🍳", labelEn: "Recipes", labelEs: "Recetas" })}
+                    {hasRecipesAccess && renderSidebarBtn({ tab: "recipes", icon: "🧑‍🍳", labelEn: "Recipes", labelEs: "Recetas" })}
                     <div className="pt-3 mt-2 border-t border-white/10">
                         {sidebarSecondary.map(b => renderSidebarBtn(b))}
                     </div>
@@ -526,7 +539,7 @@ export default function App() {
                             <div className="dd-tile-grid">
                                 {[
                                     { tab: "training", icon: "📚", label: t("trainingHub", language), sub: language === "es" ? "Modulos" : "Modules" },
-                                    { tab: "operations", icon: "📋", label: t("dailyOps", language), sub: language === "es" ? "Listas" : "Checklists" },
+                                    ...(hasOpsAccess ? [{ tab: "operations", icon: "📋", label: t("dailyOps", language), sub: language === "es" ? "Listas" : "Checklists" }] : []),
                                     { tab: "menu", icon: "🍜", label: t("menuReference", language), sub: language === "es" ? "Menu completo" : "Full menu" },
                                     { tab: "schedule", icon: "📅", label: t("weeklySchedule", language), sub: language === "es" ? "Tus turnos" : "Your shifts" },
                                 ].map(b => (
@@ -537,12 +550,12 @@ export default function App() {
                                         <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{b.sub}</p>
                                     </button>
                                 ))}
-                                {(isAtDDMau || hasRecipesAccess) ? (
+                                {hasRecipesAccess ? (
                                     <button onClick={() => setActiveTab("recipes")}
                                         style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", cursor: "pointer"}}>
                                         <div style={{width: "44px", height: "44px", background: "#065f46", borderRadius: "12px", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 8px", fontSize: "22px"}}>🧑‍🍳</div>
                                         <p style={{fontSize: "13px", fontWeight: 700, color: "#f9fafb", margin: 0}}>{t("recipesTitle", language)}</p>
-                                        <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{hasRecipesAccess && !isAtDDMau ? (language === "es" ? "Acceso" : "Access granted") : (language === "es" ? "En tienda" : "In-store")}</p>
+                                        <p style={{fontSize: "10px", color: "#34d399", margin: "2px 0 0"}}>{language === "es" ? "Acceso" : "Access"}</p>
                                     </button>
                                 ) : (
                                     <div style={{background: "#1f2937", borderRadius: "16px", padding: "16px", textAlign: "center", boxShadow: "0 2px 8px rgba(0,0,0,0.3)", border: "1px solid #374151", opacity: 0.4}}>
@@ -600,10 +613,10 @@ export default function App() {
                 <Suspense fallback={<TabLoading language={language} />}>
                     <ErrorBoundary language={language} key={activeTab}>
                         {activeTab === "training" && <TrainingHub staffName={staffName} language={language} staffList={staffList} />}
-                        {activeTab === "operations" && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
+                        {activeTab === "operations" && hasOpsAccess && <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "menu" && <MenuReference language={language} />}
                         {activeTab === "schedule" && <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />}
-                        {activeTab === "recipes" && (isAtDDMau || hasRecipesAccess) && <Recipes language={language} staffName={staffName} staffList={staffList} />}
+                        {activeTab === "recipes" && hasRecipesAccess && <Recipes language={language} staffName={staffName} staffList={staffList} />}
                         {activeTab === "labor" && staffIsAdmin && <LaborDashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "eighty6" && <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />}
                         {activeTab === "catering" && <CateringOrder language={language} staffName={staffName} />}
@@ -612,7 +625,7 @@ export default function App() {
                         {activeTab === "ai" && <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />}
                         {activeTab === "tardies" && isManager && <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />}
                         {activeTab === "handoff" && isManager && <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />}
-                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
+                        {activeTab === "admin" && staffIsAdmin && <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />}
                     </ErrorBoundary>
                 </Suspense>
             </div>
@@ -623,7 +636,7 @@ export default function App() {
                     {[
                         { tab: "home", icon: "🏠", label: t("home", language) },
                         { tab: "training", icon: "📚", label: t("training", language) },
-                        { tab: "operations", icon: "📋", label: t("operations", language) },
+                        ...(hasOpsAccess ? [{ tab: "operations", icon: "📋", label: t("operations", language) }] : []),
                         { tab: "menu", icon: "🍜", label: t("menu", language) },
                         { tab: "schedule", icon: "📅", label: t("schedule", language) },
                     ].map(b => (
@@ -642,7 +655,7 @@ export default function App() {
                         <span className="text-2xl">🤖</span>
                         <span className="text-xs font-bold mt-1">{language === "es" ? "AI" : "AI"}</span>
                     </button>
-                    {(isAtDDMau || staffIsAdmin) && (
+                    {hasRecipesAccess && (
                         <button
                             onClick={() => setActiveTab("recipes")}
                             className={`flex flex-col items-center justify-center flex-1 h-full transition ${activeTab === "recipes" ? "text-mint-700 bg-mint-50" : "text-gray-600 hover:text-mint-700"}`}

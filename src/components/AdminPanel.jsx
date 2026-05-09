@@ -6,7 +6,22 @@ import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory'; 
 
-export default function AdminPanel({ language, staffList, setStaffList, storeLocation }) {
+// Wrapper enforces admin-only access BEFORE the inner component's hooks run.
+// Early-returning inside AdminPanelInner would violate React's rules-of-hooks
+// (hooks must run in the same order every render). This wrapper-pattern is the
+// idiomatic fix.
+export default function AdminPanel(props) {
+    if (!isAdmin(props.staffName, props.staffList)) {
+        return (
+            <div className="p-6 text-center text-gray-500">
+                {props.language === "es" ? "Acceso denegado." : "Access denied."}
+            </div>
+        );
+    }
+    return <AdminPanelInner {...props} />;
+}
+
+function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLocation }) {
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
@@ -50,6 +65,36 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                     : `✓ Auto-tagged ${touched} staff from role.`);
             };
 
+            // Migration helper: flip every staff record's recipesAccess to
+            // true. The recipes policy moved from opt-IN to opt-OUT, so any
+            // existing record that's false (or unset) needs an explicit true
+            // to participate cleanly. Idempotent — safe to click again.
+            // After this runs, the manager only has to TOGGLE OFF anyone they
+            // don't want to have access (rare).
+            const grantRecipesToAll = async () => {
+                if (!confirm(language === "es"
+                    ? "¿Dar acceso a Recetas a TODO el personal? (Puedes quitárselo a alguien después.)"
+                    : "Grant Recipes access to ALL staff? (You can revoke individuals later.)")) return;
+                let touched = 0;
+                let latest = null;
+                setStaffList(prev => {
+                    const next = prev.map(s => {
+                        if (s.recipesAccess === true) return s;
+                        touched += 1;
+                        return { ...s, recipesAccess: true };
+                    });
+                    latest = next;
+                    return next;
+                });
+                if (touched > 0 && latest) {
+                    await saveStaffToFirestore(latest);
+                    showSaved();
+                }
+                alert(language === "es"
+                    ? `✓ Acceso a Recetas otorgado: ${touched}.`
+                    : `✓ Recipes access granted to ${touched} staff.`);
+            };
+
             // Sweep a filtered subset to one side. Used by the "Tag all
             // visible as FOH/BOH" action — one batched write instead of
             // dozens of taps.
@@ -71,7 +116,11 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
             const [newPin, setNewPin] = useState("");
             const [newLocation, setNewLocation] = useState(storeLocation || "webster");
             const [newOpsAccess, setNewOpsAccess] = useState(false);
-            const [newRecipesAccess, setNewRecipesAccess] = useState(false);
+            // Recipes is opt-OUT — every new hire gets access by default.
+            // Manager can flip the toggle off if they don't want a specific
+            // person to see recipes (rare). Operations stays opt-in (default
+            // false) because access is genuinely restricted there.
+            const [newRecipesAccess, setNewRecipesAccess] = useState(true);
             const [newShiftLead, setNewShiftLead] = useState(false);
             const [newIsMinor, setNewIsMinor] = useState(false);
             const [newScheduleSide, setNewScheduleSide] = useState("foh");
@@ -188,7 +237,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                 setNewPin("");
                 setNewLocation(storeLocation || "webster");
                 setNewOpsAccess(false);
-                setNewRecipesAccess(false);
+                setNewRecipesAccess(true);
                 setNewShiftLead(false);
                 setNewIsMinor(false);
                 setNewScheduleSide("foh");
@@ -595,7 +644,7 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 className={`flex-1 py-2 rounded-lg font-bold text-white transition ${newName.trim() && newPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                 {t("addStaff", language)}
                                             </button>
-                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(false); setNewShiftLead(false); setNewIsMinor(false); setNewScheduleSide("foh"); }}
+                                            <button onClick={() => { setShowAdd(false); setNewName(""); setNewRole("FOH"); setNewPin(""); setNewOpsAccess(false); setNewRecipesAccess(true); setNewShiftLead(false); setNewIsMinor(false); setNewScheduleSide("foh"); }}
                                                 className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                 {t("cancel", language)}
                                             </button>
@@ -765,6 +814,13 @@ export default function AdminPanel({ language, staffList, setStaffList, storeLoc
                                                 ✨ {language === "es" ? `Auto-etiquetar ${untagged} pendientes (por rol)` : `Auto-tag ${untagged} untagged (from role)`}
                                             </button>
                                         )}
+                                        {/* Grant Recipes to all — one-shot migration helper for the
+                                            opt-OUT recipes policy. Use after first deploy of the new
+                                            policy or after onboarding a batch of new hires. */}
+                                        <button onClick={grantRecipesToAll}
+                                            className="w-full mb-2 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700">
+                                            🧑‍🍳 {language === "es" ? "Dar acceso a Recetas a TODO el personal" : "Grant Recipes access to ALL staff"}
+                                        </button>
 
                                         {/* Filter chips — narrow the list quickly */}
                                         <div className="flex gap-1 mb-2">
