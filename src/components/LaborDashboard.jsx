@@ -2,42 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, collection, query, where, onSnapshot, setDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
-
-// SPLH = Sales Per Labor Hour. Industry-standard restaurant productivity metric:
-// every labor hour scheduled supports $X of sales. Tracking historical SPLH by
-// daypart + day-of-week tells managers whether they're staffed for typical
-// volume. Higher SPLH = more efficient (each labor hour produces more sales).
-// Lower SPLH than your historical baseline = over-staffed for the volume.
-const DAYPARTS = [
-    { id: 'lunch',  enLabel: 'Lunch',  esLabel: 'Almuerzo', startHr: 11, endHr: 14 },
-    { id: 'slow',   enLabel: 'Slow',   esLabel: 'Lento',    startHr: 14, endHr: 16 },
-    { id: 'dinner', enLabel: 'Dinner', esLabel: 'Cena',     startHr: 16, endHr: 20 },
-    { id: 'late',   enLabel: 'Late',   esLabel: 'Tarde',    startHr: 20, endHr: 23 },
-];
-const DOW_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const DOW_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-
-function dowFromKey(dateKey) {
-    if (!dateKey) return null;
-    const [y, m, d] = String(dateKey).split('-').map(Number);
-    if (!y || !m || !d) return null;
-    return new Date(y, m - 1, d).getDay();
-}
-function hrFromTime(timeStr) {
-    if (!timeStr) return null;
-    // Accept "HH:MM" or "H:MM AM/PM"
-    const m = String(timeStr).match(/(\d{1,2}):(\d{2})(?:\s*(AM|PM))?/i);
-    if (!m) return null;
-    let h = parseInt(m[1], 10);
-    const ampm = m[3]?.toUpperCase();
-    if (ampm === 'PM' && h < 12) h += 12;
-    if (ampm === 'AM' && h === 12) h = 0;
-    return h;
-}
-function fmtUSD(n) {
-    if (!Number.isFinite(n)) return '—';
-    return '$' + n.toLocaleString('en-US', { maximumFractionDigits: 0 });
-}
+import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, fmtUSD, splhTone } from '../data/splh';
 
 // Note: Requires Chart.js or similar for charting
 
@@ -128,54 +93,11 @@ export default function LaborDashboard({ language, storeLocation }) {
         return () => unsub();
     }, [storeLocation]);
 
-    // Compute SPLH grid: { [dow]: { [daypartId]: { sales, hours, splh, n } } }
-    // where n = number of distinct days included (sample size for confidence).
-    const splhGrid = useMemo(() => {
-        const grid = {}; // grid[dow][daypartId] = { sales, hours, days: Set }
-        for (const e of splhHistory) {
-            const sales = Number(e.netSales);
-            const hours = Number(e.totalHours);
-            if (!Number.isFinite(sales) || !Number.isFinite(hours) || hours <= 0) continue;
-            const dow = dowFromKey(e.date);
-            const hr = hrFromTime(e.time);
-            if (dow == null || hr == null) continue;
-            const part = DAYPARTS.find(p => hr >= p.startHr && hr < p.endHr);
-            if (!part) continue;
-            if (!grid[dow]) grid[dow] = {};
-            if (!grid[dow][part.id]) grid[dow][part.id] = { sales: 0, hours: 0, days: new Set() };
-            grid[dow][part.id].sales += sales;
-            grid[dow][part.id].hours += hours;
-            grid[dow][part.id].days.add(e.date);
-        }
-        // Convert sets → counts and compute SPLH.
-        const out = {};
-        for (const dow of Object.keys(grid)) {
-            out[dow] = {};
-            for (const partId of Object.keys(grid[dow])) {
-                const cell = grid[dow][partId];
-                out[dow][partId] = {
-                    sales: cell.sales,
-                    hours: cell.hours,
-                    splh: cell.hours > 0 ? cell.sales / cell.hours : null,
-                    n: cell.days.size,
-                };
-            }
-        }
-        return out;
-    }, [splhHistory]);
+    // Aggregation now lives in src/data/splh.js so Schedule's advisor uses
+    // the exact same math.
+    const splhGrid = useMemo(() => aggregateSplh(splhHistory), [splhHistory]);
     const splhSampleCount = splhHistory.length;
-    // Today's day-of-week for highlighting + "today vs typical" callout.
     const todayDow = new Date().getDay();
-    // Pick a tone for an SPLH cell — green = healthy productivity,
-    // amber = soft, red = very low (might be over-staffed). Thresholds are
-    // restaurant-rules-of-thumb for fast-casual; tune later when we have
-    // more data.
-    const splhTone = (s) => {
-        if (s == null) return 'bg-gray-50 text-gray-400';
-        if (s >= 120) return 'bg-emerald-100 text-emerald-800 border-emerald-300';
-        if (s >= 80)  return 'bg-amber-50 text-amber-800 border-amber-200';
-        return 'bg-red-50 text-red-700 border-red-200';
-    };
 
     const saveTarget = async () => {
         const val = parseFloat(tempTarget);

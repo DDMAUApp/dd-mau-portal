@@ -32,6 +32,7 @@ import {
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
 import { enableFcmPush } from '../messaging';
+import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -318,6 +319,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [showRecurringModal, setShowRecurringModal] = useState(false);
     // In-app notifications (bell drawer)
     const [notifications, setNotifications] = useState([]);
+    // SPLH historical data — last 28 days of laborHistory_{location} feeds
+    // the per-daypart staffing advisor that sits above the weekly grid.
+    // Same shape used by LaborDashboard; helpers in src/data/splh.js.
+    const [splhHistory, setSplhHistory] = useState([]);
+    // Weather forecast for the current location's lat/lng. NWS API is free
+    // (no key) and returns up to 7 days of half-day periods. We use the
+    // forecast to nudge "rain → trim FOH" / "extreme heat → +1 drinks".
+    const [weather, setWeather] = useState(null);
+    const [splhAdvisorOpen, setSplhAdvisorOpen] = useState(false);
     const [showNotifDrawer, setShowNotifDrawer] = useState(false);
 
     // ── Data load ──
@@ -384,6 +394,70 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }, (err) => console.error('schedule_templates snapshot error:', err));
         return unsub;
     }, []);
+
+    // ── SPLH historical pull (last 28 days of laborHistory_{location}) ──
+    // Powers the Schedule SPLH advisor — same data source as Labor Dashboard.
+    useEffect(() => {
+        if (storeLocation === 'both') {
+            // Multi-location view: forecasting per-location is more useful
+            // than mixed; default to webster for the SPLH math but acknowledge
+            // the limitation in the UI.
+            const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+            const cutoffKey = cutoff.getFullYear() + '-' + String(cutoff.getMonth() + 1).padStart(2, '0') + '-' + String(cutoff.getDate()).padStart(2, '0');
+            const unsub = onSnapshot(
+                query(collection(db, 'laborHistory_webster'), where('date', '>=', cutoffKey)),
+                (snap) => { const arr = []; snap.forEach(d => arr.push(d.data())); setSplhHistory(arr); },
+                (err) => console.warn('SPLH history snapshot error:', err)
+            );
+            return () => unsub();
+        }
+        const cutoff = new Date(Date.now() - 28 * 24 * 60 * 60 * 1000);
+        const cutoffKey = cutoff.getFullYear() + '-' + String(cutoff.getMonth() + 1).padStart(2, '0') + '-' + String(cutoff.getDate()).padStart(2, '0');
+        const unsub = onSnapshot(
+            query(collection(db, 'laborHistory_' + storeLocation), where('date', '>=', cutoffKey)),
+            (snap) => { const arr = []; snap.forEach(d => arr.push(d.data())); setSplhHistory(arr); },
+            (err) => console.warn('SPLH history snapshot error:', err)
+        );
+        return () => unsub();
+    }, [storeLocation]);
+
+    // ── Weather forecast (NWS API, free, no key) ──
+    // Two-step: lat/lng → grid point → forecast. Stored per location-coord.
+    // We only need the next 7 daily periods for scheduling decisions.
+    useEffect(() => {
+        const COORDS = {
+            webster:  { lat: 38.5917, lng: -90.3389, label: 'Webster Groves' },
+            maryland: { lat: 38.7138, lng: -90.4391, label: 'Maryland Heights' },
+        };
+        const c = COORDS[storeLocation] || COORDS.webster;
+        let cancelled = false;
+        (async () => {
+            try {
+                // Step 1: lat/lng → forecast URL.
+                const ptRes = await fetch(`https://api.weather.gov/points/${c.lat},${c.lng}`, {
+                    headers: { 'User-Agent': 'dd-mau-portal (info@ddmau.com)' },
+                });
+                if (!ptRes.ok) return;
+                const ptData = await ptRes.json();
+                const fcUrl = ptData?.properties?.forecast;
+                if (!fcUrl) return;
+                // Step 2: pull the daily forecast.
+                const fcRes = await fetch(fcUrl, {
+                    headers: { 'User-Agent': 'dd-mau-portal (info@ddmau.com)' },
+                });
+                if (!fcRes.ok) return;
+                const fcData = await fcRes.json();
+                if (cancelled) return;
+                setWeather({
+                    location: c.label,
+                    periods: (fcData?.properties?.periods || []).slice(0, 14),
+                });
+            } catch (e) {
+                console.warn('Weather fetch failed (non-fatal):', e?.message || e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [storeLocation]);
 
     // ── Listen for recurring shift rules ──
     useEffect(() => {
@@ -660,6 +734,78 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // manager building a week sees over/under signals BEFORE publishing.
     // Replaces the "labor cost %" idea — that needed wage data we don't
     // have. This uses only targetHours which already exists per staff.
+    // SPLH grid from the last 28 days of laborHistory.
+    const splhGrid = useMemo(() => aggregateSplh(splhHistory), [splhHistory]);
+    // Scheduled hours per (dow, daypart) for the currently-viewed week.
+    // Filtered to the active side so FOH advisor only counts FOH labor etc.
+    const scheduledByDayPart = useMemo(() => {
+        const sideFilter = (sh) => {
+            // Match Schedule's existing visible-shift filter logic loosely.
+            // If the shift has an explicit side, use it; otherwise infer from
+            // staff role group.
+            return sh.side === side || (!sh.side && sh.staffName && (() => {
+                const s = staffList.find(x => x.name === sh.staffName);
+                if (!s) return false;
+                if (s.scheduleSide) return s.scheduleSide === side;
+                // Fall back to role-family inference (BOH-tagged roles → boh).
+                const isBoh = BOH_ROLE_HINTS.has(s.role);
+                return side === (isBoh ? 'boh' : 'foh');
+            })());
+        };
+        const weekShifts = (visibleShifts || []).filter(sh => sideFilter(sh));
+        return scheduledHoursByDayPart(weekShifts, weekStart);
+    }, [visibleShifts, side, staffList, weekStart]);
+    // Build per-day forecast: typical sales × scheduled hours → implied SPLH
+    const splhForecast = useMemo(() => {
+        const out = [];
+        for (let i = 0; i < 7; i++) {
+            const day = addDays(weekStart, i);
+            const dow = day.getDay();
+            const dateStr = toDateStr(day);
+            for (const part of DAYPARTS) {
+                const hist = splhGrid[dow]?.[part.id];
+                const scheduled = scheduledByDayPart[dow]?.[part.id] || 0;
+                const v = variance(scheduled, hist?.avgHours);
+                out.push({
+                    dow, dateStr, part,
+                    hist,
+                    scheduled,
+                    variance: v,
+                    impliedSplh: hist?.avgSales > 0 && scheduled > 0 ? hist.avgSales / scheduled : null,
+                });
+            }
+        }
+        return out;
+    }, [splhGrid, scheduledByDayPart, weekStart]);
+    // Top-line advisory: how many slots are flagged?
+    const splhAdvisory = useMemo(() => {
+        const under = splhForecast.filter(f => f.variance.status === 'under').length;
+        const over  = splhForecast.filter(f => f.variance.status === 'over').length;
+        const haveData = splhHistory.length > 0;
+        return { under, over, haveData };
+    }, [splhForecast, splhHistory.length]);
+
+    // Weather impact derivation. Maps each forecast period to a hint.
+    // Conservative thresholds — only show a tip if the weather is genuinely
+    // unusual for the region.
+    const weatherTips = useMemo(() => {
+        if (!weather?.periods?.length) return [];
+        const tips = [];
+        for (const p of weather.periods.slice(0, 8)) { // 4 days, day+night
+            if (!p.isDaytime) continue;
+            const rain = p.probabilityOfPrecipitation?.value || 0;
+            const tF = Number(p.temperature) || null;
+            const partsForDay = [];
+            if (rain >= 60) partsForDay.push({ kind: 'rain', text: `${rain}% rain — walk-in traffic typically dips. Consider trimming 1 FOH from lunch.`, esText: `${rain}% lluvia — el tráfico baja. Considera quitar 1 FOH del almuerzo.` });
+            if (tF != null && tF >= 95) partsForDay.push({ kind: 'heat', text: `${tF}°F — drinks demand spikes ~30%. Consider +1 at the boba station.`, esText: `${tF}°F — bebidas suben ~30%. Considera +1 en boba.` });
+            if (tF != null && tF <= 25) partsForDay.push({ kind: 'cold', text: `${tF}°F — pho/hot food ramps; foot traffic drops. Same labor, watch lunch volume.`, esText: `${tF}°F — pho sube; menos tráfico. Mismo personal, vigila el almuerzo.` });
+            if (partsForDay.length > 0) {
+                tips.push({ name: p.name, shortForecast: p.shortForecast, tF, rain, parts: partsForDay });
+            }
+        }
+        return tips;
+    }, [weather]);
+
     const hoursScoreboard = useMemo(() => {
         if (!Array.isArray(staffList)) return null;
         const locStaff = staffList.filter(s =>
@@ -2339,6 +2485,19 @@ ${dayBlocks}
                     {viewMode === 'grid' && (
                         <>
                             <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
+                            {/* SPLH advisor + weather. Foldable so it doesn't dominate
+                                the grid by default. The summary chip ALWAYS shows
+                                under/over-staffed counts so even collapsed it's useful. */}
+                            <SplhAdvisor
+                                splhForecast={splhForecast}
+                                advisory={splhAdvisory}
+                                weatherTips={weatherTips}
+                                weather={weather}
+                                open={splhAdvisorOpen}
+                                onToggle={() => setSplhAdvisorOpen(o => !o)}
+                                isEn={isEn}
+                                side={side}
+                            />
                             <WeeklyGrid
                                 weekStart={weekStart}
                                 staffSummary={staffSummary}
@@ -2773,6 +2932,146 @@ function HoursScoreboard({ scoreboard, side, isEn }) {
 // 12 blocks per day. Color by headcount in that hour:
 //   0 = red gap, 1 = yellow thin, 2 = teal ok, 3+ = green well-staffed.
 // Tweak HEATMAP_THIN / HEATMAP_OK if a location wants different thresholds.
+// SPLH Advisor — sits above the weekly grid. Compares scheduled hours
+// per (day-of-week, daypart) against historical typical hours from Toast.
+// Surfaces under-/over-staffed slots with a one-line "+1 / -1" hint plus
+// any weather warnings from NWS forecast for the next several days.
+function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onToggle, isEn, side }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const hasData = advisory.haveData;
+    // Headline chip (always visible). Compact summary so the advisor adds
+    // signal even when collapsed.
+    const headline = (() => {
+        if (!hasData) return tx('Forecast: no historical data yet.', 'Pronóstico: sin datos históricos.');
+        if (advisory.under === 0 && advisory.over === 0) return tx('Forecast: schedule looks balanced ✓', 'Pronóstico: horario balanceado ✓');
+        const bits = [];
+        if (advisory.under > 0) bits.push(tx(`${advisory.under} under-staffed`, `${advisory.under} con poco personal`));
+        if (advisory.over > 0)  bits.push(tx(`${advisory.over} over-staffed`, `${advisory.over} con exceso`));
+        return tx(`Forecast: ${bits.join(', ')}`, `Pronóstico: ${bits.join(', ')}`);
+    })();
+    const headlineTone = !hasData ? 'bg-gray-100 text-gray-600 border-gray-300'
+        : (advisory.under > 0 || advisory.over > 0) ? 'bg-amber-100 text-amber-800 border-amber-300'
+        : 'bg-emerald-100 text-emerald-800 border-emerald-300';
+    return (
+        <div className="mb-3">
+            <button onClick={onToggle}
+                className={`w-full text-left flex items-center justify-between gap-2 px-3 py-2 rounded-lg border ${headlineTone}`}>
+                <span className="text-xs font-bold flex items-center gap-1">
+                    📊 {headline}
+                    {(weatherTips?.length || 0) > 0 && <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200 text-[10px]">🌧 {weatherTips.length} {tx('weather tip', 'aviso clima')}{weatherTips.length === 1 ? '' : 's'}</span>}
+                </span>
+                <span className="text-xs font-bold">{open ? '▼' : '▶'}</span>
+            </button>
+            {open && (
+                <div className="mt-2 bg-white border border-gray-200 rounded-lg p-3 space-y-3">
+                    {!hasData && (
+                        <p className="text-xs text-gray-500">
+                            {tx('No labor history yet — once the Toast scraper has 7+ days of hourly data, forecasts will populate.',
+                                'Sin historial — una vez que el scraper de Toast tenga 7+ días, el pronóstico aparecerá.')}
+                        </p>
+                    )}
+                    {hasData && (
+                        <div className="overflow-x-auto -mx-2 px-2">
+                            <table className="w-full text-[11px] border-collapse">
+                                <thead>
+                                    <tr className="text-gray-500">
+                                        <th className="text-left p-1 font-semibold">{tx('Day', 'Día')}</th>
+                                        {DAYPARTS.map(p => (
+                                            <th key={p.id} className="text-center p-1 font-semibold whitespace-nowrap">
+                                                {isEn ? p.enLabel : p.esLabel}<br />
+                                                <span className="text-[9px] font-normal text-gray-400">{p.startHr}-{p.endHr}</span>
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {[0,1,2,3,4,5,6].map(i => {
+                                        const dayCells = splhForecast.filter(f => f.dow === i || (() => {
+                                            // splhForecast is built per-day-of-week-of-the-current-week.
+                                            // Each entry's dateStr is unique per row index. We render in
+                                            // calendar-week order — re-bucket properly:
+                                            return false;
+                                        })());
+                                        // Re-bucket: take the entries whose displayed row should be `i`.
+                                        const rowEntries = splhForecast.slice(i * DAYPARTS.length, (i + 1) * DAYPARTS.length);
+                                        if (rowEntries.length === 0) return null;
+                                        const dow = rowEntries[0]?.dow;
+                                        const labels = isEn ? DOW_EN : DOW_ES;
+                                        return (
+                                            <tr key={i}>
+                                                <td className="p-1 font-bold text-gray-700">
+                                                    {labels[dow]}
+                                                    <span className="text-[9px] text-gray-400 block">{rowEntries[0]?.dateStr?.slice(5)}</span>
+                                                </td>
+                                                {rowEntries.map(f => {
+                                                    const v = f.variance;
+                                                    const tone = v.status === 'over' ? 'bg-red-50 text-red-700 border-red-200'
+                                                              : v.status === 'under' ? 'bg-amber-50 text-amber-800 border-amber-300'
+                                                              : v.status === 'on' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                                              : 'bg-gray-50 text-gray-400 border-gray-200';
+                                                    const icon = v.status === 'over' ? '⬇' : v.status === 'under' ? '⬆' : v.status === 'on' ? '✓' : '—';
+                                                    const deltaHrs = v.recommendedDelta;
+                                                    const recommend = (v.status !== 'unknown' && Math.abs(deltaHrs) >= 1)
+                                                        ? `${deltaHrs > 0 ? '+' : ''}${deltaHrs.toFixed(1)}h`
+                                                        : '';
+                                                    return (
+                                                        <td key={f.part.id} className="p-1">
+                                                            <div className={`text-center rounded border ${tone} px-1 py-1`}
+                                                                title={f.hist
+                                                                    ? `Scheduled ${f.scheduled.toFixed(1)}h vs typical ${f.hist.avgHours.toFixed(1)}h · typical sales ${fmtUSD(f.hist.avgSales)} (n=${f.hist.n})`
+                                                                    : 'no historical data for this slot'}>
+                                                                <div className="font-bold text-[11px] leading-tight">
+                                                                    {icon} {f.scheduled.toFixed(0)}h
+                                                                </div>
+                                                                {f.hist?.avgHours > 0 && (
+                                                                    <div className="text-[8px] text-gray-500 leading-none mt-0.5">
+                                                                        {tx('typ', 'típ')} {f.hist.avgHours.toFixed(0)}h
+                                                                    </div>
+                                                                )}
+                                                                {recommend && (
+                                                                    <div className="text-[8px] font-bold leading-none mt-0.5">{recommend}</div>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                    );
+                                                })}
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
+                            <p className="text-[10px] text-gray-500 mt-2">
+                                {tx(`Scheduled ${side.toUpperCase()} hours per slot vs typical from last 28 days. ⬆ = under-staffed, ⬇ = over-staffed, ✓ = on target. Tooltip shows raw numbers.`,
+                                    `Horas programadas ${side.toUpperCase()} vs típicas (28 días). ⬆ = poco, ⬇ = exceso, ✓ = bien. Pasa el cursor para detalles.`)}
+                            </p>
+                        </div>
+                    )}
+                    {weatherTips?.length > 0 && (
+                        <div className="border-t border-gray-200 pt-2">
+                            <h4 className="text-[11px] font-bold text-blue-800 mb-1">
+                                🌤 {tx(`Weather: ${weather?.location || ''}`, `Clima: ${weather?.location || ''}`)}
+                            </h4>
+                            <ul className="text-[11px] text-gray-700 space-y-1">
+                                {weatherTips.map((tip, idx) => (
+                                    <li key={idx} className="flex items-start gap-2">
+                                        <span className="font-bold whitespace-nowrap">{tip.name}:</span>
+                                        <span>
+                                            <span className="text-gray-500">{tip.shortForecast} · {tip.tF}°F · {tip.rain}% rain</span>
+                                            {tip.parts.map((p, j) => (
+                                                <div key={j} className="text-[11px] text-amber-800 mt-0.5">⚠️ {isEn ? p.text : p.esText}</div>
+                                            ))}
+                                        </span>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+}
+
 const HEATMAP_FIRST_HOUR = 10;
 const HEATMAP_LAST_HOUR = 22; // exclusive upper bound (block-of-22:00 = 9-10pm)
 const HEATMAP_THIN = 1;       // <= this is "thin" (yellow)
