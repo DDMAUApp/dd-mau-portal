@@ -4,3 +4,6 @@ dist
 *.log
 .env
 toast-menu-snapshot.json
+firebase-service-account.json
+serviceAccountKey.json
+backups/
