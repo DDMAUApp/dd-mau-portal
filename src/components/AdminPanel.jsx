@@ -99,6 +99,29 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     : `✓ Recipes access granted to ${touched} staff.`);
             };
 
+            // Generic bulk-update helper — sweep a subset of staff records
+            // to the same value for the same field. Used by every "Sweep N
+            // visible to ON/OFF" button in the bulk-toggle section.
+            const bulkSetField = async (ids, field, value) => {
+                if (!ids || ids.length === 0) return;
+                const idSet = new Set(ids);
+                let touched = 0;
+                let latest = null;
+                setStaffList(prev => {
+                    latest = prev.map(s => {
+                        if (!idSet.has(s.id)) return s;
+                        if (s[field] === value) return s; // skip no-ops
+                        touched += 1;
+                        return { ...s, [field]: value };
+                    });
+                    return latest;
+                });
+                if (touched > 0 && latest) {
+                    await saveStaffToFirestore(latest);
+                    showSaved();
+                }
+            };
+
             // Sweep a filtered subset to one side. Used by the "Tag all
             // visible as FOH/BOH" action — one batched write instead of
             // dozens of taps.
@@ -887,6 +910,40 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     className="flex-1 py-1.5 rounded-md bg-orange-100 text-orange-800 font-bold border border-orange-300 hover:bg-orange-200">
                                                     → {language === "es" ? `Marcar ${visible.length} como BOH` : `Tag ${visible.length} as BOH`}
                                                 </button>
+                                            </div>
+                                        )}
+                                        {/* Bulk toggle section — sweep ON/OFF for every staff currently
+                                            visible (after search + filter). Operates on `visibleIds`,
+                                            so first narrow the list with the filter chips + search box,
+                                            then hit a button. Acts on the displayed staff only. */}
+                                        {visible.length > 0 && (
+                                            <div className="mt-2 pt-2 border-t border-gray-200">
+                                                <p className="text-[10px] text-gray-500 font-bold mb-1">
+                                                    🔁 {language === "es" ? `Toggles para ${visible.length} visibles` : `Toggles for ${visible.length} visible`}
+                                                </p>
+                                                {[
+                                                    { field: "recipesAccess",        labelEn: "Recipes",      labelEs: "Recetas",      emoji: "🧑‍🍳", onColor: "bg-green-600",  offColor: "bg-gray-300" },
+                                                    { field: "opsAccess",            labelEn: "Operations",   labelEs: "Operaciones",  emoji: "📋", onColor: "bg-mint-700",   offColor: "bg-gray-300" },
+                                                    { field: "shiftLead",            labelEn: "Shift Lead",   labelEs: "Líder",        emoji: "🛡️", onColor: "bg-purple-600", offColor: "bg-gray-300" },
+                                                    { field: "canEditScheduleFOH",   labelEn: "FOH editor",   labelEs: "Editor FOH",   emoji: "📅", onColor: "bg-teal-600",   offColor: "bg-gray-300" },
+                                                    { field: "canEditScheduleBOH",   labelEn: "BOH editor",   labelEs: "Editor BOH",   emoji: "📅", onColor: "bg-orange-600", offColor: "bg-gray-300" },
+                                                ].map(t => (
+                                                    <div key={t.field} className="flex items-center gap-1 mb-1">
+                                                        <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
+                                                            {t.emoji} {language === "es" ? t.labelEs : t.labelEn}
+                                                        </div>
+                                                        <button onClick={() => bulkSetField(visibleIds, t.field, true)}
+                                                            className={`px-2 py-1 rounded text-[9px] font-bold text-white ${t.onColor} hover:opacity-90`}
+                                                            title={language === "es" ? `Activar para ${visible.length}` : `Turn ON for ${visible.length}`}>
+                                                            ON
+                                                        </button>
+                                                        <button onClick={() => bulkSetField(visibleIds, t.field, false)}
+                                                            className={`px-2 py-1 rounded text-[9px] font-bold text-white ${t.offColor} hover:opacity-90`}
+                                                            title={language === "es" ? `Desactivar para ${visible.length}` : `Turn OFF for ${visible.length}`}>
+                                                            OFF
+                                                        </button>
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                     </div>
