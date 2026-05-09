@@ -28,7 +28,7 @@ import { db } from '../firebase';
 import { toast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
-    setDoc, serverTimestamp, writeBatch,
+    setDoc, serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
 import { enableFcmPush } from '../messaging';
@@ -867,6 +867,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // Race-safe shift take. Two staff hitting "Take" within the same snapshot
+    // tick used to BOTH succeed locally (each updateDoc would overwrite the
+    // other's pendingClaimBy). The transaction reads the live shift, refuses
+    // if it's not still 'open', and writes atomically — first writer wins,
+    // second gets a clear error.
     const handleTakeShift = async (shift) => {
         const ok = confirm(tx(
             `✅ This shift on ${shift.date} from ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} is now YOUR responsibility (pending manager approval). Confirm?`,
@@ -874,42 +879,79 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         ));
         if (!ok) return;
         try {
-            await updateDoc(doc(db, 'shifts', shift.id), {
-                offerStatus: 'pending',
-                pendingClaimBy: staffName,
-                claimedAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shift.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx('Shift no longer exists.', 'El turno ya no existe.'));
+                }
+                const live = snap.data();
+                if (live.offerStatus !== 'open') {
+                    // Someone else got there first, or owner cancelled the offer.
+                    throw new Error(tx('Shift is no longer open for pickup.', 'El turno ya no está disponible.'));
+                }
+                if (live.staffName === staffName) {
+                    throw new Error(tx("You can't take your own shift.", 'No puedes tomar tu propio turno.'));
+                }
+                txn.update(ref, {
+                    offerStatus: 'pending',
+                    pendingClaimBy: staffName,
+                    claimedAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                });
             });
         } catch (e) {
             console.error('Take shift failed:', e);
-            toast(tx('Could not take shift: ', 'No se pudo tomar: ') + e.message);
+            toast((tx('Could not take shift: ', 'No se pudo tomar: ')) + (e.message || e), { kind: 'error' });
         }
     };
 
+    // Race-safe swap approval. Two managers approving simultaneously could
+    // each fire notifications and double-write. Also caught here: approving
+    // a swap whose claim was just cancelled (the live shift would be back to
+    // 'open' — approval is invalid, refuse). First manager wins; second sees
+    // a clear "already approved by X" message.
     const handleApproveSwap = async (shift) => {
         if (!canEdit) return;
         const oldOwner = shift.staffName;
         const newOwner = shift.pendingClaimBy;
+        let detail = '';
         try {
-            await updateDoc(doc(db, 'shifts', shift.id), {
-                staffName: newOwner,
-                offerStatus: null,
-                offeredBy: null,
-                offeredAt: null,
-                pendingClaimBy: null,
-                claimedAt: null,
-                approvedBy: staffName,
-                approvedAt: serverTimestamp(),
-                updatedAt: serverTimestamp(),
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'shifts', shift.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) {
+                    throw new Error(tx('Shift no longer exists.', 'El turno ya no existe.'));
+                }
+                const live = snap.data();
+                if (live.offerStatus !== 'pending' || !live.pendingClaimBy) {
+                    throw new Error(tx('No pending claim on this shift anymore.', 'Ya no hay reclamo pendiente.'));
+                }
+                if (live.approvedBy) {
+                    throw new Error(tx(`Already approved by ${live.approvedBy}.`, `Ya aprobado por ${live.approvedBy}.`));
+                }
+                detail = `${live.date} ${formatTime12h(live.startTime)}–${formatTime12h(live.endTime)}`;
+                txn.update(ref, {
+                    staffName: live.pendingClaimBy, // use live value, not stale snapshot
+                    offerStatus: null,
+                    offeredBy: null,
+                    offeredAt: null,
+                    pendingClaimBy: null,
+                    claimedAt: null,
+                    approvedBy: staffName,
+                    approvedAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                });
             });
-            const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+            // Notifications outside the transaction — they hit a different
+            // collection and shouldn't roll back the swap if push fails.
             await notify(oldOwner, 'swap_approved', tx('Swap approved', 'Cambio aprobado'),
                 tx(`Your shift on ${detail} is now ${newOwner}'s.`, `Tu turno del ${detail} ahora es de ${newOwner}.`));
             await notify(newOwner, 'swap_approved', tx('Shift assigned', 'Turno asignado'),
                 tx(`The shift on ${detail} is now yours.`, `El turno del ${detail} ahora es tuyo.`));
         } catch (e) {
             console.error('Approve failed:', e);
-            toast(tx('Could not approve: ', 'No se pudo aprobar: ') + e.message);
+            toast((tx('Could not approve: ', 'No se pudo aprobar: ')) + (e.message || e), { kind: 'error' });
         }
     };
 

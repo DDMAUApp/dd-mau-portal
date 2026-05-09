@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { MASTER_RECIPES } from '../data/masterRecipes';
@@ -519,66 +519,115 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         deleteRecipe(recipeId);
     };
 
+    // ── Race-safe save helpers ──────────────────────────────────────────
+    // BEFORE: every save did `setDoc(..., { list: builtFromLocalState })`.
+    // Two admins editing simultaneously = whoever saved second silently
+    // clobbered the other's change. Now: runTransaction reads the LIVE
+    // doc, applies the change against that fresh list, and writes back
+    // atomically. Firestore retries the function if the doc changed
+    // between the read and the write, so concurrent edits both land.
+    const recipesDocRef = doc(db, "config", "recipes");
+    const transactRecipes = (transformer) =>
+        runTransaction(db, async (tx) => {
+            const snap = await tx.get(recipesDocRef);
+            const liveList = (snap.exists() && Array.isArray(snap.data()?.list)) ? snap.data().list : [];
+            const next = transformer(liveList);
+            tx.set(recipesDocRef, { list: next, updatedAt: new Date().toISOString() });
+            return next;
+        });
+    // ID generation: was Math.max(...) + 1, which produced collisions when
+    // two admins added recipes simultaneously. Now Date.now() (millisecond
+    // timestamp) — globally unique enough for human edit cadence.
+    const newRecipeId = () => Date.now();
+
     const saveRecipe = async (recipeData) => {
-        let updated;
-        if (editMode === "add") {
-            const newId = recipes.length > 0 ? Math.max(...recipes.map(r => r.id || 0)) + 1 : 1;
-            updated = [...recipes, { ...recipeData, id: newId }];
-        } else {
-            updated = recipes.map(r => r.id === editMode.id ? { ...recipeData, id: editMode.id } : r);
-        }
-        setRecipes(updated);
+        const id = (editMode === "add") ? newRecipeId() : editMode.id;
         setEditMode(null);
         try {
-            await setDoc(doc(db, "config", "recipes"), { list: updated, updatedAt: new Date().toISOString() });
-        } catch (err) { console.error("Error saving recipes:", err); }
+            await transactRecipes((live) => {
+                if (editMode === "add") return [...live, { ...recipeData, id }];
+                // Update path: find by id IN THE LIVE LIST (not stale local state).
+                // If another admin renamed/moved the recipe between snapshot and
+                // save, we still match correctly by id.
+                const idx = live.findIndex(r => r.id === id);
+                if (idx === -1) return [...live, { ...recipeData, id }]; // recipe was deleted by someone else; treat as add
+                const next = [...live];
+                next[idx] = { ...recipeData, id };
+                return next;
+            });
+            toast(language === "es" ? "✓ Receta guardada." : "✓ Recipe saved.");
+        } catch (err) {
+            console.error("Error saving recipe:", err);
+            toast((language === "es" ? "Error al guardar: " : "Save failed: ") + (err.message || err), { kind: 'error' });
+        }
     };
 
     const deleteRecipe = async (recipeId) => {
         if (!confirm(language === "es" ? "¿Eliminar esta receta?" : "Delete this recipe?")) return;
-        const updated = recipes.filter(r => r.id !== recipeId);
-        setRecipes(updated);
         try {
-            await setDoc(doc(db, "config", "recipes"), { list: updated, updatedAt: new Date().toISOString() });
-        } catch (err) { console.error("Error deleting recipe:", err); }
+            await transactRecipes((live) => live.filter(r => r.id !== recipeId));
+            toast(language === "es" ? "✓ Receta eliminada." : "✓ Recipe deleted.");
+        } catch (err) {
+            console.error("Error deleting recipe:", err);
+            toast((language === "es" ? "Error al eliminar: " : "Delete failed: ") + (err.message || err), { kind: 'error' });
+        }
     };
 
     // Bulk-import / refresh the Master Recipe Book (admin only). Existing
     // recipes that share an English title with a master entry are *updated*
     // (preserving their id) so corrections to the source data flow through;
     // new master entries are appended with fresh ids; user-created recipes
-    // whose titles aren't in the master book are left alone.
+    // whose titles aren't in the master book are left alone. Now also
+    // race-safe — operates against the LIVE recipe list inside a transaction.
     const importMasterRecipes = async () => {
+        // Preview the change against the local snapshot for the confirm prompt.
         const norm = (s) => (s || "").trim().toLowerCase();
-        const masterByTitle = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
-        let updates = 0, adds = 0;
-        const updated = recipes.map(r => {
-            const m = masterByTitle.get(norm(r.titleEn));
-            if (!m) return r;
-            updates += 1;
-            masterByTitle.delete(norm(r.titleEn));
-            return { ...m, id: r.id };
-        });
-        let nextId = recipes.length > 0 ? Math.max(...recipes.map(r => r.id || 0)) + 1 : 1;
-        for (const m of masterByTitle.values()) {
-            updated.push({ ...m, id: nextId++ });
-            adds += 1;
+        const previewMaster = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
+        let previewUpdates = 0, previewAdds = 0;
+        for (const r of recipes) {
+            if (previewMaster.has(norm(r.titleEn))) {
+                previewUpdates += 1;
+                previewMaster.delete(norm(r.titleEn));
+            }
         }
-        if (updates === 0 && adds === 0) {
+        previewAdds = previewMaster.size;
+        if (previewUpdates === 0 && previewAdds === 0) {
             toast(language === "es" ? "Sin cambios." : "Nothing to do.");
             return;
         }
         const summary = language === "es"
-            ? `${adds} nueva(s), ${updates} actualizada(s). ¿Continuar?`
-            : `${adds} new, ${updates} to update. Proceed?`;
+            ? `${previewAdds} nueva(s), ${previewUpdates} actualizada(s). ¿Continuar?`
+            : `${previewAdds} new, ${previewUpdates} to update. Proceed?`;
         if (!confirm(summary)) return;
-        setRecipes(updated);
         try {
-            await setDoc(doc(db, "config", "recipes"), { list: updated, updatedAt: new Date().toISOString() });
-            toast(language === "es" ? `${adds} agregadas, ${updates} actualizadas.` : `${adds} added, ${updates} updated.`);
+            // Real import: re-walks against the LIVE list inside the transaction
+            // (counts may differ slightly from preview if another admin just edited).
+            const result = await runTransaction(db, async (tx) => {
+                const snap = await tx.get(recipesDocRef);
+                const live = (snap.exists() && Array.isArray(snap.data()?.list)) ? snap.data().list : [];
+                const masterByTitle = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
+                let upd = 0, add = 0;
+                const next = live.map(r => {
+                    const m = masterByTitle.get(norm(r.titleEn));
+                    if (!m) return r;
+                    upd += 1;
+                    masterByTitle.delete(norm(r.titleEn));
+                    return { ...m, id: r.id };
+                });
+                let nextId = Date.now();
+                for (const m of masterByTitle.values()) {
+                    next.push({ ...m, id: nextId++ });
+                    add += 1;
+                }
+                tx.set(recipesDocRef, { list: next, updatedAt: new Date().toISOString() });
+                return { adds: add, updates: upd };
+            });
+            toast(language === "es"
+                ? `✓ ${result.adds} agregadas, ${result.updates} actualizadas.`
+                : `✓ ${result.adds} added, ${result.updates} updated.`);
         } catch (err) {
             console.error("Error importing master recipes:", err);
-            toast(`Import failed: ${err.message || err}`);
+            toast(`Import failed: ${err.message || err}`, { kind: 'error' });
         }
     };
 

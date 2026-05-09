@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
@@ -1054,33 +1054,67 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return () => { cancelled = true; unsubBreakPlan(); };
             }, [breakDate, storeLocation]);
 
-            const saveBreakPlan = async (plan, times) => {
-                const saveTimes = times || breakWaveTimes;
-                const docId = "breakPlan_" + storeLocation + "_" + breakDate;
+            const breakPlanDocRef = () => doc(db, "ops", "breakPlan_" + storeLocation + "_" + breakDate);
+            // Race-safe break-plan mutator. Pass (livePlan, liveTimes) => { plan, times }.
+            // Two shift leads adjusting different stations / wave breakers concurrently
+            // used to clobber each other (full-doc setDoc). Now both edits land.
+            const mutateBreakPlan = async (transformer) => {
                 try {
-                    await setDoc(doc(db, "ops", docId), { plan, date: breakDate, waveTimes: saveTimes, updatedAt: new Date().toISOString(), storeBranch: storeLocation });
+                    const next = await runTransaction(db, async (txn) => {
+                        const snap = await txn.get(breakPlanDocRef());
+                        const livePlan = (snap.exists() && snap.data()?.plan)
+                            ? snap.data().plan
+                            : breakPlan;
+                        const liveTimes = (snap.exists() && Array.isArray(snap.data()?.waveTimes))
+                            ? snap.data().waveTimes
+                            : breakWaveTimes;
+                        const out = transformer(livePlan, liveTimes) || {};
+                        const newPlan = out.plan != null ? out.plan : livePlan;
+                        const newTimes = out.times != null ? out.times : liveTimes;
+                        txn.set(breakPlanDocRef(), {
+                            plan: newPlan, date: breakDate, waveTimes: newTimes,
+                            updatedAt: new Date().toISOString(), storeBranch: storeLocation,
+                        });
+                        return { plan: newPlan, times: newTimes };
+                    });
+                    setBreakPlan(next.plan);
+                    setBreakWaveTimes(next.times);
                     setBreakPlanSaved(true);
                     setTimeout(() => setBreakPlanSaved(false), 2000);
-                } catch (err) { console.error("Error saving break plan:", err); }
+                    return next;
+                } catch (err) {
+                    console.error("Error saving break plan:", err);
+                    toast(language === "es" ? "Error al guardar plan de breaks" : "Break plan save failed", { kind: 'error' });
+                    return null;
+                }
+            };
+            // Backward-compat shim. Prefer mutateBreakPlan for race safety.
+            const saveBreakPlan = async (plan, times) => {
+                const saveTimes = times || breakWaveTimes;
+                try {
+                    await setDoc(breakPlanDocRef(), { plan, date: breakDate, waveTimes: saveTimes, updatedAt: new Date().toISOString(), storeBranch: storeLocation });
+                    setBreakPlanSaved(true);
+                    setTimeout(() => setBreakPlanSaved(false), 2000);
+                } catch (err) { console.error("Error saving break plan (legacy):", err); }
             };
 
             const updateWaveTime = (idx, newTime) => {
-                const updated = [...breakWaveTimes];
-                updated[idx] = newTime;
-                setBreakWaveTimes(updated);
-                saveBreakPlan(breakPlan, updated);
+                mutateBreakPlan((_livePlan, liveTimes) => {
+                    const next = [...liveTimes];
+                    next[idx] = newTime;
+                    return { times: next };
+                });
             };
 
             const updateStationAssignment = (posId, name) => {
-                const newPlan = { ...breakPlan, stations: { ...breakPlan.stations, [posId]: name } };
-                setBreakPlan(newPlan);
-                saveBreakPlan(newPlan);
+                mutateBreakPlan((livePlan) => ({
+                    plan: { ...livePlan, stations: { ...(livePlan.stations || {}), [posId]: name } },
+                }));
             };
 
             const clearBreakPlan = () => {
                 if (!confirm(language === "es" ? "¿Borrar todo el plan de breaks?" : "Clear entire break plan?")) return;
-                setBreakPlan({ stations: {}, waves: {} });
-                saveBreakPlan({ stations: {}, waves: {} });
+                mutateBreakPlan(() => ({ plan: { stations: {}, waves: {} } }));
             };
 
             // Build a map: person -> position(s) they're assigned to
@@ -1100,25 +1134,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return breakPlan.waves?.[waveId + "_breakers"] || [];
             };
 
-            // Toggle a person on/off break for a wave
+            // Toggle a person on/off break for a wave. Race-safe: applies the
+            // toggle against the LIVE breakers list inside a transaction so
+            // two shift leads tapping different people in the same wave both
+            // land instead of clobbering each other.
             const toggleBreaker = (waveId, personName) => {
-                const breakers = [...getWaveBreakers(waveId)];
-                const idx = breakers.indexOf(personName);
-                if (idx >= 0) breakers.splice(idx, 1);
-                else breakers.push(personName);
-                const newWaves = { ...breakPlan.waves, [waveId + "_breakers"]: breakers };
-                const newPlan = { ...breakPlan, waves: newWaves };
-                setBreakPlan(newPlan);
-                saveBreakPlan(newPlan);
+                mutateBreakPlan((livePlan) => {
+                    const liveBreakers = (livePlan.waves || {})[waveId + "_breakers"] || [];
+                    const next = [...liveBreakers];
+                    const idx = next.indexOf(personName);
+                    if (idx >= 0) next.splice(idx, 1);
+                    else next.push(personName);
+                    return { plan: { ...livePlan, waves: { ...(livePlan.waves || {}), [waveId + "_breakers"]: next } } };
+                });
             };
 
             // Get/set who covers a specific position during a wave
             const getWaveCover = (waveId, posId) => breakPlan.waves?.[waveId + "_cover_" + posId] || "";
             const setWaveCover = (waveId, posId, coverName) => {
-                const newWaves = { ...breakPlan.waves, [waveId + "_cover_" + posId]: coverName };
-                const newPlan = { ...breakPlan, waves: newWaves };
-                setBreakPlan(newPlan);
-                saveBreakPlan(newPlan);
+                mutateBreakPlan((livePlan) => ({
+                    plan: { ...livePlan, waves: { ...(livePlan.waves || {}), [waveId + "_cover_" + posId]: coverName } },
+                }));
             };
 
             // Get all assigned people
@@ -2175,14 +2211,42 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 console.log(`[idMigration] healed ${Object.keys(idMigration).length} ids`);
             };
 
-            const saveInventory = async (_counts, items) => {
-                // Schema-only writer (called when items are added/edited). Counts and countMeta intentionally
-                // not written here so concurrent count edits on another tablet aren't clobbered.
+            const inventoryDocRef = () => doc(db, "ops", "inventory_" + storeLocation);
+            // Race-safe inventory mutator. Pass a transformer (currentList) => newList
+            // and the transaction reads the LIVE customInventory, applies the change,
+            // and writes back atomically. If another tablet wrote between our read and
+            // our write, Firestore retries the transformer against the fresh data —
+            // no more silent overwrites when two managers edit at once.
+            const mutateInventory = async (transformer) => {
                 try {
-                    await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
+                    const next = await runTransaction(db, async (txn) => {
+                        const snap = await txn.get(inventoryDocRef());
+                        const live = (snap.exists() && Array.isArray(snap.data()?.customInventory))
+                            ? snap.data().customInventory
+                            : customInventory;
+                        const updated = transformer(live);
+                        txn.set(inventoryDocRef(), {
+                            customInventory: updated,
+                            date: new Date().toISOString(),
+                        }, { merge: true });
+                        return updated;
+                    });
+                    setCustomInventory(next);
+                    return next;
+                } catch (err) {
+                    console.error("Error updating inventory:", err);
+                    toast(language === "es" ? "Error al guardar inventario" : "Inventory save failed", { kind: 'error' });
+                    return null;
+                }
+            };
+            // Backward-compat shim — legacy callers that pre-computed `items`.
+            // New code should use mutateInventory(transformer) for race safety.
+            const saveInventory = async (_counts, items) => {
+                try {
+                    await setDoc(inventoryDocRef(), {
                         customInventory: items, date: new Date().toISOString()
                     }, { merge: true });
-                } catch (err) { console.error("Error updating inventory:", err); }
+                } catch (err) { console.error("Error updating inventory (legacy):", err); }
             };
 
             // Build a fresh ID that won't collide with anything currently in the category,
@@ -2194,67 +2258,73 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return catIdx + "-" + n;
             };
 
-            // Quick write-in add (from the blank line at bottom of each category)
+            // Quick write-in add (from the blank line at bottom of each category).
+            // Uses mutateInventory so two managers adding to the same category
+            // simultaneously don't clobber each other.
             const quickAddItem = async (catIdx) => {
                 const input = (writeInValues[catIdx] || "").trim();
                 if (!input) return;
                 const translated = autoTranslateItem(input);
-                const category = customInventory[catIdx];
-                const newItem = { id: nextItemId(category, catIdx), name: translated.name, nameEs: translated.nameEs, vendor: "", supplier: "", orderDay: "", pack: "", price: null, subcat: "" };
-                const updated = customInventory.map((cat, idx) =>
-                    idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
-                );
-                setCustomInventory(updated);
                 setWriteInValues(prev => ({ ...prev, [catIdx]: "" }));
-                await saveInventory(inventory, updated);
+                await mutateInventory((live) => {
+                    const liveCat = live[catIdx];
+                    if (!liveCat) return live;
+                    const newItem = {
+                        id: nextItemId(liveCat, catIdx),
+                        name: translated.name, nameEs: translated.nameEs,
+                        vendor: "", supplier: "", orderDay: "", pack: "", price: null, subcat: "",
+                    };
+                    return live.map((cat, idx) => idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat);
+                });
             };
 
             const addInvItem = async (catIdx) => {
                 if (!invNewName.trim()) return;
-                const category = customInventory[catIdx];
-                const newItem = {
-                    id: nextItemId(category, catIdx),
-                    name: invNewName.trim(),
-                    nameEs: invNewNameEs.trim(),
-                    vendor: invNewSupplier.trim(),
-                    supplier: invNewSupplier.trim(),
-                    orderDay: invNewOrderDay,
-                    pack: "",
-                    price: null,
-                    subcat: ""
+                const captured = {
+                    name: invNewName.trim(), nameEs: invNewNameEs.trim(),
+                    supplier: invNewSupplier.trim(), orderDay: invNewOrderDay,
                 };
-                const updated = customInventory.map((cat, idx) =>
-                    idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat
-                );
-                setCustomInventory(updated);
-                await saveInventory(inventory, updated);
+                await mutateInventory((live) => {
+                    const liveCat = live[catIdx];
+                    if (!liveCat) return live;
+                    const newItem = {
+                        id: nextItemId(liveCat, catIdx),
+                        name: captured.name, nameEs: captured.nameEs,
+                        vendor: captured.supplier, supplier: captured.supplier,
+                        orderDay: captured.orderDay, pack: "", price: null, subcat: "",
+                    };
+                    return live.map((cat, idx) => idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat);
+                });
                 setInvNewName(""); setInvNewNameEs(""); setInvNewSupplier(""); setInvNewOrderDay("Fri"); setInvShowAddForm(null);
             };
 
             const saveInvEdit = async (catIdx, itemIdx) => {
                 if (!invEditName.trim()) return;
-                const updated = customInventory.map((cat, cIdx) =>
+                // Capture the item ID from local state so we can locate it in the live
+                // list by ID rather than by index — index drifts if other managers
+                // added/removed items in this category between snapshots.
+                const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
+                const patch = {
+                    name: invEditName.trim(), nameEs: invEditNameEs.trim(),
+                    vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(),
+                    orderDay: invEditOrderDay,
+                };
+                await mutateInventory((live) => live.map((cat, cIdx) =>
                     cIdx === catIdx
-                        ? { ...cat, items: cat.items.map((item, iIdx) =>
-                            iIdx === itemIdx
-                                ? { ...item, name: invEditName.trim(), nameEs: invEditNameEs.trim(), vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(), orderDay: invEditOrderDay }
-                                : item
-                            )}
+                        ? { ...cat, items: cat.items.map(item =>
+                            item.id === targetId ? { ...item, ...patch } : item) }
                         : cat
-                );
-                setCustomInventory(updated);
-                await saveInventory(inventory, updated);
+                ));
                 setInvEditingIdx(null); setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri");
             };
 
             const deleteInvItem = async (catIdx, itemIdx) => {
-                const updated = customInventory.map((cat, cIdx) =>
-                    cIdx === catIdx
-                        ? { ...cat, items: cat.items.filter((_, iIdx) => iIdx !== itemIdx) }
-                        : cat
-                );
-                setCustomInventory(updated);
-                await saveInventory(inventory, updated);
+                // Same drift-safety: target by ID, not by index.
+                const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
+                if (!targetId) return;
+                await mutateInventory((live) => live.map((cat, cIdx) =>
+                    cIdx === catIdx ? { ...cat, items: cat.items.filter(it => it.id !== targetId) } : cat
+                ));
             };
 
             // Split list helpers
@@ -2647,24 +2717,31 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     date: now.toISOString(),
                     dateStr: now.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " " + now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
                 };
-                const updated = customInventory.map((cat, cIdx) =>
+                const targetId = item.id;
+                // Race-safe inventory update — target by ID against the live list.
+                await mutateInventory((live) => live.map((cat, cIdx) =>
                     cIdx === catIdx
-                        ? { ...cat, items: cat.items.map((it, iIdx) =>
-                            iIdx === itemIdx ? { ...it, preferredVendor: newVendor } : it
-                        )}
+                        ? { ...cat, items: cat.items.map(it =>
+                            it.id === targetId ? { ...it, preferredVendor: newVendor } : it) }
                         : cat
-                );
-                setCustomInventory(updated);
-                const newLog = [logEntry, ...vendorChangeLog].slice(0, 50);
-                setVendorChangeLog(newLog);
+                ));
+                // Race-safe log append. The previous code did
+                //   newLog = [entry, ...localLog].slice(0,50)
+                //   setDoc({ log: newLog })
+                // — which lost simultaneous writes from the other tablet (last
+                // writer wins, the first entry vanishes). Now we transactionally
+                // read the live log, prepend our entry, cap to 50, write back.
                 try {
-                    // Only customInventory changed here. Skip writing counts/countMeta so concurrent
-                    // count edits on another tablet aren't clobbered.
-                    await setDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                        customInventory: updated, date: now.toISOString()
-                    }, { merge: true });
-                    await setDoc(doc(db, "ops", "vendorLog_" + storeLocation), { log: newLog }, { merge: true });
-                } catch (err) { console.error("Error saving vendor change:", err); }
+                    const logRef = doc(db, "ops", "vendorLog_" + storeLocation);
+                    await runTransaction(db, async (txn) => {
+                        const snap = await txn.get(logRef);
+                        const liveLog = (snap.exists() && Array.isArray(snap.data()?.log)) ? snap.data().log : [];
+                        const merged = [logEntry, ...liveLog].slice(0, 50);
+                        txn.set(logRef, { log: merged }, { merge: true });
+                    });
+                } catch (err) {
+                    console.error("Error saving vendor log:", err);
+                }
             };
 
             // Get tasks for current side + period
