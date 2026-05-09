@@ -2481,6 +2481,15 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     );
 }
 
+// Coverage heatmap config — service window the strip covers (10 AM → 10 PM).
+// 12 blocks per day. Color by headcount in that hour:
+//   0 = red gap, 1 = yellow thin, 2 = teal ok, 3+ = green well-staffed.
+// Tweak HEATMAP_THIN / HEATMAP_OK if a location wants different thresholds.
+const HEATMAP_FIRST_HOUR = 10;
+const HEATMAP_LAST_HOUR = 22; // exclusive upper bound (block-of-22:00 = 9-10pm)
+const HEATMAP_THIN = 1;       // <= this is "thin" (yellow)
+const HEATMAP_OK = 2;         // <= this is "ok" (teal); above is "well-staffed" (green)
+
 function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes }) {
     // Pre-compute per-day staffing-need stats (filled / total / open) so the
     // day header can show a live countdown badge as slots get assigned.
@@ -2520,6 +2529,50 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
         }
         return map;
     }, [shifts]);
+
+    // Coverage heatmap data — for each day, how many distinct people are
+    // on the floor at each hour of the service window. A shift covers an
+    // hour H when startTime <= H:00 AND endTime > H:00. Counts unique
+    // staff names so two shifts by the same person on the same day still
+    // count as one body in the building during overlap (which can't
+    // physically happen anyway, but the de-dupe protects against shift
+    // overlap data bugs).
+    const coverageByDate = useMemo(() => {
+        const out = new Map();
+        const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
+        const toMin = (t) => {
+            if (!t) return null;
+            const [h, m] = t.split(':').map(Number);
+            return h * 60 + (m || 0);
+        };
+        for (const d of days) {
+            const dStr = toDateStr(d);
+            const dayShifts = shifts.filter(sh => sh.date === dStr);
+            const hours = [];
+            for (let h = HEATMAP_FIRST_HOUR; h < HEATMAP_LAST_HOUR; h++) {
+                const hourMin = h * 60;
+                const namesOn = new Set();
+                for (const sh of dayShifts) {
+                    const sm = toMin(sh.startTime);
+                    const em = toMin(sh.endTime);
+                    if (sm == null || em == null) continue;
+                    if (sm <= hourMin && em > hourMin) {
+                        namesOn.add(sh.staffName);
+                    }
+                }
+                hours.push(namesOn.size);
+            }
+            out.set(dStr, hours);
+        }
+        return out;
+    }, [shifts, weekStart]);
+
+    const heatmapColor = (count) => {
+        if (count === 0) return 'bg-red-400';
+        if (count <= HEATMAP_THIN) return 'bg-yellow-300';
+        if (count <= HEATMAP_OK) return 'bg-teal-300';
+        return 'bg-emerald-500';
+    };
 
     if (staffSummary.length === 0) {
         return <p className="text-center text-gray-400 mt-6 text-sm">{isEn ? 'No staff for this location.' : 'Sin personal para esta ubicación.'}</p>;
@@ -2563,6 +2616,30 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         </div>
                                     )}
                                     {onDayHeaderClick && !closed && <div className="text-[8px] text-mint-600 mt-0.5 print:hidden">👥 {isEn ? 'tap' : 'tocar'}</div>}
+                                    {/* Coverage heatmap — one block per service hour
+                                        (10am→10pm). Color shows headcount on the floor.
+                                        Hover any block to see exact count + hour. */}
+                                    {!closed && (() => {
+                                        const hours = coverageByDate.get(dStr) || [];
+                                        const minHere = Math.min(...hours);
+                                        const hasGap = minHere === 0;
+                                        return (
+                                            <div className={`mt-1 flex gap-px rounded overflow-hidden border ${hasGap ? 'border-red-300' : 'border-gray-200'} print:hidden`}
+                                                title={isEn
+                                                    ? `${hours.join(', ')} (${HEATMAP_FIRST_HOUR}am–${HEATMAP_LAST_HOUR === 24 ? '12am' : HEATMAP_LAST_HOUR > 12 ? `${HEATMAP_LAST_HOUR - 12}pm` : `${HEATMAP_LAST_HOUR}am`})`
+                                                    : `Personal por hora: ${hours.join(', ')}`}>
+                                                {hours.map((cnt, hi) => {
+                                                    const hour = HEATMAP_FIRST_HOUR + hi;
+                                                    const hourLabel = hour === 12 ? '12pm' : hour > 12 ? `${hour - 12}pm` : `${hour}am`;
+                                                    return (
+                                                        <div key={hi}
+                                                            className={`flex-1 h-2 ${heatmapColor(cnt)}`}
+                                                            title={`${hourLabel}: ${cnt} ${cnt === 1 ? (isEn ? 'person' : 'persona') : (isEn ? 'people' : 'personas')}`} />
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })()}
                                 </th>
                             );
                         })}
