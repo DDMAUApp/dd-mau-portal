@@ -506,11 +506,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return () => { timers.forEach(clearTimeout); };
     }, [staffName, shifts, notifPermission, isEn]);
 
-    // Helper — write a notification doc. Silently swallows errors so a notify
-    // failure never blocks the underlying action. Multiple recipients = multiple
-    // calls (caller maps).
-    const notify = async (forStaff, type, title, body, link = null) => {
-        if (!forStaff || forStaff === staffName) return; // don't notify yourself
+    // Helper — write a notification doc. Cloud Function dispatchNotification
+    // picks it up and fires FCM push to the recipient's tokens. Silently
+    // swallows errors so a notify failure never blocks the underlying action.
+    //
+    // allowSelf default = false (don't push you for actions you yourself
+    // performed — e.g. don't ping you when you take your own shift).
+    // BUT for publish + manager-edits-to-your-shift you SHOULD self-notify,
+    // because the action affects you-as-staff even though you're also the
+    // one doing it. Pass { allowSelf: true } in those callers.
+    const notify = async (forStaff, type, title, body, link = null, opts = {}) => {
+        if (!forStaff) return;
+        if (forStaff === staffName && !opts.allowSelf) return;
         try {
             await addDoc(collection(db, 'notifications'), {
                 forStaff, type, title, body, link,
@@ -767,8 +774,22 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const handleDeleteShift = async (shiftId) => {
         if (!canEdit) return;
         if (!confirm(tx('Delete this shift?', '¿Eliminar este turno?'))) return;
+        // Capture the shift's pre-delete details so we can notify the
+        // affected staffer AFTER the delete commits — only if it was
+        // published (drafts haven't been released to staff so silent
+        // delete is fine).
+        const sh = shifts.find(s => s.id === shiftId);
+        const wasPublished = sh && sh.published !== false;
         try {
             await deleteDoc(doc(db, 'shifts', shiftId));
+            if (wasPublished && sh.staffName) {
+                const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
+                await notify(sh.staffName, 'shift_deleted',
+                    tx('Shift removed', 'Turno eliminado'),
+                    tx(`Your ${detail} shift has been removed.`,
+                       `Tu turno del ${detail} ha sido eliminado.`),
+                    null, { allowSelf: true });
+            }
         } catch (e) {
             console.error('Delete shift failed:', e);
             toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message);
@@ -789,6 +810,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             toast(tx('End time must be after start time.', 'La hora de fin debe ser después del inicio.'));
             return;
         }
+        const sh = shifts.find(s => s.id === shiftId);
+        const wasPublished = sh && sh.published !== false;
+        const oldDetail = sh ? `${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}` : '';
+        const newDetail = `${formatTime12h(startTime)}–${formatTime12h(endTime)}`;
         try {
             await updateDoc(doc(db, 'shifts', shiftId), {
                 startTime,
@@ -796,6 +821,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
+            // Push to the assigned staffer if their PUBLISHED shift just
+            // changed times. Drafts are silent (not released yet).
+            if (wasPublished && sh.staffName && (sh.startTime !== startTime || sh.endTime !== endTime)) {
+                await notify(sh.staffName, 'shift_time_changed',
+                    tx('Shift time changed', 'Horario de turno cambiado'),
+                    tx(`Your ${sh.date} shift moved: ${oldDetail} → ${newDetail}.`,
+                       `Tu turno del ${sh.date} cambió: ${oldDetail} → ${newDetail}.`),
+                    null, { allowSelf: true });
+            }
         } catch (e) {
             console.error('Update shift times failed:', e);
             toast(tx('Could not update times: ', 'No se pudieron actualizar los horarios: ') + e.message);
@@ -818,12 +852,43 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             toast(tx(`${newStaffName} is on approved time-off that date.`, `${newStaffName} tiene tiempo libre aprobado esa fecha.`));
             return;
         }
+        const wasPublished = shift.published !== false;
+        const oldStaff = shift.staffName;
+        const oldDate = shift.date;
+        const detail = `${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
         try {
             await updateDoc(doc(db, 'shifts', shiftId), {
                 staffName: newStaffName,
                 date: newDate,
                 updatedAt: serverTimestamp(),
             });
+            // Push notifications when a published shift moves between
+            // staff or dates. Three cases:
+            //   - assignee changed: notify both old (lost shift) and new (got shift)
+            //   - date changed only: notify the assignee that day moved
+            // Drafts are silent (not released yet).
+            if (wasPublished) {
+                if (oldStaff !== newStaffName) {
+                    if (oldStaff) {
+                        await notify(oldStaff, 'shift_reassigned',
+                            tx('Shift reassigned', 'Turno reasignado'),
+                            tx(`Your ${oldDate} ${detail} shift was reassigned to ${newStaffName}.`,
+                               `Tu turno del ${oldDate} ${detail} fue reasignado a ${newStaffName}.`),
+                            null, { allowSelf: true });
+                    }
+                    await notify(newStaffName, 'shift_added',
+                        tx('New shift assigned', 'Nuevo turno asignado'),
+                        tx(`You picked up the ${newDate} ${detail} shift (was ${oldStaff}'s).`,
+                           `Tomaste el turno del ${newDate} ${detail} (antes de ${oldStaff}).`),
+                        null, { allowSelf: true });
+                } else if (oldDate !== newDate) {
+                    await notify(newStaffName, 'shift_date_changed',
+                        tx('Shift moved', 'Turno movido'),
+                        tx(`Your shift moved from ${oldDate} to ${newDate} (${detail}).`,
+                           `Tu turno se movió del ${oldDate} al ${newDate} (${detail}).`),
+                        null, { allowSelf: true });
+                }
+            }
         } catch (e) {
             console.error('Drop shift failed:', e);
             toast(tx('Could not move shift: ', 'No se pudo mover: ') + e.message);
@@ -1793,9 +1858,24 @@ ${dayBlocks}
                 byStaff.set(s.staffName, list);
             }
             for (const [name, list] of byStaff) {
-                await notify(name, 'week_published', tx('Schedule published', 'Horario publicado'),
-                    tx(`${list.length} new shift${list.length === 1 ? '' : 's'} for the week of ${toDateStr(weekStart)}.`,
-                       `${list.length} turno${list.length === 1 ? '' : 's'} nuevo${list.length === 1 ? '' : 's'} para la semana del ${toDateStr(weekStart)}.`));
+                // Build a date+time summary so the staff push tells them WHAT
+                // shifts were just released, not just "you have N shifts."
+                // First 3 shifts itemized, rest summarized as "+N more."
+                const sorted = [...list].sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.startTime || '').localeCompare(b.startTime || ''));
+                const lines = sorted.slice(0, 3).map(s => {
+                    const d = parseLocalDate(s.date);
+                    const dayLbl = d ? (isEn ? DAYS_EN : DAYS_ES)[d.getDay()].slice(0, 3) : s.date;
+                    return `${dayLbl} ${s.date.slice(5)} ${formatTime12h(s.startTime)}–${formatTime12h(s.endTime)}`;
+                });
+                if (sorted.length > 3) lines.push(isEn ? `+${sorted.length - 3} more` : `+${sorted.length - 3} más`);
+                const body = lines.join('\n');
+                // allowSelf: true — when YOU publish a week that includes YOUR
+                // own shifts, you should still get the push (you might be on
+                // a different device, and confirms the notification system works).
+                await notify(name, 'week_published',
+                    tx(`📢 Schedule published: ${list.length} shift${list.length === 1 ? '' : 's'}`,
+                       `📢 Horario publicado: ${list.length} turno${list.length === 1 ? '' : 's'}`),
+                    body, null, { allowSelf: true });
             }
         } catch (e) {
             console.error('Publish failed:', e);
