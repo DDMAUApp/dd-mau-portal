@@ -31,6 +31,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editIsMinor, setEditIsMinor] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
             const [editTargetHours, setEditTargetHours] = useState(0);
+            // Designated-scheduler toggles. Per-side so the FOH scheduler
+            // can't accidentally publish over BOH shifts and vice versa.
+            const [editCanEditScheduleFOH, setEditCanEditScheduleFOH] = useState(false);
+            const [editCanEditScheduleBOH, setEditCanEditScheduleBOH] = useState(false);
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [bulkSearch, setBulkSearch] = useState("");
             const [bulkFilter, setBulkFilter] = useState("all"); // all | untagged | foh | boh
@@ -200,7 +204,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0 } : s);
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -504,6 +508,31 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             value={editTargetHours} onChange={e => setEditTargetHours(e.target.value)}
                                                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                                                     </div>
+                                                    {/* Designated-scheduler toggles. ONLY the people you turn on here can
+                                                        edit / publish the schedule for that side. Everyone else can still
+                                                        view, offer up shifts, take shifts, and request PTO. */}
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-sm font-bold text-gray-700 mb-1">📅 {language === "es" ? "Editor de horario" : "Schedule Editor"}</p>
+                                                        <p className="text-xs text-gray-500 mb-2">
+                                                            {language === "es"
+                                                                ? "Solo los activados aquí pueden crear/editar/publicar turnos. Admin (Andrew/Julie) siempre puede."
+                                                                : "Only people toggled on here can create/edit/publish shifts. Admin (Andrew/Julie) always can."}
+                                                        </p>
+                                                        <div className="flex items-center justify-between mb-2">
+                                                            <span className="text-xs font-bold text-teal-700">FOH {language === "es" ? "editor" : "editor"}</span>
+                                                            <button onClick={() => setEditCanEditScheduleFOH(!editCanEditScheduleFOH)}
+                                                                className={`w-12 h-6 rounded-full relative transition ${editCanEditScheduleFOH ? "bg-teal-600" : "bg-gray-300"}`}>
+                                                                <div className={`w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition ${editCanEditScheduleFOH ? "translate-x-6" : "translate-x-0.5"}`} />
+                                                            </button>
+                                                        </div>
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-xs font-bold text-orange-700">BOH {language === "es" ? "editor" : "editor"}</span>
+                                                            <button onClick={() => setEditCanEditScheduleBOH(!editCanEditScheduleBOH)}
+                                                                className={`w-12 h-6 rounded-full relative transition ${editCanEditScheduleBOH ? "bg-orange-600" : "bg-gray-300"}`}>
+                                                                <div className={`w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition ${editCanEditScheduleBOH ? "translate-x-6" : "translate-x-0.5"}`} />
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                     <button onClick={() => setAvailabilityForId(person.id)}
                                                         className="w-full py-2 rounded-lg bg-purple-100 text-purple-700 text-xs font-bold hover:bg-purple-200">
                                                         🗓 {language === "es" ? "Editar disponibilidad" : "Edit Availability"}
@@ -514,7 +543,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -527,7 +556,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(!!person.recipesAccess); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>

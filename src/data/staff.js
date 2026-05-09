@@ -26,18 +26,30 @@ export function isAdmin(name, staffList) {
   return ADMIN_NAMES.includes(name);
 }
 
-// Roles that can edit the schedule (create/edit/delete shifts, publish weeks).
-// Owners (isAdmin) always can. Any role title containing "Manager" also can —
-// covers "Manager", "Kitchen Manager", "Asst Manager", "Asst Kitchen Manager".
-// Shift Lead is NOT included (HR consultant lens: cleaner accountability if
-// only managers own scheduling).
-export function canEditSchedule(staffName, staffList) {
+// Schedule-edit access — designated-scheduler model.
+//
+// Owners (isAdmin) always edit BOTH sides. Otherwise it's per-side and
+// per-staff via two explicit toggles set in AdminPanel:
+//   canEditScheduleFOH: boolean
+//   canEditScheduleBOH: boolean
+//
+// Pass a `side` ('foh' | 'boh') to check edit access for that specific side.
+// Without `side`, returns true if the staff has either toggle (used by UI
+// "is this person ever a scheduler?" checks).
+//
+// Note: role title is no longer used. The previous implementation auto-
+// granted edit access to anyone with "Manager" in their role, but DD Mau
+// has multiple managers and only one designated scheduler per side, so
+// we moved to explicit per-staff toggles.
+export function canEditSchedule(staffName, staffList, side) {
   if (isAdmin(staffName, staffList)) return true;
   if (!staffName || !Array.isArray(staffList)) return false;
   const me = staffList.find(s => s.name === staffName);
   if (!me) return false;
-  const role = (me.role || "").toLowerCase();
-  return role.includes("manager") || role === "owner";
+  if (side === 'foh') return me.canEditScheduleFOH === true;
+  if (side === 'boh') return me.canEditScheduleBOH === true;
+  // No side specified → either toggle counts.
+  return me.canEditScheduleFOH === true || me.canEditScheduleBOH === true;
 }
 
 export const LOCATION_LABELS = {

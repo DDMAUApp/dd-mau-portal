@@ -236,7 +236,10 @@ const minorShiftWarnings = (shift, isEn) => {
 export default function Schedule({ staffName, language, storeLocation, staffList, setStaffList }) {
     const isEn = language !== 'es';
     const tx = (en, es) => (isEn ? en : es);
-    const canEdit = canEditSchedule(staffName, staffList);
+    // Side-aware edit gate. The designated FOH scheduler can only edit FOH
+    // shifts; the designated BOH scheduler can only edit BOH. Admins edit
+    // either side. Re-derives whenever the manager toggles between sides.
+    const canEdit = canEditSchedule(staffName, staffList, side);
 
     const [shifts, setShifts] = useState([]);
     const [loading, setLoading] = useState(true);
