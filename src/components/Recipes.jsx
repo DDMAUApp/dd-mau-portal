@@ -159,6 +159,42 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
+    // Raw text the user has typed in the per-recipe Custom multiplier input.
+    // We commit (parseQuantity → setRecipeMultipliers) on blur/Enter so that
+    // mid-typing characters like "1/" don't snap to a preset. Without this,
+    // a number-typed `1/3` was being stripped to `3` by the browser and
+    // jumping to the 3× preset chip.
+    const [multiplierDrafts, setMultiplierDrafts] = useState({}); // { recipeId: string }
+    // Parse "1/3", "1 1/2", "½", "1½", "0.333", "2" → number. Returns null on garbage.
+    const parseQuantity = (raw) => {
+        if (raw == null) return null;
+        const s = String(raw).trim();
+        if (!s) return null;
+        const FRAC = { '½':0.5,'¼':0.25,'¾':0.75,'⅓':1/3,'⅔':2/3,'⅛':0.125,'⅜':0.375,'⅝':0.625,'⅞':0.875,'⅙':1/6,'⅚':5/6,'⅕':0.2,'⅖':0.4,'⅗':0.6,'⅘':0.8 };
+        // Mixed Unicode like "1½"
+        let m = s.match(/^(\d+)\s*([½¼¾⅓⅔⅛⅜⅝⅞⅙⅚⅕⅖⅗⅘])$/);
+        if (m) return parseInt(m[1], 10) + FRAC[m[2]];
+        // Lone Unicode fraction like "½"
+        if (FRAC[s] !== undefined) return FRAC[s];
+        // Mixed ASCII like "1 1/2"
+        m = s.match(/^(\d+)\s+(\d+)\/(\d+)$/);
+        if (m) return parseInt(m[1],10) + parseInt(m[2],10)/parseInt(m[3],10);
+        // Plain ASCII fraction like "1/3"
+        m = s.match(/^(\d+)\/(\d+)$/);
+        if (m) { const d = parseInt(m[2],10); if (d > 0) return parseInt(m[1],10)/d; return null; }
+        // Plain number
+        const n = parseFloat(s);
+        return Number.isFinite(n) ? n : null;
+    };
+    const commitMultiplierDraft = (recipeId) => {
+        const raw = multiplierDrafts[recipeId];
+        if (raw === undefined) return;
+        const v = parseQuantity(raw);
+        if (v && v > 0) {
+            setRecipeMultipliers(prev => ({ ...prev, [recipeId]: v }));
+        }
+        setMultiplierDrafts(prev => { const n = { ...prev }; delete n[recipeId]; return n; });
+    };
     // Auto-blur was removed (2026-05-09): on iOS the URL bar collapsing on
     // input focus, and the soft-keyboard appearing in the recipe editor,
     // both trip the blur/focus and devtools heuristics. Result: the page
@@ -755,19 +791,20 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                                         })}
                                         <div className="flex items-center gap-1 ml-1">
                                             <input
-                                                type="number"
-                                                min="0.1"
-                                                step="0.1"
-                                                placeholder={language === "es" ? "Otro" : "Custom"}
+                                                type="text"
+                                                inputMode="decimal"
+                                                placeholder={language === "es" ? "ej. 1/3" : "e.g. 1/3"}
                                                 value={(() => {
+                                                    if (multiplierDrafts[recipe.id] !== undefined) return multiplierDrafts[recipe.id];
                                                     const cur = recipeMultipliers[recipe.id] || 1;
                                                     const presets = [0.5, 1, 2, 3, 5, 10];
                                                     return presets.includes(cur) ? "" : cur;
                                                 })()}
                                                 onChange={(e) => {
-                                                    const v = parseFloat(e.target.value);
-                                                    if (v > 0) setRecipeMultipliers(prev => ({...prev, [recipe.id]: v}));
+                                                    setMultiplierDrafts(prev => ({ ...prev, [recipe.id]: e.target.value }));
                                                 }}
+                                                onBlur={() => commitMultiplierDraft(recipe.id)}
+                                                onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
                                                 className="w-16 text-center border border-purple-300 rounded-lg px-2 py-1.5 text-xs font-bold text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400"
                                             />
                                             <span className="text-xs text-purple-500 font-bold">x</span>

@@ -114,16 +114,26 @@ const SHIFT_PRESETS_BOH = [
 ];
 const getShiftPresets = (side) => (side === 'boh' ? SHIFT_PRESETS_BOH : SHIFT_PRESETS_FOH);
 
-// Role-family color tokens for shift cubes.
-const roleColors = (role) => {
-    if (!role) return { bg: 'bg-gray-100', border: 'border-gray-300', text: 'text-gray-800' };
-    if (role === 'Shift Lead')    return { bg: 'bg-purple-100', border: 'border-purple-300', text: 'text-purple-800' };
-    if (role === 'Manager' || role === 'Asst Manager' || role === 'Owner')
-                                  return { bg: 'bg-amber-100',  border: 'border-amber-400',  text: 'text-amber-900' };
-    if (role === 'Kitchen Manager' || role === 'Asst Kitchen Manager')
-                                  return { bg: 'bg-amber-100',  border: 'border-amber-400',  text: 'text-amber-900' };
-    if (BOH_ROLE_HINTS.has(role)) return { bg: 'bg-orange-100', border: 'border-orange-300', text: 'text-orange-800' };
-    return { bg: 'bg-teal-100', border: 'border-teal-300', text: 'text-teal-800' };
+// Role-tier color tokens. Three tiers:
+//   ORANGE  = manager-tier (Owner, Manager, Asst Manager, Kitchen Manager,
+//             Asst Kitchen Manager). They run the floor.
+//   GREEN   = shift lead (either dedicated "Shift Lead" role OR the
+//             per-staff shiftLead flag set by an admin). Floor captain.
+//   BLUE    = everyone else (regular FOH or BOH).
+// Used by every shift cube AND by the left-column staff name in the
+// weekly grid, so the same person reads the same color everywhere.
+const MANAGER_ROLES = new Set([
+    'Owner', 'Manager', 'Asst Manager',
+    'Kitchen Manager', 'Asst Kitchen Manager',
+]);
+const roleColors = (role, shiftLead) => {
+    if (MANAGER_ROLES.has(role)) {
+        return { bg: 'bg-orange-100', border: 'border-orange-400', text: 'text-orange-900', dot: 'bg-orange-500', tier: 'manager' };
+    }
+    if (shiftLead || role === 'Shift Lead') {
+        return { bg: 'bg-green-100',  border: 'border-green-400',  text: 'text-green-800',  dot: 'bg-green-500',  tier: 'lead' };
+    }
+    return { bg: 'bg-blue-100',  border: 'border-blue-300',  text: 'text-blue-800',  dot: 'bg-blue-500',   tier: 'staff' };
 };
 
 // ── Date helpers ───────────────────────────────────────────────────────────
@@ -2716,6 +2726,13 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
 
     return (
         <div className="overflow-x-auto -mx-4 px-4 schedule-grid-wrap">
+            {/* Tiny role-color legend so the blue/green/orange code is self-explanatory.
+                Hidden when printing — the printed schedule uses its own legend block. */}
+            <div className="flex items-center gap-3 mb-2 text-[10px] font-semibold text-gray-600 print:hidden">
+                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> {isEn ? 'Staff' : 'Personal'}</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-500" /> {isEn ? 'Shift Lead' : 'Líder'}</span>
+                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-orange-500" /> {isEn ? 'Manager' : 'Gerente'}</span>
+            </div>
             <table className="border-collapse text-xs min-w-max">
                 <thead>
                     <tr>
@@ -2782,12 +2799,18 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                     </tr>
                 </thead>
                 <tbody>
-                    {staffSummary.map(s => (
+                    {staffSummary.map(s => {
+                        // Per-staff role tier color (blue = staff, green = shift
+                        // lead, orange = manager). Used on the name + a small
+                        // dot so the row is visually scannable at a glance.
+                        const tierC = roleColors(s.role, s.shiftLead);
+                        return (
                         <tr key={s.id || s.name} className={s.name === currentStaffName ? 'bg-green-50/40' : ''}>
                             <td className={`sticky left-0 z-10 border-b border-r border-gray-200 px-2 py-1.5 align-top ${s.name === currentStaffName ? 'bg-green-50' : 'bg-white'}`}>
                                 <button onClick={() => onStaffClick && onStaffClick(s.name)}
                                     className="flex items-center gap-1 text-left hover:underline">
-                                    <span className={`font-semibold text-xs leading-tight truncate ${s.name === currentStaffName ? 'text-green-800' : 'text-gray-800'}`}>
+                                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${tierC.dot}`} title={tierC.tier} />
+                                    <span className={`font-semibold text-xs leading-tight truncate ${tierC.text}`}>
                                         {s.name}
                                     </span>
                                     {s.shiftLead && <span title="Shift Lead">🛡️</span>}
@@ -2839,7 +2862,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                 <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'PTO pending' : 'PTO pendiente'}</div>
                                             )}
                                             {cellShifts.map(sh => (
-                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
+                                                <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
                                                     currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer}
                                                     draggable={canEdit}
                                                     isDoubleDay={cellShifts.length >= 2}
@@ -2889,15 +2912,16 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 );
                             })}
                         </tr>
-                    ))}
+                        );
+                    })}
                 </tbody>
             </table>
         </div>
     );
 }
 
-function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes }) {
-    const colors = roleColors(staffRole);
+function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes }) {
+    const colors = roleColors(staffRole, isShiftLead);
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const hasWarning = warnings.length > 0;
     // Inline time-edit state — tap the time text to morph into two time
@@ -3078,6 +3102,7 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                         const dayCount = dayShiftCountByStaff.get(sh.staffName) || 1;
                         return (
                             <DayRow key={sh.id} shift={sh} staffRole={staff?.role} isMinor={!!staff?.isMinor}
+                                isShiftLead={!!staff?.shiftLead}
                                 isCurrentStaff={sh.staffName === currentStaffName}
                                 canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn}
                                 currentStaffName={currentStaffName}
@@ -3092,9 +3117,9 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
     );
 }
 
-function DayRow({ shift, staffRole, isMinor, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer, dayShiftCount }) {
+function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer, dayShiftCount }) {
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
-    const colors = roleColors(staffRole);
+    const colors = roleColors(staffRole, isShiftLead);
     // Auto-double = 2+ shifts on same day. Show raw shift hours; the per-day
     // 1h break deduction lives in the weekly total (dayPaidHours).
     const isAutoDouble = dayShiftCount && dayShiftCount >= 2;
@@ -3207,7 +3232,7 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                         const isMine = sh.staffName === currentStaffName;
                         const staff = staffByName.get(sh.staffName);
                         const warnings = staff?.isMinor ? minorShiftWarnings(sh, isEn) : [];
-                        const colors = roleColors(staff?.role);
+                        const colors = roleColors(staff?.role, staff?.shiftLead);
                         const dayCount = dayShiftCountByCell.get(`${sh.staffName}|${sh.date}`) || 1;
                         const isAutoDouble = dayCount >= 2;
                         const hours = isAutoDouble
