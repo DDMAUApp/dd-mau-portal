@@ -69,15 +69,64 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Recipes — read by all, write by anyone with the app open (admin
-    // gating is in the UI). Tighten later.
+    // Recipes doc — hardened after the 2026-05-09 Import Master incident.
+    // The bug clobbered 39 of 40 recipes in a single write by replacing
+    // each one with a master-default version. Since the doc is one giant
+    // `list` array, every save touches the whole thing — meaning the
+    // blast radius of one bad write is "everything."
+    //
+    // Rules below are defense-in-depth (the Import Master button is also
+    // removed from the client). Server-side enforcement means even a
+    // future buggy client can't reproduce the same blast radius.
+    //
+    // Allowed write profile:
+    //   • list is a non-empty array, sane upper bound (200)
+    //   • updatedAt is present and STRICTLY increasing (rejects stale
+    //     offline-cache flushes that try to overwrite newer server state)
+    //   • list size doesn't shrink by more than 5 per write (catches
+    //     mass-delete bugs)
+    //   • list size doesn't grow by more than 10 per write (catches
+    //     bulk-import bugs like the one we just removed)
+    //
+    // What this does NOT catch: a bad write that REPLACES the same
+    // number of recipes with different content (the actual incident
+    // pattern). Per-save audit log in /recipe_audits + the removed
+    // Import Master button cover that case.
     match /config/recipes {
-      allow read, write: if true;
+      allow read: if true;
+      allow create: if
+        request.resource.data.list is list &&
+        request.resource.data.list.size() > 0 &&
+        request.resource.data.list.size() <= 200 &&
+        request.resource.data.updatedAt is string;
+      allow update: if
+        request.resource.data.list is list &&
+        request.resource.data.list.size() > 0 &&
+        request.resource.data.list.size() <= 200 &&
+        request.resource.data.updatedAt is string &&
+        // updatedAt must move forward — reject stale flushes
+        request.resource.data.updatedAt > resource.data.updatedAt &&
+        // Don't shrink by more than 5
+        request.resource.data.list.size() >= resource.data.list.size() - 5 &&
+        // Don't grow by more than 10
+        request.resource.data.list.size() <= resource.data.list.size() + 10;
+      // Recipes doc must never be deleted from a client.
+      allow delete: if false;
     }
 
     // PIN audit log — append-only from clients, read by anyone (admin
     // sees it in the dashboard). NEVER modifiable or deletable.
     match /pin_audits/{auditId} {
+      allow read, create: if true;
+      allow update, delete: if false;
+    }
+
+    // Recipe audit log — append-only from clients, captures BEFORE/AFTER
+    // state of every recipe save/delete (paired with writeRecipeAudit() in
+    // Recipes.jsx). Lets us roll back any single recipe to any point in
+    // history. NEVER modifiable or deletable — that would defeat the
+    // whole purpose of an audit log.
+    match /recipe_audits/{auditId} {
       allow read, create: if true;
       allow update, delete: if false;
     }

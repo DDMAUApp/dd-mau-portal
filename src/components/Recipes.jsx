@@ -573,22 +573,54 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // timestamp) — globally unique enough for human edit cadence.
     const newRecipeId = () => Date.now();
 
+    // Append-only audit log for every recipe write. Captures the BEFORE
+    // state of the affected recipe (full snapshot, not a diff) so any
+    // single recipe can be rolled back to any prior state by reading from
+    // /recipe_audits. Costs ~1 doc per save (cheap) and gives full per-
+    // recipe history without needing to take a full Firestore backup
+    // every time someone tweaks a quantity. Failures here are NON-FATAL
+    // — we never want an audit-write hiccup to block the actual save.
+    const writeRecipeAudit = async ({ action, recipeId, before, after }) => {
+        try {
+            await addDoc(collection(db, 'recipe_audits'), {
+                action,                // 'add' | 'edit' | 'delete'
+                recipeId,
+                recipeTitle: (after && after.titleEn) || (before && before.titleEn) || '?',
+                byName: staffName || 'unknown',
+                at: serverTimestamp(),
+                before: before || null,
+                after: after || null,
+            });
+        } catch (auditErr) {
+            console.warn('recipe_audits write failed (non-fatal):', auditErr);
+        }
+    };
+
     const saveRecipe = async (recipeData) => {
         const id = (editMode === "add") ? newRecipeId() : editMode.id;
+        const action = (editMode === "add") ? 'add' : 'edit';
         setEditMode(null);
+        // Closure-capture the BEFORE/AFTER state from inside the transaction
+        // so we know the actual live state that was overwritten. The
+        // transformer runs inside runTransaction's read window — these
+        // values are the authoritative pre-/post-state.
+        let beforeRecipe = null;
+        let afterRecipe = null;
         try {
             await transactRecipes((live) => {
-                if (editMode === "add") return [...live, { ...recipeData, id }];
-                // Update path: find by id IN THE LIVE LIST (not stale local state).
-                // If another admin renamed/moved the recipe between snapshot and
-                // save, we still match correctly by id.
                 const idx = live.findIndex(r => r.id === id);
-                if (idx === -1) return [...live, { ...recipeData, id }]; // recipe was deleted by someone else; treat as add
+                beforeRecipe = idx === -1 ? null : live[idx];
+                afterRecipe = { ...recipeData, id };
+                if (action === 'add' || idx === -1) {
+                    // Pure add path (or edit-on-deleted-recipe — treat as add)
+                    return [...live, afterRecipe];
+                }
                 const next = [...live];
-                next[idx] = { ...recipeData, id };
+                next[idx] = afterRecipe;
                 return next;
             });
             toast(language === "es" ? "✓ Receta guardada." : "✓ Recipe saved.");
+            await writeRecipeAudit({ action, recipeId: id, before: beforeRecipe, after: afterRecipe });
         } catch (err) {
             console.error("Error saving recipe:", err);
             toast((language === "es" ? "Error al guardar: " : "Save failed: ") + (err.message || err), { kind: 'error' });
@@ -597,9 +629,15 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
 
     const deleteRecipe = async (recipeId) => {
         if (!confirm(language === "es" ? "¿Eliminar esta receta?" : "Delete this recipe?")) return;
+        let beforeRecipe = null;
         try {
-            await transactRecipes((live) => live.filter(r => r.id !== recipeId));
+            await transactRecipes((live) => {
+                const idx = live.findIndex(r => r.id === recipeId);
+                beforeRecipe = idx === -1 ? null : live[idx];
+                return live.filter(r => r.id !== recipeId);
+            });
             toast(language === "es" ? "✓ Receta eliminada." : "✓ Recipe deleted.");
+            await writeRecipeAudit({ action: 'delete', recipeId, before: beforeRecipe, after: null });
         } catch (err) {
             console.error("Error deleting recipe:", err);
             toast((language === "es" ? "Error al eliminar: " : "Delete failed: ") + (err.message || err), { kind: 'error' });
