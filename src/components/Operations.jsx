@@ -3073,15 +3073,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                 return (
                     <div className="space-y-3">
-                        {/* FOH / BOH side selector */}
-                        <div className="flex gap-2 mb-1">
+                        {/* FOH / BOH side selector — v2 segmented control (matches Schedule). */}
+                        <div className="flex gap-1 mb-1 bg-white border border-dd-line rounded-lg p-1 shadow-card">
                             {["FOH", "BOH"].map(side => {
                                 const isActive = checklistSide === side;
-                                const color = side === "FOH" ? "blue" : "amber";
+                                const activeBg = side === "FOH" ? "bg-dd-green text-white shadow-sm" : "bg-orange-600 text-white shadow-sm";
                                 return (
                                     <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); setTaskFilter(""); }}
-                                        className={`flex-1 py-2 px-2 rounded-xl font-bold text-sm transition border-2 ${isActive ? "bg-" + color + "-600 text-white border-" + color + "-600" : "bg-" + color + "-50 text-" + color + "-700 border-" + color + "-200"}`}>
-                                        {side}
+                                        className={`flex-1 py-2 px-2 rounded-md font-bold text-sm transition active:scale-95 ${isActive ? activeBg : "text-dd-text-2 hover:bg-dd-bg"}`}>
+                                        {side === "FOH" ? "🪑 " : "🍳 "}{side}
                                     </button>
                                 );
                             })}

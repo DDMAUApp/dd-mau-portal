@@ -2316,15 +2316,22 @@ ${dayBlocks}
                         📍 {LOCATION_LABELS[storeLocation] || storeLocation} · {side === 'foh' ? tx('Front of House', 'Front of House') : tx('Back of House', 'Back of House')}
                     </p>
                 </div>
-                <button onClick={() => setShowNotifDrawer(true)}
-                    className="relative p-2 rounded-lg bg-white border border-dd-line hover:bg-dd-bg transition shadow-card">
-                    <span className="text-base">🔔</span>
-                    {unreadCount > 0 && (
+                {/* Schedule's own notification bell — opens the schedule-specific
+                    notif drawer (shift offers / swap approvals / PTO updates).
+                    Distinct from the v2 header's global bell, but visually
+                    redundant when both are on screen. Only shown when there
+                    ARE unread notifs so users don't see two bells in normal
+                    operation. */}
+                {unreadCount > 0 && (
+                    <button onClick={() => setShowNotifDrawer(true)}
+                        title="Schedule notifications"
+                        className="relative p-2 rounded-lg bg-white border border-dd-line hover:bg-dd-bg transition shadow-card">
+                        <span className="text-base">🔔</span>
                         <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                             {unreadCount > 9 ? '9+' : unreadCount}
                         </span>
-                    )}
-                </button>
+                    </button>
+                )}
             </div>
 
             {/* FOH / BOH segmented control — matches the v2 segmented pattern
