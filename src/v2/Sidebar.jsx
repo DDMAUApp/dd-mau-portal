@@ -66,17 +66,17 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
                 it naturally, no inversion needed. Collapsed mode shows a green
                 DD badge centered. Visually echoes the white cards on the home
                 page so the brand mark feels consistent across surfaces. */}
-            <div className="h-16 flex items-center justify-between px-3 bg-white shrink-0">
+            <div className="h-24 flex items-center justify-between px-3 bg-white shrink-0">
                 {collapsed ? (
-                    <div className="w-9 h-9 mx-auto rounded-lg bg-dd-green flex items-center justify-center text-white font-black text-lg shrink-0">
+                    <div className="w-11 h-11 mx-auto rounded-lg bg-dd-green flex items-center justify-center text-white font-black text-lg shrink-0">
                         DD
                     </div>
                 ) : (
-                    <div className="flex-1 flex items-center justify-center min-w-0 px-2">
+                    <div className="flex-1 flex items-center justify-center min-w-0 px-1">
                         <img
                             src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                             alt="DD Mau Vietnamese Eatery"
-                            className="max-h-12 w-auto object-contain"
+                            className="max-h-20 w-auto object-contain"
                             onError={(e) => {
                                 e.target.style.display = 'none';
                                 if (e.target.parentElement) {
