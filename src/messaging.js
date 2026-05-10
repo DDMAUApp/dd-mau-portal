@@ -12,7 +12,7 @@
 // Cloud Messaging → Web Push certificates → Generate key pair, then paste the
 // PUBLIC key string here. Without it, getToken() will fail.
 import { getMessaging, getToken, onMessage, isSupported } from "firebase/messaging";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
 import app, { db } from "./firebase";
 
 // ⚠️ REPLACE THIS PLACEHOLDER ⚠️
@@ -98,42 +98,53 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     }
     if (!token) return { ok: false, reason: "no-token" };
 
-    // Persist token on staff record. Use the FUNCTIONAL form of setStaffList
-    // so we read the *latest* staffList from React state instead of the
-    // closed-over snapshot — otherwise concurrent admin edits get clobbered.
-    if (staffName && setStaffList) {
-        let savedSnapshot = null;
-        setStaffList((prev) => {
-            if (!Array.isArray(prev)) return prev;
-            const me = prev.find((s) => s.name === staffName);
-            if (!me) return prev;
-            const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
-            const dedup = existing.filter((t) => t && t.token && t.token !== token);
-            const next = [{ token, lastSeen: Date.now() }, ...dedup].slice(0, MAX_TOKENS_PER_STAFF);
-            const updated = prev.map((s) =>
-                s.name === staffName ? { ...s, fcmTokens: next } : s
-            );
-            savedSnapshot = updated;
-            return updated;
-        });
-        if (savedSnapshot) {
-            // PIN INTEGRITY GATE: refuse to write the staff doc if any record
-            // has a missing/invalid PIN. Same defense as in AdminPanel — if
-            // local state somehow has empty PINs (stale React snapshot, etc.)
-            // we'd silently corrupt the live data. Block instead.
-            const bad = savedSnapshot.find(s => {
-                const p = String(s.pin ?? '').trim();
-                return !p || !/^\d{4}$/.test(p);
+    // Persist token on staff record. CRITICAL: read the LIVE Firestore staff
+    // doc inside a transaction and modify only ONE field (this user's
+    // fcmTokens). Do NOT use React state as the base — on app startup
+    // staffList is still DEFAULT_STAFF (the seed) before the Firestore
+    // snapshot arrives, and writing that back wiped real PINs to seed
+    // values. This was the 2026-05-09 PIN-corruption root cause.
+    if (staffName) {
+        try {
+            await runTransaction(db, async (tx) => {
+                const ref = doc(db, "config", "staff");
+                const snap = await tx.get(ref);
+                if (!snap.exists()) {
+                    console.warn("FCM token: config/staff doc missing, skipping write");
+                    return;
+                }
+                const liveList = (snap.data() || {}).list || [];
+                const meIdx = liveList.findIndex((s) => s.name === staffName);
+                if (meIdx === -1) {
+                    console.warn(`FCM token: ${staffName} not found in live staff list, skipping write`);
+                    return;
+                }
+                const me = liveList[meIdx];
+                const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
+                // De-dup + cap.
+                const dedup = existing.filter((t) => t && t.token && t.token !== token);
+                const nextTokens = [{ token, lastSeen: Date.now() }, ...dedup].slice(0, MAX_TOKENS_PER_STAFF);
+                // No-op if nothing meaningful changed.
+                if (existing.length === nextTokens.length &&
+                    existing.every((t, i) => t.token === nextTokens[i].token)) {
+                    return;
+                }
+                const nextList = liveList.slice();
+                nextList[meIdx] = { ...me, fcmTokens: nextTokens };
+                tx.set(ref, { list: nextList });
             });
-            if (bad) {
-                console.error("Refusing FCM-token staff save — invalid PIN on:", bad.name, "pin=", bad.pin);
-                return { ok: true, token, warning: "save-blocked-invalid-pin" };
+            // Mirror the live data into local React state so the app sees
+            // the same as Firestore. Do this AFTER the transaction commits.
+            if (setStaffList) {
+                try {
+                    const fresh = await getDoc(doc(db, "config", "staff"));
+                    if (fresh.exists()) {
+                        setStaffList(fresh.data().list || []);
+                    }
+                } catch (_) {}
             }
-            try {
-                await setDoc(doc(db, "config", "staff"), { list: savedSnapshot });
-            } catch (e) {
-                console.warn("Save FCM token to staff doc failed:", e);
-            }
+        } catch (e) {
+            console.warn("FCM token persist (transactional) failed:", e);
         }
     }
 
