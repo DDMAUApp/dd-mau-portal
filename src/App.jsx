@@ -10,6 +10,9 @@ import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import AppToast from './components/AppToast';
+// v2 design preview — gated by ?v2=1 query param.
+const AppShellV2 = lazy(() => import('./v2/AppShellV2'));
+const DemoDashboardV2 = lazy(() => import('./v2/DemoDashboard'));
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
@@ -146,7 +149,20 @@ const SS = {
     set: (k, v) => { try { v == null ? localStorage.removeItem("ddmau:" + k) : localStorage.setItem("ddmau:" + k, v); } catch {} },
 };
 
+// v2 design preview — when the URL contains ?v2=1 (or localStorage flag is
+// set) we render the new SaaS-style shell instead of the existing app.
+// Lets us iterate on the new design with real data and a real toggle without
+// breaking the live app. Append ?v2=0 to the URL to leave the preview.
+function useV2Flag() {
+    const url = typeof window !== 'undefined' ? new URL(window.location.href) : null;
+    const queryFlag = url?.searchParams.get('v2');
+    if (queryFlag === '1') { try { localStorage.setItem('ddmau:v2', '1'); } catch {} return true; }
+    if (queryFlag === '0') { try { localStorage.removeItem('ddmau:v2'); } catch {} return false; }
+    try { return localStorage.getItem('ddmau:v2') === '1'; } catch { return false; }
+}
+
 export default function App() {
+    const v2 = useV2Flag();
     // Lazy-init from localStorage so the user stays on the same screen across reloads.
     const [staffName, setStaffName] = useState(() => SS.get("staffName"));
     const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
@@ -344,6 +360,28 @@ export default function App() {
     };
     if (!staffName) {
         return <HomePage onSelectStaff={handleSelectStaff} language={language} staffList={staffList} />;
+    }
+    // ── v2 design preview branch ─────────────────────────────────────────
+    // When ?v2=1 is set, render the redesigned shell instead of the legacy
+    // app. Currently shows DemoDashboard for the home tab; other tabs fall
+    // through to the legacy components inside the new shell.
+    if (v2) {
+        return (
+            <Suspense fallback={<div className="min-h-screen bg-dd-bg" />}>
+                <AppShellV2
+                    language={language}
+                    staffName={staffName}
+                    activeTab={activeTab}
+                    onNavigate={(tab) => setActiveTab(tab)}
+                    onExitV2={() => {
+                        try { localStorage.removeItem('ddmau:v2'); } catch {}
+                        window.location.search = '?v2=0';
+                    }}
+                >
+                    <DemoDashboardV2 language={language} staffName={staffName} />
+                </AppShellV2>
+            </Suspense>
+        );
     }
     // Sidebar nav items — all tabs accessible at desktop. Conditional ones gated.
     // Operations is opt-in (admin or opsAccess === true) so we hide the link
