@@ -589,12 +589,32 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // BUT for publish + manager-edits-to-your-shift you SHOULD self-notify,
     // because the action affects you-as-staff even though you're also the
     // one doing it. Pass { allowSelf: true } in those callers.
+    //
+    // LANGUAGE: title and body can be either a plain string OR an
+    // {en, es} pair. When a pair is given, we resolve to the recipient's
+    // preferred language (s.preferredLanguage) before writing the doc. This
+    // keeps push notifications in the staff member's language — Andrew
+    // publishing in English to a Spanish-only kitchen worker → that worker
+    // gets Spanish on their phone.
+    const resolveText = (val, recipient) => {
+        if (val == null) return '';
+        if (typeof val === 'string') return val;
+        if (typeof val === 'object') {
+            const lang = recipient?.preferredLanguage || 'en';
+            return val[lang] || val.en || val.es || '';
+        }
+        return String(val);
+    };
     const notify = async (forStaff, type, title, body, link = null, opts = {}) => {
         if (!forStaff) return;
         if (forStaff === staffName && !opts.allowSelf) return;
+        const recipient = (staffList || []).find(s => s.name === forStaff);
         try {
             await addDoc(collection(db, 'notifications'), {
-                forStaff, type, title, body, link,
+                forStaff, type,
+                title: resolveText(title, recipient),
+                body: resolveText(body, recipient),
+                link,
                 createdAt: serverTimestamp(),
                 read: false,
                 createdBy: staffName,
@@ -665,6 +685,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const set = new Set();
         for (const sh of shifts) {
             if (storeLocation !== 'both' && sh.location !== storeLocation) continue;
+            // Bug fix 2026-05-09: deleted staff still had their old shifts in
+            // the shifts collection, and crossSideNames pulled their names in
+            // → ghost row appeared on the schedule grid for someone who no
+            // longer exists. Skip any shift whose staffName isn't in the
+            // current staff list.
+            if (!staffByName.has(sh.staffName)) continue;
             const shiftSide = sh.side || resolveStaffSide(staffByName.get(sh.staffName));
             if (shiftSide === side) set.add(sh.staffName);
         }
@@ -694,6 +720,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return shifts.filter(s => {
             if (storeLocation !== 'both' && s.location !== storeLocation) return false;
             if (personFilter && s.staffName !== personFilter) return false;
+            // Skip orphan shifts whose assignee no longer exists in staffList
+            // (deleted staff). sideStaffNames already gates this for the
+            // common case, but defensive double-check here too.
+            if (!staffByName.has(s.staffName)) return false;
             const shiftSide = s.side || resolveStaffSide(staffByName.get(s.staffName));
             return shiftSide === side && sideStaffNames.has(s.staffName);
         });
@@ -931,9 +961,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (wasPublished && sh.staffName) {
                 const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
                 await notify(sh.staffName, 'shift_deleted',
-                    tx('Shift removed', 'Turno eliminado'),
-                    tx(`Your ${detail} shift has been removed.`,
-                       `Tu turno del ${detail} ha sido eliminado.`),
+                    { en: 'Shift removed', es: 'Turno eliminado' },
+                    { en: `Your ${detail} shift has been removed.`,
+                      es: `Tu turno del ${detail} ha sido eliminado.` },
                     null, { allowSelf: true });
             }
         } catch (e) {
@@ -971,9 +1001,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // changed times. Drafts are silent (not released yet).
             if (wasPublished && sh.staffName && (sh.startTime !== startTime || sh.endTime !== endTime)) {
                 await notify(sh.staffName, 'shift_time_changed',
-                    tx('Shift time changed', 'Horario de turno cambiado'),
-                    tx(`Your ${sh.date} shift moved: ${oldDetail} → ${newDetail}.`,
-                       `Tu turno del ${sh.date} cambió: ${oldDetail} → ${newDetail}.`),
+                    { en: 'Shift time changed', es: 'Horario de turno cambiado' },
+                    { en: `Your ${sh.date} shift moved: ${oldDetail} → ${newDetail}.`,
+                      es: `Tu turno del ${sh.date} cambió: ${oldDetail} → ${newDetail}.` },
                     null, { allowSelf: true });
             }
         } catch (e) {
@@ -1017,21 +1047,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 if (oldStaff !== newStaffName) {
                     if (oldStaff) {
                         await notify(oldStaff, 'shift_reassigned',
-                            tx('Shift reassigned', 'Turno reasignado'),
-                            tx(`Your ${oldDate} ${detail} shift was reassigned to ${newStaffName}.`,
-                               `Tu turno del ${oldDate} ${detail} fue reasignado a ${newStaffName}.`),
+                            { en: 'Shift reassigned', es: 'Turno reasignado' },
+                            { en: `Your ${oldDate} ${detail} shift was reassigned to ${newStaffName}.`,
+                              es: `Tu turno del ${oldDate} ${detail} fue reasignado a ${newStaffName}.` },
                             null, { allowSelf: true });
                     }
                     await notify(newStaffName, 'shift_added',
-                        tx('New shift assigned', 'Nuevo turno asignado'),
-                        tx(`You picked up the ${newDate} ${detail} shift (was ${oldStaff}'s).`,
-                           `Tomaste el turno del ${newDate} ${detail} (antes de ${oldStaff}).`),
+                        { en: 'New shift assigned', es: 'Nuevo turno asignado' },
+                        { en: `You picked up the ${newDate} ${detail} shift (was ${oldStaff}'s).`,
+                          es: `Tomaste el turno del ${newDate} ${detail} (antes de ${oldStaff}).` },
                         null, { allowSelf: true });
                 } else if (oldDate !== newDate) {
                     await notify(newStaffName, 'shift_date_changed',
-                        tx('Shift moved', 'Turno movido'),
-                        tx(`Your shift moved from ${oldDate} to ${newDate} (${detail}).`,
-                           `Tu turno se movió del ${oldDate} al ${newDate} (${detail}).`),
+                        { en: 'Shift moved', es: 'Turno movido' },
+                        { en: `Your shift moved from ${oldDate} to ${newDate} (${detail}).`,
+                          es: `Tu turno se movió del ${oldDate} al ${newDate} (${detail}).` },
                         null, { allowSelf: true });
                 }
             }
@@ -1156,10 +1186,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             // Notifications outside the transaction — they hit a different
             // collection and shouldn't roll back the swap if push fails.
-            await notify(oldOwner, 'swap_approved', tx('Swap approved', 'Cambio aprobado'),
-                tx(`Your shift on ${detail} is now ${newOwner}'s.`, `Tu turno del ${detail} ahora es de ${newOwner}.`));
-            await notify(newOwner, 'swap_approved', tx('Shift assigned', 'Turno asignado'),
-                tx(`The shift on ${detail} is now yours.`, `El turno del ${detail} ahora es tuyo.`));
+            await notify(oldOwner, 'swap_approved',
+                { en: 'Swap approved', es: 'Cambio aprobado' },
+                { en: `Your shift on ${detail} is now ${newOwner}'s.`,
+                  es: `Tu turno del ${detail} ahora es de ${newOwner}.` });
+            await notify(newOwner, 'swap_approved',
+                { en: 'Shift assigned', es: 'Turno asignado' },
+                { en: `The shift on ${detail} is now yours.`,
+                  es: `El turno del ${detail} ahora es tuyo.` });
         } catch (e) {
             console.error('Approve failed:', e);
             toast((tx('Could not approve: ', 'No se pudo aprobar: ')) + (e.message || e), { kind: 'error' });
@@ -1176,8 +1210,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
             });
             const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
-            await notify(shift.pendingClaimBy, 'swap_denied', tx('Swap denied', 'Cambio negado'),
-                tx(`Manager denied your takeover of the ${detail} shift.`, `Gerente negó tu toma del turno ${detail}.`));
+            await notify(shift.pendingClaimBy, 'swap_denied',
+                { en: 'Swap denied', es: 'Cambio negado' },
+                { en: `Manager denied your takeover of the ${detail} shift.`,
+                  es: `Gerente negó tu toma del turno ${detail}.` });
         } catch (e) {
             console.error('Deny failed:', e);
         }
@@ -1622,8 +1658,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 reviewedAt: serverTimestamp(),
             });
             const range = start + (end !== start ? ` → ${end}` : '');
-            await notify(entry.staffName, 'pto_approved', tx('Time-off approved', 'Tiempo libre aprobado'),
-                tx(`Your time-off for ${range} was approved.`, `Tu tiempo libre del ${range} fue aprobado.`));
+            await notify(entry.staffName, 'pto_approved',
+                { en: 'Time-off approved', es: 'Tiempo libre aprobado' },
+                { en: `Your time-off for ${range} was approved.`,
+                  es: `Tu tiempo libre del ${range} fue aprobado.` });
         } catch (e) {
             console.error('Approve PTO failed:', e);
         }
@@ -1637,8 +1675,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 reviewedAt: serverTimestamp(),
             });
             const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
-            await notify(entry.staffName, 'pto_denied', tx('Time-off denied', 'Tiempo libre negado'),
-                tx(`Your time-off for ${range} was denied.`, `Tu tiempo libre del ${range} fue negado.`));
+            await notify(entry.staffName, 'pto_denied',
+                { en: 'Time-off denied', es: 'Tiempo libre negado' },
+                { en: `Your time-off for ${range} was denied.`,
+                  es: `Tu tiempo libre del ${range} fue negado.` });
         } catch (e) {
             console.error('Deny PTO failed:', e);
         }
@@ -2006,22 +2046,25 @@ ${dayBlocks}
             for (const [name, list] of byStaff) {
                 // Build a date+time summary so the staff push tells them WHAT
                 // shifts were just released, not just "you have N shifts."
-                // First 3 shifts itemized, rest summarized as "+N more."
+                // Two parallel summaries (EN+ES) so the recipient sees their
+                // preferred language regardless of who published.
                 const sorted = [...list].sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.startTime || '').localeCompare(b.startTime || ''));
-                const lines = sorted.slice(0, 3).map(s => {
-                    const d = parseLocalDate(s.date);
-                    const dayLbl = d ? (isEn ? DAYS_EN : DAYS_ES)[d.getDay()].slice(0, 3) : s.date;
-                    return `${dayLbl} ${s.date.slice(5)} ${formatTime12h(s.startTime)}–${formatTime12h(s.endTime)}`;
-                });
-                if (sorted.length > 3) lines.push(isEn ? `+${sorted.length - 3} more` : `+${sorted.length - 3} más`);
-                const body = lines.join('\n');
-                // allowSelf: true — when YOU publish a week that includes YOUR
-                // own shifts, you should still get the push (you might be on
-                // a different device, and confirms the notification system works).
+                const fmtLines = (lng) => {
+                    const lines = sorted.slice(0, 3).map(s => {
+                        const d = parseLocalDate(s.date);
+                        const dayLbl = d ? (lng === 'es' ? DAYS_ES : DAYS_EN)[d.getDay()].slice(0, 3) : s.date;
+                        return `${dayLbl} ${s.date.slice(5)} ${formatTime12h(s.startTime)}–${formatTime12h(s.endTime)}`;
+                    });
+                    if (sorted.length > 3) lines.push(lng === 'es' ? `+${sorted.length - 3} más` : `+${sorted.length - 3} more`);
+                    return lines.join('\n');
+                };
                 await notify(name, 'week_published',
-                    tx(`📢 Schedule published: ${list.length} shift${list.length === 1 ? '' : 's'}`,
-                       `📢 Horario publicado: ${list.length} turno${list.length === 1 ? '' : 's'}`),
-                    body, null, { allowSelf: true });
+                    {
+                        en: `📢 Schedule published: ${list.length} shift${list.length === 1 ? '' : 's'}`,
+                        es: `📢 Horario publicado: ${list.length} turno${list.length === 1 ? '' : 's'}`,
+                    },
+                    { en: fmtLines('en'), es: fmtLines('es') },
+                    null, { allowSelf: true });
             }
         } catch (e) {
             console.error('Publish failed:', e);

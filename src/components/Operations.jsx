@@ -199,6 +199,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [lastUpdated, setLastUpdated] = useState({});
             const [editMode, setEditMode] = useState(false);
             const [editingIdx, setEditingIdx] = useState(null);
+            // Per-task messaging composer state. When non-null = open for that
+            // task ID. Holds text + delivery mode the admin is composing.
+            const [openMsgTask, setOpenMsgTask] = useState(null);
+            const [msgDraft, setMsgDraft] = useState("");
+            const [msgDeliverWhen, setMsgDeliverWhen] = useState("now"); // 'now' | 'on_complete'
             const [editTask, setEditTask] = useState("");
             const [editCategory, setEditCategory] = useState("other");
             const [editRecurrence, setEditRecurrence] = useState("daily");
@@ -1555,12 +1560,29 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             if (currentMinutes >= deadlineMinutes - 30 && currentMinutes < deadlineMinutes && !dismissedAlertsRef.current.has(warn30Key)) {
                                 const minsLeft = deadlineMinutes - currentMinutes;
                                 alerts.push({ key: warn30Key, type: "warning", taskName, timeStr, message: `${minsLeft} min left` });
+                                // Push to all assignees (idempotent doc IDs so multiple
+                                // devices firing this don't duplicate the FCM trigger).
+                                for (const a of itemAssignees) {
+                                    const docId = `taskremind_${item.id}_${todayKey}_30_${a.replace(/\W/g, '_')}`;
+                                    taskNotify(a, 'task_due_soon',
+                                        { en: `⏰ ${taskName} due in ${minsLeft} min`, es: `⏰ ${taskName} vence en ${minsLeft} min` },
+                                        { en: `Due at ${timeStr}.`, es: `Vence a las ${timeStr}.` },
+                                        null, { docId, allowSelf: true });
+                                }
                             }
                             // At deadline or overdue
                             const dueKey = item.id + "_due_" + todayKey;
                             if (currentMinutes >= deadlineMinutes && !dismissedAlertsRef.current.has(dueKey)) {
                                 const overBy = currentMinutes - deadlineMinutes;
                                 alerts.push({ key: dueKey, type: "overdue", taskName, timeStr, message: overBy === 0 ? "Due NOW" : `${overBy} min overdue` });
+                                for (const a of itemAssignees) {
+                                    const docId = `taskremind_${item.id}_${todayKey}_due_${a.replace(/\W/g, '_')}`;
+                                    taskNotify(a, 'task_overdue',
+                                        { en: `🚨 ${taskName} OVERDUE`, es: `🚨 ${taskName} VENCIDA` },
+                                        { en: overBy === 0 ? `Due now (${timeStr}).` : `${overBy} min overdue (was due ${timeStr}).`,
+                                          es: overBy === 0 ? `Vence ahora (${timeStr}).` : `${overBy} min vencida (debía a las ${timeStr}).` },
+                                        null, { docId, allowSelf: true });
+                                }
                             }
                         });
                     });
@@ -1777,6 +1799,67 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await writeCheckPatch({ [pKey]: newArr.length > 0 ? newArr : undefined });
             };
 
+            // ── Push notifications for tasks ──────────────────────────────
+            // Same pipeline the schedule uses: writes a doc to /notifications,
+            // Cloud Function dispatchNotification fires FCM to that staff's
+            // tokens. resolveText() picks the right language from the staff
+            // record's preferredLanguage; falls back to English.
+            const taskNotifyResolve = (val, recipient) => {
+                if (val == null) return '';
+                if (typeof val === 'string') return val;
+                if (typeof val === 'object') {
+                    const lang = recipient?.preferredLanguage || 'en';
+                    return val[lang] || val.en || val.es || '';
+                }
+                return String(val);
+            };
+            const taskNotify = async (forStaff, type, title, body, link = null, opts = {}) => {
+                if (!forStaff) return;
+                if (forStaff === staffName && !opts.allowSelf) return;
+                const recipient = (staffList || []).find(s => s.name === forStaff);
+                try {
+                    if (opts.docId) {
+                        // Idempotent path — used for time-based reminders so multiple
+                        // devices firing checkDeadlines don't write duplicates. Fixed
+                        // doc ID + setDoc means second writer just overwrites the first
+                        // with same content (no second Cloud Function trigger).
+                        await setDoc(doc(db, 'notifications', opts.docId), {
+                            forStaff, type,
+                            title: taskNotifyResolve(title, recipient),
+                            body: taskNotifyResolve(body, recipient),
+                            link, createdAt: serverTimestamp(), read: false, createdBy: staffName,
+                        });
+                    } else {
+                        await addDoc(collection(db, 'notifications'), {
+                            forStaff, type,
+                            title: taskNotifyResolve(title, recipient),
+                            body: taskNotifyResolve(body, recipient),
+                            link, createdAt: serverTimestamp(), read: false, createdBy: staffName,
+                        });
+                    }
+                } catch (e) {
+                    console.warn('task notify failed (non-fatal):', e);
+                }
+            };
+
+            // Send a per-task message to all assignees of `task` immediately.
+            // Used by the messaging composer's "Send now" button and by the
+            // on-complete delivery path inside toggleCheckItem.
+            const dispatchTaskMessage = async (task, message, kind /* 'now'|'on_complete' */) => {
+                if (!task || !message?.text) return;
+                const assignees = Array.isArray(task.assignTo) ? task.assignTo : (task.assignTo ? [task.assignTo] : []);
+                const taskName = (task.task || '').split('\n')[0];
+                const titleEn = kind === 'on_complete' ? `✅ Task done: ${taskName}` : `📨 Task message: ${taskName}`;
+                const titleEs = kind === 'on_complete' ? `✅ Tarea hecha: ${taskName}` : `📨 Mensaje de tarea: ${taskName}`;
+                const body = (typeof message.text === 'object')
+                    ? { en: message.text.en || message.text.es || '', es: message.text.es || message.text.en || '' }
+                    : message.text;
+                for (const name of assignees) {
+                    await taskNotify(name, kind === 'on_complete' ? 'task_completed' : 'task_message',
+                        { en: titleEn, es: titleEs }, body, null, { allowSelf: true });
+                }
+            };
+
             const toggleCheckItem = async (taskId, parentTask) => {
                 const cur = checksRef.current;
                 const pKey = currentPrefix + taskId;
@@ -1806,6 +1889,42 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         ? parentTask.subtasks.every(s => (currentPrefix + s.id) === pKey ? newVal : newChecks[currentPrefix + s.id])
                         : true;
                     if (allDone) setShowFollowUpFor(parentTask.id);
+                }
+                // Task-completed push: if the task carries any deferred messages
+                // (deliverWhen === 'on_complete'), dispatch them now to all
+                // assignees. Only fires when we just turned the task ON, and
+                // only when ALL subtasks are done (or no subtasks).
+                if (newVal) {
+                    const taskObj = parentTask || (() => {
+                        // top-level task — find it in customTasks
+                        const list = (customTasksRef.current[checklistSide] && customTasksRef.current[checklistSide][PERIOD_KEY]) || [];
+                        return list.find(t => t.id === taskId);
+                    })();
+                    if (taskObj) {
+                        const allSubDone = taskObj.subtasks && taskObj.subtasks.length > 0
+                            ? taskObj.subtasks.every(s => newChecks[currentPrefix + s.id])
+                            : true;
+                        if (allSubDone) {
+                            const queued = (taskObj.messages || []).filter(m => m.deliverWhen === 'on_complete' && !m.delivered);
+                            for (const m of queued) {
+                                await dispatchTaskMessage(taskObj, m, 'on_complete');
+                            }
+                            // Mark these messages as delivered so re-checking the
+                            // task tomorrow doesn't re-fire them.
+                            if (queued.length > 0) {
+                                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                                const list = updated[checklistSide][PERIOD_KEY] || [];
+                                const tIdx = list.findIndex(t => t.id === taskObj.id);
+                                if (tIdx >= 0) {
+                                    list[tIdx].messages = (list[tIdx].messages || []).map(m =>
+                                        m.deliverWhen === 'on_complete' && !m.delivered ? { ...m, delivered: true, deliveredAt: new Date().toISOString() } : m
+                                    );
+                                    setCustomTasks(updated);
+                                    await saveChecklistState(newChecks, updated, checklistAssignmentsRef.current, checklistListsRef.current);
+                                }
+                            }
+                        }
+                    }
                 }
             };
 
@@ -3351,6 +3470,96 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         {String.fromCodePoint(0x2713)} {checks[currentPrefix + item.id + "_by"]} {String.fromCodePoint(0x2014)} {checks[currentPrefix + item.id + "_at"]}
                                                     </p>
                                                 )}
+                                                {/* 📨 Push messaging — admin/manager only. Sends a message
+                                                    to the task's assignees as a real push notification.
+                                                    Either right now ("Send now") or queued to fire when the
+                                                    task is checked complete ("Send when complete"). Each
+                                                    on-complete message fires once and is marked delivered.
+                                                    Recipient sees it in their preferred language. */}
+                                                {currentIsAdmin && (() => {
+                                                    const isOpen = openMsgTask === item.id;
+                                                    const queued = (item.messages || []).filter(m => m.deliverWhen === 'on_complete' && !m.delivered);
+                                                    return (
+                                                        <div className="mt-1">
+                                                            <button onClick={() => { setOpenMsgTask(isOpen ? null : item.id); setMsgDraft(""); setMsgDeliverWhen("now"); }}
+                                                                className={`text-[11px] font-bold underline ${queued.length > 0 ? 'text-purple-700' : 'text-gray-500'}`}>
+                                                                📨 {queued.length > 0
+                                                                    ? `${queued.length} ${language === 'es' ? 'mensaje(s) en cola' : 'queued msg(s)'}`
+                                                                    : (language === 'es' ? 'Enviar mensaje' : 'Send message')}
+                                                            </button>
+                                                            {isOpen && (
+                                                                <div className="mt-1 bg-purple-50 border border-purple-200 rounded p-2 space-y-2">
+                                                                    <div className="text-[10px] text-purple-900">
+                                                                        {language === 'es'
+                                                                            ? `Se enviará a: ${assignees.join(', ') || '(sin asignados)'}`
+                                                                            : `Will send to: ${assignees.join(', ') || '(no assignees)'}`}
+                                                                    </div>
+                                                                    {queued.length > 0 && (
+                                                                        <div className="text-[10px] text-purple-700 bg-white border border-purple-100 rounded p-1">
+                                                                            <div className="font-bold mb-0.5">{language === 'es' ? 'En cola para entrega al completar:' : 'Queued for completion delivery:'}</div>
+                                                                            {queued.map((m, mi) => (
+                                                                                <div key={mi} className="flex items-start justify-between gap-2">
+                                                                                    <span>"{typeof m.text === 'object' ? (m.text.en || m.text.es) : m.text}"</span>
+                                                                                    <button onClick={async () => {
+                                                                                        const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                                                                                        const list = updated[checklistSide][PERIOD_KEY] || [];
+                                                                                        const tIdx = list.findIndex(t => t.id === item.id);
+                                                                                        if (tIdx >= 0) {
+                                                                                            list[tIdx].messages = (list[tIdx].messages || []).filter(x => !(x.deliverWhen === m.deliverWhen && x.text === m.text && !x.delivered));
+                                                                                            setCustomTasks(updated);
+                                                                                            await saveChecklistState(checksRef.current, updated, checklistAssignmentsRef.current, checklistListsRef.current);
+                                                                                        }
+                                                                                    }} className="text-red-500 text-xs">×</button>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    )}
+                                                                    <textarea value={msgDraft} onChange={e => setMsgDraft(e.target.value)}
+                                                                        placeholder={language === 'es' ? 'Mensaje al equipo asignado...' : 'Message to assigned staff...'}
+                                                                        rows={2}
+                                                                        className="w-full px-2 py-1 border border-purple-200 rounded text-[11px]" />
+                                                                    <div className="flex gap-1 text-[10px]">
+                                                                        <button onClick={() => setMsgDeliverWhen('now')}
+                                                                            className={`flex-1 py-1 rounded font-bold ${msgDeliverWhen === 'now' ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-purple-700'}`}>
+                                                                            {language === 'es' ? 'Ahora' : 'Send now'}
+                                                                        </button>
+                                                                        <button onClick={() => setMsgDeliverWhen('on_complete')}
+                                                                            className={`flex-1 py-1 rounded font-bold ${msgDeliverWhen === 'on_complete' ? 'bg-purple-600 text-white' : 'bg-white border border-purple-200 text-purple-700'}`}>
+                                                                            {language === 'es' ? 'Al completar' : 'When complete'}
+                                                                        </button>
+                                                                    </div>
+                                                                    <button onClick={async () => {
+                                                                        const text = msgDraft.trim();
+                                                                        if (!text) return;
+                                                                        if (msgDeliverWhen === 'now') {
+                                                                            await dispatchTaskMessage(item, { text }, 'now');
+                                                                            toast(language === 'es' ? '✓ Mensaje enviado' : '✓ Message sent');
+                                                                        } else {
+                                                                            // Queue on the task itself for later delivery.
+                                                                            const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                                                                            const list = updated[checklistSide][PERIOD_KEY] || [];
+                                                                            const tIdx = list.findIndex(t => t.id === item.id);
+                                                                            if (tIdx >= 0) {
+                                                                                list[tIdx].messages = [...(list[tIdx].messages || []), { text, deliverWhen: 'on_complete', queuedBy: staffName, queuedAt: new Date().toISOString(), delivered: false }];
+                                                                                setCustomTasks(updated);
+                                                                                await saveChecklistState(checksRef.current, updated, checklistAssignmentsRef.current, checklistListsRef.current);
+                                                                                toast(language === 'es' ? '✓ Mensaje en cola para entrega al completar' : '✓ Queued for completion delivery');
+                                                                            }
+                                                                        }
+                                                                        setMsgDraft(""); setOpenMsgTask(null);
+                                                                    }}
+                                                                        disabled={!msgDraft.trim()}
+                                                                        className={`w-full py-1 rounded text-[11px] font-bold ${msgDraft.trim() ? 'bg-purple-700 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                                                                        📨 {msgDeliverWhen === 'now'
+                                                                            ? (language === 'es' ? 'Enviar ahora' : 'Send now')
+                                                                            : (language === 'es' ? 'Poner en cola' : 'Queue for completion')}
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
+
                                                 {/* Comment thread — collapsed badge on the card,
                                                     expand to see + add. Always-visible 💬 toggle below the title. */}
                                                 {(() => {

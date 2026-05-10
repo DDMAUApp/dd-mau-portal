@@ -32,6 +32,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editIsMinor, setEditIsMinor] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
             const [editTargetHours, setEditTargetHours] = useState(0);
+            // Preferred language for outbound notifications (push, in-app
+            // banners). Defaults to English for legacy records that don't
+            // carry the field. New staff form picks this up from the device's
+            // current UI language.
+            const [editPreferredLanguage, setEditPreferredLanguage] = useState("en");
             // Designated-scheduler toggles. Per-side so the FOH scheduler
             // can't accidentally publish over BOH shifts and vice versa.
             const [editCanEditScheduleFOH, setEditCanEditScheduleFOH] = useState(false);
@@ -202,7 +207,23 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
             // Filter staff by active location
             const [staffFilter, setStaffFilter] = useState("all");
-            const filteredStaff = staffFilter === "all" ? staffList : staffList.filter(s => s.location === staffFilter || s.location === "both");
+            // Side filter inside a location tab. Only meaningful when a
+            // specific location is selected (Webster or Maryland) — when "All
+            // Locations" is showing, the side filter is hidden but kept in
+            // state so toggling locations preserves the user's choice.
+            const [staffSideFilter, setStaffSideFilter] = useState("all"); // 'all' | 'foh' | 'boh'
+            // Resolve a person's effective side: explicit scheduleSide if set,
+            // else infer from BOH-tagged role list. Same logic the schedule
+            // uses, kept consistent so the count chips match.
+            const personSide = (s) => s.scheduleSide || (BULK_BOH_ROLES.includes(s.role) ? 'boh' : 'foh');
+            const filteredStaff = (() => {
+                let out = staffList;
+                if (staffFilter !== "all") out = out.filter(s => s.location === staffFilter || s.location === "both");
+                if (staffSideFilter !== "all" && staffFilter !== "all") {
+                    out = out.filter(s => personSide(s) === staffSideFilter);
+                }
+                return out;
+            })();
 
             // Load maintenance requests
             useEffect(() => {
@@ -324,7 +345,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH } : s);
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -372,6 +393,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // Block removal by ADMIN_ID (not name) so renaming an admin
                 // doesn't bypass this guard.
                 if (ADMIN_IDS.includes(id)) return;
+                // Capture the name BEFORE we drop them from the list — needed
+                // to clean up future-dated shifts so the schedule stops
+                // showing them as a ghost row (bug 2026-05-09).
+                const removedPerson = (staffList || []).find(s => s.id === id);
+                const removedName = removedPerson?.name;
                 // Functional setState avoids stale-closure clobber.
                 let latest = null;
                 setStaffList(prev => {
@@ -379,6 +405,28 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
+                // Cascade-delete future shifts for the removed staff so
+                // they don't sit as orphans on the schedule. Past shifts
+                // are kept (for hours history / audit).
+                if (removedName) {
+                    try {
+                        const today = new Date();
+                        const todayKey = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+                        const futureShifts = await getDocs(query(
+                            collection(db, 'shifts'),
+                            where('staffName', '==', removedName),
+                            where('date', '>=', todayKey)
+                        ));
+                        if (!futureShifts.empty) {
+                            const batch = writeBatch(db);
+                            futureShifts.forEach(d => batch.delete(d.ref));
+                            await batch.commit();
+                            console.log(`[handleRemoveStaff] cascaded ${futureShifts.size} future shifts for ${removedName}`);
+                        }
+                    } catch (e) {
+                        console.warn('cascade shift cleanup failed:', e);
+                    }
+                }
                 setConfirmRemoveId(null);
                 showSaved();
             };
@@ -543,7 +591,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
                         {staffExpanded && (
                             <div className="mt-2">
-                                <div className="flex gap-1 justify-center mb-3 flex-wrap">
+                                <div className="flex gap-1 justify-center mb-2 flex-wrap">
                                     {[{k:"all",en:"All",es:"Todos"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
                                         <button key={f.k} onClick={() => setStaffFilter(f.k)}
                                             className={`px-3 py-1 rounded-full text-xs font-bold border transition ${staffFilter === f.k ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-600 border-blue-300 hover:bg-blue-50"}`}>
@@ -556,6 +604,35 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         🏷 {language === "es" ? "Etiquetar en lote" : "Bulk Tag"}
                                     </button>
                                 </div>
+                                {/* Side sub-tabs — only meaningful when a specific
+                                    location is selected. Hidden under "All Locations"
+                                    because filtering by side across both stores rarely
+                                    matches what an admin actually wants to see. */}
+                                {staffFilter !== "all" && (
+                                    <div className="flex gap-1 justify-center mb-3 flex-wrap">
+                                        {[
+                                            { k: "all", en: "All", es: "Todos", tone: "blue" },
+                                            { k: "foh", en: "🪑 FOH", es: "🪑 FOH", tone: "blue" },
+                                            { k: "boh", en: "🍳 BOH", es: "🍳 BOH", tone: "orange" },
+                                        ].map(f => {
+                                            const active = staffSideFilter === f.k;
+                                            const count = staffList.filter(s =>
+                                                (s.location === staffFilter || s.location === "both") &&
+                                                (f.k === "all" || personSide(s) === f.k)
+                                            ).length;
+                                            const activeCls = f.tone === 'orange'
+                                                ? 'bg-orange-600 text-white border-orange-600'
+                                                : 'bg-blue-500 text-white border-blue-500';
+                                            return (
+                                                <button key={f.k} onClick={() => setStaffSideFilter(f.k)}
+                                                    className={`px-3 py-1 rounded-full text-[11px] font-bold border transition ${active ? activeCls : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}>
+                                                    {language === "es" ? f.es : f.en}
+                                                    <span className="ml-1 opacity-70">({count})</span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
                                 <div className="space-y-2 mb-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-2">
                                     {filteredStaff.map(person => (
                                         <div key={person.id} className="bg-white rounded-lg border-2 border-gray-200 overflow-hidden">
@@ -639,6 +716,23 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             </button>
                                                         </div>
                                                     </div>
+                                                    {/* Preferred language for this person's notifications. */}
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-sm font-bold text-gray-700 mb-1">🗣 {language === "es" ? "Idioma de notificaciones" : "Notification language"}</p>
+                                                        <p className="text-xs text-gray-500 mb-2">{language === "es"
+                                                            ? "Pushes y mensajes de tareas se enviarán en este idioma."
+                                                            : "Pushes and task messages will be sent in this language."}</p>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <button onClick={() => setEditPreferredLanguage("en")}
+                                                                className={`py-2 rounded-md text-xs font-bold ${editPreferredLanguage === "en" ? "bg-blue-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                English
+                                                            </button>
+                                                            <button onClick={() => setEditPreferredLanguage("es")}
+                                                                className={`py-2 rounded-md text-xs font-bold ${editPreferredLanguage === "es" ? "bg-blue-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                Español
+                                                            </button>
+                                                        </div>
+                                                    </div>
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horas semanales objetivo" : "Target Hours / Week"}</p>
                                                         <p className="text-xs text-gray-500 mb-2">{language === "es" ? "Usado por el auto-populador. 0 = sin objetivo." : "Used by auto-fill. 0 = no target."}</p>
@@ -694,7 +788,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
