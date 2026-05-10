@@ -251,7 +251,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const [shifts, setShifts] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'day' | 'list'
+    // Default view mode: 'day' on mobile (the week-grid is too wide to read
+    // comfortably on a phone — staff end up pinch-zooming and scrolling
+    // horizontally), 'grid' on tablet/desktop where there's room. Detected
+    // once at mount; the user can switch via the segmented control any time.
+    const [viewMode, setViewMode] = useState(() => {
+        if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) return 'day';
+        return 'grid';
+    });
     const [side, setSide] = useState('foh'); // 'foh' | 'boh'
     // Side-aware edit gate. MUST be declared AFTER `side` — used to be one
     // line before the `useState`, which threw a TDZ ReferenceError on first

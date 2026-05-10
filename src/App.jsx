@@ -455,6 +455,16 @@ export default function App() {
                     // sidebar's refresh button. Clears all caches and reloads.
                     onForceRefresh={() => forceRefresh()}
                     onLanguageToggle={() => setLanguage(language === 'en' ? 'es' : 'en')}
+                    // Location cycle — admins can flip between webster /
+                    // maryland / both; staff are pinned to their assigned
+                    // location (no-op when not admin).
+                    onLocationChange={() => {
+                        if (!staffIsAdmin) return;
+                        const cycle = ['webster', 'maryland', 'both'];
+                        const idx = cycle.indexOf(activeLocation);
+                        const next = cycle[(idx + 1) % cycle.length];
+                        setActiveLocation(next);
+                    }}
                     onExitV2={() => {
                         // v2 is the default now — "exit" means opt OUT (sets
                         // the persistent opt-out flag). useV2Flag picks it up

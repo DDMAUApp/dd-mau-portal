@@ -37,6 +37,7 @@ export default function AppShellV2({
     onLogout,
     onForceRefresh,
     onLanguageToggle,
+    onLocationChange,
 }) {
     const [sidebarOpen, setSidebarOpen] = useState(false); // mobile "More" drawer
     const [collapsed, setCollapsed] = useState(false);     // desktop rail mode
@@ -78,6 +79,7 @@ export default function AppShellV2({
                     onExitV2={onExitV2}
                     onLanguageToggle={onLanguageToggle}
                     onLogout={onLogout}
+                    onLocationChange={onLocationChange}
                 />
                 {/* Mobile gets pb-bottom-nav so the bottom tab bar doesn't cover
                     the last row of content. Desktop has no bottom bar so the
