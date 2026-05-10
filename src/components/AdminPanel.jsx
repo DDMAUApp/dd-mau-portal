@@ -319,10 +319,70 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 }
             };
 
+            // Refuse-to-write-empty-pin guard + PIN audit log.
+            // After the 2026-05-09 PIN-corruption incident (the legacy migration
+            // block was silently re-writing PINs to placeholder defaults), every
+            // staff write goes through this helper. Two protections:
+            //
+            // 1. PIN INTEGRITY GATE: any record whose pin would land as empty,
+            //    null, or non-4-digit is REJECTED — the entire save is aborted
+            //    and the admin sees a toast. This kills the class of bug where
+            //    a stale React state writes pin: "" or pin: undefined.
+            //
+            // 2. AUDIT LOG: we read the current Firestore record, diff against
+            //    the new list, and write a doc to /pin_audits for every PIN
+            //    that actually changed. Each entry: {id, name, oldPin, newPin,
+            //    changedBy, changedAt}. So if a PIN ever changes again, we
+            //    have a full forensic trail naming the actor.
             const saveStaffToFirestore = async (updatedList) => {
+                // GATE: bail if any PIN is missing/blank/wrong-length.
+                const bad = updatedList.find(s => {
+                    const p = String(s.pin ?? '').trim();
+                    return !p || !/^\d{4}$/.test(p);
+                });
+                if (bad) {
+                    console.error('Refusing staff save — invalid PIN on:', bad.name, 'pin=', bad.pin);
+                    toast(language === 'es'
+                        ? `Guardado bloqueado: PIN inválido en ${bad.name}. No se hicieron cambios.`
+                        : `Save blocked: invalid PIN on ${bad.name}. No changes made.`,
+                        { kind: 'error', duration: 8000 });
+                    return;
+                }
+                // AUDIT: read current Firestore + compute diff before write.
+                let oldByName = new Map();
+                try {
+                    const cur = await getDoc(doc(db, 'config', 'staff'));
+                    if (cur.exists()) {
+                        const list = (cur.data() || {}).list || [];
+                        for (const s of list) oldByName.set(`${s.id}|${s.name}`, s.pin);
+                    }
+                } catch (e) {
+                    console.warn('audit: pre-read failed (proceeding anyway):', e);
+                }
                 try {
                     await setDoc(doc(db, "config", "staff"), { list: updatedList });
-                } catch (err) { console.error("Error saving staff:", err); }
+                } catch (err) {
+                    console.error("Error saving staff:", err);
+                    toast(language === 'es' ? 'Error al guardar personal' : 'Staff save failed', { kind: 'error' });
+                    return;
+                }
+                // Post-write: log every PIN change to /pin_audits.
+                // Fire-and-forget so a logging failure never blocks the save.
+                for (const s of updatedList) {
+                    const key = `${s.id}|${s.name}`;
+                    const oldPin = oldByName.get(key);
+                    if (oldPin != null && oldPin !== s.pin) {
+                        addDoc(collection(db, 'pin_audits'), {
+                            staffId: s.id,
+                            staffName: s.name,
+                            oldPin: oldPin,
+                            newPin: s.pin,
+                            changedBy: staffName,
+                            changedAt: serverTimestamp(),
+                            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+                        }).catch(e => console.warn('pin audit write failed:', e));
+                    }
+                }
             };
 
             // Tap-to-flip bulk tag handler — used by the Bulk Tag modal.

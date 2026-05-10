@@ -1689,6 +1689,22 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const handleSaveMyAvailability = async (newAvailability) => {
         if (!staffList || !setStaffList) return;
         const updated = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
+        // PIN INTEGRITY GATE — same defense as in AdminPanel. If any staff
+        // record in `updated` has a missing/invalid PIN, refuse the save
+        // entirely. This blocks the bug pattern that wiped PINs on
+        // 2026-05-09: stale React state writing empty/missing PINs back
+        // to Firestore.
+        const bad = updated.find(s => {
+            const p = String(s.pin ?? '').trim();
+            return !p || !/^\d{4}$/.test(p);
+        });
+        if (bad) {
+            console.error('Refusing availability save — invalid PIN on:', bad.name, 'pin=', bad.pin);
+            toast(tx(`Save blocked: invalid PIN on ${bad.name}. Reload the app and try again.`,
+                     `Guardado bloqueado: PIN inválido en ${bad.name}. Recarga la app.`),
+                  { kind: 'error', duration: 8000 });
+            return;
+        }
         setStaffList(updated);
         try {
             await setDoc(doc(db, 'config', 'staff'), { list: updated });

@@ -117,6 +117,18 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
             return updated;
         });
         if (savedSnapshot) {
+            // PIN INTEGRITY GATE: refuse to write the staff doc if any record
+            // has a missing/invalid PIN. Same defense as in AdminPanel — if
+            // local state somehow has empty PINs (stale React snapshot, etc.)
+            // we'd silently corrupt the live data. Block instead.
+            const bad = savedSnapshot.find(s => {
+                const p = String(s.pin ?? '').trim();
+                return !p || !/^\d{4}$/.test(p);
+            });
+            if (bad) {
+                console.error("Refusing FCM-token staff save — invalid PIN on:", bad.name, "pin=", bad.pin);
+                return { ok: true, token, warning: "save-blocked-invalid-pin" };
+            }
             try {
                 await setDoc(doc(db, "config", "staff"), { list: savedSnapshot });
             } catch (e) {
