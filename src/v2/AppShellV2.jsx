@@ -15,7 +15,7 @@ import { useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 
-export default function AppShellV2({ children, language = 'en', staffName = '', activeTab = 'home', onNavigate, onExitV2 }) {
+export default function AppShellV2({ children, language = 'en', staffName = '', storeLocation = 'webster', activeTab = 'home', onNavigate, onExitV2 }) {
     const [sidebarOpen, setSidebarOpen] = useState(false); // mobile drawer
     const [collapsed, setCollapsed] = useState(false);     // desktop rail mode
 
@@ -31,6 +31,8 @@ export default function AppShellV2({ children, language = 'en', staffName = '', 
 
             <Sidebar
                 language={language}
+                staffName={staffName}
+                storeLocation={storeLocation}
                 activeTab={activeTab}
                 onNavigate={(tab) => { setSidebarOpen(false); onNavigate?.(tab); }}
                 open={sidebarOpen}

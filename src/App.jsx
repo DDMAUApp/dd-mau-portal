@@ -427,6 +427,7 @@ export default function App() {
                 <AppShellV2
                     language={language}
                     staffName={staffName}
+                    storeLocation={effectiveLocation}
                     activeTab={activeTab}
                     onNavigate={(tab) => setActiveTab(tab)}
                     onExitV2={() => {

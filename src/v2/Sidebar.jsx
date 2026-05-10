@@ -5,6 +5,15 @@
 //
 // Active state = a 3px dd-green left bar + lighter charcoal background.
 // Hover state = subtle wash.
+//
+// LIVE BADGES (added 2026-05-09): each tab can show a numeric or dot
+// indicator showing how much attention it needs. Subscribes to the
+// relevant Firestore collections internally so the sidebar always
+// reflects current state without prop-drilling counts from App.jsx.
+
+import { useEffect, useState } from 'react';
+import { db } from '../firebase';
+import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
 
 const NAV_GROUPS = [
     {
@@ -50,12 +59,83 @@ const NAV_GROUPS = [
     },
 ];
 
-export default function Sidebar({ language, activeTab, onNavigate, open, collapsed, onToggleCollapse }) {
+export default function Sidebar({ language, activeTab, onNavigate, open, collapsed, onToggleCollapse, storeLocation = 'webster', staffName = '' }) {
     const isEs = language === 'es';
     const widthClass = collapsed ? 'w-[72px]' : 'w-[260px]';
     const positionClass = open
         ? 'translate-x-0'
         : '-translate-x-full md:translate-x-0';
+
+    // ── Live badge subscriptions ────────────────────────────────────────
+    const [draftCount, setDraftCount] = useState(0);
+    const [eighty6Count, setEighty6Count] = useState(0);
+    const [pendingPto, setPendingPto] = useState(0);
+    const [unreadNotifs, setUnreadNotifs] = useState(0);
+
+    // Drafts: shifts in the next 14 days that aren't published.
+    useEffect(() => {
+        const today = new Date();
+        const cutoff = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000);
+        const fmt = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        const q = query(collection(db, 'shifts'), where('date', '>=', fmt(today)), where('date', '<', fmt(cutoff)));
+        const unsub = onSnapshot(q, (snap) => {
+            let n = 0;
+            snap.forEach(d => {
+                const sh = d.data();
+                if (sh.published === false && (storeLocation === 'both' || sh.location === storeLocation)) n++;
+            });
+            setDraftCount(n);
+        }, () => setDraftCount(0));
+        return () => unsub();
+    }, [storeLocation]);
+
+    // 86 board count.
+    useEffect(() => {
+        const loc = storeLocation === 'both' ? 'webster' : storeLocation;
+        const unsub = onSnapshot(doc(db, 'ops', `86_${loc}`), (snap) => {
+            setEighty6Count(snap.exists() ? (snap.data().count || 0) : 0);
+        }, () => setEighty6Count(0));
+        return () => unsub();
+    }, [storeLocation]);
+
+    // Pending PTO requests.
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'time_off'), (snap) => {
+            let n = 0;
+            snap.forEach(d => { if (d.data().status === 'pending') n++; });
+            setPendingPto(n);
+        }, () => setPendingPto(0));
+        return () => unsub();
+    }, []);
+
+    // Unread notifications for the current user.
+    useEffect(() => {
+        if (!staffName) return;
+        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
+        const unsub = onSnapshot(q, (snap) => {
+            let n = 0;
+            snap.forEach(d => { if (!d.data().read) n++; });
+            setUnreadNotifs(n);
+        }, () => setUnreadNotifs(0));
+        return () => unsub();
+    }, [staffName]);
+
+    // Map: tab → badge count (or null if no badge).
+    const badges = {
+        schedule: draftCount,
+        eighty6:  eighty6Count,
+        admin:    pendingPto,
+        home:     unreadNotifs,
+    };
+
+    // Badge tone per tab — green if positive thing (notifications), amber if
+    // attention needed (drafts, PTO), red if blocking (86'd items).
+    const badgeTone = (tab) => {
+        if (tab === 'eighty6') return 'bg-red-500 text-white';
+        if (tab === 'schedule' || tab === 'admin') return 'bg-amber-400 text-amber-950';
+        if (tab === 'home') return 'bg-dd-green text-white';
+        return 'bg-white/20 text-white';
+    };
 
     return (
         <aside
@@ -118,11 +198,15 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
                         <div className="space-y-0.5">
                             {group.items.map(item => {
                                 const active = activeTab === item.tab;
+                                const badge = badges[item.tab];
+                                const showBadge = badge && badge > 0;
                                 return (
                                     <button
                                         key={item.tab}
                                         onClick={() => onNavigate?.(item.tab)}
-                                        title={collapsed ? (isEs ? item.es : item.en) : undefined}
+                                        title={collapsed
+                                            ? (isEs ? item.es : item.en) + (showBadge ? ` (${badge})` : '')
+                                            : undefined}
                                         className={`w-full group relative flex items-center ${collapsed ? 'justify-center px-2' : 'px-3 gap-3'} py-2 rounded-lg text-sm font-medium transition ${active
                                             ? 'bg-dd-charcoal-2 text-white'
                                             : 'text-white/70 hover:bg-dd-charcoal-2 hover:text-white'}`}
@@ -130,8 +214,25 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
                                         {active && (
                                             <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-dd-green rounded-r" />
                                         )}
-                                        <span className="text-base shrink-0">{item.icon}</span>
-                                        {!collapsed && <span className="truncate">{isEs ? item.es : item.en}</span>}
+                                        <span className="relative text-base shrink-0">
+                                            {item.icon}
+                                            {/* Collapsed mode: small dot in the corner of the icon */}
+                                            {collapsed && showBadge && (
+                                                <span className={`absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full flex items-center justify-center text-[8px] font-bold ${badgeTone(item.tab)}`}>
+                                                    {badge > 9 ? '9+' : badge}
+                                                </span>
+                                            )}
+                                        </span>
+                                        {!collapsed && (
+                                            <>
+                                                <span className="flex-1 text-left truncate">{isEs ? item.es : item.en}</span>
+                                                {showBadge && (
+                                                    <span className={`min-w-[20px] h-5 px-1.5 rounded-full flex items-center justify-center text-[10px] font-bold ${badgeTone(item.tab)}`}>
+                                                        {badge > 99 ? '99+' : badge}
+                                                    </span>
+                                                )}
+                                            </>
+                                        )}
                                     </button>
                                 );
                             })}
