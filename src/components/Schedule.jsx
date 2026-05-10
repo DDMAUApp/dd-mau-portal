@@ -3538,7 +3538,7 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                     </div>
                     <div className="flex gap-1">
                         <button onClick={commitTimeEdit}
-                            className="flex-1 py-0.5 rounded bg-mint-600 text-white text-[10px] font-bold hover:bg-mint-700">✓ {isEn ? 'Save' : 'Guardar'}</button>
+                            className="flex-1 py-0.5 rounded bg-dd-green text-white text-[10px] font-bold hover:bg-dd-green-700">✓ {isEn ? 'Save' : 'Guardar'}</button>
                         <button onClick={cancelTimeEdit}
                             className="px-2 py-0.5 rounded bg-gray-200 text-gray-700 text-[10px] font-bold hover:bg-gray-300">✕</button>
                     </div>
@@ -3621,7 +3621,7 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                     const isSelected = i === selectedDayIdx;
                     return (
                         <button key={i} onClick={() => setSelectedDayIdx(i)}
-                            className={`py-1.5 rounded text-center transition ${isSelected ? 'bg-mint-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+                            className={`py-1.5 rounded text-center transition ${isSelected ? 'bg-dd-green text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
                             <div className="text-[10px] uppercase">{dayLabels[i]}</div>
                             <div className="text-sm font-bold">{d.getDate()}</div>
                         </button>
@@ -4038,10 +4038,10 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-mint-700">+ {tx('Add Shift', 'Agregar Turno')}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
+                <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-dd-text">+ {tx('Add Shift', 'Agregar Turno')}</h3>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
 
                 <div className="p-4 space-y-3">
@@ -4074,7 +4074,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                                 <button type="button" onClick={() => updateField('side', 'foh')}
                                     className={`py-2 rounded-lg text-sm font-bold border ${
                                         presetSide === 'foh'
-                                            ? 'bg-teal-600 text-white border-teal-600'
+                                            ? 'bg-dd-green text-white border-dd-green'
                                             : 'bg-white text-gray-700 border-gray-300'
                                     }`}>
                                     🧑‍💼 FOH {staffDefaultSide === 'foh' ? `(${tx('home', 'casa')})` : ''}
@@ -4115,7 +4115,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                                     onClick={() => setForm(f => ({ ...f, startTime: p.start, endTime: p.end, isDouble: !!p.isDouble }))}
                                     className={`px-2.5 py-1 rounded-md text-[11px] font-bold border ${
                                         isPresetActive(p)
-                                            ? 'bg-mint-700 text-white border-mint-700'
+                                            ? 'bg-dd-green text-white border-dd-green'
                                             : 'bg-white text-gray-700 border-gray-300 hover:border-mint-500'
                                     }`}>
                                     {p.label}
@@ -4183,7 +4183,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                         <div className="grid grid-cols-2 gap-2">
                             {['webster', 'maryland'].map(loc => (
                                 <button key={loc} onClick={() => updateField('location', loc)}
-                                    className={`py-2 rounded-lg text-sm font-bold border ${form.location === loc ? 'bg-mint-700 text-white border-mint-700' : 'bg-white text-gray-700 border-gray-300'}`}>
+                                    className={`py-2 rounded-lg text-sm font-bold border ${form.location === loc ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-gray-700 border-gray-300'}`}>
                                     {LOCATION_LABELS[loc]}
                                 </button>
                             ))}
@@ -4232,7 +4232,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     )}
                 </div>
 
-                <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 flex gap-2">
+                <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2">
                     <button onClick={onClose}
                         className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={() => {
@@ -4243,7 +4243,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                         const finalSide = form.side || staffDefaultSide || 'foh';
                         onSave({ ...form, side: finalSide });
                     }} disabled={!canSubmit}
-                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-mint-700 hover:bg-mint-800' : 'bg-gray-300'}`}>
+                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-gray-300'}`}>
                         {tx('Save Shift', 'Guardar Turno')}
                     </button>
                 </div>
@@ -4277,10 +4277,10 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn 
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
+                <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-gray-800">🚫 {tx('Date Blackouts', 'Bloqueos de Fechas')}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
 
                 <div className="p-4 space-y-3">
@@ -4314,7 +4314,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn 
                             placeholder={tx('Reason (e.g. Christmas Day)', 'Razón (ej. Navidad)')}
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                         <button onClick={() => canSubmit && onAdd(form)} disabled={!canSubmit}
-                            className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-mint-700 hover:bg-mint-800' : 'bg-gray-300'}`}>
+                            className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-gray-300'}`}>
                             {tx('Add Blackout', 'Agregar Bloqueo')}
                         </button>
                     </div>
@@ -4395,7 +4395,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-amber-700">🌴 {tx("Time Off", "Tiempo Libre")}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     {canEdit && (
@@ -4503,7 +4503,7 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-amber-700">🌴 {tx('Request Time Off', 'Pedir Tiempo Libre')}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="p-4 space-y-3">
                     <div className="text-xs text-gray-600 bg-amber-50 rounded-lg p-2 border border-amber-200">
@@ -4575,7 +4575,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                         <h3 className="text-lg font-bold text-purple-700">🗓 {tx('My Availability', 'Mi Disponibilidad')}</h3>
                         <p className="text-xs text-gray-500">{staffName}</p>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
                     <p className="text-xs text-gray-500 mb-1">{tx("This is when you're available to work each week. Auto-fill uses this.", 'Cuándo estás disponible para trabajar cada semana. Auto-rellenar lo usa.')}</p>
@@ -4697,7 +4697,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
-                        <h3 className="text-lg font-bold text-mint-700">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
+                        <h3 className="text-lg font-bold text-dd-text">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
                         <p className="text-xs text-gray-500">
                             {dayName} · {dateStr}
                             {requiredGroup && requiredGroup.id !== 'any' && (
@@ -4707,7 +4707,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                             )}
                         </p>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
@@ -4929,14 +4929,14 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
     return (
         <div className="fixed inset-0 bg-black/40 z-50 flex justify-end" onClick={onClose}>
             <div className="bg-white w-full max-w-sm h-full overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-mint-700">🔔 {tx('Notifications', 'Notificaciones')}</h3>
+                <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
+                    <h3 className="text-lg font-bold text-dd-text">🔔 {tx('Notifications', 'Notificaciones')}</h3>
                     <div className="flex items-center gap-2">
                         {notifications.some(n => !n.read) && (
                             <button onClick={onMarkAllRead}
-                                className="text-xs text-mint-700 underline">{tx('Mark all read', 'Marcar todo')}</button>
+                                className="text-xs text-dd-green-700 underline font-semibold">{tx('Mark all read', 'Marcar todo')}</button>
                         )}
-                        <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                        <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                     </div>
                 </div>
                 <div className="p-3 space-y-2">
@@ -5035,7 +5035,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
-                <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+                <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-blue-700">
                         👥 {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
                     </h3>
@@ -5054,7 +5054,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Side', 'Lado')}</label>
                         <div className="grid grid-cols-2 gap-2">
                             <button onClick={() => update('side', 'foh')}
-                                className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'foh' ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-700 border-gray-300'}`}>FOH</button>
+                                className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'foh' ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-gray-700 border-gray-300'}`}>FOH</button>
                             <button onClick={() => update('side', 'boh')}
                                 className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'boh' ? 'bg-orange-600 text-white border-orange-600' : 'bg-white text-gray-700 border-gray-300'}`}>BOH</button>
                         </div>
@@ -5123,7 +5123,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         <div className="grid grid-cols-2 gap-2">
                             {['webster', 'maryland'].map(loc => (
                                 <button key={loc} onClick={() => update('location', loc)}
-                                    className={`py-2 rounded-lg text-sm font-bold border ${form.location === loc ? 'bg-mint-700 text-white border-mint-700' : 'bg-white text-gray-700 border-gray-300'}`}>
+                                    className={`py-2 rounded-lg text-sm font-bold border ${form.location === loc ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-gray-700 border-gray-300'}`}>
                                     {LOCATION_LABELS[loc]}
                                 </button>
                             ))}
@@ -5136,7 +5136,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                     </div>
                 </div>
-                <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 flex gap-2">
+                <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2">
                     <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={handleSave} disabled={!canSubmit}
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
@@ -5188,7 +5188,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
                 {/* Header */}
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
-                        <h3 className="text-lg font-bold text-mint-700">
+                        <h3 className="text-lg font-bold text-dd-text">
                             📋 {tx('Publish drafts — preview', 'Publicar borradores — vista previa')}
                         </h3>
                         <p className="text-xs text-gray-500 mt-0.5">
@@ -5197,7 +5197,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
                         </p>
                     </div>
                     <button onClick={onCancel}
-                        className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                        className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
 
                 {/* Body */}
@@ -5281,7 +5281,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
                     </button>
                     <button onClick={onConfirm}
                         disabled={drafts.length === 0}
-                        className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold text-white ${drafts.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-mint-700 hover:bg-mint-800'}`}>
+                        className={`flex-1 px-4 py-2 rounded-lg text-sm font-bold text-white ${drafts.length === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-dd-green hover:bg-dd-green-700'}`}>
                         ✓ {tx(`Publish ${drafts.length} draft${drafts.length === 1 ? '' : 's'}`, `Publicar ${drafts.length} borrador${drafts.length === 1 ? '' : 'es'}`)}
                     </button>
                 </div>
@@ -5344,7 +5344,7 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
                 </div>
                 <div className="border-t border-gray-200 p-3 flex-shrink-0">
                     <button onClick={onCustomShift}
-                        className="w-full py-2 rounded-lg bg-mint-600 text-white font-bold text-sm hover:bg-mint-700">
+                        className="w-full py-2 rounded-lg bg-dd-green text-white font-bold text-sm hover:bg-dd-green-700">
                         ✏ {tx('Or create a custom shift instead', 'O crear un turno personalizado')}
                     </button>
                 </div>
@@ -5434,7 +5434,7 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                         <div>
                             <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Side", "Lado")}</label>
                             <div className="grid grid-cols-2 gap-1">
-                                <button onClick={() => update("side", "foh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "foh" ? "bg-teal-600 text-white border-teal-600" : "bg-white text-gray-600 border-gray-300"}`}>FOH</button>
+                                <button onClick={() => update("side", "foh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "foh" ? "bg-dd-green text-white border-dd-green" : "bg-white text-gray-600 border-gray-300"}`}>FOH</button>
                                 <button onClick={() => update("side", "boh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "boh" ? "bg-orange-600 text-white border-orange-600" : "bg-white text-gray-600 border-gray-300"}`}>BOH</button>
                             </div>
                         </div>
