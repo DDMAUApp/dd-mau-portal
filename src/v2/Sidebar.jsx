@@ -61,23 +61,41 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
         <aside
             className={`fixed top-0 left-0 z-40 h-screen bg-dd-charcoal text-white flex flex-col transition-all duration-200 ${widthClass} ${positionClass}`}
         >
-            {/* Logo slot — your logo will go here. Sized to fit a 40px-tall mark
-                with optional wordmark next to it when expanded. */}
-            <div className="h-16 flex items-center justify-between px-4 border-b border-dd-charcoal-2 shrink-0">
-                <div className="flex items-center gap-2 min-w-0">
-                    <div className="w-9 h-9 rounded-lg bg-dd-green flex items-center justify-center text-white font-black text-lg shrink-0">
+            {/* Logo slot. Full logo (illustrated scooter mark + DD MAU wordmark
+                + "Vietnamese Eatery" tagline) is dark line art on transparent —
+                sits on a white rounded plate so it pops against the charcoal
+                sidebar. Collapsed mode falls back to a green "DD" badge since
+                the full wordmark won't fit at 72px wide.
+                Asset: drop your logo at /public/dd-mau-logo.png in the repo;
+                Vite copies it to dist/ at the BASE_URL during build. The
+                onError handler falls back to a placeholder if the file isn't
+                there yet. */}
+            <div className="h-16 flex items-center justify-between px-3 border-b border-dd-charcoal-2 shrink-0">
+                {collapsed ? (
+                    <div className="w-9 h-9 mx-auto rounded-lg bg-dd-green flex items-center justify-center text-white font-black text-lg shrink-0">
                         DD
                     </div>
-                    {!collapsed && (
-                        <div className="min-w-0">
-                            <div className="text-[13px] font-bold leading-tight truncate">DD Mau</div>
-                            <div className="text-[10px] text-white/60 leading-tight truncate">Staff Portal</div>
-                        </div>
-                    )}
-                </div>
+                ) : (
+                    <div className="flex-1 bg-white rounded-lg px-3 py-1.5 flex items-center justify-center min-w-0">
+                        <img
+                            src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
+                            alt="DD Mau Vietnamese Eatery"
+                            className="max-h-10 w-auto object-contain"
+                            onError={(e) => {
+                                // Logo file not committed yet — fall back to text.
+                                e.target.style.display = 'none';
+                                if (e.target.parentElement) {
+                                    e.target.parentElement.innerHTML =
+                                        '<div class="text-dd-charcoal text-sm font-black tracking-wider">DD MAU</div>' +
+                                        '<div class="text-dd-text-2 text-[8px] font-bold tracking-widest">VIETNAMESE EATERY</div>';
+                                }
+                            }}
+                        />
+                    </div>
+                )}
                 {!collapsed && (
                     <button onClick={onToggleCollapse}
-                        className="hidden md:flex w-7 h-7 items-center justify-center rounded text-white/40 hover:text-white hover:bg-dd-charcoal-2"
+                        className="ml-2 hidden md:flex w-7 h-7 items-center justify-center rounded text-white/40 hover:text-white hover:bg-dd-charcoal-2"
                         title="Collapse sidebar">
                         ◀
                     </button>

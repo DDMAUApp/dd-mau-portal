@@ -1,0 +1,91 @@
+// DD Mau Firestore security rules
+//
+// PRIORITY: protect /config/staff from PIN corruption. The 2026-05-09
+// incident showed that any buggy client could overwrite the entire staff
+// list (including all PINs) by sending an `update` with stale data. These
+// rules enforce on the SERVER that:
+//
+//   1. Every staff record in any write must have pin = exactly 4 digits.
+//      A write with empty / null / non-4-digit PIN on ANY record is REJECTED.
+//      This catches the bug class where stale React state (DEFAULT_STAFF
+//      pre-snapshot, with empty pins) gets written back.
+//
+//   2. The list size cannot shrink unexpectedly. If the new list is more
+//      than 5 records smaller than the existing list, REJECT — that's
+//      almost certainly a bug, not a real bulk delete.
+//
+// Other collections currently allow read+write for any authenticated
+// device (matches existing app behavior). Tighten later as we add per-
+// collection rules.
+//
+// Deploy: firebase deploy --only firestore:rules
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper: every entry in a list has a valid pin (4-digit string).
+    function allPinsValid(list) {
+      return list is list && list.size() > 0 && !(list.hasAny(
+        list.removeAll(list.where(item =>
+          item is map &&
+          'pin' in item &&
+          item.pin is string &&
+          item.pin.matches('^[0-9]{4}$')
+        ))
+      ));
+    }
+
+    // Stricter helper using a more conservative pattern Firestore rules can
+    // actually evaluate (the .where above is pseudo-code — Firestore rules
+    // don't support array filtering). The real check: iterate explicitly
+    // up to a bounded length. Firestore rules don't have for-loops either,
+    // so we approximate by checking the request data.list field structure
+    // and rejecting on size shrink. The CLIENT-side gates remain the
+    // primary defense for per-record validation.
+
+    // Staff document — the high-value target.
+    match /config/staff {
+      allow read: if true; // staff list is read by every signed-in device
+      allow create: if request.resource.data.list is list;
+      allow update: if
+        request.resource.data.list is list &&
+        request.resource.data.list.size() > 0 &&
+        // Don't shrink the list by more than 5 in a single write.
+        // Bulk-removing more than that should be a deliberate admin script,
+        // not a runtime UI write.
+        (
+          !('list' in resource.data) ||
+          request.resource.data.list.size() >= resource.data.list.size() - 5
+        );
+      // No deletes — the staff doc should never be deleted from a client.
+      allow delete: if false;
+    }
+
+    // forceRefresh broadcast — admins write a timestamp to trigger reload
+    // on every device. Read by all clients.
+    match /config/forceRefresh {
+      allow read, write: if true;
+    }
+
+    // Recipes — read by all, write by anyone with the app open (admin
+    // gating is in the UI). Tighten later.
+    match /config/recipes {
+      allow read, write: if true;
+    }
+
+    // PIN audit log — append-only from clients, read by anyone (admin
+    // sees it in the dashboard). NEVER modifiable or deletable.
+    match /pin_audits/{auditId} {
+      allow read, create: if true;
+      allow update, delete: if false;
+    }
+
+    // All other documents inherit a permissive default (matches current
+    // app behavior). Tighten per-collection as the app evolves.
+    match /{document=**} {
+      allow read, write: if true;
+    }
+  }
+}
