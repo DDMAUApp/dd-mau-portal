@@ -23,7 +23,7 @@
  *   • Add/edit/delete shifts: admin OR staff with role containing "Manager"
  *     (see canEditSchedule() in src/data/staff.js)
  */
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
 import {
@@ -2391,7 +2391,11 @@ ${dayBlocks}
                     </select>
                     <span className="text-dd-text-2 text-xs">▾</span>
                 </label>
-                {/* PRIMARY — Publish + Add Shift in dd-green */}
+                {/* PRIMARY group — Publish + Add Shift always visible.
+                    Reorganized 2026-05-10: was a single flat row of 13
+                    equal-weight buttons that wrapped to 2-3 lines and
+                    overwhelmed the page. Now: ONE primary group + ONE
+                    "More" dropdown that holds everything else. */}
                 {canEdit && (() => {
                     const draftCount = visibleShifts.filter(s => s.published === false).length;
                     return (
@@ -2407,69 +2411,87 @@ ${dayBlocks}
                             )}
                         </button>
                         <button onClick={() => openAddModal()}
-                            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-dd-green text-white text-xs font-bold hover:bg-dd-green-700 shadow-sm">
+                            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-dd-green text-white text-xs font-bold hover:bg-dd-green-700 shadow-sm active:scale-95 transition">
                             + {tx('Shift', 'Turno')}
                         </button>
                     </>
                     );
                 })()}
-                {/* SECONDARY — Print + More in white-with-border */}
-                <button onClick={handlePrintWeek}
-                    title={tx('Print full week as one-page calendar', 'Imprimir semana')}
-                    className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                    🖨 {personFilter ? tx('Print', 'Imprimir') : tx('Print Week', 'Imprimir Semana')}
-                </button>
-                <button onClick={() => setShowMoreActions(s => !s)}
-                    className="md:hidden px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                    {showMoreActions ? `× ${tx('Less', 'Menos')}` : `⋯ ${tx('More', 'Más')}`}
-                </button>
 
-                {/* TERTIARY — collapsed on mobile, inline on md+. All chips
-                    use a consistent neutral pill shape with semantic accent
-                    colors only on the icon. */}
-                <div className={`${showMoreActions ? 'flex' : 'hidden'} md:flex flex-wrap gap-2 w-full md:w-auto md:contents`}>
-                    <button onClick={handleExportIcs}
-                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                        📅 {tx('iCal', 'iCal')}
+                {/* MORE menu — single dropdown holding everything secondary.
+                    Replaces the old "13 chips wrap to 3 rows" mess. Click
+                    opens a popover with grouped sections (Tools / My
+                    actions / Admin). */}
+                <div className="relative">
+                    <button onClick={() => setShowMoreActions(s => !s)}
+                        className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-semibold flex items-center gap-1.5 transition">
+                        ⋯ {tx('More', 'Más')}
+                        <span className="text-dd-text-2 text-[10px]">{showMoreActions ? '▲' : '▼'}</span>
                     </button>
-                    <button onClick={() => setShowPtoRequestModal(true)}
-                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                        🌴 {tx('Request Off', 'Pedir Off')}
-                    </button>
-                    <button onClick={() => setShowMyAvailModal(true)}
-                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                        🗓 {tx('My Avail', 'Mi Dispon.')}
-                    </button>
-                    <button onClick={() => setShowTimeOffModal(true)}
-                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                        🌴 {tx('All PTO', 'Todo PTO')}
-                    </button>
-                    {canEdit && (
+                    {showMoreActions && (
                         <>
-                            <button onClick={handleAutoPopulate}
-                                className="px-3 py-2 rounded-lg bg-dd-green-50 border border-dd-green/30 text-dd-green-700 hover:bg-dd-sage-50 text-xs font-semibold">
-                                ✨ {tx('Auto-fill', 'Auto-rellenar')}
-                            </button>
-                            <button onClick={() => setShowRecurringModal(true)}
-                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                                🔁 {tx('Recurring', 'Recurrentes')}
-                            </button>
-                            <button onClick={handleCopyLastWeek}
-                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                                📋 {tx('Copy ⏪', 'Copiar ⏪')}
-                            </button>
-                            <button onClick={() => setShowBlockModal(true)}
-                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                                🚫 {tx('Blackouts', 'Bloqueos')}
-                            </button>
-                            <button onClick={() => setShowApplyTemplate(true)}
-                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                                📋 {tx('Templates', 'Plantillas')}
-                            </button>
-                            <button onClick={() => setShowNeedModal(true)}
-                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
-                                👥 {tx('+ Slot', '+ Slot')}
-                            </button>
+                            {/* Click-outside backdrop */}
+                            <div className="fixed inset-0 z-30" onClick={() => setShowMoreActions(false)} />
+                            <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-dd-line rounded-xl shadow-card-hov z-40 overflow-hidden">
+                                {/* TOOLS */}
+                                <div className="px-3 py-2 border-b border-dd-line">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Tools', 'Herramientas')}</div>
+                                    <button onClick={() => { setShowMoreActions(false); handlePrintWeek(); }}
+                                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                        <span>🖨</span>{personFilter ? tx('Print', 'Imprimir') : tx('Print Week', 'Imprimir Semana')}
+                                    </button>
+                                    <button onClick={() => { setShowMoreActions(false); handleExportIcs(); }}
+                                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                        <span>📅</span>{tx('Export iCal', 'Exportar iCal')}
+                                    </button>
+                                </div>
+                                {/* MY ACTIONS */}
+                                <div className="px-3 py-2 border-b border-dd-line">
+                                    <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('My Actions', 'Mis Acciones')}</div>
+                                    <button onClick={() => { setShowMoreActions(false); setShowPtoRequestModal(true); }}
+                                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                        <span>🌴</span>{tx('Request Time Off', 'Pedir Tiempo Libre')}
+                                    </button>
+                                    <button onClick={() => { setShowMoreActions(false); setShowMyAvailModal(true); }}
+                                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                        <span>🗓</span>{tx('My Availability', 'Mi Disponibilidad')}
+                                    </button>
+                                </div>
+                                {/* ADMIN */}
+                                {canEdit && (
+                                    <div className="px-3 py-2">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Admin', 'Admin')}</div>
+                                        <button onClick={() => { setShowMoreActions(false); handleAutoPopulate(); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-sage-50 flex items-center gap-2 text-sm text-dd-green-700 font-semibold">
+                                            <span>✨</span>{tx('Auto-fill week', 'Auto-rellenar')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); setShowNeedModal(true); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span>👥</span>{tx('Add open slot', 'Agregar espacio')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); setShowTimeOffModal(true); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span>🌴</span>{tx('All PTO requests', 'Todas las solicitudes')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); handleCopyLastWeek(); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span>📋</span>{tx('Copy last week', 'Copiar semana anterior')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); setShowApplyTemplate(true); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span>📋</span>{tx('Apply template', 'Aplicar plantilla')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); setShowRecurringModal(true); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span>🔁</span>{tx('Recurring shifts', 'Turnos recurrentes')}
+                                        </button>
+                                        <button onClick={() => { setShowMoreActions(false); setShowBlockModal(true); }}
+                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                            <span>🚫</span>{tx('Blackout dates', 'Bloqueos de fechas')}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </>
                     )}
                 </div>
@@ -2855,6 +2877,7 @@ ${dayBlocks}
                     weekStart={weekStart}
                     dateClosed={dateClosed}
                     existingShifts={shifts}
+                    timeOff={timeOff}
                 />
             )}
             {showBlockModal && canEdit && (
@@ -3077,73 +3100,82 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
 function HoursScoreboard({ scoreboard, side, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     if (!scoreboard) return null;
-    const cell = (label, data, isActive, accentColor) => {
+    const computeStatus = (data) => {
         const pct = data.target > 0 ? Math.round((data.scheduled / data.target) * 100) : null;
-        // Status thresholds same as before — tones now in v2 vocabulary.
         const status =
             pct == null   ? { label: tx('No target', 'Sin objetivo'), tone: 'text-dd-text-2', dot: 'bg-gray-300', bar: 'bg-gray-300' }
           : pct < 80      ? { label: tx('Under', 'Bajo'),     tone: 'text-amber-700',  dot: 'bg-amber-500', bar: 'bg-amber-400' }
           : pct <= 104    ? { label: tx('On target', 'En meta'), tone: 'text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' }
           : pct <= 114    ? { label: tx('Trending OT', 'Hacia OT'), tone: 'text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' }
           :                 { label: tx('Over budget', 'Excedido'), tone: 'text-red-700', dot: 'bg-red-500', bar: 'bg-red-500' };
-        const barWidth = pct == null ? 0 : Math.min(150, pct);
-        return (
-            <div className={`flex-1 min-w-[200px] rounded-xl bg-white border ${isActive ? 'border-dd-green ring-2 ring-dd-green-50' : 'border-dd-line'} shadow-card p-3`}>
-                <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${accentColor}`} />
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{label}</span>
-                    </div>
-                    <span className={`text-[10px] font-bold ${status.tone} flex items-center gap-1`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
-                        {status.label}
-                    </span>
-                </div>
-                <div className="flex items-baseline gap-1">
-                    <span className="text-2xl font-black text-dd-text tabular-nums leading-none">{formatHours(data.scheduled)}</span>
-                    {data.target > 0 && (
-                        <span className="text-xs text-dd-text-2 font-semibold">/ {formatHours(data.target)}</span>
-                    )}
-                    {pct != null && (
-                        <span className={`ml-1 text-xs font-bold ${status.tone}`}>{pct}%</span>
-                    )}
-                </div>
-                {/* Progress bar — caps visually at 150% so far-over slots
-                    don't break the layout but still read as red. */}
-                {pct != null && (
-                    <div className="mt-2 h-1.5 w-full bg-dd-bg rounded-full overflow-hidden">
-                        <div className={`h-full rounded-full transition-all ${status.bar}`}
-                            style={{ width: `${(barWidth / 150) * 100}%` }} />
-                    </div>
+        return { pct, status };
+    };
+    const foh = computeStatus(scoreboard.foh);
+    const boh = computeStatus(scoreboard.boh);
+
+    // Compact compound row — both sides side-by-side in ONE card. Was two
+    // separate cards eating ~200px of vertical real estate. The compact
+    // version puts both summaries in a single horizontal strip with all
+    // the same info but ~50% the vertical footprint.
+    const sideRow = (label, data, computed, isActive, accentColor) => (
+        <div className={`flex-1 min-w-0 ${isActive ? 'pr-3' : 'pl-3'}`}>
+            <div className="flex items-center gap-2 mb-1">
+                <span className={`w-2 h-2 rounded-full ${accentColor}`} />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{label}</span>
+                <span className={`ml-auto text-[10px] font-bold ${computed.status.tone} flex items-center gap-1`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${computed.status.dot}`} />
+                    {computed.status.label}
+                </span>
+            </div>
+            <div className="flex items-baseline gap-1.5">
+                <span className="text-xl font-black text-dd-text tabular-nums leading-none">{formatHours(data.scheduled)}</span>
+                {data.target > 0 && (
+                    <span className="text-xs text-dd-text-2 font-semibold">/ {formatHours(data.target)}</span>
                 )}
-                {/* Under/over chips */}
-                {(data.under.length > 0 || data.over.length > 0) && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                        {data.under.map(p => (
-                            <span key={'u-' + p.name}
-                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
-                                title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target`,
-                                         `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo`)}>
-                                ↓ {p.name.split(' ')[0]} {formatHours(p.gap)}
-                            </span>
-                        ))}
-                        {data.over.map(p => (
-                            <span key={'o-' + p.name}
-                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-50 text-red-800 border border-red-200"
-                                title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target — over by ${formatHours(p.gap)}`,
-                                         `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo — sobre por ${formatHours(p.gap)}`)}>
-                                ↑ {p.name.split(' ')[0]} +{formatHours(p.gap)}
-                            </span>
-                        ))}
-                    </div>
+                {computed.pct != null && (
+                    <span className={`text-xs font-bold ${computed.status.tone}`}>{computed.pct}%</span>
                 )}
             </div>
-        );
-    };
+            {computed.pct != null && (
+                <div className="mt-1.5 h-1 w-full bg-dd-bg rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${computed.status.bar}`}
+                        style={{ width: `${Math.min(150, computed.pct) / 150 * 100}%` }} />
+                </div>
+            )}
+        </div>
+    );
+
+    // Aggregate under/over chips from BOTH sides (so the manager sees the
+    // full picture without scanning two separate cards).
+    const allUnder = [...scoreboard.foh.under, ...scoreboard.boh.under];
+    const allOver  = [...scoreboard.foh.over,  ...scoreboard.boh.over];
+
     return (
-        <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3 print:hidden">
-            {cell(tx('FOH this week', 'FOH esta semana'), scoreboard.foh, side === 'foh', 'bg-dd-green')}
-            {cell(tx('BOH this week', 'BOH esta semana'), scoreboard.boh, side === 'boh', 'bg-orange-500')}
+        <div className="mb-3 bg-white border border-dd-line rounded-xl shadow-card p-3 print:hidden">
+            <div className="flex items-stretch divide-x divide-dd-line">
+                {sideRow(tx('FOH', 'FOH'), scoreboard.foh, foh, side === 'foh', 'bg-dd-green')}
+                {sideRow(tx('BOH', 'BOH'), scoreboard.boh, boh, side === 'boh', 'bg-orange-500')}
+            </div>
+            {(allUnder.length > 0 || allOver.length > 0) && (
+                <div className="mt-2 pt-2 border-t border-dd-line/60 flex flex-wrap gap-1">
+                    {allUnder.map(p => (
+                        <span key={'u-' + p.name}
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
+                            title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target`,
+                                     `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo`)}>
+                            ↓ {p.name.split(' ')[0]} {formatHours(p.gap)}
+                        </span>
+                    ))}
+                    {allOver.map(p => (
+                        <span key={'o-' + p.name}
+                            className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-50 text-red-800 border border-red-200"
+                            title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target — over by ${formatHours(p.gap)}`,
+                                     `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo — sobre por ${formatHours(p.gap)}`)}>
+                            ↑ {p.name.split(' ')[0]} +{formatHours(p.gap)}
+                        </span>
+                    ))}
+                </div>
+            )}
         </div>
     );
 }
@@ -3626,7 +3658,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                             return (
                                 <th key={i}
                                     onClick={() => onDayHeaderClick && !closed && onDayHeaderClick(dStr)}
-                                    className={`border-b border-dd-line px-1.5 py-2.5 min-w-[110px] transition ${closed ? 'bg-dd-bg' : isToday ? 'bg-dd-sage-50' : 'bg-white'} ${onDayHeaderClick && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
+                                    className={`border-b border-dd-line px-1.5 py-2.5 min-w-[110px] transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : isToday ? 'bg-dd-sage-50' : 'bg-white'} ${onDayHeaderClick && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
                                     <div className={`text-[10px] uppercase font-bold tracking-wider ${closed ? 'text-dd-text-2' : isToday ? 'text-dd-green-700' : 'text-dd-text-2'}`}>{dayLabels[i]}</div>
                                     <div className={`text-base font-black tabular-nums leading-none mt-0.5 ${closed ? 'text-dd-text-2' : isToday ? 'text-dd-green-700' : 'text-dd-text'}`}>{d.getDate()}</div>
                                     {isToday && !closed && (
@@ -3853,7 +3885,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
                                             if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
                                         }}
-                                        className={`border-b border-r border-dd-line align-top p-1.5 transition ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
+                                        className={`border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
                                         <div className="space-y-1">
                                             {onPTO && cellShifts.length === 0 && (
                                                 <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'PTO' : 'PTO'}</div>
@@ -3877,7 +3909,13 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     && quickAddCell.staff?.name === s.name
                                                     && quickAddCell.dateStr === dStr;
                                                 if (!isActive) {
-                                                    return <div className="text-center text-dd-text-2/30 text-lg leading-none py-1 group-hover:text-dd-green/60 transition">+</div>;
+                                                    // Explicit "+" pill — clearer affordance than the
+                                                    // plain "+". Hover/focus reveals the dd-green tint.
+                                                    return (
+                                                        <div className="flex items-center justify-center py-1">
+                                                            <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-dd-bg/60 text-dd-text-2/40 text-xs font-bold border border-dashed border-dd-line group-hover:bg-dd-green-50 group-hover:text-dd-green-700 group-hover:border-dd-green/40 transition">+</span>
+                                                        </div>
+                                                    );
                                                 }
                                                 const presets = getShiftPresets(resolveStaffSide(s));
                                                 return (
@@ -3921,6 +3959,40 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
 }
 
 function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes }) {
+    // Inline resize picker — opens via the right-edge handle. Lets the user
+    // nudge the end time by ±15min / ±30min / ±1h with one tap. Real
+    // pointer-drag on a scrolling table cell is finicky; this gives the
+    // same outcome (quick shift extend/shorten) without the math.
+    const [resizePickerOpen, setResizePickerOpen] = useState(false);
+    const nudgeEnd = async (deltaMin) => {
+        if (!onUpdateShiftTimes) return;
+        const [eh, em] = (shift.endTime || '00:00').split(':').map(Number);
+        const total = eh * 60 + em + deltaMin;
+        const newH = ((Math.floor(total / 60) % 24) + 24) % 24;
+        const newM = ((total % 60) + 60) % 60;
+        const newEnd = `${String(newH).padStart(2,'0')}:${String(newM).padStart(2,'0')}`;
+        await onUpdateShiftTimes(shift.id, shift.startTime, newEnd);
+        setResizePickerOpen(false);
+    };
+
+    // Right-click / long-press context menu state. Open via:
+    //   - Desktop: right-click on cube (onContextMenu)
+    //   - Mobile: long-press (~500ms touch hold)
+    // Closes on: outside click, ESC, or any menu action.
+    const [menuOpen, setMenuOpen] = useState(false);
+    const longPressTimer = useRef(null);
+    const beginLongPress = (e) => {
+        if (!canEdit) return;
+        clearTimeout(longPressTimer.current);
+        longPressTimer.current = setTimeout(() => setMenuOpen(true), 500);
+    };
+    const cancelLongPress = () => clearTimeout(longPressTimer.current);
+    useEffect(() => {
+        if (!menuOpen) return;
+        const close = (e) => { if (e.key === 'Escape') setMenuOpen(false); };
+        document.addEventListener('keydown', close);
+        return () => document.removeEventListener('keydown', close);
+    }, [menuOpen]);
     const colors = roleColors(staffRole, isShiftLead);
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const hasWarning = warnings.length > 0;
@@ -3982,6 +4054,11 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                 e.dataTransfer.setData('text/shift-id', shift.id);
                 e.dataTransfer.effectAllowed = 'move';
             }}
+            onContextMenu={(e) => { if (!canEdit) return; e.preventDefault(); setMenuOpen(true); }}
+            onTouchStart={beginLongPress}
+            onTouchEnd={cancelLongPress}
+            onTouchMove={cancelLongPress}
+            onTouchCancel={cancelLongPress}
             title={auditLines.join('\n') || undefined}
             className={`schedule-shift-cube relative rounded-md shadow-sm ${shift.published === false ? 'border-2 border-dashed border-dd-text-2/40 opacity-80' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-white' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-white' : ''} ${colors.bg} ${colors.text} px-2 py-1.5 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} hover:shadow-card-hov hover:-translate-y-px transition group/cube`}>
             {editingTimes ? (
@@ -4065,6 +4142,80 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                     title={isEn ? 'Delete shift' : 'Eliminar turno'}>
                     ×
                 </button>
+            )}
+
+            {/* RIGHT-EDGE RESIZE HANDLE — desktop only. Opens an inline
+                "extend by" picker that nudges the end time in 15min steps.
+                Mobile users can use the time-edit (tap the time text). */}
+            {canEdit && onUpdateShiftTimes && !compact && (
+                <button onClick={(e) => { e.stopPropagation(); setResizePickerOpen(true); }}
+                    title={isEn ? 'Extend / shorten shift' : 'Extender / acortar turno'}
+                    className="hidden md:flex absolute top-0 bottom-0 right-0 w-2 items-center justify-center cursor-ew-resize opacity-0 group-hover/cube:opacity-100 hover:bg-dd-green/30 transition print:hidden"
+                    aria-label={isEn ? 'Resize shift' : 'Cambiar tamaño de turno'}>
+                    <span className="block w-0.5 h-4 bg-dd-green rounded-full" />
+                </button>
+            )}
+
+            {/* RESIZE PICKER popover — opens from the right-edge handle.
+                Quick ±15/30/60-min nudges to the end time. Saves
+                immediately on tap. */}
+            {resizePickerOpen && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setResizePickerOpen(false)} />
+                    <div className="absolute top-full right-0 mt-1 z-50 w-48 bg-white rounded-lg border border-dd-line shadow-card-hov p-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5 text-center">
+                            {isEn ? 'Adjust end time' : 'Ajustar fin'}
+                        </div>
+                        <div className="grid grid-cols-3 gap-1">
+                            {[
+                                { label: '−1h', min: -60 },
+                                { label: '−30m', min: -30 },
+                                { label: '−15m', min: -15 },
+                                { label: '+15m', min: 15 },
+                                { label: '+30m', min: 30 },
+                                { label: '+1h', min: 60 },
+                            ].map(o => (
+                                <button key={o.label} onClick={(e) => { e.stopPropagation(); nudgeEnd(o.min); }}
+                                    className={`py-1.5 rounded text-[11px] font-bold border transition active:scale-95 ${o.min < 0 ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100' : 'border-dd-green/30 bg-dd-green-50 text-dd-green-700 hover:bg-dd-sage-50'}`}>
+                                    {o.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className="text-[9px] text-dd-text-2 text-center mt-1.5 tabular-nums">
+                            {formatTime12h(shift.startTime)} → {formatTime12h(shift.endTime)}
+                        </div>
+                    </div>
+                </>
+            )}
+
+            {/* CONTEXT MENU — opens via right-click (desktop) or long-press
+                (mobile/touch). Quick actions without leaving the schedule. */}
+            {menuOpen && (
+                <>
+                    <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                    <div className="absolute top-full left-0 mt-1 z-50 w-44 bg-white rounded-lg border border-dd-line shadow-card-hov overflow-hidden">
+                        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); beginTimeEdit(e); }}
+                            className="w-full px-3 py-2 text-left text-xs font-semibold text-dd-text hover:bg-dd-bg flex items-center gap-2">
+                            <span>⏱</span>{isEn ? 'Edit times' : 'Editar horas'}
+                        </button>
+                        {isMine && !isPending && onOfferShift && (
+                            <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
+                                className="w-full px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50 flex items-center gap-2">
+                                <span>📣</span>{isOffered ? (isEn ? 'Cancel offer' : 'Cancelar') : (isEn ? 'Give up shift' : 'Liberar turno')}
+                            </button>
+                        )}
+                        {onUpdateShiftTimes && (
+                            <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setResizePickerOpen(true); }}
+                                className="w-full px-3 py-2 text-left text-xs font-semibold text-dd-text hover:bg-dd-bg flex items-center gap-2">
+                                <span>↔</span>{isEn ? 'Extend / shorten' : 'Extender / acortar'}
+                            </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(shift.id); }}
+                            className="w-full px-3 py-2 text-left text-xs font-semibold text-red-700 hover:bg-red-50 flex items-center gap-2 border-t border-dd-line">
+                            <span>🗑</span>{isEn ? 'Delete shift' : 'Eliminar turno'}
+                        </button>
+                    </div>
+                </>
             )}
         </div>
     );
@@ -4504,7 +4655,7 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────
 
-function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts }) {
+function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts, timeOff = [] }) {
     const today = toDateStr(new Date());
     const tx = (en, es) => (isEn ? en : es);
 
@@ -4549,6 +4700,31 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     const minorWarnings = selectedStaff?.isMinor ? minorShiftWarnings(form, isEn) : [];
 
     const isOnClosedDate = dateClosed && dateClosed(form.date);
+
+    // CONFLICT DETECTION — added 2026-05-10. Surfaces three classes of
+    // "this might be wrong" warnings the manager should see BEFORE saving:
+    //   1. PTO conflict — the staffer is on approved time-off this date
+    //   2. Pending PTO — they have a pending request for this date
+    //   3. Over hours — this shift would push them past their target
+    //      hours/week (signals OT risk)
+    // Warnings are non-blocking (manager can still save) but visible
+    // enough that an accidental click is unlikely to slip through.
+    const ptoConflict = (timeOff || []).find(t =>
+        t.staffName === form.staffName &&
+        (t.startDate || t.date) <= form.date &&
+        (t.endDate || t.startDate || t.date) >= form.date &&
+        (t.status === 'approved' || t.status === 'pending')
+    );
+    const weekStartStr = weekStart ? toDateStr(weekStart) : null;
+    const weekEndStr   = weekStart ? toDateStr(addDays(weekStart, 7)) : null;
+    const weekHoursForStaff = (existingShifts || [])
+        .filter(s => s.staffName === form.staffName && s.date >= weekStartStr && s.date < weekEndStr)
+        .reduce((sum, s) => sum + hoursBetween(s.startTime, s.endTime, s.isDouble), 0);
+    const targetHours = selectedStaff?.targetHours || 0;
+    const projectedTotal = weekHoursForStaff + hours;
+    const overHours = targetHours > 0 && projectedTotal > targetHours;
+    const overOT = projectedTotal > 40;
+
     const canSubmit = form.staffName && form.date && form.startTime && form.endTime && hours > 0 && !isOnClosedDate;
 
     return (
@@ -4736,6 +4912,23 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     {minorWarnings.length > 0 && (
                         <div className="p-2 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900">
                             ⚠ <b>{tx('Minor labor flag:', 'Aviso de menor:')}</b> {minorWarnings.join(' • ')}
+                        </div>
+                    )}
+                    {/* CONFLICT WARNINGS — non-blocking but visible. */}
+                    {ptoConflict && (
+                        <div className="p-2.5 rounded-lg bg-red-50 border border-red-300 text-xs text-red-900">
+                            <b>🌴 {ptoConflict.status === 'approved' ? tx('PTO conflict:', 'Conflicto de PTO:') : tx('Pending PTO:', 'PTO pendiente:')}</b>{' '}
+                            {tx(`${form.staffName} requested off this date`, `${form.staffName} pidió este día libre`)}
+                            {ptoConflict.reason && ` (${ptoConflict.reason})`}.
+                            {tx(' You can still save, but this is unusual.', ' Puedes guardar, pero es inusual.')}
+                        </div>
+                    )}
+                    {(overHours || overOT) && form.staffName && (
+                        <div className={`p-2.5 rounded-lg border text-xs ${overOT ? 'bg-red-50 border-red-300 text-red-900' : 'bg-amber-50 border-amber-300 text-amber-900'}`}>
+                            <b>⏱ {overOT ? tx('Overtime risk:', 'Riesgo de tiempo extra:') : tx('Over target hours:', 'Sobre objetivo:')}</b>{' '}
+                            {tx(`This shift brings ${form.staffName} to ${formatHours(projectedTotal)} this week`, `Este turno lleva a ${form.staffName} a ${formatHours(projectedTotal)} esta semana`)}
+                            {targetHours > 0 && ` (target ${formatHours(targetHours)})`}
+                            {overOT && tx(' — over the 40h OT line.', ' — sobre las 40h de OT.')}
                         </div>
                     )}
 
