@@ -61,7 +61,11 @@ const NAV_GROUPS = [
 
 export default function Sidebar({ language, activeTab, onNavigate, open, collapsed, onToggleCollapse, storeLocation = 'webster', staffName = '' }) {
     const isEs = language === 'es';
-    const widthClass = collapsed ? 'w-[72px]' : 'w-[260px]';
+    // Mobile drawer is wider (88vw, capped) so the More-menu shows the full
+    // group labels comfortably with thumb-friendly tap targets. Desktop keeps
+    // the 260px / 72px collapsed pattern.
+    const widthClass = collapsed ? 'md:w-[72px]' : 'md:w-[260px]';
+    const mobileWidth = 'w-[min(88vw,320px)]';
     const positionClass = open
         ? 'translate-x-0'
         : '-translate-x-full md:translate-x-0';
@@ -139,7 +143,7 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
 
     return (
         <aside
-            className={`fixed top-0 left-0 z-40 h-screen bg-dd-charcoal text-white flex flex-col transition-all duration-200 ${widthClass} ${positionClass}`}
+            className={`fixed top-0 left-0 z-40 h-screen bg-dd-charcoal text-white flex flex-col transition-all duration-200 ${mobileWidth} ${widthClass} ${positionClass}`}
         >
             {/* Logo header strip — entire 64px top of the sidebar is WHITE,
                 like a header bar. Logo (dark line art on transparent) sits on
@@ -207,9 +211,9 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
                                         title={collapsed
                                             ? (isEs ? item.es : item.en) + (showBadge ? ` (${badge})` : '')
                                             : undefined}
-                                        className={`w-full group relative flex items-center ${collapsed ? 'justify-center px-2' : 'px-3 gap-3'} py-2 rounded-lg text-sm font-medium transition ${active
+                                        className={`w-full group relative flex items-center ${collapsed ? 'justify-center px-2' : 'px-3 gap-3'} py-3 md:py-2 min-h-[44px] md:min-h-0 rounded-lg text-sm font-medium transition active:scale-[0.98] ${active
                                             ? 'bg-dd-charcoal-2 text-white'
-                                            : 'text-white/70 hover:bg-dd-charcoal-2 hover:text-white'}`}
+                                            : 'text-white/70 hover:bg-dd-charcoal-2 hover:text-white active:bg-dd-charcoal-2'}`}
                                     >
                                         {active && (
                                             <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-dd-green rounded-r" />

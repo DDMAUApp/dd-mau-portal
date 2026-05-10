@@ -3309,9 +3309,12 @@ function OpenShiftsCalendarBar({
                 </div>
             </div>
 
-            {/* 7 day columns aligned to the schedule grid below. Horizontal
-                scroll on narrow phones; otherwise the columns flex to fit. */}
-            <div className="grid grid-cols-7 divide-x divide-dd-line">
+            {/* 7 day columns. On md+ they share width via grid (aligns to the
+                weekly grid below). On phones we switch to a horizontal flex
+                with scroll-snap so each column gets a usable 96px instead of
+                being crushed to ~50px. Snap-mandatory means the user lands on
+                a clean column boundary every time they swipe. */}
+            <div className="flex md:grid md:grid-cols-7 md:divide-x md:divide-dd-line overflow-x-auto md:overflow-visible snap-x snap-mandatory scrollbar-thin">
                 {days.map((d, i) => {
                     const dStr = toDateStr(d);
                     const isToday = dStr === today;
@@ -3322,7 +3325,7 @@ function OpenShiftsCalendarBar({
                     const closed = dayBlocks.some(b => b.type === 'closed');
 
                     return (
-                        <div key={i} className={`p-1.5 min-w-0 ${isToday ? 'bg-dd-sage-50/40' : ''} ${closed ? 'opacity-60' : ''}`}>
+                        <div key={i} className={`shrink-0 w-[96px] md:w-auto snap-start p-1.5 min-w-0 border-r border-dd-line md:border-r-0 ${isToday ? 'bg-dd-sage-50/40' : ''} ${closed ? 'opacity-60' : ''}`}>
                             {/* Day header — matches grid header style at compact size */}
                             <div className={`text-center pb-1.5 mb-1.5 border-b ${isToday ? 'border-dd-green/30' : 'border-dd-line/60'}`}>
                                 <div className={`text-[9px] uppercase font-bold tracking-wider ${isToday ? 'text-dd-green-700' : 'text-dd-text-2'}`}>

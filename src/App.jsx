@@ -443,6 +443,8 @@ export default function App() {
                     storeLocation={effectiveLocation}
                     activeTab={activeTab}
                     onNavigate={(tab) => setActiveTab(tab)}
+                    hasOpsAccess={hasOpsAccess}
+                    hasRecipesAccess={hasRecipesAccess}
                     onExitV2={() => {
                         // v2 is the default now — "exit" means opt OUT (sets
                         // the persistent opt-out flag). useV2Flag picks it up
