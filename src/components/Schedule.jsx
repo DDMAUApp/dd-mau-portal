@@ -2289,39 +2289,44 @@ ${dayBlocks}
                 }
             `}</style>
 
-            <div className="flex items-center justify-between mb-1 print:hidden">
-                <h2 className="text-2xl font-bold text-mint-700">📅 {tx('Schedule', 'Horario')}</h2>
-                <div className="flex items-center gap-2">
-                    <button onClick={() => setShowNotifDrawer(true)}
-                        className="relative p-1.5 rounded-full bg-gray-100 hover:bg-gray-200">
-                        <span className="text-lg">🔔</span>
-                        {unreadCount > 0 && (
-                            <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
-                                {unreadCount > 9 ? '9+' : unreadCount}
-                            </span>
-                        )}
-                    </button>
-                    <span className="text-xs text-gray-500">{LOCATION_LABELS[storeLocation] || storeLocation}</span>
+            {/* v2-themed title row + bell + location pill. Bigger type,
+                cleaner hierarchy, matches HomeV2 typography. */}
+            <div className="flex items-start justify-between mb-4 print:hidden">
+                <div>
+                    <h2 className="text-2xl font-bold text-dd-text">📅 {tx('Schedule', 'Horario')}</h2>
+                    <p className="text-xs text-dd-text-2 mt-0.5">
+                        📍 {LOCATION_LABELS[storeLocation] || storeLocation} · {side === 'foh' ? tx('Front of House', 'Front of House') : tx('Back of House', 'Back of House')}
+                    </p>
                 </div>
+                <button onClick={() => setShowNotifDrawer(true)}
+                    className="relative p-2 rounded-lg bg-white border border-dd-line hover:bg-dd-bg transition shadow-card">
+                    <span className="text-base">🔔</span>
+                    {unreadCount > 0 && (
+                        <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
+                            {unreadCount > 9 ? '9+' : unreadCount}
+                        </span>
+                    )}
+                </button>
             </div>
 
-            {/* FOH / BOH side toggle — two separate schedules, managers & leads in both */}
-            <div className="flex gap-2 mb-2 print:hidden">
+            {/* FOH / BOH segmented control — matches the v2 segmented pattern
+                from HomeV2's "All/FOH/BOH" filter on upcoming shifts. */}
+            <div className="flex gap-1 mb-3 bg-white border border-dd-line rounded-lg p-1 print:hidden">
                 <button onClick={() => setSide('foh')}
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${side === 'foh' ? 'bg-teal-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {tx('Front of House', 'Front of House')}
+                    className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'foh' ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                    🪑 {tx('Front of House', 'Front of House')}
                 </button>
                 <button onClick={() => setSide('boh')}
-                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${side === 'boh' ? 'bg-orange-600 text-white shadow' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                    {tx('Back of House', 'Back of House')}
+                    className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'boh' ? 'bg-orange-600 text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                    🍳 {tx('Back of House', 'Back of House')}
                 </button>
             </div>
 
             {/* Week navigator */}
             <WeekNav weekStart={weekStart} setWeekStart={setWeekStart} isEn={isEn} />
 
-            {/* View mode toggle */}
-            <div className="flex gap-1 mb-3 bg-gray-100 rounded-lg p-1 print:hidden">
+            {/* View mode segmented control */}
+            <div className="flex gap-1 mb-3 bg-white border border-dd-line rounded-lg p-1 print:hidden">
                 {[
                     { key: 'grid', labelEn: 'Week', labelEs: 'Semana', icon: '⊞' },
                     { key: 'day', labelEn: 'Day', labelEs: 'Día', icon: '☰' },
@@ -2329,102 +2334,105 @@ ${dayBlocks}
                     { key: 'pto', labelEn: 'PTO', labelEs: 'PTO', icon: '🌴' },
                 ].map(v => (
                     <button key={v.key} onClick={() => setViewMode(v.key)}
-                        className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${viewMode === v.key ? 'bg-white text-mint-700 shadow' : 'text-gray-500'}`}>
+                        className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${viewMode === v.key ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
                         <span className="mr-1">{v.icon}</span>{tx(v.labelEn, v.labelEs)}
                     </button>
                 ))}
             </div>
 
-            {/* Action bar — mobile collapses secondary buttons behind a ⋯ toggle.
-                Tablet+ shows everything inline (more horizontal real estate). */}
+            {/* Action bar — v2 button hierarchy.
+                  PRIMARY (dd-green):  Publish (when drafts exist), + Shift
+                  SECONDARY (white):   Print, iCal, person filter, "More" toggle
+                  TERTIARY (subtle):   Request Off, My Avail, All PTO, Auto-fill,
+                                        Recurring, Copy, Blackouts, Templates, + Slot
+                Two flat rows of equal-weight pills replaced by a single primary
+                row + a "More" expander on mobile. */}
             <div className="flex flex-wrap gap-2 mb-3 print:hidden">
                 <select value={personFilter || ''}
                     onChange={(e) => setPersonFilter(e.target.value || null)}
-                    className="flex-1 min-w-[140px] border border-gray-300 rounded-lg px-2 py-2 text-xs">
+                    className="flex-1 min-w-[140px] bg-white border border-dd-line rounded-lg px-2 py-2 text-xs text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
                     <option value="">{tx('👥 Everyone', '👥 Todos')}</option>
                     {sideStaff.map(s => (
                         <option key={s.id || s.name} value={s.name}>{s.name}</option>
                     ))}
                 </select>
-                {/* PRIMARY (always inline, mobile + desktop) */}
+                {/* PRIMARY — Publish + Add Shift in dd-green */}
                 {canEdit && (() => {
-                    // Count drafts visible in the current week + side so the
-                    // manager sees at-a-glance whether Publish has work to do.
-                    // Without this badge we routinely had managers tap Publish,
-                    // get the "no drafts" alert, and assume the button is broken.
                     const draftCount = visibleShifts.filter(s => s.published === false).length;
                     return (
                     <>
                         <button onClick={handlePublishDrafts}
                             title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores')}
-                            className={`relative px-3 py-2 rounded-lg text-xs font-bold transition ${draftCount > 0 ? 'bg-green-600 text-white hover:bg-green-700 animate-pulse' : 'bg-gray-200 text-gray-500'}`}>
+                            className={`relative inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm ${draftCount > 0 ? 'bg-dd-green text-white hover:bg-dd-green-700 animate-pulse' : 'bg-dd-bg text-dd-text-2 border border-dd-line'}`}>
                             📢 {tx('Publish', 'Publicar')}
                             {draftCount > 0 && (
-                                <span className="absolute -top-1 -right-1 bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
+                                <span className="bg-amber-400 text-amber-950 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
                                     {draftCount}
                                 </span>
                             )}
                         </button>
                         <button onClick={() => openAddModal()}
-                            className="px-3 py-2 rounded-lg bg-mint-700 text-white text-xs font-bold hover:bg-mint-800">
+                            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-dd-green text-white text-xs font-bold hover:bg-dd-green-700 shadow-sm">
                             + {tx('Shift', 'Turno')}
                         </button>
                     </>
                     );
                 })()}
+                {/* SECONDARY — Print + More in white-with-border */}
                 <button onClick={handlePrintWeek}
                     title={tx('Print full week as one-page calendar', 'Imprimir semana')}
-                    className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                    className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                     🖨 {personFilter ? tx('Print', 'Imprimir') : tx('Print Week', 'Imprimir Semana')}
                 </button>
-                {/* Mobile-only "more" toggle. Hidden on md+. */}
                 <button onClick={() => setShowMoreActions(s => !s)}
-                    className="md:hidden px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                    className="md:hidden px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                     {showMoreActions ? `× ${tx('Less', 'Menos')}` : `⋯ ${tx('More', 'Más')}`}
                 </button>
 
-                {/* SECONDARY — wrapped in a section that's collapsed on mobile, always visible on md+ */}
+                {/* TERTIARY — collapsed on mobile, inline on md+. All chips
+                    use a consistent neutral pill shape with semantic accent
+                    colors only on the icon. */}
                 <div className={`${showMoreActions ? 'flex' : 'hidden'} md:flex flex-wrap gap-2 w-full md:w-auto md:contents`}>
                     <button onClick={handleExportIcs}
-                        className="px-3 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200 text-xs font-bold">
+                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                         📅 {tx('iCal', 'iCal')}
                     </button>
                     <button onClick={() => setShowPtoRequestModal(true)}
-                        className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
+                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                         🌴 {tx('Request Off', 'Pedir Off')}
                     </button>
                     <button onClick={() => setShowMyAvailModal(true)}
-                        className="px-3 py-2 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold hover:bg-purple-200 border border-purple-300">
+                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                         🗓 {tx('My Avail', 'Mi Dispon.')}
                     </button>
                     <button onClick={() => setShowTimeOffModal(true)}
-                        className="px-3 py-2 rounded-lg bg-amber-100 text-amber-800 text-xs font-bold hover:bg-amber-200 border border-amber-300">
+                        className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                         🌴 {tx('All PTO', 'Todo PTO')}
                     </button>
                     {canEdit && (
                         <>
                             <button onClick={handleAutoPopulate}
-                                className="px-3 py-2 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700">
+                                className="px-3 py-2 rounded-lg bg-dd-green-50 border border-dd-green/30 text-dd-green-700 hover:bg-dd-sage-50 text-xs font-semibold">
                                 ✨ {tx('Auto-fill', 'Auto-rellenar')}
                             </button>
                             <button onClick={() => setShowRecurringModal(true)}
-                                className="px-3 py-2 rounded-lg bg-cyan-100 text-cyan-800 border border-cyan-300 text-xs font-bold hover:bg-cyan-200">
+                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                                 🔁 {tx('Recurring', 'Recurrentes')}
                             </button>
                             <button onClick={handleCopyLastWeek}
-                                className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700">
+                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                                 📋 {tx('Copy ⏪', 'Copiar ⏪')}
                             </button>
                             <button onClick={() => setShowBlockModal(true)}
-                                className="px-3 py-2 rounded-lg bg-gray-700 text-white text-xs font-bold hover:bg-gray-800">
+                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                                 🚫 {tx('Blackouts', 'Bloqueos')}
                             </button>
                             <button onClick={() => setShowApplyTemplate(true)}
-                                className="px-3 py-2 rounded-lg bg-indigo-100 text-indigo-800 border border-indigo-300 text-xs font-bold hover:bg-indigo-200">
+                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                                 📋 {tx('Templates', 'Plantillas')}
                             </button>
                             <button onClick={() => setShowNeedModal(true)}
-                                className="px-3 py-2 rounded-lg bg-blue-600 text-white text-xs font-bold hover:bg-blue-700">
+                                className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg text-xs font-semibold">
                                 👥 {tx('+ Slot', '+ Slot')}
                             </button>
                         </>
