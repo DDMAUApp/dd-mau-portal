@@ -63,23 +63,21 @@ export default function Header({
                     <span className="text-dd-text-2 font-medium">{isEs ? 'Inicio' : 'Home'}</span>
                 </div>
 
-                {/* DESKTOP CENTER — location pill + search bar */}
+                {/* DESKTOP CENTER — location pill (centered, prominent).
+                    Search bar removed: it was a non-functional placeholder
+                    (no command-palette wired). Will be re-added when ⌘K
+                    search ships. */}
                 <div className="hidden md:flex flex-1 justify-center items-center gap-2 max-w-3xl mx-auto">
                     <button
                         onClick={() => onLocationChange?.()}
-                        className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-dd-bg border border-dd-line text-sm font-medium text-dd-text hover:bg-dd-sage-50 transition">
-                        <span className="w-2 h-2 rounded-full bg-dd-green" />
+                        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm font-semibold text-dd-text hover:bg-dd-sage-50 active:scale-95 transition">
+                        <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
+                        </span>
                         <span>{fullLabel}</span>
                         <span className="text-dd-text-2 text-xs">▾</span>
                     </button>
-                    <div className="flex-1 max-w-md relative">
-                        <input
-                            type="text"
-                            placeholder={isEs ? 'Buscar… (⌘K)' : 'Search… (⌘K)'}
-                            className="w-full pl-9 pr-3 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm placeholder:text-dd-text-2 focus:outline-none focus:bg-white focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition"
-                        />
-                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-dd-text-2 text-sm">🔍</span>
-                    </div>
                 </div>
 
                 {/* RIGHT — actions. Compact on mobile, all ≥44×44. Order

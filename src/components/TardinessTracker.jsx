@@ -236,7 +236,7 @@ export default function TardinessTracker({ language, staffName, staffList, store
                     </p>
                 </div>
                 <button onClick={() => setShowLogModal(true)}
-                    className="px-3 py-2 rounded-lg bg-red-600 text-white text-sm font-bold hover:bg-red-700">
+                    className="px-3 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
                     + {tx('Log tardy', 'Registrar')}
                 </button>
             </div>

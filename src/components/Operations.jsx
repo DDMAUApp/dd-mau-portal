@@ -3073,7 +3073,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                 return (
                     <div className="space-y-3">
-                        {/* FOH / BOH side selector — v2 segmented control (matches Schedule). */}
+                        {/* FOH / BOH side selector — v2 segmented control (matches Schedule).
+                            Emojis dropped — 🪑 + 🍳 don't render reliably across systems
+                            (showed as fallback tofu on some browsers). Side codes alone
+                            are universally read by restaurant staff. */}
                         <div className="flex gap-1 mb-1 bg-white border border-dd-line rounded-lg p-1 shadow-card">
                             {["FOH", "BOH"].map(side => {
                                 const isActive = checklistSide === side;
@@ -3081,7 +3084,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 return (
                                     <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); setTaskFilter(""); }}
                                         className={`flex-1 py-2 px-2 rounded-md font-bold text-sm transition active:scale-95 ${isActive ? activeBg : "text-dd-text-2 hover:bg-dd-bg"}`}>
-                                        {side === "FOH" ? "🪑 " : "🍳 "}{side}
+                                        {side}
                                     </button>
                                 );
                             })}
@@ -3152,32 +3155,32 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             const top = [...scoreboard.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
                             const sidePct = (s) => s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
                             return (
-                                <div className="rounded-lg border-2 border-mint-200 bg-gradient-to-br from-white to-mint-50 p-3 mb-2">
+                                <div className="rounded-xl border border-dd-line bg-white shadow-card p-3 mb-2">
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="text-xs font-bold text-gray-700">📊 {language === "es" ? "Resumen del día" : "Today's snapshot"}</span>
+                                        <span className="text-[11px] font-bold uppercase tracking-wider text-dd-text-2">{language === "es" ? "Resumen del día" : "Today's snapshot"}</span>
                                         {overdue.length > 0 && (
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-300">
+                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">
                                                 🚨 {overdue.length} {language === "es" ? "atrasadas" : "overdue"}
                                             </span>
                                         )}
                                     </div>
                                     <div className="grid grid-cols-2 gap-2 mb-2">
-                                        <div className="bg-blue-50 border border-blue-200 rounded p-2">
-                                            <div className="flex justify-between text-[10px] font-bold text-blue-700 mb-1">
+                                        <div className="bg-dd-green-50 border border-dd-green/30 rounded-lg p-2">
+                                            <div className="flex justify-between items-baseline text-[11px] font-bold text-dd-green-700 mb-1.5">
                                                 <span>FOH</span>
-                                                <span>{fohStats.done}/{fohStats.total} · {sidePct(fohStats)}%</span>
+                                                <span className="tabular-nums">{fohStats.done}/{fohStats.total} · {sidePct(fohStats)}%</span>
                                             </div>
-                                            <div className="w-full bg-blue-100 rounded-full h-1.5">
-                                                <div className="h-1.5 rounded-full bg-blue-500" style={{ width: sidePct(fohStats) + "%" }} />
+                                            <div className="w-full bg-white/60 rounded-full h-1.5 overflow-hidden">
+                                                <div className="h-1.5 rounded-full bg-dd-green transition-all" style={{ width: sidePct(fohStats) + "%" }} />
                                             </div>
                                         </div>
-                                        <div className="bg-amber-50 border border-amber-200 rounded p-2">
-                                            <div className="flex justify-between text-[10px] font-bold text-amber-700 mb-1">
+                                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
+                                            <div className="flex justify-between items-baseline text-[11px] font-bold text-orange-700 mb-1.5">
                                                 <span>BOH</span>
-                                                <span>{bohStats.done}/{bohStats.total} · {sidePct(bohStats)}%</span>
+                                                <span className="tabular-nums">{bohStats.done}/{bohStats.total} · {sidePct(bohStats)}%</span>
                                             </div>
-                                            <div className="w-full bg-amber-100 rounded-full h-1.5">
-                                                <div className="h-1.5 rounded-full bg-amber-500" style={{ width: sidePct(bohStats) + "%" }} />
+                                            <div className="w-full bg-white/60 rounded-full h-1.5 overflow-hidden">
+                                                <div className="h-1.5 rounded-full bg-orange-500 transition-all" style={{ width: sidePct(bohStats) + "%" }} />
                                             </div>
                                         </div>
                                     </div>

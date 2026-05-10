@@ -288,9 +288,15 @@ export default function Sidebar({
                 "lock screen is gone" bug — the Log Out button used to be a
                 pure presentational stub with no onClick handler. */}
             <div className="border-t border-dd-charcoal-2 p-2 space-y-1 shrink-0">
-                {!collapsed && (
-                    <div className="text-[10px] text-white/40 mb-2 px-2">
-                        Shih Technology · {staffName || 'guest'}
+                {!collapsed && staffName && (
+                    <div className="flex items-center gap-2 mb-2 px-2">
+                        <div className="w-7 h-7 rounded-full bg-dd-green text-white flex items-center justify-center text-[11px] font-bold shrink-0">
+                            {staffName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="text-xs font-semibold text-white truncate">{staffName}</div>
+                            <div className="text-[9px] text-white/40 leading-tight">Signed in</div>
+                        </div>
                     </div>
                 )}
                 {/* Language toggle (mirrors the legacy footer action) */}
