@@ -12,7 +12,7 @@ import AppVersion from './components/AppVersion';
 import AppToast from './components/AppToast';
 // v2 design preview — gated by ?v2=1 query param.
 const AppShellV2 = lazy(() => import('./v2/AppShellV2'));
-const DemoDashboardV2 = lazy(() => import('./v2/DemoDashboard'));
+const HomeV2 = lazy(() => import('./v2/HomeV2'));
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
@@ -386,7 +386,13 @@ export default function App() {
                         window.location.search = '?v2=0';
                     }}
                 >
-                    <DemoDashboardV2 language={language} staffName={staffName} />
+                    <HomeV2
+                        language={language}
+                        staffName={staffName}
+                        storeLocation={effectiveLocation}
+                        staffList={staffList}
+                        onNavigate={(tab) => setActiveTab(tab)}
+                    />
                 </AppShellV2>
             </Suspense>
         );
