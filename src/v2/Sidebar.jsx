@@ -15,19 +15,28 @@ import { useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
 
+// NAV_GROUPS — every tab the v2 shell can render, with per-item access keys.
+// Items are filtered at render time based on the user's role/access flags
+// passed in from App.jsx (hasOpsAccess, hasRecipesAccess, isManager, isAdmin).
+//
+// Items removed since v2 launch:
+//   - 'orders'   → had no render handler in App.jsx (broken link)
+//   - 'invoices' → had no render handler in App.jsx (broken link)
+// Items added back to match legacy parity:
+//   - 'ai' AI Assistant — surfaced in legacy as a pinned purple block
 const NAV_GROUPS = [
     {
         labelEn: 'WORKSPACE', labelEs: 'TRABAJO',
         items: [
             { tab: 'home',       icon: '🏠', en: 'Home',       es: 'Inicio' },
             { tab: 'schedule',   icon: '📅', en: 'Schedule',   es: 'Horario' },
-            { tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones' },
+            { tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', requires: 'opsAccess' },
         ],
     },
     {
         labelEn: 'KITCHEN', labelEs: 'COCINA',
         items: [
-            { tab: 'recipes', icon: '🧑‍🍳', en: 'Recipes',    es: 'Recetas' },
+            { tab: 'recipes', icon: '🧑‍🍳', en: 'Recipes',    es: 'Recetas',     requires: 'recipesAccess' },
             { tab: 'menu',    icon: '🍜',   en: 'Menu',       es: 'Menú' },
             { tab: 'eighty6', icon: '🚫',   en: '86 Board',   es: 'Tablero 86' },
         ],
@@ -36,17 +45,16 @@ const NAV_GROUPS = [
         labelEn: 'PEOPLE', labelEs: 'PERSONAL',
         items: [
             { tab: 'training', icon: '📚', en: 'Training',  es: 'Capacitación' },
-            { tab: 'tardies',  icon: '⏰', en: 'Tardies',   es: 'Tardanzas' },
-            { tab: 'handoff',  icon: '🤝', en: 'Handoff',   es: 'Entrega' },
+            { tab: 'tardies',  icon: '⏰', en: 'Tardies',   es: 'Tardanzas',  requires: 'manager' },
+            { tab: 'handoff',  icon: '🤝', en: 'Handoff',   es: 'Entrega',    requires: 'manager' },
         ],
     },
     {
         labelEn: 'BUSINESS', labelEs: 'NEGOCIO',
         items: [
-            { tab: 'labor',     icon: '📊', en: 'Labor',         es: 'Labor' },
-            { tab: 'orders',    icon: '🧾', en: 'Live Orders',   es: 'Órdenes en vivo' },
-            { tab: 'invoices',  icon: '💵', en: 'Invoices',      es: 'Facturas' },
+            { tab: 'labor',     icon: '📊', en: 'Labor',         es: 'Mano Obra',   requires: 'admin' },
             { tab: 'catering',  icon: '🥘', en: 'Catering',      es: 'Catering' },
+            { tab: 'ai',        icon: '🤖', en: 'AI Assistant',  es: 'Asistente AI' },
         ],
     },
     {
@@ -54,13 +62,42 @@ const NAV_GROUPS = [
         items: [
             { tab: 'maintenance', icon: '🔧', en: 'Maintenance', es: 'Mantenimiento' },
             { tab: 'insurance',   icon: '📑', en: 'Insurance',   es: 'Seguro' },
-            { tab: 'admin',       icon: '⚙️', en: 'Admin',       es: 'Admin' },
+            { tab: 'admin',       icon: '⚙️', en: 'Admin',       es: 'Admin', requires: 'admin' },
         ],
     },
 ];
 
-export default function Sidebar({ language, activeTab, onNavigate, open, collapsed, onToggleCollapse, storeLocation = 'webster', staffName = '' }) {
+export default function Sidebar({
+    language, activeTab, onNavigate, open, collapsed, onToggleCollapse,
+    storeLocation = 'webster', staffName = '',
+    // Access flags — items in NAV_GROUPS are filtered out if the user
+    // doesn't have the required role. Defaults are permissive so the
+    // sidebar still renders if the parent forgets to pass them.
+    isAdmin = false,
+    isManager = false,
+    hasOpsAccess = true,
+    hasRecipesAccess = true,
+    // Action handlers — wired from App.jsx via AppShellV2.
+    onLogout,
+    onForceRefresh,
+    onLanguageToggle,
+}) {
     const isEs = language === 'es';
+
+    // Filter nav items by required role/access flag. An item with no
+    // `requires` is always shown.
+    const accessOk = (req) => {
+        if (!req) return true;
+        if (req === 'admin') return isAdmin;
+        if (req === 'manager') return isManager;
+        if (req === 'opsAccess') return hasOpsAccess;
+        if (req === 'recipesAccess') return hasRecipesAccess;
+        return true;
+    };
+    const filteredGroups = NAV_GROUPS.map(g => ({
+        ...g,
+        items: g.items.filter(it => accessOk(it.requires)),
+    })).filter(g => g.items.length > 0);
     // Mobile drawer is wider (88vw, capped) so the More-menu shows the full
     // group labels comfortably with thumb-friendly tap targets. Desktop keeps
     // the 260px / 72px collapsed pattern.
@@ -192,7 +229,7 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
 
             {/* Nav groups */}
             <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
-                {NAV_GROUPS.map(group => (
+                {filteredGroups.map(group => (
                     <div key={group.labelEn}>
                         {!collapsed && (
                             <div className="text-[10px] font-bold tracking-widest text-white/40 px-3 mb-1.5">
@@ -245,16 +282,42 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
                 ))}
             </nav>
 
-            {/* Footer — version + log out */}
-            <div className="border-t border-dd-charcoal-2 p-3 shrink-0">
+            {/* Footer — three quick actions: language toggle, force refresh,
+                and log out (returns to the lock screen). All wired from App.jsx
+                so they actually do something. The footer was the source of the
+                "lock screen is gone" bug — the Log Out button used to be a
+                pure presentational stub with no onClick handler. */}
+            <div className="border-t border-dd-charcoal-2 p-2 space-y-1 shrink-0">
                 {!collapsed && (
-                    <div className="text-[10px] text-white/40 mb-2 px-1">
-                        Shih Technology · v2-preview
+                    <div className="text-[10px] text-white/40 mb-2 px-2">
+                        Shih Technology · {staffName || 'guest'}
                     </div>
                 )}
-                <button className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2 px-3'} py-2 rounded-lg text-sm font-medium text-white/70 hover:bg-dd-charcoal-2 hover:text-white transition`}>
-                    <span>🚪</span>
-                    {!collapsed && <span>{isEs ? 'Salir' : 'Log out'}</span>}
+                {/* Language toggle (mirrors the legacy footer action) */}
+                {onLanguageToggle && (
+                    <button onClick={onLanguageToggle}
+                        title={isEs ? 'Cambiar idioma' : 'Switch language'}
+                        className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2 px-3'} py-2 min-h-[44px] md:min-h-0 rounded-lg text-sm font-medium text-white/70 hover:bg-dd-charcoal-2 hover:text-white active:bg-dd-charcoal-2 transition`}>
+                        <span className="text-base">🌐</span>
+                        {!collapsed && <span>{language === 'es' ? 'EN / ES' : 'EN / ES'} <span className="text-white/40 ml-1">({language.toUpperCase()})</span></span>}
+                    </button>
+                )}
+                {/* Force-refresh — clears caches + reloads. Same flow as
+                    pull-to-refresh on mobile. */}
+                {onForceRefresh && (
+                    <button onClick={onForceRefresh}
+                        title={isEs ? 'Refrescar app' : 'Refresh app'}
+                        className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2 px-3'} py-2 min-h-[44px] md:min-h-0 rounded-lg text-sm font-medium text-white/70 hover:bg-dd-charcoal-2 hover:text-white active:bg-dd-charcoal-2 transition`}>
+                        <span className="text-base">🔄</span>
+                        {!collapsed && <span>{isEs ? 'Refrescar app' : 'Refresh app'}</span>}
+                    </button>
+                )}
+                {/* Log Out — clears staffName, sends user back to lock screen */}
+                <button onClick={onLogout}
+                    title={isEs ? 'Cerrar sesión' : 'Log out'}
+                    className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2 px-3'} py-2 min-h-[44px] md:min-h-0 rounded-lg text-sm font-bold bg-dd-charcoal-2 text-white hover:bg-red-900/40 hover:text-white active:bg-red-900/50 transition`}>
+                    <span className="text-base">🔒</span>
+                    {!collapsed && <span>{isEs ? 'Bloquear / Salir' : 'Lock / Log out'}</span>}
                 </button>
             </div>
         </aside>

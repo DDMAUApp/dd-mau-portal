@@ -32,6 +32,11 @@ export default function AppShellV2({
     onExitV2,
     hasOpsAccess = true,
     hasRecipesAccess = true,
+    isAdmin = false,
+    isManager = false,
+    onLogout,
+    onForceRefresh,
+    onLanguageToggle,
 }) {
     const [sidebarOpen, setSidebarOpen] = useState(false); // mobile "More" drawer
     const [collapsed, setCollapsed] = useState(false);     // desktop rail mode
@@ -55,6 +60,13 @@ export default function AppShellV2({
                 open={sidebarOpen}
                 collapsed={collapsed}
                 onToggleCollapse={() => setCollapsed(c => !c)}
+                isAdmin={isAdmin}
+                isManager={isManager}
+                hasOpsAccess={hasOpsAccess}
+                hasRecipesAccess={hasRecipesAccess}
+                onLogout={() => { setSidebarOpen(false); onLogout?.(); }}
+                onForceRefresh={() => { setSidebarOpen(false); onForceRefresh?.(); }}
+                onLanguageToggle={() => onLanguageToggle?.()}
             />
 
             <div className={`transition-all duration-200 ${collapsed ? 'md:pl-[72px]' : 'md:pl-[260px]'}`}>
@@ -64,6 +76,8 @@ export default function AppShellV2({
                     storeLocation={storeLocation}
                     onMenuClick={() => setSidebarOpen(true)}
                     onExitV2={onExitV2}
+                    onLanguageToggle={onLanguageToggle}
+                    onLogout={onLogout}
                 />
                 {/* Mobile gets pb-bottom-nav so the bottom tab bar doesn't cover
                     the last row of content. Desktop has no bottom bar so the

@@ -445,6 +445,16 @@ export default function App() {
                     onNavigate={(tab) => setActiveTab(tab)}
                     hasOpsAccess={hasOpsAccess}
                     hasRecipesAccess={hasRecipesAccess}
+                    isAdmin={staffIsAdmin}
+                    isManager={isManager}
+                    // Logout returns the app to the lock screen by clearing
+                    // the active staffName. The render branches at the top
+                    // of App() route to <HomePage /> when staffName is null.
+                    onLogout={() => { setStaffName(null); setActiveTab('home'); }}
+                    // Same forceRefresh used by pull-to-refresh + the legacy
+                    // sidebar's refresh button. Clears all caches and reloads.
+                    onForceRefresh={() => forceRefresh()}
+                    onLanguageToggle={() => setLanguage(language === 'en' ? 'es' : 'en')}
                     onExitV2={() => {
                         // v2 is the default now — "exit" means opt OUT (sets
                         // the persistent opt-out flag). useV2Flag picks it up

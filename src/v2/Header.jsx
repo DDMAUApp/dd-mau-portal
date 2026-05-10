@@ -10,7 +10,7 @@
 // All tap targets are ≥44px on mobile (Apple HIG / a11y minimum). The compact
 // look is achieved with smaller icons, not smaller hit areas.
 
-export default function Header({ language, staffName, storeLocation = 'webster', onMenuClick, onExitV2 }) {
+export default function Header({ language, staffName, storeLocation = 'webster', onMenuClick, onExitV2, onLanguageToggle, onLogout }) {
     const isEs = language === 'es';
     const initials = (staffName || 'U')
         .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -56,12 +56,13 @@ export default function Header({ language, staffName, storeLocation = 'webster',
                     </div>
                 </div>
 
-                {/* RIGHT — language + bell + avatar. Mobile: ml-auto pushes
-                    these to the right edge. All tap targets ≥44px. */}
+                {/* RIGHT — language + bell + avatar + lock. Mobile: ml-auto
+                    pushes these to the right edge. All tap targets ≥44px. */}
                 <div className="ml-auto flex items-center gap-1 md:gap-1">
-                    <button className="min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg text-xs font-bold transition"
-                        title={isEs ? 'Idioma' : 'Language'}
-                        aria-label={isEs ? 'Cambiar idioma' : 'Change language'}>
+                    <button onClick={onLanguageToggle}
+                        className="min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg text-xs font-bold transition"
+                        title={isEs ? 'Cambiar idioma' : 'Switch language'}
+                        aria-label={isEs ? 'Cambiar idioma' : 'Switch language'}>
                         {language === 'es' ? 'ES' : 'EN'}
                     </button>
                     <button className="relative min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg transition"
@@ -76,9 +77,20 @@ export default function Header({ language, staffName, storeLocation = 'webster',
                         </div>
                         <div className="hidden lg:block min-w-0 max-w-[140px]">
                             <div className="text-sm font-semibold text-dd-text leading-tight truncate">{staffName || 'You'}</div>
-                            <div className="text-[10px] text-dd-text-2 leading-tight">Admin</div>
+                            <div className="text-[10px] text-dd-text-2 leading-tight">{staffName ? 'Signed in' : 'Guest'}</div>
                         </div>
                     </div>
+                    {/* Lock button — quick way back to the PIN screen without
+                        opening the More drawer. Hidden on mobile (it's in the
+                        bottom More drawer there) to keep the slim header tidy. */}
+                    {onLogout && (
+                        <button onClick={onLogout}
+                            className="hidden md:flex min-w-[40px] min-h-[40px] ml-2 rounded-lg items-center justify-center text-dd-text-2 hover:bg-red-50 hover:text-red-700 active:bg-red-100 transition"
+                            title={isEs ? 'Bloquear / Salir' : 'Lock / Log out'}
+                            aria-label={isEs ? 'Bloquear / Salir' : 'Lock / Log out'}>
+                            <span className="text-base">🔒</span>
+                        </button>
+                    )}
                     {onExitV2 && (
                         <button onClick={onExitV2}
                             className="hidden md:flex ml-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-dd-bg border border-dd-line text-dd-text-2 hover:bg-dd-sage-50">
