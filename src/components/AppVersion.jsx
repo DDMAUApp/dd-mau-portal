@@ -38,10 +38,10 @@ export default function AppVersion({ language, className = '' }) {
                 <span className="font-mono">{VERSION}</span>
             </button>
             {open && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
                     onClick={() => setOpen(false)}>
                     <div onClick={(e) => e.stopPropagation()}
-                        className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3">
+                        className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 space-y-3 modal-scroll-lock pb-bottom-nav sm:pb-5">
                         <div className="flex items-center justify-between">
                             <h3 className="text-base font-bold text-mint-700">ℹ {isEs ? 'Versión de la app' : 'App version'}</h3>
                             <button onClick={() => setOpen(false)}

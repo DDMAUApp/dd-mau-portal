@@ -724,8 +724,8 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     return (
         <div className="p-4 pb-bottom-nav recipe-protected" onContextMenu={e => e.preventDefault()}>
             {pinPromptOpen && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl max-w-sm w-full p-5 space-y-3">
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                    <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full sm:max-w-sm p-5 space-y-3 modal-scroll-lock pb-bottom-nav sm:pb-5">
                         <h3 className="text-base font-bold text-mint-700">🔐 {language === 'es' ? 'Ingresa tu PIN' : 'Enter your PIN'}</h3>
                         <p className="text-xs text-gray-600">
                             {language === 'es'

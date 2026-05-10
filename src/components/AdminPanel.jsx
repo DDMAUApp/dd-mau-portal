@@ -827,7 +827,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horas semanales objetivo" : "Target Hours / Week"}</p>
                                                         <p className="text-xs text-gray-500 mb-2">{language === "es" ? "Usado por el auto-populador. 0 = sin objetivo." : "Used by auto-fill. 0 = no target."}</p>
-                                                        <input type="number" min="0" max="80" step="1"
+                                                        <input type="number" inputMode="numeric" pattern="[0-9]*" min="0" max="80" step="1"
                                                             value={editTargetHours} onChange={e => setEditTargetHours(e.target.value)}
                                                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                                                     </div>
@@ -1418,7 +1418,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             </select>
                                                         );
                                                     })()}
-                                                    <input type="number" min="0" max="80" step="1"
+                                                    <input type="number" inputMode="numeric" pattern="[0-9]*" min="0" max="80" step="1"
                                                         value={s.targetHours || 0}
                                                         onChange={e => handleBulkUpdate(s.id, { targetHours: Number(e.target.value) || 0 })}
                                                         title={language === "es" ? "Horas/sem objetivo" : "Target hrs/week"}

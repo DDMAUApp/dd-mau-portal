@@ -7,6 +7,74 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
         'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans',
         'Helvetica Neue', sans-serif;
+    /* Disable iOS user font scaling that breaks our layouts. Staff using
+       large-text accessibility setting still see scaled type via
+       text-size-adjust: 100% (which respects browser zoom but stops
+       Safari's runtime auto-resize). */
+    -webkit-text-size-adjust: 100%;
+    /* Smooth momentum scrolling for iOS */
+    -webkit-overflow-scrolling: touch;
+}
+
+/* ── Mobile-first universal tweaks ────────────────────────────────────────
+ * All of these target the kitchen-staff use case: gloved or wet fingers,
+ * one-handed taps during a rush, phones held with the home indicator down.
+ *
+ * Combined effect: every tap fires INSTANTLY (no 300ms wait), no ugly blue
+ * highlight flash, scrollable areas momentum-scroll naturally, and modals
+ * don't accidentally scroll the page underneath them.
+ */
+
+/* Eliminate the ~300ms tap delay iOS adds while it waits to see if you're
+   double-tapping to zoom. We never want zoom-on-double-tap inside an app —
+   pinch-zoom still works for accessibility. This is the single biggest
+   "feels responsive" change you can make on a mobile web app. */
+button, a, [role="button"], input, select, textarea, label {
+    touch-action: manipulation;
+}
+
+/* Kill the ugly blue/gray tap-highlight box that iOS / Android default to
+   when you tap a button. Our custom active: states (active:scale, active:bg)
+   already give clear tactile feedback. */
+* {
+    -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent overscroll bounce from the body bleeding into modal scrollables —
+   makes modals feel locked-in like native sheets. */
+.modal-scroll-lock {
+    overscroll-behavior: contain;
+}
+
+/* Keyboard-only focus ring (mouse / touch users see clean states; tab-key
+   users get a clear ring). Default browser :focus is too aggressive for
+   touch UX. */
+:focus { outline: none; }
+:focus-visible {
+    outline: 2px solid #1F7A4D; /* dd-green */
+    outline-offset: 2px;
+}
+
+/* Inputs default — bigger min-height on touch devices so the soft keyboard
+   handler works correctly and the field is easy to land on. */
+@media (pointer: coarse) {
+    input:not([type=checkbox]):not([type=radio]),
+    select,
+    textarea {
+        min-height: 44px;
+        font-size: 16px; /* < 16px causes iOS to auto-zoom on focus */
+    }
+}
+
+/* Scrollbar polish — thin and subtle, matches v2 theme.
+   `scrollbar-thin` utility class is referenced by the OpenShiftsCalendarBar. */
+.scrollbar-thin::-webkit-scrollbar { height: 6px; width: 6px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #C9DBC9; border-radius: 3px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: #1F7A4D; }
+.scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #C9DBC9 transparent;
 }
 
 .navbar-shadow {
