@@ -2463,9 +2463,13 @@ ${dayBlocks}
                 ).sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
                 if (weekNeeds.length === 0) return null;
                 return (
-                    <div className="mb-3 rounded-lg p-2 bg-blue-50 border-2 border-blue-300 text-xs">
-                        <div className="font-bold text-blue-900 mb-1">👥 {tx('Staffing needs this week', 'Necesidades de personal esta semana')} — {side === 'foh' ? 'FOH' : 'BOH'}</div>
-                        <div className="space-y-1">
+                    <div className="mb-3 rounded-xl p-3 bg-white border border-dd-line shadow-card">
+                        <div className="flex items-center gap-2 mb-2">
+                            <span className="w-1 h-5 bg-blue-500 rounded-full" />
+                            <h3 className="text-sm font-bold text-dd-text">👥 {tx('Open staffing slots', 'Espacios abiertos')}</h3>
+                            <span className="text-[10px] font-bold text-dd-text-2 uppercase tracking-wider">{side === 'foh' ? 'FOH' : 'BOH'} · {weekNeeds.length}</span>
+                        </div>
+                        <div className="space-y-2">
                             {weekNeeds.map(n => {
                                 const filled = (n.filledStaff || []).length;
                                 const open = Math.max(0, (n.count || 0) - filled);
@@ -2475,7 +2479,7 @@ ${dayBlocks}
                                 const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
                                 const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
                                 return (
-                                    <div key={n.id} className={`p-2 rounded border ${overFilled ? 'bg-red-50 border-red-400' : fullyStaffed ? 'bg-green-50 border-green-300' : 'bg-white border-blue-200'}`}>
+                                    <div key={n.id} className={`p-2.5 rounded-lg border ${overFilled ? 'bg-red-50 border-red-200' : fullyStaffed ? 'bg-dd-green-50 border-dd-green/30' : 'bg-dd-bg border-dd-line'}`}>
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="min-w-0 flex-1">
                                                 <div className="font-bold text-gray-800 flex items-center gap-1.5 flex-wrap">
@@ -2507,17 +2511,18 @@ ${dayBlocks}
                                             <div className="flex flex-col gap-1 flex-shrink-0">
                                                 {!fullyStaffed && (
                                                     <button onClick={() => { setFillingNeed(n); setAvailableForDate(n.date); }}
-                                                        className="px-2 py-1 rounded bg-blue-600 text-white text-[10px] font-bold hover:bg-blue-700">
-                                                        {tx('Fill 1', 'Asignar 1')}
+                                                        className="px-2.5 py-1 rounded-md bg-dd-green text-white text-[10px] font-bold hover:bg-dd-green-700 shadow-sm">
+                                                        {tx('Fill', 'Llenar')}
                                                     </button>
                                                 )}
                                                 <button onClick={() => setEditingNeed(n)}
                                                     title={tx('Edit slot times / count', 'Editar horario / cantidad')}
-                                                    className="px-2 py-1 rounded bg-gray-200 text-gray-700 text-[10px] font-bold hover:bg-gray-300">
+                                                    className="px-2.5 py-1 rounded-md bg-white border border-dd-line text-dd-text text-[10px] font-semibold hover:bg-dd-bg">
                                                     ✏ {tx('Edit', 'Editar')}
                                                 </button>
                                                 <button onClick={() => handleRemoveNeed(n.id)}
-                                                    className="px-2 py-1 rounded bg-red-100 text-red-700 text-[10px] font-bold hover:bg-red-200">×</button>
+                                                    title={tx('Remove slot', 'Eliminar')}
+                                                    className="px-2.5 py-1 rounded-md bg-white border border-red-200 text-red-700 text-[10px] font-semibold hover:bg-red-50">×</button>
                                             </div>
                                         </div>
                                     </div>
@@ -2911,28 +2916,35 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
     const sameMonth = weekStart.getMonth() === weekEnd.getMonth();
     const fmt = (d) => d.toLocaleDateString(isEn ? 'en-US' : 'es-MX', { month: 'short', day: 'numeric' });
     const range = sameMonth
-        ? `${fmt(weekStart)}–${weekEnd.getDate()}`
-        : `${fmt(weekStart)} – ${fmt(weekEnd)}`;
+        ? `${fmt(weekStart)} – ${weekEnd.getDate()}, ${weekStart.getFullYear()}`
+        : `${fmt(weekStart)} – ${fmt(weekEnd)}, ${weekStart.getFullYear()}`;
     const today = startOfWeek(new Date());
     const isCurrentWeek = toDateStr(today) === toDateStr(weekStart);
     return (
-        <div className="flex items-center justify-between mb-3 bg-mint-50 rounded-lg p-2 border border-mint-200 print:bg-white print:border-0 print:p-0 print:mb-2">
+        <div className="flex items-center justify-between mb-3 bg-white rounded-lg p-2 border border-dd-line shadow-card print:bg-white print:border-0 print:p-0 print:mb-2">
             <button onClick={() => setWeekStart(addDays(weekStart, -7))}
-                className="w-9 h-9 rounded-md bg-white text-mint-700 font-bold shadow-sm hover:bg-mint-100 print:hidden">‹</button>
+                aria-label="Previous week"
+                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-bold hover:bg-dd-sage-50 transition print:hidden">
+                ‹
+            </button>
             <div className="text-center">
-                <div className="text-sm font-bold text-mint-800 print:text-base">{range}</div>
-                {!isCurrentWeek && (
+                <div className="text-base font-bold text-dd-text print:text-lg leading-tight">{range}</div>
+                {isCurrentWeek ? (
+                    <div className="text-[10px] text-dd-green-700 font-bold uppercase tracking-wider mt-0.5 print:hidden">
+                        ● {isEn ? 'This week' : 'Esta semana'}
+                    </div>
+                ) : (
                     <button onClick={() => setWeekStart(today)}
-                        className="text-[10px] text-mint-700 underline print:hidden">
-                        {isEn ? 'Today' : 'Hoy'}
+                        className="text-[11px] text-dd-text-2 hover:text-dd-green-700 font-semibold mt-0.5 print:hidden">
+                        ↺ {isEn ? 'Jump to today' : 'Ir a hoy'}
                     </button>
-                )}
-                {isCurrentWeek && (
-                    <div className="text-[10px] text-mint-600 font-semibold print:hidden">{isEn ? 'This week' : 'Esta semana'}</div>
                 )}
             </div>
             <button onClick={() => setWeekStart(addDays(weekStart, 7))}
-                className="w-9 h-9 rounded-md bg-white text-mint-700 font-bold shadow-sm hover:bg-mint-100 print:hidden">›</button>
+                aria-label="Next week"
+                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-bold hover:bg-dd-sage-50 transition print:hidden">
+                ›
+            </button>
         </div>
     );
 }
@@ -2944,39 +2956,59 @@ function WeekNav({ weekStart, setWeekStart, isEn }) {
 function HoursScoreboard({ scoreboard, side, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     if (!scoreboard) return null;
-    const cell = (label, data, isActive) => {
+    const cell = (label, data, isActive, accentColor) => {
         const pct = data.target > 0 ? Math.round((data.scheduled / data.target) * 100) : null;
-        // Color thresholds:
-        //   <80%  amber   (under-staffed for the team's appetite)
-        //   80-104% green (healthy)
-        //   105-114% amber (creeping into OT)
-        //   115%+ red    (over budget — likely OT exposure)
-        const tone =
-            pct == null   ? 'bg-gray-50 border-gray-200 text-gray-600'
-          : pct < 80      ? 'bg-amber-50 border-amber-300 text-amber-900'
-          : pct <= 104    ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
-          : pct <= 114    ? 'bg-amber-50 border-amber-400 text-amber-900'
-          :                 'bg-red-50 border-red-300 text-red-900';
+        // Status thresholds same as before — tones now in v2 vocabulary.
+        const status =
+            pct == null   ? { label: tx('No target', 'Sin objetivo'), tone: 'text-dd-text-2', dot: 'bg-gray-300', bar: 'bg-gray-300' }
+          : pct < 80      ? { label: tx('Under', 'Bajo'),     tone: 'text-amber-700',  dot: 'bg-amber-500', bar: 'bg-amber-400' }
+          : pct <= 104    ? { label: tx('On target', 'En meta'), tone: 'text-emerald-700', dot: 'bg-emerald-500', bar: 'bg-emerald-500' }
+          : pct <= 114    ? { label: tx('Trending OT', 'Hacia OT'), tone: 'text-amber-700', dot: 'bg-amber-500', bar: 'bg-amber-500' }
+          :                 { label: tx('Over budget', 'Excedido'), tone: 'text-red-700', dot: 'bg-red-500', bar: 'bg-red-500' };
+        const barWidth = pct == null ? 0 : Math.min(150, pct);
         return (
-            <div className={`flex-1 min-w-[140px] rounded-lg border-2 px-3 py-2 ${tone} ${isActive ? 'ring-2 ring-mint-500' : ''}`}>
-                <div className="text-[10px] font-bold uppercase opacity-80">{label}</div>
-                <div className="text-base font-bold leading-tight">
-                    {formatHours(data.scheduled)}
-                    {data.target > 0 && <span className="text-xs opacity-70"> / {formatHours(data.target)}</span>}
-                    {pct != null && <span className="text-xs opacity-70 ml-1">({pct}%)</span>}
+            <div className={`flex-1 min-w-[200px] rounded-xl bg-white border ${isActive ? 'border-dd-green ring-2 ring-dd-green-50' : 'border-dd-line'} shadow-card p-3`}>
+                <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full ${accentColor}`} />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{label}</span>
+                    </div>
+                    <span className={`text-[10px] font-bold ${status.tone} flex items-center gap-1`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />
+                        {status.label}
+                    </span>
                 </div>
-                {/* Under/over chips — quick "who needs hours" + "who's at OT risk" */}
+                <div className="flex items-baseline gap-1">
+                    <span className="text-2xl font-black text-dd-text tabular-nums leading-none">{formatHours(data.scheduled)}</span>
+                    {data.target > 0 && (
+                        <span className="text-xs text-dd-text-2 font-semibold">/ {formatHours(data.target)}</span>
+                    )}
+                    {pct != null && (
+                        <span className={`ml-1 text-xs font-bold ${status.tone}`}>{pct}%</span>
+                    )}
+                </div>
+                {/* Progress bar — caps visually at 150% so far-over slots
+                    don't break the layout but still read as red. */}
+                {pct != null && (
+                    <div className="mt-2 h-1.5 w-full bg-dd-bg rounded-full overflow-hidden">
+                        <div className={`h-full rounded-full transition-all ${status.bar}`}
+                            style={{ width: `${(barWidth / 150) * 100}%` }} />
+                    </div>
+                )}
+                {/* Under/over chips */}
                 {(data.under.length > 0 || data.over.length > 0) && (
-                    <div className="mt-1 flex flex-wrap gap-1">
+                    <div className="mt-2 flex flex-wrap gap-1">
                         {data.under.map(p => (
-                            <span key={'u-' + p.name} className="text-[9px] px-1 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold"
+                            <span key={'u-' + p.name}
+                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
                                 title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target`,
                                          `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo`)}>
                                 ↓ {p.name.split(' ')[0]} {formatHours(p.gap)}
                             </span>
                         ))}
                         {data.over.map(p => (
-                            <span key={'o-' + p.name} className="text-[9px] px-1 py-0.5 rounded bg-red-100 text-red-900 border border-red-300 font-bold"
+                            <span key={'o-' + p.name}
+                                className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-red-50 text-red-800 border border-red-200"
                                 title={tx(`${p.name}: ${formatHours(p.scheduled)} of ${formatHours(p.target)} target — over by ${formatHours(p.gap)}`,
                                          `${p.name}: ${formatHours(p.scheduled)} de ${formatHours(p.target)} objetivo — sobre por ${formatHours(p.gap)}`)}>
                                 ↑ {p.name.split(' ')[0]} +{formatHours(p.gap)}
@@ -2988,9 +3020,9 @@ function HoursScoreboard({ scoreboard, side, isEn }) {
         );
     };
     return (
-        <div className="mb-2 flex flex-wrap gap-2 print:hidden">
-            {cell(tx('FOH this week', 'FOH esta semana'), scoreboard.foh, side === 'foh')}
-            {cell(tx('BOH this week', 'BOH esta semana'), scoreboard.boh, side === 'boh')}
+        <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-3 print:hidden">
+            {cell(tx('FOH this week', 'FOH esta semana'), scoreboard.foh, side === 'foh', 'bg-dd-green')}
+            {cell(tx('BOH this week', 'BOH esta semana'), scoreboard.boh, side === 'boh', 'bg-orange-500')}
         </div>
     );
 }
