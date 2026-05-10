@@ -149,16 +149,29 @@ const SS = {
     set: (k, v) => { try { v == null ? localStorage.removeItem("ddmau:" + k) : localStorage.setItem("ddmau:" + k, v); } catch {} },
 };
 
-// v2 design preview — when the URL contains ?v2=1 (or localStorage flag is
-// set) we render the new SaaS-style shell instead of the existing app.
-// Lets us iterate on the new design with real data and a real toggle without
-// breaking the live app. Append ?v2=0 to the URL to leave the preview.
+// v2 design — now the DEFAULT for everyone (2026-05-09).
+//
+// History: v2 launched as opt-in via ?v2=1. After the user confirmed the
+// new SaaS-style shell is what they want everywhere, we flipped the
+// default. Existing data paths are unchanged — v2 just renders legacy
+// components inside the new shell with the same props, same Firestore
+// subscriptions, same race-safe writes (audited 2026-05-09).
+//
+// Escape hatch preserved: append ?v2=0 to the URL to fall back to the
+// legacy shell for one session (or persistently — it clears the flag).
+// The "Exit v2" button in the v2 sidebar uses this same path.
+//
+// localStorage layering:
+//   • ?v2=0 in URL          → opt OUT, persist (sets ddmau:v2 = '0')
+//   • ?v2=1 in URL          → opt IN, persist (clears any opt-out)
+//   • ddmau:v2 = '0' stored → opt-out persists across sessions
+//   • otherwise             → v2 is on (the new default)
 function useV2Flag() {
     const url = typeof window !== 'undefined' ? new URL(window.location.href) : null;
     const queryFlag = url?.searchParams.get('v2');
-    if (queryFlag === '1') { try { localStorage.setItem('ddmau:v2', '1'); } catch {} return true; }
-    if (queryFlag === '0') { try { localStorage.removeItem('ddmau:v2'); } catch {} return false; }
-    try { return localStorage.getItem('ddmau:v2') === '1'; } catch { return false; }
+    if (queryFlag === '1') { try { localStorage.removeItem('ddmau:v2_optout'); } catch {} return true; }
+    if (queryFlag === '0') { try { localStorage.setItem('ddmau:v2_optout', '1'); } catch {} return false; }
+    try { return localStorage.getItem('ddmau:v2_optout') !== '1'; } catch { return true; }
 }
 
 export default function App() {
@@ -431,7 +444,10 @@ export default function App() {
                     activeTab={activeTab}
                     onNavigate={(tab) => setActiveTab(tab)}
                     onExitV2={() => {
-                        try { localStorage.removeItem('ddmau:v2'); } catch {}
+                        // v2 is the default now — "exit" means opt OUT (sets
+                        // the persistent opt-out flag). useV2Flag picks it up
+                        // on the reload so the user stays in legacy mode.
+                        try { localStorage.setItem('ddmau:v2_optout', '1'); } catch {}
                         window.location.search = '?v2=0';
                     }}
                 >
