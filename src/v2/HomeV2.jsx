@@ -12,6 +12,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { canViewLabor } from '../data/staff';
 
 // ── Primitives ─────────────────────────────────────────────────────────
 function Card({ className = '', children, hover = false, ...rest }) {
@@ -234,13 +235,15 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                     action={<Button variant="ghost" size="sm" onClick={() => onNavigate?.('labor')}>{tx('Labor dashboard', 'Mano de obra')} →</Button>}
                 />
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    <StatCard
-                        label={tx('Labor %', 'Mano de obra')}
-                        value={fmtPct(laborPct)}
-                        tone={laborTone}
-                        sub={labor.data?.updatedAt ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`) : tx('Target 25%', 'Objetivo 25%')}
-                        icon="📊"
-                        loading={labor.loading} />
+                    {canViewLabor((staffList || []).find(s => s.name === staffName)) && (
+                        <StatCard
+                            label={tx('Labor %', 'Mano de obra')}
+                            value={fmtPct(laborPct)}
+                            tone={laborTone}
+                            sub={labor.data?.updatedAt ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`) : tx('Target 25%', 'Objetivo 25%')}
+                            icon="📊"
+                            loading={labor.loading} />
+                    )}
                     <StatCard
                         label={tx('Total hours', 'Horas')}
                         value={labor.data?.totalHours != null ? labor.data.totalHours.toFixed(1) : '—'}

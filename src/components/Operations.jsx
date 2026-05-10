@@ -3,7 +3,7 @@ import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
-import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS } from '../data/staff';
+import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import InventoryHistory from './InventoryHistory';
 import PrepList from './PrepList';
@@ -3875,8 +3875,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                 <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F4CB}"} {t("dailyOps", language)}</h2>
 
-                    {/* Labor % Card — visible to all staff, percentage only (no dollar amounts) */}
-                    {laborData && laborData.laborPercent !== undefined && (() => {
+                    {/* Labor % Card — gated by canViewLabor (admins/managers by default,
+                        staff opt-in via Admin Panel toggle). Percentage only (no dollar
+                        amounts even when visible). */}
+                    {canViewLabor((staffList || []).find(s => s.name === staffName)) && laborData && laborData.laborPercent !== undefined && (() => {
                         const pct = laborData.laborPercent;
                         const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
                         const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;

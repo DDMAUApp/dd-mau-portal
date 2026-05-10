@@ -386,6 +386,7 @@ export default function App() {
                         language={language}
                         staffName={staffName}
                         storeLocation={effectiveLocation}
+                        staffList={staffList}
                         onNavigate={(tab) => setActiveTab(tab)}
                         hasOpsAccess={hasOpsAccess}
                         hasRecipesAccess={hasRecipesAccess}
@@ -425,6 +426,7 @@ export default function App() {
                     language={language}
                     staffName={staffName}
                     storeLocation={effectiveLocation}
+                    staffList={staffList}
                     onNavigate={(tab) => setActiveTab(tab)}
                     hasOpsAccess={hasOpsAccess}
                     hasRecipesAccess={hasRecipesAccess}

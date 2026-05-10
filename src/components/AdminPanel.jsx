@@ -11,6 +11,26 @@ import { toast, undoToast } from '../toast';
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
 // (hooks must run in the same order every render). This wrapper-pattern is the
 // idiomatic fix.
+
+// AccessToggle — bulk-edit per-staff "what can this person SEE" pill.
+// Designed for the redesigned bulk edit cards: shows a clear icon + label,
+// big enough to be tappable on a phone, with on/off state read at a glance
+// (mint pill = ON, ghost-grey strikethrough = OFF). Replaces the old 8x8
+// icon-only buttons that had no labels.
+function AccessToggle({ on, label, icon, onClick }) {
+    return (
+        <button onClick={onClick}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition active:scale-95 ${
+                on
+                    ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30 hover:bg-dd-sage-50'
+                    : 'bg-white text-dd-text-2 border-dd-line line-through opacity-70 hover:opacity-100'
+            }`}>
+            <span className="text-sm">{icon}</span>
+            <span>{label}</span>
+        </button>
+    );
+}
+
 export default function AdminPanel(props) {
     if (!isAdmin(props.staffName, props.staffList)) {
         return (
@@ -28,6 +48,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editRole, setEditRole] = useState("");
             const [editOpsAccess, setEditOpsAccess] = useState(false);
             const [editRecipesAccess, setEditRecipesAccess] = useState(false);
+            const [editViewLabor, setEditViewLabor] = useState(false);
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
@@ -411,7 +432,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView } : s);
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -748,6 +769,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editRecipesAccess ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    {/* Labor % visibility — gated dashboard data. Default ON for
+                                                        managers/owners, OFF for staff. Admin can override per-person. */}
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Ver % de Mano de Obra" : "View Labor %"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Ver KPI de costo laboral en Inicio + Operaciones" : "See labor-cost KPI on Home + Operations"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditViewLabor(!editViewLabor)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editViewLabor ? "bg-green-600" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editViewLabor ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
                                                         <div>
                                                             <p className="text-sm font-bold text-gray-700">{language === "es" ? "Líder de Turno" : "Shift Lead"}</p>
@@ -879,7 +912,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -1251,6 +1284,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 {[
                                                     { field: "recipesAccess",        labelEn: "Recipes",      labelEs: "Recetas",      emoji: "🧑‍🍳", onColor: "bg-green-600",  offColor: "bg-gray-300" },
                                                     { field: "opsAccess",            labelEn: "Operations",   labelEs: "Operaciones",  emoji: "📋", onColor: "bg-mint-700",   offColor: "bg-gray-300" },
+                                                    { field: "viewLabor",            labelEn: "Labor %",      labelEs: "Mano obra %",  emoji: "📊", onColor: "bg-emerald-600", offColor: "bg-gray-300" },
                                                     { field: "shiftLead",            labelEn: "Shift Lead",   labelEs: "Líder",        emoji: "🛡️", onColor: "bg-purple-600", offColor: "bg-gray-300" },
                                                     { field: "canEditScheduleFOH",   labelEn: "FOH editor",   labelEs: "Editor FOH",   emoji: "📅", onColor: "bg-teal-600",   offColor: "bg-gray-300" },
                                                     { field: "canEditScheduleBOH",   labelEn: "BOH editor",   labelEs: "Editor BOH",   emoji: "📅", onColor: "bg-orange-600", offColor: "bg-gray-300" },
@@ -1317,117 +1351,117 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         {visible.length === 0 && (
                                             <p className="text-center text-gray-400 text-sm py-8">{language === "es" ? "Sin resultados." : "No results."}</p>
                                         )}
+                                        {/* CARD-LAYOUT bulk edit: each staff member is a full
+                                            card with controls grouped into clearly-labeled rows.
+                                            Was a 1-line cramped strip — controls were 8x8 icon
+                                            buttons with no labels, very hard to use during a real
+                                            admin session. New layout: 3 rows per card on phone, all
+                                            inline on lg+. Each toggle has visible label text so
+                                            admins know what they're flipping. */}
                                         {visible.map(s => {
                                             const side = s.scheduleSide || (s.role && ["BOH","Pho","Pho Station","Grill","Fryer","Fried Rice","Dish","Bao/Tacos/Banh Mi","Spring Rolls/Prep","Prep","Kitchen Manager","Asst Kitchen Manager"].includes(s.role) ? "boh" : "foh");
                                             const explicitTagged = !!s.scheduleSide;
+                                            const rec = s.recipesAccess !== false;
+                                            const ops = s.opsAccess === true;
+                                            const labor = s.viewLabor === true || (s.viewLabor !== false && /manager|owner/i.test(s.role || ''));
+                                            const lng = s.preferredLanguage === "es" ? "es" : "en";
+                                            const cur = s.homeView || 'auto';
                                             return (
-                                                <div key={s.id} className={`flex items-center gap-2 p-2 rounded-lg border ${explicitTagged ? "bg-white border-gray-200" : "bg-red-50 border-red-200"}`}>
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="font-bold text-sm text-gray-800 truncate flex items-center gap-1">
-                                                            {s.name}
-                                                            {!explicitTagged && <span className="text-[9px] text-red-600 font-bold">⚠ {language === "es" ? "inferido" : "inferred"}</span>}
+                                                <div key={s.id} className={`p-3 rounded-xl border-2 transition ${explicitTagged ? "bg-white border-dd-line" : "bg-red-50 border-red-200"}`}>
+                                                    {/* HEADER ROW — name + role + side toggle */}
+                                                    <div className="flex items-center gap-3 mb-3">
+                                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${side === 'foh' ? 'bg-dd-green-50 text-dd-green-700 border-2 border-dd-green/30' : 'bg-orange-50 text-orange-700 border-2 border-orange-200'}`}>
+                                                            {(s.name || '??').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
                                                         </div>
-                                                        <div className="text-[10px] text-gray-500 truncate">{s.role} · {LOCATION_LABELS[s.location] || s.location}</div>
+                                                        <div className="min-w-0 flex-1">
+                                                            <div className="font-bold text-sm text-dd-text truncate flex items-center gap-1.5">
+                                                                {s.name}
+                                                                {!explicitTagged && <span className="text-[10px] text-red-600 font-bold uppercase tracking-wider">⚠ {language === "es" ? "inferido" : "inferred"}</span>}
+                                                            </div>
+                                                            <div className="text-[11px] text-dd-text-2 truncate">{s.role} · {LOCATION_LABELS[s.location] || s.location}</div>
+                                                        </div>
+                                                        <div className="flex gap-1 bg-dd-bg rounded-lg p-0.5 border border-dd-line">
+                                                            <button onClick={() => handleBulkUpdate(s.id, { scheduleSide: "foh" })}
+                                                                className={`px-3 py-1 rounded-md text-[11px] font-bold transition ${side === "foh" && explicitTagged ? "bg-dd-green text-white shadow-sm" : "text-dd-text-2 hover:bg-white"}`}>
+                                                                FOH
+                                                            </button>
+                                                            <button onClick={() => handleBulkUpdate(s.id, { scheduleSide: "boh" })}
+                                                                className={`px-3 py-1 rounded-md text-[11px] font-bold transition ${side === "boh" && explicitTagged ? "bg-orange-600 text-white shadow-sm" : "text-dd-text-2 hover:bg-white"}`}>
+                                                                BOH
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex gap-0.5">
-                                                        <button onClick={() => handleBulkUpdate(s.id, { scheduleSide: "foh" })}
-                                                            className={`px-2 py-1 rounded-l text-[10px] font-bold border ${side === "foh" && explicitTagged ? "bg-teal-600 text-white border-teal-600" : side === "foh" ? "bg-teal-100 text-teal-800 border-teal-300" : "bg-white text-gray-500 border-gray-300"}`}>
-                                                            FOH
-                                                        </button>
-                                                        <button onClick={() => handleBulkUpdate(s.id, { scheduleSide: "boh" })}
-                                                            className={`px-2 py-1 rounded-r text-[10px] font-bold border-t border-r border-b ${side === "boh" && explicitTagged ? "bg-orange-600 text-white border-orange-600" : side === "boh" ? "bg-orange-100 text-orange-800 border-orange-300" : "bg-white text-gray-500 border-gray-300"}`}>
-                                                            BOH
-                                                        </button>
+
+                                                    {/* PAGE ACCESS ROW — what this person can SEE.
+                                                        Includes the new viewLabor toggle (was missing). */}
+                                                    <div className="mb-3">
+                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                                                            {language === "es" ? "Acceso a páginas" : "Page access"}
+                                                        </div>
+                                                        <div className="flex flex-wrap gap-1.5">
+                                                            <AccessToggle
+                                                                on={rec} label={language === "es" ? "Recetas" : "Recipes"} icon="🧑‍🍳"
+                                                                onClick={() => handleBulkUpdate(s.id, { recipesAccess: !rec })} />
+                                                            <AccessToggle
+                                                                on={ops} label={language === "es" ? "Operaciones" : "Operations"} icon="📋"
+                                                                onClick={() => handleBulkUpdate(s.id, { opsAccess: !ops })} />
+                                                            <AccessToggle
+                                                                on={labor} label={language === "es" ? "Labor %" : "Labor %"} icon="📊"
+                                                                onClick={() => handleBulkUpdate(s.id, { viewLabor: !labor })} />
+                                                            <AccessToggle
+                                                                on={!!s.shiftLead} label={language === "es" ? "Líder" : "Lead"} icon="🛡"
+                                                                onClick={() => handleBulkUpdate(s.id, { shiftLead: !s.shiftLead })} />
+                                                            <AccessToggle
+                                                                on={!!s.isMinor} label={language === "es" ? "Menor" : "Minor"} icon="🔑"
+                                                                onClick={() => handleBulkUpdate(s.id, { isMinor: !s.isMinor })} />
+                                                        </div>
                                                     </div>
-                                                    <button onClick={() => handleBulkUpdate(s.id, { isMinor: !s.isMinor })}
-                                                        title={language === "es" ? "Menor de edad" : "Minor"}
-                                                        className={`w-8 h-8 rounded text-sm font-bold border ${s.isMinor ? "bg-amber-500 text-white border-amber-600" : "bg-white text-gray-300 border-gray-300"}`}>
-                                                        🔑
-                                                    </button>
-                                                    {/* Per-row Recipes access toggle. Opt-out semantics: undefined or
-                                                        true = granted (default), false = blocked. Mint green when ON,
-                                                        gray when OFF. Lets admins quickly take recipes away from a
-                                                        specific person from the bulk view. */}
-                                                    {(() => {
-                                                        const rec = s.recipesAccess !== false;
-                                                        return (
-                                                            <button onClick={() => handleBulkUpdate(s.id, { recipesAccess: !rec })}
-                                                                title={language === "es"
-                                                                    ? (rec ? "Acceso a recetas: ACTIVO (clic para quitar)" : "Acceso a recetas: BLOQUEADO (clic para conceder)")
-                                                                    : (rec ? "Recipes access: ON (click to revoke)" : "Recipes access: OFF (click to grant)")}
-                                                                className={`w-8 h-8 rounded text-sm border ${rec ? "bg-mint-100 text-mint-700 border-mint-300" : "bg-gray-200 text-gray-400 border-gray-300 line-through"}`}>
-                                                                🧑‍🍳
+
+                                                    {/* SETTINGS ROW — quick prefs the admin tunes per-staff.
+                                                        Always visible, never hidden behind another modal. */}
+                                                    <div>
+                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                                                            {language === "es" ? "Preferencias" : "Settings"}
+                                                        </div>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-dd-text-2">
+                                                                {language === "es" ? "Inicio:" : "Default tab:"}
+                                                                <select value={cur}
+                                                                    onChange={e => handleBulkUpdate(s.id, { homeView: e.target.value })}
+                                                                    className="border border-dd-line rounded-md px-2 py-1 text-xs bg-white font-bold text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
+                                                                    <option value="auto">🏠 {language === "es" ? "Auto" : "Auto"}</option>
+                                                                    <option value="schedule">📅 {language === "es" ? "Horario" : "Schedule"}</option>
+                                                                    <option value="recipes">📖 {language === "es" ? "Recetas" : "Recipes"}</option>
+                                                                    <option value="operations">📋 {language === "es" ? "Ops" : "Ops"}</option>
+                                                                    <option value="training">📚 {language === "es" ? "Capac." : "Training"}</option>
+                                                                    <option value="menu">🍜 {language === "es" ? "Menú" : "Menu"}</option>
+                                                                    <option value="eighty6">🚫 86</option>
+                                                                    <option value="handoff">🤝 {language === "es" ? "Entrega" : "Handoff"}</option>
+                                                                    <option value="tardies">⏰ {language === "es" ? "Tardanzas" : "Tardies"}</option>
+                                                                    <option value="labor">📊 Labor</option>
+                                                                </select>
+                                                            </label>
+                                                            <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-dd-text-2">
+                                                                {language === "es" ? "Idioma:" : "Lang:"}
+                                                                <button onClick={() => handleBulkUpdate(s.id, { preferredLanguage: lng === "es" ? "en" : "es" })}
+                                                                    className="px-2.5 py-1 rounded-md text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition">
+                                                                    {lng.toUpperCase()}
+                                                                </button>
+                                                            </label>
+                                                            <label className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-dd-text-2">
+                                                                {language === "es" ? "Hrs/sem:" : "Hrs/wk:"}
+                                                                <input type="number" inputMode="numeric" pattern="[0-9]*" min="0" max="80" step="1"
+                                                                    value={s.targetHours || 0}
+                                                                    onChange={e => handleBulkUpdate(s.id, { targetHours: Number(e.target.value) || 0 })}
+                                                                    className="w-14 text-center text-xs font-bold border border-dd-line rounded-md py-1 text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50" />
+                                                            </label>
+                                                            <button onClick={() => { setShowBulkTag(false); setAvailabilityForId(s.id); }}
+                                                                title={language === "es" ? "Disponibilidad" : "Availability"}
+                                                                className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-[11px] font-bold bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg transition">
+                                                                🗓 {language === "es" ? "Disponib." : "Avail"}
                                                             </button>
-                                                        );
-                                                    })()}
-                                                    {/* Per-row Operations access toggle. Opt-IN semantics — only
-                                                        staff with opsAccess === true see the Operations tab. */}
-                                                    {(() => {
-                                                        const ops = s.opsAccess === true;
-                                                        return (
-                                                            <button onClick={() => handleBulkUpdate(s.id, { opsAccess: !ops })}
-                                                                title={language === "es"
-                                                                    ? (ops ? "Operaciones: ACTIVO (clic para quitar)" : "Operaciones: BLOQUEADO (clic para conceder)")
-                                                                    : (ops ? "Operations: ON (click to revoke)" : "Operations: OFF (click to grant)")}
-                                                                className={`w-8 h-8 rounded text-sm border ${ops ? "bg-indigo-100 text-indigo-700 border-indigo-300" : "bg-gray-200 text-gray-400 border-gray-300 line-through"}`}>
-                                                                📋
-                                                            </button>
-                                                        );
-                                                    })()}
-                                                    {/* Per-row notification language toggle. Tap to flip between
-                                                        EN ↔ ES. Determines what language pushes (publish, task
-                                                        deadline, task message, swap approved, etc.) arrive in. */}
-                                                    {(() => {
-                                                        const lng = s.preferredLanguage === "es" ? "es" : "en";
-                                                        const next = lng === "es" ? "en" : "es";
-                                                        return (
-                                                            <button onClick={() => handleBulkUpdate(s.id, { preferredLanguage: next })}
-                                                                title={language === "es"
-                                                                    ? `Idioma de notificaciones: ${lng.toUpperCase()} (clic para cambiar a ${next.toUpperCase()})`
-                                                                    : `Notification language: ${lng.toUpperCase()} (click to switch to ${next.toUpperCase()})`}
-                                                                className="w-8 h-8 rounded text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-300">
-                                                                {lng.toUpperCase()}
-                                                            </button>
-                                                        );
-                                                    })()}
-                                                    {/* Per-row Home view selector. Compact dropdown — admin can
-                                                        change a single staff member's landing tab from the bulk
-                                                        view without opening the full edit form. */}
-                                                    {(() => {
-                                                        const HOME_LABELS = {
-                                                            auto: '🏠', schedule: '📅', recipes: '🧑‍🍳', operations: '📋',
-                                                            training: '📚', menu: '🍜', eighty6: '🚫', handoff: '🤝',
-                                                            tardies: '⏰', labor: '📊',
-                                                        };
-                                                        const cur = s.homeView || 'auto';
-                                                        return (
-                                                            <select value={cur}
-                                                                onChange={e => handleBulkUpdate(s.id, { homeView: e.target.value })}
-                                                                title={language === "es" ? `Vista de inicio: ${cur}` : `Home view: ${cur}`}
-                                                                className="w-10 h-8 text-center text-xs border border-gray-300 rounded bg-white">
-                                                                <option value="auto">🏠</option>
-                                                                <option value="schedule">📅</option>
-                                                                <option value="recipes">🧑‍🍳</option>
-                                                                <option value="operations">📋</option>
-                                                                <option value="training">📚</option>
-                                                                <option value="menu">🍜</option>
-                                                                <option value="eighty6">🚫</option>
-                                                                <option value="handoff">🤝</option>
-                                                                <option value="tardies">⏰</option>
-                                                                <option value="labor">📊</option>
-                                                            </select>
-                                                        );
-                                                    })()}
-                                                    <input type="number" inputMode="numeric" pattern="[0-9]*" min="0" max="80" step="1"
-                                                        value={s.targetHours || 0}
-                                                        onChange={e => handleBulkUpdate(s.id, { targetHours: Number(e.target.value) || 0 })}
-                                                        title={language === "es" ? "Horas/sem objetivo" : "Target hrs/week"}
-                                                        className="w-12 text-center text-xs border border-gray-300 rounded py-1" />
-                                                    <button onClick={() => { setShowBulkTag(false); setAvailabilityForId(s.id); }}
-                                                        title={language === "es" ? "Disponibilidad" : "Availability"}
-                                                        className="w-8 h-8 rounded text-sm border bg-white text-purple-600 border-purple-300 hover:bg-purple-50">
-                                                        🗓
-                                                    </button>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             );
                                         })}

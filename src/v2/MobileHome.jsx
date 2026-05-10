@@ -27,6 +27,7 @@
 import { useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { canViewLabor } from '../data/staff';
 
 function todayKey() {
     const d = new Date();
@@ -60,6 +61,7 @@ export default function MobileHome({
     hasRecipesAccess = true,
     isAdmin = false,
     isManager = false,
+    staffList = [],
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -138,14 +140,16 @@ export default function MobileHome({
         return () => unsub();
     }, [staffName]);
 
-    // Labor — admins only see this in the KPI strip.
+    // Labor — gated by canViewLabor (admins/managers default; staff opt-in).
+    const me = (staffList || []).find(s => s.name === staffName);
+    const canSeeLabor = canViewLabor(me);
     useEffect(() => {
-        if (!isAdmin) return;
+        if (!canSeeLabor) return;
         const unsub = onSnapshot(doc(db, 'ops', `labor_${queryLoc}`), (snap) => {
             setLabor(snap.exists() ? snap.data() : null);
         }, () => setLabor(null));
         return () => unsub();
-    }, [queryLoc, isAdmin]);
+    }, [queryLoc, canSeeLabor]);
 
     // ── Derived ────────────────────────────────────────────────────────
     const greeting = (() => {
@@ -188,7 +192,7 @@ export default function MobileHome({
             unit: 'h',
             tone: 'neutral',
         }] : []),
-        ...(isAdmin && laborPct != null ? [{
+        ...(canSeeLabor && laborPct != null ? [{
             label: tx('Labor', 'Mano obra'),
             value: laborPct.toFixed(1),
             unit: '%',

@@ -52,6 +52,32 @@ export function canEditSchedule(staffName, staffList, side) {
   return me.canEditScheduleFOH === true || me.canEditScheduleBOH === true;
 }
 
+// Per-staff page visibility / sensitive-data access.
+//
+// Determines whether a given staff member can SEE manager-only data
+// surfaces — labor %, financial KPIs, etc. The actual edit gates for
+// admin features are still controlled by ADMIN_IDS / canEditSchedule;
+// these flags are about VIEW visibility for sensitive-but-non-edit data.
+//
+// Default by role: managers and owners see labor by default. Regular
+// staff have to be explicitly opted in via the Admin Panel toggle.
+// Returns true/false; never undefined (so the consumer can safely just
+// check truthiness).
+export function canViewLabor(staff) {
+  if (!staff) return false;
+  // Explicit admin override per record (Admin Panel toggle): if set,
+  // it wins over the role-based default.
+  if (staff.viewLabor === true) return true;
+  if (staff.viewLabor === false) return false;
+  // Default: anyone whose role contains "manager" or "owner" sees labor.
+  // This matches the de-facto practice before the explicit toggle existed
+  // (the Labor tab was already gated on isAdmin, but Operations/HomeV2
+  // were leaking labor % to anyone who could see those pages).
+  const role = (staff.role || "").toLowerCase();
+  if (/manager|owner/.test(role)) return true;
+  return false;
+}
+
 export const LOCATION_LABELS = {
   webster: "Webster",
   maryland: "Maryland Heights",
