@@ -2579,40 +2579,57 @@ ${dayBlocks}
                 </div>
             ) : (
                 <>
-                    {/* "Open Shifts" calendar strip — pinned ABOVE the view-mode-
-                        specific content so it's always visible regardless of
-                        whether the user is on Week / Day / List. Previously
-                        only rendered inside the grid branch, which meant
-                        mobile users (auto-routed to Day view) never saw it.
-                        Hidden in PTO view since that view is PTO-focused
-                        and shifts aren't relevant there. */}
+                    {/* TWO STACKED BARS above the schedule calendar:
+                          1. 📋 Unassigned shifts (manager-created openings)
+                          2. 📣 Available to claim (staff-offered shifts)
+                        Conceptually distinct actions — splitting them into
+                        their own headers + color stories makes it easier to
+                        glance and tell what kind of action each chip needs.
+                        Each bar self-hides if its category is empty.
+                        Both visible in Week / Day / List, hidden in PTO. */}
                     {viewMode !== 'pto' && (
-                        <OpenShiftsCalendarBar
-                            weekStart={weekStart}
-                            staffingNeeds={staffingNeeds}
-                            shifts={visibleShifts}
-                            side={side}
-                            storeLocation={storeLocation}
-                            isEn={isEn}
-                            canEdit={canEdit}
-                            currentStaffName={staffName}
-                            blocksByDate={blocksByDate}
-                            onFillSlot={(n) => {
-                                if (canEdit) {
-                                    // Manager: prefill the available-staff modal scoped to this slot
-                                    setFillingNeed(n);
-                                    setAvailableForDate(n.date);
-                                } else {
-                                    // Staff: just nudge them to ask the manager
-                                    toast(tx(
-                                        `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
-                                        `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
-                                    ));
-                                }
-                            }}
-                            onTakeShift={handleTakeShift}
-                            onCancelOffer={handleCancelOffer}
-                        />
+                        <>
+                            <OpenShiftsCalendarBar
+                                mode="unassigned"
+                                weekStart={weekStart}
+                                staffingNeeds={staffingNeeds}
+                                shifts={visibleShifts}
+                                side={side}
+                                storeLocation={storeLocation}
+                                isEn={isEn}
+                                canEdit={canEdit}
+                                currentStaffName={staffName}
+                                blocksByDate={blocksByDate}
+                                onFillSlot={(n) => {
+                                    if (canEdit) {
+                                        setFillingNeed(n);
+                                        setAvailableForDate(n.date);
+                                    } else {
+                                        toast(tx(
+                                            `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
+                                            `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
+                                        ));
+                                    }
+                                }}
+                                onTakeShift={handleTakeShift}
+                                onCancelOffer={handleCancelOffer}
+                            />
+                            <OpenShiftsCalendarBar
+                                mode="available"
+                                weekStart={weekStart}
+                                staffingNeeds={staffingNeeds}
+                                shifts={visibleShifts}
+                                side={side}
+                                storeLocation={storeLocation}
+                                isEn={isEn}
+                                canEdit={canEdit}
+                                currentStaffName={staffName}
+                                blocksByDate={blocksByDate}
+                                onFillSlot={() => {}}
+                                onTakeShift={handleTakeShift}
+                                onCancelOffer={handleCancelOffer}
+                            />
+                        </>
                     )}
 
                     {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
@@ -3240,16 +3257,26 @@ const HEATMAP_THIN = 1;       // <= this is "thin" (yellow)
 const HEATMAP_OK = 2;         // <= this is "ok" (teal); above is "well-staffed" (green)
 
 // ── OpenShiftsCalendarBar ──────────────────────────────────────────────────
-// Sling-style horizontal week strip pinned above the schedule grid. Surfaces
-// two distinct kinds of "open" work for the current week + side + location:
-//   📋 UNASSIGNED SLOTS — staffing needs the manager created that haven't
-//      been filled yet. Tap → opens the available-staff picker for that slot
-//      (managers) or shows interest (staff).
-//   📣 UP-FOR-GRABS    — shifts that staff have offered up. Tap → claim
-//      (other staff) or cancel-offer (own).
-// Hidden entirely if there's nothing open this week so the bar doesn't take
-// up space when there's no signal.
+// Sling-style horizontal week strip pinned above the schedule grid.
+//
+// Renders ONE category at a time (split into two stacked bars by the parent
+// so each category — manager-created openings vs staff-offered shifts — has
+// its own header, color story, and counts). Original combined version
+// mixed both, which made it harder to glance and tell what kind of action
+// each chip required.
+//
+// Modes:
+//   "unassigned" — 📋 staffing needs the MANAGER created that haven't
+//                  been filled yet. BLUE palette. Tap → opens the available-
+//                  staff picker for that slot (managers) or nudges staff to
+//                  ask the manager.
+//   "available"  — 📣 shifts STAFF have offered up. PURPLE palette (your
+//                  own offers show in AMBER so you can spot them). Tap →
+//                  claim (other staff) or cancel-offer (own).
+//
+// Hidden entirely if there's nothing for this category in the current week.
 function OpenShiftsCalendarBar({
+    mode,                 // 'unassigned' | 'available'
     weekStart, staffingNeeds, shifts, side, storeLocation, isEn,
     canEdit, currentStaffName, blocksByDate,
     onFillSlot, onTakeShift, onCancelOffer,
@@ -3261,85 +3288,93 @@ function OpenShiftsCalendarBar({
     const weekStartStr = toDateStr(weekStart);
     const weekEndStr = toDateStr(addDays(weekStart, 7));
 
-    // Slots: this week, this side, this location, with at least one opening.
-    const openSlots = (staffingNeeds || []).filter(n =>
-        n.date >= weekStartStr && n.date < weekEndStr &&
-        n.side === side &&
-        (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
-        ((n.filledStaff || []).length < (n.count || 0))
-    );
+    // Build per-mode data + visual config.
+    const isUnassigned = mode === 'unassigned';
 
-    // Offers: open-status shifts in this week + side + location.
-    const openOffers = (shifts || []).filter(s =>
-        s.offerStatus === 'open' &&
-        s.date >= weekStartStr && s.date < weekEndStr &&
-        (storeLocation === 'both' || s.location === storeLocation) &&
-        // Side filter — fall through if shift has no side stamp (legacy data).
-        (!s.side || s.side === side)
-    );
+    const openSlots = isUnassigned
+        ? (staffingNeeds || []).filter(n =>
+            n.date >= weekStartStr && n.date < weekEndStr &&
+            n.side === side &&
+            (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
+            ((n.filledStaff || []).length < (n.count || 0)))
+        : [];
 
-    const totalSlots = openSlots.reduce((sum, n) =>
-        sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0);
-    const totalOffers = openOffers.length;
+    const openOffers = !isUnassigned
+        ? (shifts || []).filter(s =>
+            s.offerStatus === 'open' &&
+            s.date >= weekStartStr && s.date < weekEndStr &&
+            (storeLocation === 'both' || s.location === storeLocation) &&
+            (!s.side || s.side === side))
+        : [];
 
-    if (totalSlots === 0 && totalOffers === 0) return null;
+    const total = isUnassigned
+        ? openSlots.reduce((sum, n) => sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)
+        : openOffers.length;
+    if (total === 0) return null;
 
-    // Bucket by date for column rendering.
-    const slotsByDate = new Map();
-    for (const n of openSlots) {
-        if (!slotsByDate.has(n.date)) slotsByDate.set(n.date, []);
-        slotsByDate.get(n.date).push(n);
+    const itemsByDate = new Map();
+    if (isUnassigned) {
+        for (const n of openSlots) {
+            if (!itemsByDate.has(n.date)) itemsByDate.set(n.date, []);
+            itemsByDate.get(n.date).push(n);
+        }
+    } else {
+        for (const o of openOffers) {
+            if (!itemsByDate.has(o.date)) itemsByDate.set(o.date, []);
+            itemsByDate.get(o.date).push(o);
+        }
     }
-    const offersByDate = new Map();
-    for (const o of openOffers) {
-        if (!offersByDate.has(o.date)) offersByDate.set(o.date, []);
-        offersByDate.get(o.date).push(o);
-    }
+
+    // Per-mode visual + copy.
+    const cfg = isUnassigned
+        ? {
+            icon: '📋',
+            titleEn: 'Unassigned Shifts',     titleEs: 'Turnos Sin Asignar',
+            countEn: 'unfilled',              countEs: 'sin llenar',
+            footerEn: 'Tap a slot to fill',  footerEs: 'Toca para llenar',
+            headerBg: 'from-blue-50 via-blue-50/40 to-white',
+            countBg:  'bg-blue-50 text-blue-700 border-blue-200',
+            iconBg:   'bg-blue-50 text-blue-700',
+        }
+        : {
+            icon: '📣',
+            titleEn: 'Available to Claim',    titleEs: 'Disponibles para Tomar',
+            countEn: 'up for grabs',          countEs: 'disponibles',
+            footerEn: 'Tap to claim',         footerEs: 'Toca para tomar',
+            headerBg: 'from-purple-50 via-purple-50/40 to-white',
+            countBg:  'bg-purple-50 text-purple-700 border-purple-200',
+            iconBg:   'bg-purple-50 text-purple-700',
+        };
 
     return (
         <div className="mb-3 bg-white border border-dd-line rounded-xl shadow-card overflow-hidden print:hidden">
-            {/* Header strip — counts + title. Subtle sage-to-white gradient
-                makes the bar feel "above" the grid without being loud. */}
-            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-dd-line bg-gradient-to-r from-dd-sage-50 via-dd-sage-50/50 to-white">
+            {/* Header strip — title + count, color-coded per mode */}
+            <div className={`flex items-center justify-between gap-2 px-3 py-2 border-b border-dd-line bg-gradient-to-r ${cfg.headerBg}`}>
                 <div className="flex items-center gap-2 min-w-0">
-                    <span className="w-7 h-7 rounded-lg bg-white shadow-sm flex items-center justify-center text-sm flex-shrink-0">📋</span>
-                    <h3 className="text-sm font-bold text-dd-text truncate">{tx('Open Shifts', 'Turnos Abiertos')}</h3>
+                    <span className={`w-7 h-7 rounded-lg ${cfg.iconBg} flex items-center justify-center text-sm flex-shrink-0`}>{cfg.icon}</span>
+                    <h3 className="text-sm font-bold text-dd-text truncate">{tx(cfg.titleEn, cfg.titleEs)}</h3>
                     <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 hidden sm:inline">
-                        {side === 'foh' ? 'FOH' : 'BOH'} · {tx('this week', 'esta semana')}
+                        {side === 'foh' ? 'FOH' : 'BOH'}
                     </span>
                 </div>
-                <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                    {totalSlots > 0 && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 whitespace-nowrap">
-                            📋 {totalSlots} {tx('unfilled', 'sin llenar')}
-                        </span>
-                    )}
-                    {totalOffers > 0 && (
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap">
-                            📣 {totalOffers} {tx('up for grabs', 'disponibles')}
-                        </span>
-                    )}
-                </div>
+                <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border whitespace-nowrap ${cfg.countBg}`}>
+                    {total} {tx(cfg.countEn, cfg.countEs)}
+                </span>
             </div>
 
-            {/* 7 day columns. On md+ they share width via grid (aligns to the
-                weekly grid below). On phones we switch to a horizontal flex
-                with scroll-snap so each column gets a usable 96px instead of
-                being crushed to ~50px. Snap-mandatory means the user lands on
-                a clean column boundary every time they swipe. */}
+            {/* 7 day columns. md+ uses grid (aligns to the weekly grid below).
+                Mobile uses horizontal scroll-snap with 96px columns so each
+                gets a tappable chip width instead of being crushed to ~50px. */}
             <div className="flex md:grid md:grid-cols-7 md:divide-x md:divide-dd-line overflow-x-auto md:overflow-visible snap-x snap-mandatory scrollbar-thin">
                 {days.map((d, i) => {
                     const dStr = toDateStr(d);
                     const isToday = dStr === today;
-                    const slots = slotsByDate.get(dStr) || [];
-                    const offers = offersByDate.get(dStr) || [];
-                    const isEmpty = slots.length === 0 && offers.length === 0;
+                    const items = itemsByDate.get(dStr) || [];
                     const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
                     const closed = dayBlocks.some(b => b.type === 'closed');
 
                     return (
                         <div key={i} className={`shrink-0 w-[96px] md:w-auto snap-start p-1.5 min-w-0 border-r border-dd-line md:border-r-0 ${isToday ? 'bg-dd-sage-50/40' : ''} ${closed ? 'opacity-60' : ''}`}>
-                            {/* Day header — matches grid header style at compact size */}
                             <div className={`text-center pb-1.5 mb-1.5 border-b ${isToday ? 'border-dd-green/30' : 'border-dd-line/60'}`}>
                                 <div className={`text-[9px] uppercase font-bold tracking-wider ${isToday ? 'text-dd-green-700' : 'text-dd-text-2'}`}>
                                     {dayLabels[i]}
@@ -3350,8 +3385,7 @@ function OpenShiftsCalendarBar({
                             </div>
 
                             <div className="space-y-1">
-                                {/* Unassigned slots first — manager openings */}
-                                {slots.map(n => {
+                                {isUnassigned && items.map(n => {
                                     const remaining = Math.max(0, (n.count || 0) - (n.filledStaff || []).length);
                                     const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
                                     return (
@@ -3378,8 +3412,7 @@ function OpenShiftsCalendarBar({
                                     );
                                 })}
 
-                                {/* Up-for-grabs offers — staff-initiated */}
-                                {offers.map(o => {
+                                {!isUnassigned && items.map(o => {
                                     const isMine = o.staffName === currentStaffName;
                                     const tone = isMine
                                         ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
@@ -3405,8 +3438,7 @@ function OpenShiftsCalendarBar({
                                     );
                                 })}
 
-                                {/* Empty state — closed glyph or em-dash */}
-                                {isEmpty && (
+                                {items.length === 0 && (
                                     <div className="text-center text-dd-text-2/30 text-[10px] py-2 leading-none">
                                         {closed ? '🚫' : '·'}
                                     </div>
@@ -3417,11 +3449,10 @@ function OpenShiftsCalendarBar({
                 })}
             </div>
 
-            {/* Footer hint — quick legend explaining the two icons */}
-            <div className="flex items-center justify-center gap-3 px-3 py-1.5 border-t border-dd-line bg-dd-bg/50 text-[10px] font-semibold text-dd-text-2">
-                <span className="flex items-center gap-1"><span>📋</span> {tx('Slot to fill', 'Espacio')}</span>
-                <span className="text-dd-text-2/40">•</span>
-                <span className="flex items-center gap-1"><span>📣</span> {tx('Tap to claim', 'Toca para tomar')}</span>
+            {/* Footer hint — single-action explanation per mode */}
+            <div className="flex items-center justify-center gap-2 px-3 py-1.5 border-t border-dd-line bg-dd-bg/50 text-[10px] font-semibold text-dd-text-2">
+                <span>{cfg.icon}</span>
+                <span>{tx(cfg.footerEn, cfg.footerEs)}</span>
             </div>
         </div>
     );
