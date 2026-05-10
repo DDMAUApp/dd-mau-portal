@@ -256,34 +256,22 @@ export default function App() {
             if (typeof unsubForeground === "function") unsubForeground();
         };
     }, [staffName, staffList?.length]);
-    // Load staff list from Firestore
+    // Load staff list from Firestore.
+    //
+    // ⚠ DISABLED 2026-05-09: legacy migration block was silently rewriting
+    // every staff member's record using DEFAULT_STAFF as the base whenever
+    // ANY single record was missing a `location` field — and using
+    // `pin: fsMatch.pin || ds.pin` meant any record whose live pin had
+    // become falsy/empty got reset to the placeholder PIN in the source
+    // file. That's how Andrew's PIN reverted to 0000 and Lorena's reverted
+    // to 2537 (the seed values). We removed the migration entirely and
+    // now ONLY mirror the live Firestore list into local state. If a
+    // schema migration is ever needed again, do it as a one-shot script
+    // run from a desktop with admin credentials, NOT in the page-load path.
     useEffect(() => {
         const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {
             if (docSnap.exists() && docSnap.data().list) {
-                const firestoreList = docSnap.data().list;
-                const needsMigration = firestoreList.some(s => !s.location);
-                if (needsMigration) {
-                    const defaultByName = {};
-                    DEFAULT_STAFF.forEach(s => { defaultByName[s.name.toLowerCase().trim()] = s; });
-                    const firestoreByName = {};
-                    firestoreList.forEach(s => { firestoreByName[s.name.toLowerCase().trim()] = s; });
-                    const merged = DEFAULT_STAFF.map(ds => {
-                        const fsMatch = firestoreByName[ds.name.toLowerCase().trim()];
-                        if (fsMatch) {
-                            return { ...ds, pin: fsMatch.pin || ds.pin, role: fsMatch.role || ds.role, location: ds.location };
-                        }
-                        return ds;
-                    });
-                    firestoreList.forEach(fs => {
-                        if (!defaultByName[fs.name.toLowerCase().trim()]) {
-                            merged.push({ ...fs, location: fs.location || "webster" });
-                        }
-                    });
-                    setStaffList(merged);
-                    setDoc(doc(db, "config", "staff"), { list: merged }).catch(err => console.error("Staff sync error:", err));
-                } else {
-                    setStaffList(firestoreList);
-                }
+                setStaffList(docSnap.data().list);
             }
         });
         return () => unsubscribe();
