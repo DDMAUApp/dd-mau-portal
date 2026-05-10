@@ -467,6 +467,11 @@ export default function App() {
                     // sidebar's refresh button. Clears all caches and reloads.
                     onForceRefresh={() => forceRefresh()}
                     onLanguageToggle={() => setLanguage(language === 'en' ? 'es' : 'en')}
+                    // Bell click — jumps to Schedule, where the per-user
+                    // notification drawer lives (shift offers, swap approvals,
+                    // PTO updates). When a real cross-app notifications
+                    // panel ships, point this at it instead.
+                    onBellClick={() => setActiveTab('schedule')}
                     // Location cycle — admins can flip between webster /
                     // maryland / both; staff are pinned to their assigned
                     // location (no-op when not admin).

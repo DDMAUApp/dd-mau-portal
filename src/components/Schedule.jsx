@@ -2373,14 +2373,24 @@ ${dayBlocks}
                 Two flat rows of equal-weight pills replaced by a single primary
                 row + a "More" expander on mobile. */}
             <div className="flex flex-wrap gap-2 mb-3 print:hidden">
-                <select value={personFilter || ''}
-                    onChange={(e) => setPersonFilter(e.target.value || null)}
-                    className="flex-1 min-w-[140px] bg-white border border-dd-line rounded-lg px-2 py-2 text-xs text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
-                    <option value="">{tx('👥 Everyone', '👥 Todos')}</option>
-                    {sideStaff.map(s => (
-                        <option key={s.id || s.name} value={s.name}>{s.name}</option>
-                    ))}
-                </select>
+                {/* View / person filter — wrapped in a labeled control so it
+                    reads as an interactive picker instead of a generic input.
+                    On mobile the wrapper expands full-width so the names list
+                    is easy to scroll. */}
+                <label className="flex-1 min-w-[180px] flex items-center gap-2 bg-white border border-dd-line rounded-lg px-3 py-1.5 hover:border-dd-green/40 focus-within:border-dd-green focus-within:ring-2 focus-within:ring-dd-green-50 transition cursor-pointer">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 whitespace-nowrap">
+                        {tx('View', 'Ver')}:
+                    </span>
+                    <select value={personFilter || ''}
+                        onChange={(e) => setPersonFilter(e.target.value || null)}
+                        className="flex-1 min-w-0 bg-transparent text-sm font-bold text-dd-text focus:outline-none cursor-pointer truncate">
+                        <option value="">{tx('Everyone', 'Todos')} ({sideStaff.length})</option>
+                        {sideStaff.map(s => (
+                            <option key={s.id || s.name} value={s.name}>{s.name}</option>
+                        ))}
+                    </select>
+                    <span className="text-dd-text-2 text-xs">▾</span>
+                </label>
                 {/* PRIMARY — Publish + Add Shift in dd-green */}
                 {canEdit && (() => {
                     const draftCount = visibleShifts.filter(s => s.published === false).length;
@@ -2586,15 +2596,14 @@ ${dayBlocks}
                 </div>
             ) : (
                 <>
-                    {/* TWO STACKED BARS above the schedule calendar:
-                          1. 📋 Unassigned shifts (manager-created openings)
-                          2. 📣 Available to claim (staff-offered shifts)
-                        Conceptually distinct actions — splitting them into
-                        their own headers + color stories makes it easier to
-                        glance and tell what kind of action each chip needs.
-                        Each bar self-hides if its category is empty.
-                        Both visible in Week / Day / List, hidden in PTO. */}
-                    {viewMode !== 'pto' && (
+                    {/* Open Shifts bars — Sling-style.
+                        IN GRID VIEW: rendered as TABLE ROWS at the top of the
+                        schedule grid (see WeeklyGrid below) so they share
+                        column widths with the day columns of the staff rows
+                        beneath. This is the layout the user wanted.
+                        IN DAY/LIST VIEWS: rendered as standalone cards above
+                        the content (no grid to align with). */}
+                    {(viewMode === 'day' || viewMode === 'list') && (
                         <>
                             <OpenShiftsCalendarBar
                                 mode="unassigned"
@@ -2663,6 +2672,32 @@ ${dayBlocks}
                                 isEn={isEn}
                                 currentStaffName={staffName}
                                 canEdit={canEdit}
+                                side={side}
+                                storeLocation={storeLocation}
+                                // Open Shifts data for the Sling-style rows at
+                                // the top of the table.
+                                openSlots={(staffingNeeds || []).filter(n =>
+                                    n.date >= toDateStr(weekStart) &&
+                                    n.date < toDateStr(addDays(weekStart, 7)) &&
+                                    n.side === side &&
+                                    (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
+                                    ((n.filledStaff || []).length < (n.count || 0)))}
+                                openOffers={visibleShifts.filter(s =>
+                                    s.offerStatus === 'open' &&
+                                    s.date >= toDateStr(weekStart) &&
+                                    s.date < toDateStr(addDays(weekStart, 7)) &&
+                                    (!s.side || s.side === side))}
+                                onFillSlot={(n) => {
+                                    if (canEdit) {
+                                        setFillingNeed(n);
+                                        setAvailableForDate(n.date);
+                                    } else {
+                                        toast(tx(
+                                            `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
+                                            `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
+                                        ));
+                                    }
+                                }}
                                 onCellClick={(staff, dateStr) => {
                                     if (!canEdit) return;
                                     if (dateClosed(dateStr)) {
@@ -3465,7 +3500,14 @@ function OpenShiftsCalendarBar({
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes }) {
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
+    // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
+    // schedule table so they share column widths with the days below.
+    // openSlots: from staffingNeeds, per-day chips ("📋 4p")
+    // openOffers: from shifts.offerStatus === 'open', per-day chips ("📣 Sara")
+    openSlots = [], openOffers = [], side = 'foh', storeLocation = 'webster',
+    onFillSlot,
+}) {
     // Pre-compute per-day staffing-need stats (filled / total / open) so the
     // day header can show a live countdown badge as slots get assigned.
     const needStatsByDate = useMemo(() => {
@@ -3637,6 +3679,124 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                     </tr>
                 </thead>
                 <tbody>
+                    {/* SLING-STYLE OPEN SHIFTS ROWS — rendered as full table
+                        rows BEFORE the staff rows so they share column widths
+                        with the day columns of the schedule grid below.
+                        Visually: each row's day cell sits directly above the
+                        Mon/Tue/Wed/etc cells in the staff rows underneath. */}
+                    {openSlots.length > 0 && (
+                        <tr className="bg-blue-50/40">
+                            <td className="sticky left-0 z-10 bg-blue-50 border-b border-r border-dd-line px-2.5 py-2 align-middle">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-base">📋</span>
+                                    <div className="min-w-0">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-blue-700 leading-none">
+                                            {isEn ? 'Unassigned' : 'Sin asignar'}
+                                        </div>
+                                        <div className="text-[10px] font-semibold text-blue-700/70 leading-tight mt-0.5">
+                                            {openSlots.reduce((s, n) => s + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)} {isEn ? 'open' : 'abiertos'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                            {days.map((d, i) => {
+                                const dStr = toDateStr(d);
+                                const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
+                                const closed = dayBlocks.some(b => b.type === 'closed');
+                                const slots = openSlots.filter(n => n.date === dStr);
+                                return (
+                                    <td key={i} className={`border-b border-r border-dd-line align-top p-1 ${closed ? 'bg-dd-bg' : 'bg-blue-50/40'}`}>
+                                        <div className="space-y-1">
+                                            {slots.map(n => {
+                                                const remaining = Math.max(0, (n.count || 0) - (n.filledStaff || []).length);
+                                                const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
+                                                return (
+                                                    <button key={'slot-' + n.id}
+                                                        onClick={() => onFillSlot && onFillSlot(n)}
+                                                        title={`${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)}${roleGroup && roleGroup.id !== 'any' ? ' · ' + (isEn ? roleGroup.labelEn : roleGroup.labelEs) : ''}`}
+                                                        className="w-full text-left rounded-md bg-white hover:bg-blue-100 border border-blue-300 px-1.5 py-1 transition active:scale-95 shadow-sm">
+                                                        <div className="flex items-center justify-between gap-1">
+                                                            <span className="text-[10px] font-black text-blue-700 tabular-nums truncate">
+                                                                📋 {formatTime12h(n.startTime).replace(':00','')}
+                                                            </span>
+                                                            {remaining > 1 && (
+                                                                <span className="text-[9px] font-bold text-blue-700 leading-tight">×{remaining}</span>
+                                                            )}
+                                                        </div>
+                                                        {roleGroup && roleGroup.id !== 'any' && (
+                                                            <div className="text-[9px] font-semibold text-blue-600 truncate leading-tight">
+                                                                {roleGroup.emoji} {isEn ? roleGroup.labelEn : roleGroup.labelEs}
+                                                            </div>
+                                                        )}
+                                                    </button>
+                                                );
+                                            })}
+                                            {slots.length === 0 && !closed && (
+                                                <div className="text-center text-blue-700/20 text-[10px] py-1 leading-none">·</div>
+                                            )}
+                                        </div>
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    )}
+                    {openOffers.length > 0 && (
+                        <tr className="bg-purple-50/40">
+                            <td className="sticky left-0 z-10 bg-purple-50 border-b border-r border-dd-line px-2.5 py-2 align-middle">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-base">📣</span>
+                                    <div className="min-w-0">
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-purple-700 leading-none">
+                                            {isEn ? 'Available' : 'Disponibles'}
+                                        </div>
+                                        <div className="text-[10px] font-semibold text-purple-700/70 leading-tight mt-0.5">
+                                            {openOffers.length} {isEn ? 'up for grabs' : 'disponibles'}
+                                        </div>
+                                    </div>
+                                </div>
+                            </td>
+                            {days.map((d, i) => {
+                                const dStr = toDateStr(d);
+                                const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
+                                const closed = dayBlocks.some(b => b.type === 'closed');
+                                const offers = openOffers.filter(o => o.date === dStr);
+                                return (
+                                    <td key={i} className={`border-b border-r border-dd-line align-top p-1 ${closed ? 'bg-dd-bg' : 'bg-purple-50/40'}`}>
+                                        <div className="space-y-1">
+                                            {offers.map(o => {
+                                                const isMine = o.staffName === currentStaffName;
+                                                const tone = isMine
+                                                    ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800'
+                                                    : 'bg-white hover:bg-purple-100 border-purple-300 text-purple-700';
+                                                return (
+                                                    <button key={'off-' + o.id}
+                                                        onClick={() => {
+                                                            if (isMine) onCancelOffer && onCancelOffer(o);
+                                                            else onTakeShift && onTakeShift(o);
+                                                        }}
+                                                        title={isMine
+                                                            ? (isEn ? 'Tap to cancel your offer' : 'Toca para cancelar oferta')
+                                                            : (isEn ? `Take ${o.staffName}'s shift` : `Tomar turno de ${o.staffName}`)}
+                                                        className={`w-full text-left rounded-md border px-1.5 py-1 transition active:scale-95 shadow-sm ${tone}`}>
+                                                        <div className="text-[10px] font-black tabular-nums truncate">
+                                                            📣 {formatTime12h(o.startTime).replace(':00','')}
+                                                        </div>
+                                                        <div className="text-[9px] font-semibold truncate opacity-80 leading-tight">
+                                                            {isMine ? (isEn ? 'You offered' : 'Tú ofreciste') : (o.staffName?.split(' ')[0] || '?')}
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                            {offers.length === 0 && !closed && (
+                                                <div className="text-center text-purple-700/20 text-[10px] py-1 leading-none">·</div>
+                                            )}
+                                        </div>
+                                    </td>
+                                );
+                            })}
+                        </tr>
+                    )}
+
                     {staffSummary.map(s => {
                         // Per-staff role tier color (blue = staff, green = shift
                         // lead, orange = manager). Used on the name + a small

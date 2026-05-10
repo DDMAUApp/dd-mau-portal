@@ -351,9 +351,20 @@ function Kpi({ label, value, unit, tone = 'neutral' }) {
     );
 }
 
-// Tile — single launcher destination. Designed for one-handed use:
-// the entire card is the tap target. Layered shadow ramp on press
-// gives clear tactile feedback without animation latency.
+// Tile — single launcher destination.
+//
+// 2026-05-10 redesign: was square aspect-[5/4] cards (too tall — empty
+// space below the label), with text-[28px] icon + text-[13px] label
+// (icon way too big, label way too small). Now a wider/shorter horizontal
+// pill: icon on the LEFT, label dominant on the right. Reads more like
+// a modern app launcher (Linear, Notion sidebar, Sling drawer) and lets
+// the label breathe at a readable size.
+//
+// Layout per tile:
+//   ┌──────────────────────────┐
+//   │ [icon]  Schedule       3 │
+//   └──────────────────────────┘
+// Icon is visually anchored but no longer the headline; the LABEL is.
 function Tile({ tab, icon, en, es, isEs, primary = false, badge, badgeTone, onTap }) {
     const showBadge = badge && badge > 0;
     const badgeBg = badgeTone === 'danger' ? 'bg-red-500'
@@ -362,17 +373,22 @@ function Tile({ tab, icon, en, es, isEs, primary = false, badge, badgeTone, onTa
     return (
         <button
             onClick={onTap}
-            className={`relative aspect-[5/4] flex flex-col items-center justify-center gap-1.5 rounded-2xl bg-white border ${primary ? 'border-dd-line' : 'border-dd-line'} shadow-card hover:shadow-card-hov active:shadow-card-hov active:scale-[0.97] transition p-3 overflow-hidden`}
+            className={`relative flex items-center gap-3 rounded-xl bg-white border border-dd-line shadow-card hover:shadow-card-hov active:shadow-card-hov active:scale-[0.97] transition px-3 py-3 overflow-hidden min-h-[64px]`}
         >
             {primary && (
-                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-2xl" />
+                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-xl" />
             )}
-            <span className="text-[28px] leading-none">{icon}</span>
-            <span className="text-[13px] font-bold text-dd-text leading-tight text-center">
+            {/* Icon disc — square chip on the left so the icon has a
+                visible "container" and doesn't compete with the label.
+                Subtle sage tint for primary tiles. */}
+            <span className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-[22px] leading-none ${primary ? 'bg-dd-sage-50' : 'bg-dd-bg'}`}>
+                {icon}
+            </span>
+            <span className="flex-1 text-[15px] font-bold text-dd-text leading-tight text-left">
                 {isEs ? es : en}
             </span>
             {showBadge && (
-                <span className={`absolute top-2 right-2 min-w-[20px] h-[20px] px-1.5 rounded-full flex items-center justify-center text-[10px] font-black text-white ${badgeBg} ring-2 ring-white shadow-sm`}>
+                <span className={`flex-shrink-0 min-w-[24px] h-[24px] px-2 rounded-full flex items-center justify-center text-[11px] font-black text-white ${badgeBg} shadow-sm`}>
                     {badge > 99 ? '99+' : badge}
                 </span>
             )}

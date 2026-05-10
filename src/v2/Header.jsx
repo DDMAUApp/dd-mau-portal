@@ -20,7 +20,7 @@ const LOCATIONS = [
 
 export default function Header({
     language, staffName, storeLocation = 'webster',
-    onMenuClick, onLanguageToggle, onLogout, onLocationChange,
+    onMenuClick, onLanguageToggle, onLogout, onLocationChange, onBellClick,
 }) {
     const isEs = language === 'es';
     const initials = (staffName || 'U')
@@ -98,7 +98,8 @@ export default function Header({
                             <span className="text-[15px] md:text-base">🔒</span>
                         </button>
                     )}
-                    <button className="relative min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg active:scale-95 transition"
+                    <button onClick={onBellClick}
+                        className="relative min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg active:scale-95 transition"
                         title={isEs ? 'Notificaciones' : 'Notifications'}
                         aria-label={isEs ? 'Notificaciones' : 'Notifications'}>
                         <span className="text-base">🔔</span>
