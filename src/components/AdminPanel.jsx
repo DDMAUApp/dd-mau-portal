@@ -1175,6 +1175,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </button>
                                                     </div>
                                                 ))}
+                                                {/* Language sweep — set ALL visible to a single language at once.
+                                                    Two buttons (EN / ES) instead of ON/OFF since this is a value
+                                                    not a flag. */}
+                                                <div className="flex items-center gap-1 mb-1">
+                                                    <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
+                                                        🗣 {language === "es" ? "Idioma de notificaciones" : "Notification language"}
+                                                    </div>
+                                                    <button onClick={() => bulkSetField(visibleIds, "preferredLanguage", "en")}
+                                                        className="px-2 py-1 rounded text-[9px] font-bold text-white bg-blue-600 hover:opacity-90"
+                                                        title={language === "es" ? `English para ${visible.length}` : `English for ${visible.length}`}>
+                                                        EN
+                                                    </button>
+                                                    <button onClick={() => bulkSetField(visibleIds, "preferredLanguage", "es")}
+                                                        className="px-2 py-1 rounded text-[9px] font-bold text-white bg-blue-800 hover:opacity-90"
+                                                        title={language === "es" ? `Español para ${visible.length}` : `Spanish for ${visible.length}`}>
+                                                        ES
+                                                    </button>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
@@ -1223,6 +1241,36 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                     : (rec ? "Recipes access: ON (click to revoke)" : "Recipes access: OFF (click to grant)")}
                                                                 className={`w-8 h-8 rounded text-sm border ${rec ? "bg-mint-100 text-mint-700 border-mint-300" : "bg-gray-200 text-gray-400 border-gray-300 line-through"}`}>
                                                                 🧑‍🍳
+                                                            </button>
+                                                        );
+                                                    })()}
+                                                    {/* Per-row Operations access toggle. Opt-IN semantics — only
+                                                        staff with opsAccess === true see the Operations tab. */}
+                                                    {(() => {
+                                                        const ops = s.opsAccess === true;
+                                                        return (
+                                                            <button onClick={() => handleBulkUpdate(s.id, { opsAccess: !ops })}
+                                                                title={language === "es"
+                                                                    ? (ops ? "Operaciones: ACTIVO (clic para quitar)" : "Operaciones: BLOQUEADO (clic para conceder)")
+                                                                    : (ops ? "Operations: ON (click to revoke)" : "Operations: OFF (click to grant)")}
+                                                                className={`w-8 h-8 rounded text-sm border ${ops ? "bg-indigo-100 text-indigo-700 border-indigo-300" : "bg-gray-200 text-gray-400 border-gray-300 line-through"}`}>
+                                                                📋
+                                                            </button>
+                                                        );
+                                                    })()}
+                                                    {/* Per-row notification language toggle. Tap to flip between
+                                                        EN ↔ ES. Determines what language pushes (publish, task
+                                                        deadline, task message, swap approved, etc.) arrive in. */}
+                                                    {(() => {
+                                                        const lng = s.preferredLanguage === "es" ? "es" : "en";
+                                                        const next = lng === "es" ? "en" : "es";
+                                                        return (
+                                                            <button onClick={() => handleBulkUpdate(s.id, { preferredLanguage: next })}
+                                                                title={language === "es"
+                                                                    ? `Idioma de notificaciones: ${lng.toUpperCase()} (clic para cambiar a ${next.toUpperCase()})`
+                                                                    : `Notification language: ${lng.toUpperCase()} (click to switch to ${next.toUpperCase()})`}
+                                                                className="w-8 h-8 rounded text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-300">
+                                                                {lng.toUpperCase()}
                                                             </button>
                                                         );
                                                     })()}
