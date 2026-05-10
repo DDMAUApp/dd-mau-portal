@@ -25,7 +25,7 @@
  */
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { toast } from '../toast';
+import { toast, undoToast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     setDoc, serverTimestamp, writeBatch, runTransaction,
@@ -949,27 +949,38 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const handleDeleteShift = async (shiftId) => {
         if (!canEdit) return;
-        if (!confirm(tx('Delete this shift?', '¿Eliminar este turno?'))) return;
         // Capture the shift's pre-delete details so we can notify the
         // affected staffer AFTER the delete commits — only if it was
         // published (drafts haven't been released to staff so silent
         // delete is fine).
         const sh = shifts.find(s => s.id === shiftId);
-        const wasPublished = sh && sh.published !== false;
-        try {
-            await deleteDoc(doc(db, 'shifts', shiftId));
-            if (wasPublished && sh.staffName) {
-                const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
-                await notify(sh.staffName, 'shift_deleted',
-                    { en: 'Shift removed', es: 'Turno eliminado' },
-                    { en: `Your ${detail} shift has been removed.`,
-                      es: `Tu turno del ${detail} ha sido eliminado.` },
-                    null, { allowSelf: true });
-            }
-        } catch (e) {
-            console.error('Delete shift failed:', e);
-            toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message);
-        }
+        if (!sh) return;
+        const wasPublished = sh.published !== false;
+        const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
+        // Replace the blocking confirm() with a 5-second undo toast.
+        // Optimistically removes the shift from view, commits to Firestore
+        // after 5s. Tap Undo and nothing happens. Restaurant managers
+        // will fat-finger; this turns "fat finger = work to fix" into
+        // "fat finger = 5 second window to recover."
+        undoToast(
+            tx(`🗑 Shift deleted (${detail})`, `🗑 Turno eliminado (${detail})`),
+            async () => {
+                try {
+                    await deleteDoc(doc(db, 'shifts', shiftId));
+                    if (wasPublished && sh.staffName) {
+                        await notify(sh.staffName, 'shift_deleted',
+                            { en: 'Shift removed', es: 'Turno eliminado' },
+                            { en: `Your ${detail} shift has been removed.`,
+                              es: `Tu turno del ${detail} ha sido eliminado.` },
+                            null, { allowSelf: true });
+                    }
+                } catch (e) {
+                    console.error('Delete shift failed:', e);
+                    toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message, { kind: 'error' });
+                }
+            },
+            { delayMs: 5000, undoLabel: tx('Undo', 'Deshacer'), kind: 'warn' }
+        );
     };
 
     // ── Drag-and-drop: move a shift to a different cell (date / staff). ──

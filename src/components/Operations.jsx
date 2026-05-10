@@ -9,7 +9,7 @@ import InventoryHistory from './InventoryHistory';
 import PrepList from './PrepList';
 import SauceLog from './SauceLog';
 import SauceLogBohBanner from './SauceLogBohBanner';
-import { toast } from '../toast';
+import { toast, undoToast } from '../toast';
 
 // Constants
 // Time-period concept (morning/afternoon/night) was tried and abandoned — only
@@ -2445,9 +2445,19 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Same drift-safety: target by ID, not by index.
                 const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
                 if (!targetId) return;
-                await mutateInventory((live) => live.map((cat, cIdx) =>
-                    cIdx === catIdx ? { ...cat, items: cat.items.filter(it => it.id !== targetId) } : cat
-                ));
+                const itemName = customInventory[catIdx]?.items[itemIdx]?.name || 'item';
+                // Wrap in 5-second undo toast — restaurant managers WILL fat-finger
+                // delete on a phone with wet hands. The audit specifically flagged
+                // this as a no-undo destructive action that needed soft-delete.
+                undoToast(
+                    language === 'es' ? `🗑 Eliminado: ${itemName}` : `🗑 Deleted: ${itemName}`,
+                    async () => {
+                        await mutateInventory((live) => live.map((cat, cIdx) =>
+                            cIdx === catIdx ? { ...cat, items: cat.items.filter(it => it.id !== targetId) } : cat
+                        ));
+                    },
+                    { delayMs: 5000, undoLabel: language === 'es' ? 'Deshacer' : 'Undo', kind: 'warn' }
+                );
             };
 
             // Split list helpers

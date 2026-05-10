@@ -24,6 +24,8 @@ function emit() {
  * @param {object} [opts]
  * @param {'info'|'success'|'error'|'warn'} [opts.kind='info']
  * @param {number} [opts.duration=4000] - ms before auto-dismiss; 0 = sticky
+ * @param {string} [opts.actionLabel] - if set, shows an action button
+ * @param {function} [opts.onAction] - called when action is tapped
  */
 export function toast(message, opts = {}) {
     if (message == null) return;
@@ -38,12 +40,48 @@ export function toast(message, opts = {}) {
         : 'info'
     );
     const duration = opts.duration != null ? opts.duration : 4000;
-    activeToasts = [...activeToasts, { id, message: String(message), kind, duration }];
+    const t = {
+        id, message: String(message), kind, duration,
+        actionLabel: opts.actionLabel || null,
+        onAction: opts.onAction || null,
+    };
+    activeToasts = [...activeToasts, t];
     emit();
     if (duration > 0) {
         setTimeout(() => dismissToast(id), duration);
     }
     return id;
+}
+
+/**
+ * Undo-toast pattern. Buffers a destructive action behind a 5-second
+ * "Undo" toast — the staffer can hit Undo to cancel before it commits.
+ *
+ * Usage:
+ *   undoToast(
+ *     'Shift deleted',
+ *     async () => { await actuallyDeleteShift(id); },
+ *     { delayMs: 5000 }
+ *   );
+ *
+ * The commit function only runs after the delay if Undo wasn't tapped.
+ * Returns a cancel handle in case the caller wants programmatic cancel.
+ */
+export function undoToast(message, commitFn, opts = {}) {
+    const delay = opts.delayMs != null ? opts.delayMs : 5000;
+    let cancelled = false;
+    const id = toast(message, {
+        kind: opts.kind || 'info',
+        duration: delay,
+        actionLabel: opts.undoLabel || 'Undo',
+        onAction: () => { cancelled = true; dismissToast(id); },
+    });
+    setTimeout(() => {
+        if (!cancelled) {
+            try { commitFn(); } catch (e) { console.warn('undoToast commit failed:', e); }
+        }
+    }, delay);
+    return { cancel: () => { cancelled = true; dismissToast(id); } };
 }
 
 export function dismissToast(id) {

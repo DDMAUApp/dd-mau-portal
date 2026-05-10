@@ -5,7 +5,7 @@ import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory'; 
-import { toast } from '../toast';
+import { toast, undoToast } from '../toast';
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks

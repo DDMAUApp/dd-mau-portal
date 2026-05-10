@@ -34,15 +34,24 @@ export default function AppToast() {
             aria-label="Notifications"
         >
             {list.map(t => (
-                <button
+                <div
                     key={t.id}
-                    onClick={() => dismissToast(t.id)}
-                    className={`pointer-events-auto rounded-xl border-2 px-4 py-3 shadow-lg text-left flex items-start gap-2 animate-toast-in ${KIND_TONE[t.kind] || KIND_TONE.info}`}
-                    title="Tap to dismiss"
+                    className={`pointer-events-auto rounded-xl border-2 px-4 py-3 shadow-lg flex items-start gap-2 animate-toast-in ${KIND_TONE[t.kind] || KIND_TONE.info}`}
                 >
                     <span className="text-base leading-none mt-0.5">{KIND_ICON[t.kind] || KIND_ICON.info}</span>
-                    <span className="text-sm font-semibold whitespace-pre-line flex-1">{t.message}</span>
-                </button>
+                    <span className="text-sm font-semibold whitespace-pre-line flex-1 cursor-pointer"
+                        onClick={() => dismissToast(t.id)}
+                        title="Tap to dismiss">
+                        {t.message}
+                    </span>
+                    {t.actionLabel && t.onAction && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); t.onAction(); }}
+                            className="ml-2 px-2.5 py-1 text-[11px] font-bold rounded-md bg-white/25 hover:bg-white/40 transition whitespace-nowrap">
+                            {t.actionLabel}
+                        </button>
+                    )}
+                </div>
             ))}
             <style>{`
                 @keyframes toast-in {
