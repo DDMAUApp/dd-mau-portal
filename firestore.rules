@@ -25,25 +25,12 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper: every entry in a list has a valid pin (4-digit string).
-    function allPinsValid(list) {
-      return list is list && list.size() > 0 && !(list.hasAny(
-        list.removeAll(list.where(item =>
-          item is map &&
-          'pin' in item &&
-          item.pin is string &&
-          item.pin.matches('^[0-9]{4}$')
-        ))
-      ));
-    }
-
-    // Stricter helper using a more conservative pattern Firestore rules can
-    // actually evaluate (the .where above is pseudo-code — Firestore rules
-    // don't support array filtering). The real check: iterate explicitly
-    // up to a bounded length. Firestore rules don't have for-loops either,
-    // so we approximate by checking the request data.list field structure
-    // and rejecting on size shrink. The CLIENT-side gates remain the
-    // primary defense for per-record validation.
+    // NOTE on per-record PIN validation:
+    // Firestore security rules do NOT support array iteration (no .where(),
+    // no for-loops, no .map). We can't validate the structure of every
+    // staff record server-side. Per-record validation lives in the CLIENT
+    // (saveStaffToFirestore in AdminPanel.jsx — the PIN integrity gate).
+    // Server-side defense here is bounded to size-shrink protection.
 
     // Staff document — the high-value target.
     match /config/staff {
