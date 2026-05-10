@@ -417,6 +417,11 @@ export default function App() {
                     onNavigate={(tab) => setActiveTab(tab)} />
             );
         };
+        // Wrap legacy tabs in a white card so they lift cleanly off the
+        // sage page background and match v2's card vocabulary. HomeV2
+        // already paints its own white cards on the sage canvas, so it
+        // gets no wrapper.
+        const isHome = activeTab === 'home';
         return (
             <Suspense fallback={<div className="min-h-screen bg-dd-sage" />}>
                 <AppShellV2
@@ -431,7 +436,11 @@ export default function App() {
                 >
                     <Suspense fallback={<TabLoading language={language} />}>
                         <ErrorBoundary language={language} key={activeTab}>
-                            {renderV2Body()}
+                            {isHome ? renderV2Body() : (
+                                <div className="bg-dd-surface rounded-xl border border-dd-line shadow-card -mx-4 sm:mx-0">
+                                    {renderV2Body()}
+                                </div>
+                            )}
                         </ErrorBoundary>
                     </Suspense>
                 </AppShellV2>
