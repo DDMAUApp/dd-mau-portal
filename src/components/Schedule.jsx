@@ -2579,39 +2579,45 @@ ${dayBlocks}
                 </div>
             ) : (
                 <>
+                    {/* "Open Shifts" calendar strip — pinned ABOVE the view-mode-
+                        specific content so it's always visible regardless of
+                        whether the user is on Week / Day / List. Previously
+                        only rendered inside the grid branch, which meant
+                        mobile users (auto-routed to Day view) never saw it.
+                        Hidden in PTO view since that view is PTO-focused
+                        and shifts aren't relevant there. */}
+                    {viewMode !== 'pto' && (
+                        <OpenShiftsCalendarBar
+                            weekStart={weekStart}
+                            staffingNeeds={staffingNeeds}
+                            shifts={visibleShifts}
+                            side={side}
+                            storeLocation={storeLocation}
+                            isEn={isEn}
+                            canEdit={canEdit}
+                            currentStaffName={staffName}
+                            blocksByDate={blocksByDate}
+                            onFillSlot={(n) => {
+                                if (canEdit) {
+                                    // Manager: prefill the available-staff modal scoped to this slot
+                                    setFillingNeed(n);
+                                    setAvailableForDate(n.date);
+                                } else {
+                                    // Staff: just nudge them to ask the manager
+                                    toast(tx(
+                                        `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
+                                        `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
+                                    ));
+                                }
+                            }}
+                            onTakeShift={handleTakeShift}
+                            onCancelOffer={handleCancelOffer}
+                        />
+                    )}
+
                     {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
                     {viewMode === 'grid' && (
                         <>
-                            {/* Sling-style "Open Shifts" bar — at-a-glance row of
-                                unassigned slots + up-for-grabs offers across the
-                                week. Tap a chip to fill (managers) or claim
-                                (staff). Hidden when there's nothing open. */}
-                            <OpenShiftsCalendarBar
-                                weekStart={weekStart}
-                                staffingNeeds={staffingNeeds}
-                                shifts={visibleShifts}
-                                side={side}
-                                storeLocation={storeLocation}
-                                isEn={isEn}
-                                canEdit={canEdit}
-                                currentStaffName={staffName}
-                                blocksByDate={blocksByDate}
-                                onFillSlot={(n) => {
-                                    if (canEdit) {
-                                        // Manager: prefill the available-staff modal scoped to this slot
-                                        setFillingNeed(n);
-                                        setAvailableForDate(n.date);
-                                    } else {
-                                        // Staff: just nudge them to ask the manager
-                                        toast(tx(
-                                            `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
-                                            `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
-                                        ));
-                                    }
-                                }}
-                                onTakeShift={handleTakeShift}
-                                onCancelOffer={handleCancelOffer}
-                            />
                             <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
                             {/* SPLH advisor + weather. Foldable so it doesn't dominate
                                 the grid by default. The summary chip ALWAYS shows
