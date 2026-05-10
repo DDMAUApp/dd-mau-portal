@@ -235,16 +235,10 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                 />
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard
-                        label={tx('Net Sales', 'Ventas Netas')}
-                        value={fmtUSD(labor.data?.netSales)}
-                        sub={labor.data?.updatedAt ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`) : ''}
-                        icon="💵"
-                        loading={labor.loading} />
-                    <StatCard
                         label={tx('Labor %', 'Mano de obra')}
                         value={fmtPct(laborPct)}
                         tone={laborTone}
-                        sub={tx('Target 25%', 'Objetivo 25%')}
+                        sub={labor.data?.updatedAt ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`) : tx('Target 25%', 'Objetivo 25%')}
                         icon="📊"
                         loading={labor.loading} />
                     <StatCard
@@ -260,6 +254,13 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         sub={eighty6.count > 0 ? tx('Tap to view', 'Toca para ver') : tx('All in stock ✓', 'Todo en stock ✓')}
                         icon="🚫"
                         loading={eighty6.loading} />
+                    <StatCard
+                        label={tx('Drafts', 'Borradores')}
+                        value={draftCount}
+                        tone={draftCount > 0 ? 'text-amber-700' : 'text-dd-text'}
+                        sub={draftCount > 0 ? tx('Awaiting publish', 'Esperando publicar') : tx('Schedule released ✓', 'Horario liberado ✓')}
+                        icon="📝"
+                        loading={shifts.loading} />
                 </div>
             </section>
 
