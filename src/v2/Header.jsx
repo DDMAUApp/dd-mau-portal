@@ -20,7 +20,7 @@ const LOCATIONS = [
 
 export default function Header({
     language, staffName, storeLocation = 'webster',
-    onMenuClick, onExitV2, onLanguageToggle, onLogout, onLocationChange,
+    onMenuClick, onLanguageToggle, onLogout, onLocationChange,
 }) {
     const isEs = language === 'es';
     const initials = (staffName || 'U')
@@ -109,12 +109,6 @@ export default function Header({
                             <div className="text-[10px] text-dd-text-2 leading-tight">{staffName ? 'Signed in' : 'Guest'}</div>
                         </div>
                     </div>
-                    {onExitV2 && (
-                        <button onClick={onExitV2}
-                            className="hidden md:flex ml-2 px-3 py-1.5 rounded-lg text-xs font-bold bg-dd-bg border border-dd-line text-dd-text-2 hover:bg-dd-sage-50">
-                            ← v1
-                        </button>
-                    )}
                 </div>
             </div>
         </header>

@@ -29,7 +29,6 @@ export default function AppShellV2({
     storeLocation = 'webster',
     activeTab = 'home',
     onNavigate,
-    onExitV2,
     hasOpsAccess = true,
     hasRecipesAccess = true,
     isAdmin = false,
@@ -76,7 +75,6 @@ export default function AppShellV2({
                     staffName={staffName}
                     storeLocation={storeLocation}
                     onMenuClick={() => setSidebarOpen(true)}
-                    onExitV2={onExitV2}
                     onLanguageToggle={onLanguageToggle}
                     onLogout={onLogout}
                     onLocationChange={onLocationChange}
