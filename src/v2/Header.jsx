@@ -30,8 +30,16 @@ export default function Header({
     const shortLabel = loc.short;
 
     return (
-        <header className="sticky top-0 z-20 h-14 md:h-16 bg-white/95 backdrop-blur-md border-b border-dd-line">
-            <div className="h-full px-2 sm:px-6 flex items-center gap-1 md:gap-3">
+        // Header background extends INTO the iPhone notch (safe area), but
+        // the content row gets pushed below the notch via padding-top:
+        // env(safe-area-inset-top). Without this, on a notched iPhone PWA
+        // install the location pill + bell + avatar were getting clipped
+        // under the status bar / Dynamic Island.
+        <header
+            className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-dd-line"
+            style={{ paddingTop: 'env(safe-area-inset-top)' }}
+        >
+            <div className="h-14 md:h-16 px-2 sm:px-6 flex items-center gap-1 md:gap-3">
 
                 {/* MOBILE LEFT — location pill. Tappable to cycle through
                     available locations. Shows the dot+short name; expands

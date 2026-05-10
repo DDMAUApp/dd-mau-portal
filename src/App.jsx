@@ -13,6 +13,8 @@ import AppToast from './components/AppToast';
 // v2 design preview — gated by ?v2=1 query param.
 const AppShellV2 = lazy(() => import('./v2/AppShellV2'));
 const HomeV2 = lazy(() => import('./v2/HomeV2'));
+const MobileHome = lazy(() => import('./v2/MobileHome'));
+import useIsMobile from './v2/useIsMobile';
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
@@ -162,6 +164,7 @@ const SS = {
 try { if (typeof localStorage !== 'undefined') localStorage.removeItem('ddmau:v2_optout'); } catch {}
 
 export default function App() {
+    const isMobile = useIsMobile();
     // Lazy-init from localStorage so the user stays on the same screen across reloads.
     const [staffName, setStaffName] = useState(() => SS.get("staffName"));
     const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
@@ -375,7 +378,21 @@ export default function App() {
     // requires opsAccess, Recipes requires recipesAccess, etc.).
     const renderV2Body = () => {
             if (activeTab === 'home') {
-                return (
+                // Mobile gets a launcher (clean tile grid of every destination
+                // — staff open the app for a specific reason, not to browse a
+                // dashboard). Desktop gets the data-rich HomeV2 dashboard.
+                return isMobile ? (
+                    <MobileHome
+                        language={language}
+                        staffName={staffName}
+                        storeLocation={effectiveLocation}
+                        onNavigate={(tab) => setActiveTab(tab)}
+                        hasOpsAccess={hasOpsAccess}
+                        hasRecipesAccess={hasRecipesAccess}
+                        isAdmin={staffIsAdmin}
+                        isManager={isManager}
+                    />
+                ) : (
                     <HomeV2
                         language={language}
                         staffName={staffName}
@@ -402,8 +419,19 @@ export default function App() {
             if (activeTab === 'tardies' && isManager) return <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'admin' && staffIsAdmin) return <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />;
-            // Tab not accessible — bounce home.
-            return (
+            // Tab not accessible — bounce home (uses same mobile/desktop split).
+            return isMobile ? (
+                <MobileHome
+                    language={language}
+                    staffName={staffName}
+                    storeLocation={effectiveLocation}
+                    onNavigate={(tab) => setActiveTab(tab)}
+                    hasOpsAccess={hasOpsAccess}
+                    hasRecipesAccess={hasRecipesAccess}
+                    isAdmin={staffIsAdmin}
+                    isManager={isManager}
+                />
+            ) : (
                 <HomeV2
                     language={language}
                     staffName={staffName}
