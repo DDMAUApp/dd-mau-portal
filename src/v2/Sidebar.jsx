@@ -76,18 +76,23 @@ export default function Sidebar({ language, activeTab, onNavigate, open, collaps
                         DD
                     </div>
                 ) : (
-                    <div className="flex-1 bg-white rounded-lg px-3 py-1.5 flex items-center justify-center min-w-0">
+                    // Logo on the dark sidebar — no white plate (looked boxy).
+                    // The source PNG is dark line art on transparent; we use a
+                    // CSS invert filter to flip it to white-on-transparent so
+                    // it reads cleanly on the charcoal background. No background
+                    // wrapper, no border — just the mark.
+                    <div className="flex-1 flex items-center justify-center min-w-0 px-2">
                         <img
                             src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                             alt="DD Mau Vietnamese Eatery"
-                            className="max-h-10 w-auto object-contain"
+                            className="max-h-12 w-auto object-contain"
+                            style={{ filter: 'invert(1) brightness(1.1)' }}
                             onError={(e) => {
-                                // Logo file not committed yet — fall back to text.
                                 e.target.style.display = 'none';
                                 if (e.target.parentElement) {
                                     e.target.parentElement.innerHTML =
-                                        '<div class="text-dd-charcoal text-sm font-black tracking-wider">DD MAU</div>' +
-                                        '<div class="text-dd-text-2 text-[8px] font-bold tracking-widest">VIETNAMESE EATERY</div>';
+                                        '<div class="text-white text-sm font-black tracking-wider">DD MAU</div>' +
+                                        '<div class="text-white/60 text-[8px] font-bold tracking-widest">VIETNAMESE EATERY</div>';
                                 }
                             }}
                         />

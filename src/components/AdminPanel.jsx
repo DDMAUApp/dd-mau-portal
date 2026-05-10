@@ -37,6 +37,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // carry the field. New staff form picks this up from the device's
             // current UI language.
             const [editPreferredLanguage, setEditPreferredLanguage] = useState("en");
+            // Per-staff Home view override. When set to a tab id (e.g. 'schedule'),
+            // tapping the Home tab — or signing in for the first time — shows
+            // that tab's content instead of the default dashboard. Useful for:
+            // FOH staff landing on Schedule, kitchen on Recipes, trainees on
+            // Training, etc. Empty/'auto' = the default unified Home page.
+            const [editHomeView, setEditHomeView] = useState("auto");
             // Designated-scheduler toggles. Per-side so the FOH scheduler
             // can't accidentally publish over BOH shifts and vice versa.
             const [editCanEditScheduleFOH, setEditCanEditScheduleFOH] = useState(false);
@@ -405,7 +411,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage } : s);
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -776,6 +782,31 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             </button>
                                                         </div>
                                                     </div>
+                                                    {/* Per-staff Home view picker. Determines what THIS person sees
+                                                        when they tap the Home tab (and what tab they land on after
+                                                        signing in for the first time on a device). 'Auto' = the
+                                                        default unified Home; any other value redirects to that tab. */}
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-sm font-bold text-gray-700 mb-1">🏠 {language === "es" ? "Vista de inicio" : "Home view"}</p>
+                                                        <p className="text-xs text-gray-500 mb-2">{language === "es"
+                                                            ? "Qué ve esta persona al abrir la app."
+                                                            : "What this person sees when they open the app."}</p>
+                                                        <select value={editHomeView}
+                                                            onChange={(e) => setEditHomeView(e.target.value)}
+                                                            className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm bg-white">
+                                                            <option value="auto">{language === "es" ? "🏠 Inicio (predeterminado)" : "🏠 Default Home"}</option>
+                                                            <option value="schedule">{language === "es" ? "📅 Horario" : "📅 Schedule"}</option>
+                                                            <option value="recipes">{language === "es" ? "🧑‍🍳 Recetas" : "🧑‍🍳 Recipes"}</option>
+                                                            <option value="operations">{language === "es" ? "📋 Operaciones (tareas)" : "📋 Operations (tasks)"}</option>
+                                                            <option value="training">{language === "es" ? "📚 Capacitación" : "📚 Training"}</option>
+                                                            <option value="menu">{language === "es" ? "🍜 Menú" : "🍜 Menu"}</option>
+                                                            <option value="eighty6">{language === "es" ? "🚫 Tablero 86" : "🚫 86 Board"}</option>
+                                                            <option value="handoff">{language === "es" ? "🤝 Entrega de turno" : "🤝 Shift Handoff"}</option>
+                                                            <option value="tardies">{language === "es" ? "⏰ Tardanzas" : "⏰ Tardies"}</option>
+                                                            <option value="labor">{language === "es" ? "📊 Mano de obra" : "📊 Labor Dashboard"}</option>
+                                                        </select>
+                                                    </div>
+
                                                     {/* Preferred language for this person's notifications. */}
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <p className="text-sm font-bold text-gray-700 mb-1">🗣 {language === "es" ? "Idioma de notificaciones" : "Notification language"}</p>
@@ -848,7 +879,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -1131,7 +1162,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const visibleIds = visible.map(s => s.id);
                         return (
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-                                <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                                {/* Wider modal so the per-row controls (FOH/BOH, minor, recipes,
+                                    ops, language, home view, target hours, availability) fit
+                                    side-by-side without crowding. Two-column staff list on
+                                    lg+ screens so admins can edit ~12 rows at a time without
+                                    scrolling. */}
+                                <div className="bg-white w-full sm:max-w-3xl lg:max-w-5xl xl:max-w-6xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[92vh] flex flex-col">
                                     <div className="border-b border-gray-200 p-4">
                                         <div className="flex items-center justify-between mb-2">
                                             <h3 className="text-lg font-bold text-purple-700">🏷 {language === "es" ? "Etiquetar Personal en Lote" : "Bulk Tag Staff"}</h3>
@@ -1253,11 +1289,31 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         ES
                                                     </button>
                                                 </div>
+                                                {/* Home view sweep — set the landing tab for all visible at once.
+                                                    Common patterns: "All FOH → Schedule home" or "All trainees →
+                                                    Training home" or "All BOH → Recipes home". */}
+                                                <div className="flex items-center gap-1 mb-1">
+                                                    <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
+                                                        🏠 {language === "es" ? "Vista de inicio" : "Home view"}
+                                                    </div>
+                                                    <select onChange={e => { if (e.target.value) { bulkSetField(visibleIds, "homeView", e.target.value); e.target.value = ''; } }}
+                                                        className="text-[9px] font-bold border border-gray-300 rounded px-1 py-1 bg-white max-w-[110px]"
+                                                        defaultValue="">
+                                                        <option value="">{language === "es" ? `Aplicar a ${visible.length}…` : `Apply to ${visible.length}…`}</option>
+                                                        <option value="auto">🏠 {language === "es" ? "Predet." : "Default"}</option>
+                                                        <option value="schedule">📅 {language === "es" ? "Horario" : "Schedule"}</option>
+                                                        <option value="recipes">🧑‍🍳 {language === "es" ? "Recetas" : "Recipes"}</option>
+                                                        <option value="operations">📋 {language === "es" ? "Operaciones" : "Operations"}</option>
+                                                        <option value="training">📚 {language === "es" ? "Capacit." : "Training"}</option>
+                                                        <option value="menu">🍜 {language === "es" ? "Menú" : "Menu"}</option>
+                                                        <option value="eighty6">🚫 86</option>
+                                                    </select>
+                                                </div>
                                             </div>
                                         )}
                                     </div>
 
-                                    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                                    <div className="flex-1 overflow-y-auto p-2 space-y-1 lg:grid lg:grid-cols-2 lg:gap-2 lg:space-y-0">
                                         {visible.length === 0 && (
                                             <p className="text-center text-gray-400 text-sm py-8">{language === "es" ? "Sin resultados." : "No results."}</p>
                                         )}
@@ -1332,6 +1388,34 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                 className="w-8 h-8 rounded text-[10px] font-bold border bg-blue-100 text-blue-700 border-blue-300">
                                                                 {lng.toUpperCase()}
                                                             </button>
+                                                        );
+                                                    })()}
+                                                    {/* Per-row Home view selector. Compact dropdown — admin can
+                                                        change a single staff member's landing tab from the bulk
+                                                        view without opening the full edit form. */}
+                                                    {(() => {
+                                                        const HOME_LABELS = {
+                                                            auto: '🏠', schedule: '📅', recipes: '🧑‍🍳', operations: '📋',
+                                                            training: '📚', menu: '🍜', eighty6: '🚫', handoff: '🤝',
+                                                            tardies: '⏰', labor: '📊',
+                                                        };
+                                                        const cur = s.homeView || 'auto';
+                                                        return (
+                                                            <select value={cur}
+                                                                onChange={e => handleBulkUpdate(s.id, { homeView: e.target.value })}
+                                                                title={language === "es" ? `Vista de inicio: ${cur}` : `Home view: ${cur}`}
+                                                                className="w-10 h-8 text-center text-xs border border-gray-300 rounded bg-white">
+                                                                <option value="auto">🏠</option>
+                                                                <option value="schedule">📅</option>
+                                                                <option value="recipes">🧑‍🍳</option>
+                                                                <option value="operations">📋</option>
+                                                                <option value="training">📚</option>
+                                                                <option value="menu">🍜</option>
+                                                                <option value="eighty6">🚫</option>
+                                                                <option value="handoff">🤝</option>
+                                                                <option value="tardies">⏰</option>
+                                                                <option value="labor">📊</option>
+                                                            </select>
                                                         );
                                                     })()}
                                                     <input type="number" min="0" max="80" step="1"
