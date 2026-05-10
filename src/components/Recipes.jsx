@@ -188,6 +188,12 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     const [expandedRecipe, setExpandedRecipe] = useState(null);
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
+    // Import-Master preview state. When non-null, the modal is open and shows
+    // exactly which recipes will be added vs which existing edited recipes
+    // would be overwritten. Per-row checkboxes give the user fine control —
+    // ADDS default checked (safe), UPDATES default unchecked (protect edits).
+    const [importPreview, setImportPreview] = useState(null);
+    // { adds: [{master, checked}], updates: [{id, master, current, checked, fieldsDiffer:[]}] }
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
     // Reverse-lookup: when set, recipes containing this allergen get a strong
     // visual warning (red border + 🚫 chip) so cashiers/cooks scanning for
@@ -607,58 +613,130 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         }
     };
 
-    // Bulk-import / refresh the Master Recipe Book (admin only). Existing
-    // recipes that share an English title with a master entry are *updated*
-    // (preserving their id) so corrections to the source data flow through;
-    // new master entries are appended with fresh ids; user-created recipes
-    // whose titles aren't in the master book are left alone. Now also
-    // race-safe — operates against the LIVE recipe list inside a transaction.
-    const importMasterRecipes = async () => {
-        // Preview the change against the local snapshot for the confirm prompt.
-        const norm = (s) => (s || "").trim().toLowerCase();
-        const previewMaster = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
-        let previewUpdates = 0, previewAdds = 0;
-        for (const r of recipes) {
-            if (previewMaster.has(norm(r.titleEn))) {
-                previewUpdates += 1;
-                previewMaster.delete(norm(r.titleEn));
-            }
+    // Bulk-import / refresh the Master Recipe Book (admin only).
+    //
+    // SAFETY DESIGN (post 2026-05-09 incident):
+    // The original flow was a one-tap-and-clobber: confirm("X new, Y updates")
+    // → REPLACE every matching recipe with the master version (preserving only
+    // the id). One accidental tap silently nuked any edits an admin had made
+    // since the last import. NOT acceptable.
+    //
+    // New two-stage flow:
+    //   1. previewImportMaster()  computes the proposed changes, opens a modal
+    //      with PER-ROW CHECKBOXES. Adds default to CHECKED (safe, just new
+    //      content). Updates default to UNCHECKED (protect existing edits —
+    //      the admin must opt in to overwrite each one).
+    //   2. commitImportMaster(selection) runs only the items the admin checked,
+    //      inside a transaction, AND writes a /recipe_audits entry capturing
+    //      who/when/what so we can replay if something still goes wrong.
+    const norm = (s) => (s || "").trim().toLowerCase();
+    const recipeFingerprint = (r) => {
+        // Stable hash of the user-visible content fields. Same content = same
+        // fingerprint, independent of id/order. Used to detect whether the
+        // current recipe matches the master version exactly (no-op) or differs
+        // (legitimate update candidate the admin should approve).
+        const fields = ['titleEn','titleEs','category','emoji','prepTimeEn','cookTimeEn','yieldsEn','yieldsEs',
+                        'ingredientsEn','ingredientsEs','instructionsEn','instructionsEs'];
+        const obj = {};
+        for (const f of fields) obj[f] = r?.[f] ?? (Array.isArray(r?.[f]) ? [] : '');
+        return JSON.stringify(obj);
+    };
+    const recipeFieldsDiffer = (a, b) => {
+        // Return list of fields that differ — used to render a per-row "what
+        // would change" hint in the preview.
+        const fields = ['titleEn','titleEs','category','emoji','prepTimeEn','cookTimeEn','yieldsEn','yieldsEs',
+                        'ingredientsEn','ingredientsEs','instructionsEn','instructionsEs'];
+        const out = [];
+        for (const f of fields) {
+            const av = JSON.stringify(a?.[f] ?? '');
+            const bv = JSON.stringify(b?.[f] ?? '');
+            if (av !== bv) out.push(f);
         }
-        previewAdds = previewMaster.size;
-        if (previewUpdates === 0 && previewAdds === 0) {
+        return out;
+    };
+
+    const previewImportMaster = () => {
+        const masterByTitle = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
+        const updates = [];
+        for (const r of recipes) {
+            const m = masterByTitle.get(norm(r.titleEn));
+            if (!m) continue;
+            masterByTitle.delete(norm(r.titleEn));
+            // Skip recipes already identical to master — nothing to do.
+            if (recipeFingerprint(r) === recipeFingerprint(m)) continue;
+            updates.push({
+                id: r.id,
+                master: m,
+                current: r,
+                fieldsDiffer: recipeFieldsDiffer(r, m),
+                checked: false,        // SAFE DEFAULT: don't overwrite edits
+            });
+        }
+        const adds = Array.from(masterByTitle.values()).map(m => ({
+            master: m,
+            checked: true,             // SAFE DEFAULT: new recipes are net-new
+        }));
+        if (updates.length === 0 && adds.length === 0) {
             toast(language === "es" ? "Sin cambios." : "Nothing to do.");
             return;
         }
-        const summary = language === "es"
-            ? `${previewAdds} nueva(s), ${previewUpdates} actualizada(s). ¿Continuar?`
-            : `${previewAdds} new, ${previewUpdates} to update. Proceed?`;
-        if (!confirm(summary)) return;
+        setImportPreview({ adds, updates });
+    };
+
+    const commitImportMaster = async () => {
+        if (!importPreview) return;
+        const checkedAdds = importPreview.adds.filter(a => a.checked);
+        const checkedUpdates = importPreview.updates.filter(u => u.checked);
+        if (checkedAdds.length === 0 && checkedUpdates.length === 0) {
+            toast(language === "es" ? "Nada seleccionado." : "Nothing selected.");
+            return;
+        }
         try {
-            // Real import: re-walks against the LIVE list inside the transaction
-            // (counts may differ slightly from preview if another admin just edited).
             const result = await runTransaction(db, async (tx) => {
                 const snap = await tx.get(recipesDocRef);
                 const live = (snap.exists() && Array.isArray(snap.data()?.list)) ? snap.data().list : [];
-                const masterByTitle = new Map(MASTER_RECIPES.map(r => [norm(r.titleEn), r]));
-                let upd = 0, add = 0;
+                const updateById = new Map(checkedUpdates.map(u => [u.id, u.master]));
                 const next = live.map(r => {
-                    const m = masterByTitle.get(norm(r.titleEn));
-                    if (!m) return r;
-                    upd += 1;
-                    masterByTitle.delete(norm(r.titleEn));
-                    return { ...m, id: r.id };
+                    if (!updateById.has(r.id)) return r;
+                    return { ...updateById.get(r.id), id: r.id };
                 });
                 let nextId = Date.now();
-                for (const m of masterByTitle.values()) {
-                    next.push({ ...m, id: nextId++ });
-                    add += 1;
+                const usedIds = new Set(next.map(r => r.id));
+                for (const a of checkedAdds) {
+                    while (usedIds.has(nextId)) nextId += 1;
+                    next.push({ ...a.master, id: nextId });
+                    usedIds.add(nextId);
+                    nextId += 1;
                 }
                 tx.set(recipesDocRef, { list: next, updatedAt: new Date().toISOString() });
-                return { adds: add, updates: upd };
+                return { adds: checkedAdds.length, updates: checkedUpdates.length };
             });
+            // Audit log — append-only record so we can replay/recover if the
+            // import did something unexpected. Captures BEFORE state of every
+            // overwritten recipe (full snapshot, not just diff).
+            try {
+                await addDoc(collection(db, 'recipe_audits'), {
+                    action: 'import_master',
+                    at: serverTimestamp(),
+                    byName: staffName || 'unknown',
+                    addCount: result.adds,
+                    updateCount: result.updates,
+                    addedTitles: checkedAdds.map(a => a.master.titleEn),
+                    overwrittenBefore: checkedUpdates.map(u => ({
+                        id: u.id,
+                        before: u.current,
+                        after: u.master,
+                        fieldsDiffer: u.fieldsDiffer,
+                    })),
+                });
+            } catch (auditErr) {
+                console.warn('recipe_audits write failed (non-fatal):', auditErr);
+            }
+            setImportPreview(null);
             toast(language === "es"
                 ? `✓ ${result.adds} agregadas, ${result.updates} actualizadas.`
-                : `✓ ${result.adds} added, ${result.updates} updated.`);
+                : `✓ ${result.adds} added, ${result.updates} updated.`,
+                { kind: 'success' });
         } catch (err) {
             console.error("Error importing master recipes:", err);
             toast(`Import failed: ${err.message || err}`, { kind: 'error' });
@@ -776,6 +854,156 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                     </div>
                 </div>
             )}
+
+            {/* Import-Master preview modal — per-row checkboxes protect edits.
+                Adds default ✓ (safe net-new content). Updates default ✗ (admin
+                must opt in to overwrite). Diff hint per row tells the admin
+                exactly what fields the master version would change. */}
+            {importPreview && (
+                <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                    <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[90vh] flex flex-col sm:shadow-2xl">
+                        <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex items-start justify-between">
+                            <div>
+                                <h3 className="text-lg font-bold text-amber-700">📚 {language === 'es' ? 'Vista previa: Importar maestro' : 'Preview: Import master'}</h3>
+                                <p className="text-xs text-gray-600 mt-1">
+                                    {language === 'es'
+                                        ? 'Marca solo los cambios que quieres aplicar. Tus ediciones están protegidas por defecto.'
+                                        : 'Check only the changes you want to apply. Your edits are protected by default.'}
+                                </p>
+                            </div>
+                            <button onClick={() => setImportPreview(null)}
+                                className="w-8 h-8 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg flex-shrink-0">×</button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                            {/* Adds — net-new master recipes (default checked) */}
+                            {importPreview.adds.length > 0 && (
+                                <section>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="text-sm font-bold text-emerald-700 flex items-center gap-1.5">
+                                            <span className="w-1 h-5 bg-emerald-500 rounded-full" />
+                                            ➕ {language === 'es' ? 'Nuevas recetas' : 'New recipes'} ({importPreview.adds.filter(a => a.checked).length}/{importPreview.adds.length})
+                                        </h4>
+                                        <div className="flex gap-1">
+                                            <button onClick={() => setImportPreview(p => ({ ...p, adds: p.adds.map(a => ({ ...a, checked: true })) }))}
+                                                className="text-[11px] font-bold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100">
+                                                {language === 'es' ? 'Todos' : 'All'}
+                                            </button>
+                                            <button onClick={() => setImportPreview(p => ({ ...p, adds: p.adds.map(a => ({ ...a, checked: false })) }))}
+                                                className="text-[11px] font-bold px-2 py-0.5 rounded bg-white text-gray-600 border border-gray-300 hover:bg-gray-50">
+                                                {language === 'es' ? 'Ninguno' : 'None'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {importPreview.adds.map((a, idx) => (
+                                            <label key={idx} className="flex items-center gap-3 p-2 rounded-lg border border-emerald-200 bg-emerald-50/50 cursor-pointer hover:bg-emerald-50 transition">
+                                                <input type="checkbox" checked={a.checked}
+                                                    onChange={(e) => setImportPreview(p => ({
+                                                        ...p,
+                                                        adds: p.adds.map((x, i) => i === idx ? { ...x, checked: e.target.checked } : x),
+                                                    }))}
+                                                    className="w-4 h-4 accent-emerald-600 flex-shrink-0" />
+                                                <span className="text-lg flex-shrink-0">{a.master.emoji || '📋'}</span>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-sm font-bold text-gray-800 truncate">{a.master.titleEn}</div>
+                                                    <div className="text-[10px] text-gray-500">
+                                                        {a.master.category || '—'} · {(a.master.ingredientsEn || []).filter(x => x?.trim()).length} {language === 'es' ? 'ingredientes' : 'ingredients'} · {(a.master.instructionsEn || []).filter(x => x?.trim()).length} {language === 'es' ? 'pasos' : 'steps'}
+                                                    </div>
+                                                </div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+
+                            {/* Updates — would overwrite EXISTING (possibly edited) recipes */}
+                            {importPreview.updates.length > 0 && (
+                                <section>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="text-sm font-bold text-amber-700 flex items-center gap-1.5">
+                                            <span className="w-1 h-5 bg-amber-500 rounded-full" />
+                                            ⚠️ {language === 'es' ? 'Sobrescribirá tus ediciones' : 'Will overwrite your edits'} ({importPreview.updates.filter(u => u.checked).length}/{importPreview.updates.length})
+                                        </h4>
+                                        <div className="flex gap-1">
+                                            <button onClick={() => setImportPreview(p => ({ ...p, updates: p.updates.map(u => ({ ...u, checked: true })) }))}
+                                                className="text-[11px] font-bold px-2 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100">
+                                                {language === 'es' ? 'Todos' : 'All'}
+                                            </button>
+                                            <button onClick={() => setImportPreview(p => ({ ...p, updates: p.updates.map(u => ({ ...u, checked: false })) }))}
+                                                className="text-[11px] font-bold px-2 py-0.5 rounded bg-white text-gray-600 border border-gray-300 hover:bg-gray-50">
+                                                {language === 'es' ? 'Ninguno' : 'None'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 mb-2">
+                                        {language === 'es'
+                                            ? '⚠️ Estas recetas ya existen y son DIFERENTES del maestro. Marcar las sobrescribirá completamente con la versión maestra. Por defecto están desmarcadas para proteger tus ediciones.'
+                                            : '⚠️ These recipes already exist and DIFFER from master. Checking them fully overwrites with the master version. Unchecked by default to protect your edits.'}
+                                    </p>
+                                    <div className="space-y-1.5">
+                                        {importPreview.updates.map((u, idx) => (
+                                            <label key={idx} className={`flex items-start gap-3 p-2 rounded-lg border cursor-pointer transition ${u.checked ? 'bg-amber-50 border-amber-300' : 'bg-white border-gray-200 hover:bg-gray-50'}`}>
+                                                <input type="checkbox" checked={u.checked}
+                                                    onChange={(e) => setImportPreview(p => ({
+                                                        ...p,
+                                                        updates: p.updates.map((x, i) => i === idx ? { ...x, checked: e.target.checked } : x),
+                                                    }))}
+                                                    className="w-4 h-4 accent-amber-600 mt-0.5 flex-shrink-0" />
+                                                <span className="text-lg flex-shrink-0 mt-0.5">{u.current.emoji || u.master.emoji || '📋'}</span>
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="text-sm font-bold text-gray-800 truncate">{u.current.titleEn}</div>
+                                                    <div className="text-[10px] text-gray-500 mt-0.5">
+                                                        {language === 'es' ? 'Cambios:' : 'Changes:'} <span className="font-semibold">{u.fieldsDiffer.join(', ')}</span>
+                                                    </div>
+                                                    {/* Quick diff peek for the most-edited fields */}
+                                                    {u.fieldsDiffer.includes('ingredientsEn') && (
+                                                        <div className="mt-1 text-[10px] text-gray-600 bg-white border border-gray-200 rounded p-1.5 max-h-24 overflow-y-auto">
+                                                            <div className="font-bold text-gray-700">{language === 'es' ? 'Ingredientes (actual → maestro):' : 'Ingredients (yours → master):'}</div>
+                                                            <div><span className="text-amber-700 font-semibold">{(u.current.ingredientsEn || []).filter(x => x?.trim()).length}</span> → <span className="text-emerald-700 font-semibold">{(u.master.ingredientsEn || []).filter(x => x?.trim()).length}</span> {language === 'es' ? 'líneas' : 'lines'}</div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+
+                            {importPreview.adds.length === 0 && importPreview.updates.length === 0 && (
+                                <div className="text-center py-8">
+                                    <div className="text-3xl mb-2">✓</div>
+                                    <p className="text-sm text-gray-600">{language === 'es' ? 'Todas las recetas ya coinciden con el maestro.' : 'All recipes already match master.'}</p>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4 flex items-center justify-between gap-2 shadow-[0_-4px_8px_-4px_rgba(15,23,42,0.06)]">
+                            <div className="text-[11px] text-gray-600 font-semibold">
+                                {(() => {
+                                    const a = importPreview.adds.filter(x => x.checked).length;
+                                    const u = importPreview.updates.filter(x => x.checked).length;
+                                    return language === 'es'
+                                        ? `${a} agregar, ${u} sobrescribir`
+                                        : `${a} to add, ${u} to overwrite`;
+                                })()}
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setImportPreview(null)}
+                                    className="px-4 py-2 rounded-lg bg-white border border-gray-300 text-gray-700 font-bold hover:bg-gray-50 transition">
+                                    {language === 'es' ? 'Cancelar' : 'Cancel'}
+                                </button>
+                                <button onClick={commitImportMaster}
+                                    disabled={importPreview.adds.filter(x => x.checked).length + importPreview.updates.filter(x => x.checked).length === 0}
+                                    className={`px-4 py-2 rounded-lg font-bold text-white shadow-sm transition ${importPreview.adds.filter(x => x.checked).length + importPreview.updates.filter(x => x.checked).length > 0 ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300 cursor-not-allowed'}`}>
+                                    {language === 'es' ? 'Aplicar' : 'Apply'}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div className={`mb-2 inline-flex items-center gap-2 text-[11px] font-bold px-2 py-1 rounded-full border ${pillTone}`}>
                 {pillCopy}
             </div>
@@ -784,10 +1012,12 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 {adminUser && (
                     <div className="flex items-center gap-2">
                         <button
-                            onClick={importMasterRecipes}
-                            className="bg-amber-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold"
-                            title={language === "es" ? "Importar el libro maestro de recetas" : "Import the master recipe book"}>
-                            📚 {language === "es" ? "Importar maestro" : "Import master"}
+                            onClick={previewImportMaster}
+                            className="bg-white border border-amber-300 text-amber-700 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-amber-50 transition"
+                            title={language === "es"
+                                ? "Vista previa antes de importar — protege tus ediciones"
+                                : "Preview before import — protects your edits"}>
+                            📚 {language === "es" ? "Importar maestro…" : "Import master…"}
                         </button>
                         <button
                             onClick={() => requestEdit("add")}
