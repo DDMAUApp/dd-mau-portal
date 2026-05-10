@@ -374,8 +374,51 @@ export default function App() {
     // app. Currently shows DemoDashboard for the home tab; other tabs fall
     // through to the legacy components inside the new shell.
     if (v2) {
+        // Renders the active tab's existing component INSIDE the v2 shell.
+        // Zero rewrite of existing components — same data paths, same gates,
+        // same race fixes. Just a different frame. Keeps the PIN incident
+        // safety nets intact while we iterate on the new UI.
+        const renderV2Body = () => {
+            if (activeTab === 'home') {
+                return (
+                    <HomeV2
+                        language={language}
+                        staffName={staffName}
+                        storeLocation={effectiveLocation}
+                        staffList={staffList}
+                        onNavigate={(tab) => setActiveTab(tab)} />
+                );
+            }
+            // For everything else, render the legacy component as-is. They
+            // sit on the sage page background; cards inside them stay white.
+            // We negate the top-level dark backgrounds some legacy components
+            // ship with via a CSS reset class that the tab itself defines.
+            if (activeTab === 'training') return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
+            if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'menu') return <MenuReference language={language} />;
+            if (activeTab === 'schedule') return <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />;
+            if (activeTab === 'recipes' && hasRecipesAccess) return <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} />;
+            if (activeTab === 'labor' && staffIsAdmin) return <LaborDashboard language={language} storeLocation={effectiveLocation} />;
+            if (activeTab === 'eighty6') return <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />;
+            if (activeTab === 'catering') return <CateringOrder language={language} staffName={staffName} />;
+            if (activeTab === 'maintenance') return <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'insurance') return <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />;
+            if (activeTab === 'ai') return <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'tardies' && isManager) return <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
+            if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
+            if (activeTab === 'admin' && staffIsAdmin) return <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />;
+            // Tab not accessible — bounce home.
+            return (
+                <HomeV2
+                    language={language}
+                    staffName={staffName}
+                    storeLocation={effectiveLocation}
+                    staffList={staffList}
+                    onNavigate={(tab) => setActiveTab(tab)} />
+            );
+        };
         return (
-            <Suspense fallback={<div className="min-h-screen bg-dd-bg" />}>
+            <Suspense fallback={<div className="min-h-screen bg-dd-sage" />}>
                 <AppShellV2
                     language={language}
                     staffName={staffName}
@@ -386,13 +429,11 @@ export default function App() {
                         window.location.search = '?v2=0';
                     }}
                 >
-                    <HomeV2
-                        language={language}
-                        staffName={staffName}
-                        storeLocation={effectiveLocation}
-                        staffList={staffList}
-                        onNavigate={(tab) => setActiveTab(tab)}
-                    />
+                    <Suspense fallback={<TabLoading language={language} />}>
+                        <ErrorBoundary language={language} key={activeTab}>
+                            {renderV2Body()}
+                        </ErrorBoundary>
+                    </Suspense>
                 </AppShellV2>
             </Suspense>
         );
