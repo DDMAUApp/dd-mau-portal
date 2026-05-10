@@ -2451,9 +2451,12 @@ ${dayBlocks}
                 </div>
             </div>
             {personFilter && (
-                <div className="mb-3 p-2 rounded bg-green-50 border border-green-300 text-xs text-green-800 flex items-center justify-between print:hidden">
-                    <span>👤 {tx('Showing only:', 'Mostrando solo:')} <b>{personFilter}</b></span>
-                    <button onClick={() => setPersonFilter(null)} className="underline">{tx('Show all', 'Mostrar todos')}</button>
+                <div className="mb-3 px-3 py-2 rounded-lg bg-dd-green-50 border border-dd-green/30 text-xs text-dd-green-700 flex items-center justify-between print:hidden shadow-sm">
+                    <span className="font-semibold">👤 {tx('Showing only:', 'Mostrando solo:')} <b>{personFilter}</b></span>
+                    <button onClick={() => setPersonFilter(null)}
+                        className="px-2 py-1 rounded-md bg-white border border-dd-green/30 text-dd-green-700 font-bold hover:bg-dd-sage-50 transition text-[11px]">
+                        {tx('Show all', 'Mostrar todos')}
+                    </button>
                 </div>
             )}
             {/* Print-only header so the printout has context */}
@@ -2561,12 +2564,47 @@ ${dayBlocks}
             />
 
             {loading ? (
-                <p className="text-center text-gray-400 mt-8">{tx('Loading…', 'Cargando…')}</p>
+                <div className="space-y-3 mt-4">
+                    <div className="h-20 bg-white border border-dd-line rounded-xl animate-pulse" />
+                    <div className="h-32 bg-white border border-dd-line rounded-xl animate-pulse" />
+                    <div className="h-64 bg-white border border-dd-line rounded-xl animate-pulse" />
+                    <p className="text-center text-dd-text-2 text-xs">{tx('Loading schedule…', 'Cargando horario…')}</p>
+                </div>
             ) : (
                 <>
                     {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
                     {viewMode === 'grid' && (
                         <>
+                            {/* Sling-style "Open Shifts" bar — at-a-glance row of
+                                unassigned slots + up-for-grabs offers across the
+                                week. Tap a chip to fill (managers) or claim
+                                (staff). Hidden when there's nothing open. */}
+                            <OpenShiftsCalendarBar
+                                weekStart={weekStart}
+                                staffingNeeds={staffingNeeds}
+                                shifts={visibleShifts}
+                                side={side}
+                                storeLocation={storeLocation}
+                                isEn={isEn}
+                                canEdit={canEdit}
+                                currentStaffName={staffName}
+                                blocksByDate={blocksByDate}
+                                onFillSlot={(n) => {
+                                    if (canEdit) {
+                                        // Manager: prefill the available-staff modal scoped to this slot
+                                        setFillingNeed(n);
+                                        setAvailableForDate(n.date);
+                                    } else {
+                                        // Staff: just nudge them to ask the manager
+                                        toast(tx(
+                                            `Open ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} slot on ${n.date}. Ask a manager to assign you.`,
+                                            `Espacio abierto ${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} el ${n.date}. Pídele al gerente que te asigne.`
+                                        ));
+                                    }
+                                }}
+                                onTakeShift={handleTakeShift}
+                                onCancelOffer={handleCancelOffer}
+                            />
                             <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
                             {/* SPLH advisor + weather. Foldable so it doesn't dominate
                                 the grid by default. The summary chip ALWAYS shows
@@ -3059,23 +3097,24 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
         if (advisory.over > 0)  bits.push(tx(`${advisory.over} over-staffed`, `${advisory.over} con exceso`));
         return tx(`Forecast: ${bits.join(', ')}`, `Pronóstico: ${bits.join(', ')}`);
     })();
-    const headlineTone = !hasData ? 'bg-gray-100 text-gray-600 border-gray-300'
-        : (advisory.under > 0 || advisory.over > 0) ? 'bg-amber-100 text-amber-800 border-amber-300'
-        : 'bg-emerald-100 text-emerald-800 border-emerald-300';
+    const headlineTone = !hasData ? 'bg-white text-dd-text-2 border-dd-line'
+        : (advisory.under > 0 || advisory.over > 0) ? 'bg-amber-50 text-amber-800 border-amber-200'
+        : 'bg-dd-green-50 text-dd-green-700 border-dd-green/30';
     return (
         <div className="mb-3">
             <button onClick={onToggle}
-                className={`w-full text-left flex items-center justify-between gap-2 px-3 py-2 rounded-lg border ${headlineTone}`}>
-                <span className="text-xs font-bold flex items-center gap-1">
-                    📊 {headline}
-                    {(weatherTips?.length || 0) > 0 && <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 border border-blue-200 text-[10px]">🌧 {weatherTips.length} {tx('weather tip', 'aviso clima')}{weatherTips.length === 1 ? '' : 's'}</span>}
+                className={`w-full text-left flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border shadow-card hover:shadow-card-hov transition ${headlineTone}`}>
+                <span className="text-xs font-bold flex items-center gap-2">
+                    <span className="w-7 h-7 rounded-lg bg-white/70 flex items-center justify-center text-sm shadow-sm">📊</span>
+                    {headline}
+                    {(weatherTips?.length || 0) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold">🌧 {weatherTips.length} {tx('weather tip', 'aviso clima')}{weatherTips.length === 1 ? '' : 's'}</span>}
                 </span>
-                <span className="text-xs font-bold">{open ? '▼' : '▶'}</span>
+                <span className="text-xs font-bold opacity-60">{open ? '▼' : '▶'}</span>
             </button>
             {open && (
-                <div className="mt-2 bg-white border border-gray-200 rounded-lg p-3 space-y-3">
+                <div className="mt-2 bg-white border border-dd-line rounded-xl p-4 space-y-3 shadow-card">
                     {!hasData && (
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-dd-text-2">
                             {tx('No labor history yet — once the Toast scraper has 7+ days of hourly data, forecasts will populate.',
                                 'Sin historial — una vez que el scraper de Toast tenga 7+ días, el pronóstico aparecerá.')}
                         </p>
@@ -3084,12 +3123,12 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
                         <div className="overflow-x-auto -mx-2 px-2">
                             <table className="w-full text-[11px] border-collapse">
                                 <thead>
-                                    <tr className="text-gray-500">
-                                        <th className="text-left p-1 font-semibold">{tx('Day', 'Día')}</th>
+                                    <tr className="text-dd-text-2">
+                                        <th className="text-left p-1 font-bold uppercase tracking-wider text-[10px]">{tx('Day', 'Día')}</th>
                                         {DAYPARTS.map(p => (
-                                            <th key={p.id} className="text-center p-1 font-semibold whitespace-nowrap">
+                                            <th key={p.id} className="text-center p-1 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap">
                                                 {isEn ? p.enLabel : p.esLabel}<br />
-                                                <span className="text-[9px] font-normal text-gray-400">{p.startHr}-{p.endHr}</span>
+                                                <span className="text-[9px] font-normal normal-case text-dd-text-2/60 tracking-normal">{p.startHr}-{p.endHr}</span>
                                             </th>
                                         ))}
                                     </tr>
@@ -3108,10 +3147,10 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
                                         const dow = rowEntries[0]?.dow;
                                         const labels = isEn ? DOW_EN : DOW_ES;
                                         return (
-                                            <tr key={i}>
-                                                <td className="p-1 font-bold text-gray-700">
+                                            <tr key={i} className="border-t border-dd-line/50">
+                                                <td className="p-1 font-bold text-dd-text">
                                                     {labels[dow]}
-                                                    <span className="text-[9px] text-gray-400 block">{rowEntries[0]?.dateStr?.slice(5)}</span>
+                                                    <span className="text-[9px] text-dd-text-2/70 block tabular-nums">{rowEntries[0]?.dateStr?.slice(5)}</span>
                                                 </td>
                                                 {rowEntries.map(f => {
                                                     const v = f.variance;
@@ -3150,23 +3189,23 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
                                     })}
                                 </tbody>
                             </table>
-                            <p className="text-[10px] text-gray-500 mt-2">
+                            <p className="text-[10px] text-dd-text-2/70 mt-2 italic">
                                 {tx(`Scheduled ${side.toUpperCase()} hours per slot vs typical from last 28 days. ⬆ = under-staffed, ⬇ = over-staffed, ✓ = on target. Tooltip shows raw numbers.`,
                                     `Horas programadas ${side.toUpperCase()} vs típicas (28 días). ⬆ = poco, ⬇ = exceso, ✓ = bien. Pasa el cursor para detalles.`)}
                             </p>
                         </div>
                     )}
                     {weatherTips?.length > 0 && (
-                        <div className="border-t border-gray-200 pt-2">
-                            <h4 className="text-[11px] font-bold text-blue-800 mb-1">
+                        <div className="border-t border-dd-line pt-3">
+                            <h4 className="text-[11px] font-bold text-blue-700 mb-1.5 uppercase tracking-wider">
                                 🌤 {tx(`Weather: ${weather?.location || ''}`, `Clima: ${weather?.location || ''}`)}
                             </h4>
-                            <ul className="text-[11px] text-gray-700 space-y-1">
+                            <ul className="text-[11px] text-dd-text space-y-1.5">
                                 {weatherTips.map((tip, idx) => (
                                     <li key={idx} className="flex items-start gap-2">
-                                        <span className="font-bold whitespace-nowrap">{tip.name}:</span>
+                                        <span className="font-bold whitespace-nowrap text-dd-text">{tip.name}:</span>
                                         <span>
-                                            <span className="text-gray-500">{tip.shortForecast} · {tip.tF}°F · {tip.rain}% rain</span>
+                                            <span className="text-dd-text-2">{tip.shortForecast} · {tip.tF}°F · {tip.rain}% rain</span>
                                             {tip.parts.map((p, j) => (
                                                 <div key={j} className="text-[11px] text-amber-800 mt-0.5">⚠️ {isEn ? p.text : p.esText}</div>
                                             ))}
@@ -3186,6 +3225,191 @@ const HEATMAP_FIRST_HOUR = 10;
 const HEATMAP_LAST_HOUR = 22; // exclusive upper bound (block-of-22:00 = 9-10pm)
 const HEATMAP_THIN = 1;       // <= this is "thin" (yellow)
 const HEATMAP_OK = 2;         // <= this is "ok" (teal); above is "well-staffed" (green)
+
+// ── OpenShiftsCalendarBar ──────────────────────────────────────────────────
+// Sling-style horizontal week strip pinned above the schedule grid. Surfaces
+// two distinct kinds of "open" work for the current week + side + location:
+//   📋 UNASSIGNED SLOTS — staffing needs the manager created that haven't
+//      been filled yet. Tap → opens the available-staff picker for that slot
+//      (managers) or shows interest (staff).
+//   📣 UP-FOR-GRABS    — shifts that staff have offered up. Tap → claim
+//      (other staff) or cancel-offer (own).
+// Hidden entirely if there's nothing open this week so the bar doesn't take
+// up space when there's no signal.
+function OpenShiftsCalendarBar({
+    weekStart, staffingNeeds, shifts, side, storeLocation, isEn,
+    canEdit, currentStaffName, blocksByDate,
+    onFillSlot, onTakeShift, onCancelOffer,
+}) {
+    const tx = (en, es) => (isEn ? en : es);
+    const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
+    const dayLabels = isEn ? DAYS_EN : DAYS_ES;
+    const today = toDateStr(new Date());
+    const weekStartStr = toDateStr(weekStart);
+    const weekEndStr = toDateStr(addDays(weekStart, 7));
+
+    // Slots: this week, this side, this location, with at least one opening.
+    const openSlots = (staffingNeeds || []).filter(n =>
+        n.date >= weekStartStr && n.date < weekEndStr &&
+        n.side === side &&
+        (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
+        ((n.filledStaff || []).length < (n.count || 0))
+    );
+
+    // Offers: open-status shifts in this week + side + location.
+    const openOffers = (shifts || []).filter(s =>
+        s.offerStatus === 'open' &&
+        s.date >= weekStartStr && s.date < weekEndStr &&
+        (storeLocation === 'both' || s.location === storeLocation) &&
+        // Side filter — fall through if shift has no side stamp (legacy data).
+        (!s.side || s.side === side)
+    );
+
+    const totalSlots = openSlots.reduce((sum, n) =>
+        sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0);
+    const totalOffers = openOffers.length;
+
+    if (totalSlots === 0 && totalOffers === 0) return null;
+
+    // Bucket by date for column rendering.
+    const slotsByDate = new Map();
+    for (const n of openSlots) {
+        if (!slotsByDate.has(n.date)) slotsByDate.set(n.date, []);
+        slotsByDate.get(n.date).push(n);
+    }
+    const offersByDate = new Map();
+    for (const o of openOffers) {
+        if (!offersByDate.has(o.date)) offersByDate.set(o.date, []);
+        offersByDate.get(o.date).push(o);
+    }
+
+    return (
+        <div className="mb-3 bg-white border border-dd-line rounded-xl shadow-card overflow-hidden print:hidden">
+            {/* Header strip — counts + title. Subtle sage-to-white gradient
+                makes the bar feel "above" the grid without being loud. */}
+            <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-dd-line bg-gradient-to-r from-dd-sage-50 via-dd-sage-50/50 to-white">
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className="w-7 h-7 rounded-lg bg-white shadow-sm flex items-center justify-center text-sm flex-shrink-0">📋</span>
+                    <h3 className="text-sm font-bold text-dd-text truncate">{tx('Open Shifts', 'Turnos Abiertos')}</h3>
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 hidden sm:inline">
+                        {side === 'foh' ? 'FOH' : 'BOH'} · {tx('this week', 'esta semana')}
+                    </span>
+                </div>
+                <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    {totalSlots > 0 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 whitespace-nowrap">
+                            📋 {totalSlots} {tx('unfilled', 'sin llenar')}
+                        </span>
+                    )}
+                    {totalOffers > 0 && (
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 whitespace-nowrap">
+                            📣 {totalOffers} {tx('up for grabs', 'disponibles')}
+                        </span>
+                    )}
+                </div>
+            </div>
+
+            {/* 7 day columns aligned to the schedule grid below. Horizontal
+                scroll on narrow phones; otherwise the columns flex to fit. */}
+            <div className="grid grid-cols-7 divide-x divide-dd-line">
+                {days.map((d, i) => {
+                    const dStr = toDateStr(d);
+                    const isToday = dStr === today;
+                    const slots = slotsByDate.get(dStr) || [];
+                    const offers = offersByDate.get(dStr) || [];
+                    const isEmpty = slots.length === 0 && offers.length === 0;
+                    const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
+                    const closed = dayBlocks.some(b => b.type === 'closed');
+
+                    return (
+                        <div key={i} className={`p-1.5 min-w-0 ${isToday ? 'bg-dd-sage-50/40' : ''} ${closed ? 'opacity-60' : ''}`}>
+                            {/* Day header — matches grid header style at compact size */}
+                            <div className={`text-center pb-1.5 mb-1.5 border-b ${isToday ? 'border-dd-green/30' : 'border-dd-line/60'}`}>
+                                <div className={`text-[9px] uppercase font-bold tracking-wider ${isToday ? 'text-dd-green-700' : 'text-dd-text-2'}`}>
+                                    {dayLabels[i]}
+                                </div>
+                                <div className={`text-xs font-black tabular-nums leading-none mt-0.5 ${isToday ? 'text-dd-green-700' : 'text-dd-text'}`}>
+                                    {d.getDate()}
+                                </div>
+                            </div>
+
+                            <div className="space-y-1">
+                                {/* Unassigned slots first — manager openings */}
+                                {slots.map(n => {
+                                    const remaining = Math.max(0, (n.count || 0) - (n.filledStaff || []).length);
+                                    const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
+                                    return (
+                                        <button key={'slot-' + n.id}
+                                            onClick={() => onFillSlot && onFillSlot(n)}
+                                            title={`${formatTime12h(n.startTime)}–${formatTime12h(n.endTime)} · ${remaining} ${tx('open', 'abierto')}${roleGroup ? ' · ' + (isEn ? roleGroup.labelEn : roleGroup.labelEs) : ''}`}
+                                            className="w-full text-left rounded-md bg-blue-50 hover:bg-blue-100 border border-blue-200 px-1.5 py-1 transition active:scale-95">
+                                            <div className="flex items-center justify-between gap-1">
+                                                <span className="text-[10px] font-black text-blue-700 tabular-nums truncate">
+                                                    📋 {formatTime12h(n.startTime).replace(':00','')}
+                                                </span>
+                                                {remaining > 1 && (
+                                                    <span className="text-[9px] font-bold text-blue-700 bg-white rounded-full px-1 border border-blue-200 leading-tight">
+                                                        ×{remaining}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {roleGroup && roleGroup.id !== 'any' && (
+                                                <div className="text-[9px] font-semibold text-blue-600 truncate">
+                                                    {roleGroup.emoji} {isEn ? roleGroup.labelEn : roleGroup.labelEs}
+                                                </div>
+                                            )}
+                                        </button>
+                                    );
+                                })}
+
+                                {/* Up-for-grabs offers — staff-initiated */}
+                                {offers.map(o => {
+                                    const isMine = o.staffName === currentStaffName;
+                                    const tone = isMine
+                                        ? 'bg-amber-50 hover:bg-amber-100 border-amber-200 text-amber-800'
+                                        : 'bg-purple-50 hover:bg-purple-100 border-purple-200 text-purple-700';
+                                    return (
+                                        <button key={'off-' + o.id}
+                                            onClick={() => {
+                                                if (isMine) onCancelOffer && onCancelOffer(o);
+                                                else onTakeShift && onTakeShift(o);
+                                            }}
+                                            title={isMine
+                                                ? tx('Tap to cancel your offer', 'Toca para cancelar oferta')
+                                                : tx(`Take ${o.staffName}'s shift (${formatTime12h(o.startTime)}–${formatTime12h(o.endTime)})`,
+                                                     `Tomar turno de ${o.staffName} (${formatTime12h(o.startTime)}–${formatTime12h(o.endTime)})`)}
+                                            className={`w-full text-left rounded-md border px-1.5 py-1 transition active:scale-95 ${tone}`}>
+                                            <div className="text-[10px] font-black tabular-nums truncate">
+                                                📣 {formatTime12h(o.startTime).replace(':00','')}
+                                            </div>
+                                            <div className="text-[9px] font-semibold truncate opacity-80">
+                                                {isMine ? tx('You offered', 'Tú ofreciste') : (o.staffName?.split(' ')[0] || '?')}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+
+                                {/* Empty state — closed glyph or em-dash */}
+                                {isEmpty && (
+                                    <div className="text-center text-dd-text-2/30 text-[10px] py-2 leading-none">
+                                        {closed ? '🚫' : '·'}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+
+            {/* Footer hint — quick legend explaining the two icons */}
+            <div className="flex items-center justify-center gap-3 px-3 py-1.5 border-t border-dd-line bg-dd-bg/50 text-[10px] font-semibold text-dd-text-2">
+                <span className="flex items-center gap-1"><span>📋</span> {tx('Slot to fill', 'Espacio')}</span>
+                <span className="text-dd-text-2/40">•</span>
+                <span className="flex items-center gap-1"><span>📣</span> {tx('Tap to claim', 'Toca para tomar')}</span>
+            </div>
+        </div>
+    );
+}
 
 function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes }) {
     // Pre-compute per-day staffing-need stats (filled / total / open) so the
@@ -3276,19 +3500,22 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     }
 
     return (
-        <div className="overflow-x-auto -mx-4 px-4 schedule-grid-wrap">
+        <div className="overflow-x-auto -mx-4 px-4 schedule-grid-wrap rounded-xl border border-dd-line bg-white shadow-card">
             {/* Tiny role-color legend so the blue/green/orange code is self-explanatory.
                 Hidden when printing — the printed schedule uses its own legend block. */}
-            <div className="flex items-center gap-3 mb-2 text-[10px] font-semibold text-gray-600 print:hidden">
-                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> {isEn ? 'Staff' : 'Personal'}</span>
-                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-500" /> {isEn ? 'Shift Lead' : 'Líder'}</span>
-                <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-orange-500" /> {isEn ? 'Manager' : 'Gerente'}</span>
+            <div className="flex items-center gap-3 px-3 py-2 border-b border-dd-line bg-dd-bg text-[10px] font-bold uppercase tracking-wider text-dd-text-2 print:hidden">
+                <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-blue-500" /> {isEn ? 'Staff' : 'Personal'}</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-emerald-500" /> {isEn ? 'Shift Lead' : 'Líder'}</span>
+                <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full bg-orange-500" /> {isEn ? 'Manager' : 'Gerente'}</span>
+                <span className="ml-auto hidden sm:inline text-dd-text-2/70 normal-case font-semibold tracking-normal">
+                    {isEn ? 'Tap empty cell to add · Drag to move' : 'Toca celda para agregar · Arrastra para mover'}
+                </span>
             </div>
-            <table className="border-collapse text-xs min-w-max">
+            <table className="border-collapse text-xs min-w-max w-full">
                 <thead>
                     <tr>
-                        <th className="sticky left-0 bg-white z-10 border-b border-gray-200 px-2 py-2 text-left min-w-[120px]">
-                            <span className="text-[10px] uppercase text-gray-500 font-semibold">{isEn ? 'Staff' : 'Personal'}</span>
+                        <th className="sticky left-0 bg-white z-10 border-b border-dd-line px-3 py-2.5 text-left min-w-[120px]">
+                            <span className="text-[10px] uppercase text-dd-text-2 font-bold tracking-wider">{isEn ? 'Staff' : 'Personal'}</span>
                         </th>
                         {days.map((d, i) => {
                             const dStr = toDateStr(d);
@@ -3303,23 +3530,29 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                             return (
                                 <th key={i}
                                     onClick={() => onDayHeaderClick && !closed && onDayHeaderClick(dStr)}
-                                    className={`border-b border-gray-200 px-1 py-2 min-w-[110px] ${closed ? 'bg-gray-200' : isToday ? 'bg-mint-50' : ''} ${onDayHeaderClick && !closed ? 'cursor-pointer hover:bg-mint-100' : ''}`}>
-                                    <div className={`text-[10px] uppercase font-semibold ${closed ? 'text-gray-600' : isToday ? 'text-mint-700' : 'text-gray-500'}`}>{dayLabels[i]}</div>
-                                    <div className={`text-sm font-bold ${closed ? 'text-gray-700' : isToday ? 'text-mint-800' : 'text-gray-700'}`}>{d.getDate()}</div>
-                                    {closed && <div className="text-[9px] font-bold text-gray-700 mt-0.5">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>}
-                                    {!closed && noTimeoff && <div className="text-[9px] font-bold text-amber-700 mt-0.5">🛑 {isEn ? 'No PTO' : 'Sin PTO'}</div>}
-                                    {/* Slot countdown — N/M filled. Color shifts as slots fill. */}
-                                    {!closed && stats && stats.total > 0 && (
-                                        <div className={`text-[9px] font-bold mt-0.5 inline-block px-1 rounded border ${
-                                            fullyStaffed ? 'bg-green-100 text-green-800 border-green-300' :
-                                            partiallyFilled ? 'bg-yellow-100 text-yellow-800 border-yellow-300' :
-                                            allOpen ? 'bg-red-100 text-red-800 border-red-300' :
-                                            'bg-blue-100 text-blue-800 border-blue-300'
-                                        }`}>
-                                            {fullyStaffed ? `✅ ${stats.filled}/${stats.total}` : `${stats.filled}/${stats.total} ${isEn ? 'slots' : 'esp.'}`}
+                                    className={`border-b border-dd-line px-1.5 py-2.5 min-w-[110px] transition ${closed ? 'bg-dd-bg' : isToday ? 'bg-dd-sage-50' : 'bg-white'} ${onDayHeaderClick && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
+                                    <div className={`text-[10px] uppercase font-bold tracking-wider ${closed ? 'text-dd-text-2' : isToday ? 'text-dd-green-700' : 'text-dd-text-2'}`}>{dayLabels[i]}</div>
+                                    <div className={`text-base font-black tabular-nums leading-none mt-0.5 ${closed ? 'text-dd-text-2' : isToday ? 'text-dd-green-700' : 'text-dd-text'}`}>{d.getDate()}</div>
+                                    {isToday && !closed && (
+                                        <div className="inline-flex items-center gap-1 mt-1 text-[9px] font-bold text-dd-green-700 uppercase tracking-wider">
+                                            <span className="w-1 h-1 rounded-full bg-dd-green animate-pulse" />
+                                            {isEn ? 'Today' : 'Hoy'}
                                         </div>
                                     )}
-                                    {onDayHeaderClick && !closed && <div className="text-[8px] text-mint-600 mt-0.5 print:hidden">👥 {isEn ? 'tap' : 'tocar'}</div>}
+                                    {closed && <div className="text-[9px] font-bold text-dd-text-2 mt-1">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>}
+                                    {!closed && noTimeoff && <div className="text-[9px] font-bold text-amber-700 mt-1">🛑 {isEn ? 'No PTO' : 'Sin PTO'}</div>}
+                                    {/* Slot countdown — N/M filled. Color shifts as slots fill. */}
+                                    {!closed && stats && stats.total > 0 && (
+                                        <div className={`text-[9px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded border ${
+                                            fullyStaffed ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30' :
+                                            partiallyFilled ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                                            allOpen ? 'bg-red-50 text-red-700 border-red-200' :
+                                            'bg-blue-50 text-blue-700 border-blue-200'
+                                        }`}>
+                                            {fullyStaffed ? `✓ ${stats.filled}/${stats.total}` : `${stats.filled}/${stats.total} ${isEn ? 'slots' : 'esp.'}`}
+                                        </div>
+                                    )}
+                                    {onDayHeaderClick && !closed && <div className="text-[8px] text-dd-text-2/60 mt-1 print:hidden font-semibold">👥 {isEn ? 'tap' : 'tocar'}</div>}
                                     {/* Coverage heatmap — one block per service hour
                                         (10am→10pm). Color shows headcount on the floor.
                                         Hover any block to see exact count + hour. */}
@@ -3356,18 +3589,20 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                         // dot so the row is visually scannable at a glance.
                         const tierC = roleColors(s.role, s.shiftLead);
                         return (
-                        <tr key={s.id || s.name} className={s.name === currentStaffName ? 'bg-green-50/40' : ''}>
-                            <td className={`sticky left-0 z-10 border-b border-r border-gray-200 px-2 py-1.5 align-top ${s.name === currentStaffName ? 'bg-green-50' : 'bg-white'}`}>
+                        <tr key={s.id || s.name} className={`group ${s.name === currentStaffName ? 'bg-dd-green-50/30' : 'odd:bg-dd-bg/30'}`}>
+                            <td className={`sticky left-0 z-10 border-b border-r border-dd-line px-2.5 py-2 align-top ${s.name === currentStaffName ? 'bg-dd-green-50' : 'bg-white group-odd:bg-dd-bg/40'}`}>
                                 <button onClick={() => onStaffClick && onStaffClick(s.name)}
-                                    className="flex items-center gap-1 text-left hover:underline">
-                                    <span className={`inline-block w-1.5 h-1.5 rounded-full ${tierC.dot}`} title={tierC.tier} />
-                                    <span className={`font-semibold text-xs leading-tight truncate ${tierC.text}`}>
-                                        {s.name}
+                                    className="flex items-center gap-1.5 text-left hover:opacity-80 transition">
+                                    <span className={`inline-block w-1.5 h-6 rounded-full ${tierC.dot}`} title={tierC.tier} />
+                                    <span className="min-w-0">
+                                        <span className={`block font-bold text-xs leading-tight truncate ${tierC.text}`}>
+                                            {s.name}
+                                            {s.shiftLead && <span title="Shift Lead" className="ml-1">🛡️</span>}
+                                            {s.isMinor && <span title="Minor" className="ml-0.5">🔑</span>}
+                                        </span>
                                     </span>
-                                    {s.shiftLead && <span title="Shift Lead">🛡️</span>}
-                                    {s.isMinor && <span title="Minor">🔑</span>}
                                 </button>
-                                <div className={`text-[10px] mt-0.5 inline-block px-1.5 py-0.5 rounded border ${hoursColor(s.totalHours)}`}>
+                                <div className={`text-[10px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded-md border ${hoursColor(s.totalHours)}`}>
                                     {formatHours(s.totalHours)}
                                 </div>
                             </td>
@@ -3404,7 +3639,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
                                             if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
                                         }}
-                                        className={`border-b border-r border-gray-200 align-top p-1 ${closed ? 'bg-gray-100' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-100 ring-2 ring-blue-400' : isToday ? 'bg-mint-50/30' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-mint-50' : ''}`}>
+                                        className={`border-b border-r border-dd-line align-top p-1.5 transition ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
                                         <div className="space-y-1">
                                             {onPTO && cellShifts.length === 0 && (
                                                 <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'PTO' : 'PTO'}</div>
@@ -3428,29 +3663,29 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     && quickAddCell.staff?.name === s.name
                                                     && quickAddCell.dateStr === dStr;
                                                 if (!isActive) {
-                                                    return <div className="text-center text-gray-300 text-lg leading-none py-1">+</div>;
+                                                    return <div className="text-center text-dd-text-2/30 text-lg leading-none py-1 group-hover:text-dd-green/60 transition">+</div>;
                                                 }
                                                 const presets = getShiftPresets(resolveStaffSide(s));
                                                 return (
                                                     <div onClick={(e) => e.stopPropagation()}
-                                                        className="space-y-1 bg-mint-50 rounded-md p-1 ring-2 ring-mint-400">
+                                                        className="space-y-1 bg-dd-green-50 rounded-lg p-1.5 ring-2 ring-dd-green/40 shadow-card">
                                                         {presets.map(p => (
                                                             <button key={p.label} type="button"
                                                                 onClick={() => onQuickAddSelect && onQuickAddSelect(p)}
-                                                                className="w-full px-1.5 py-1 rounded bg-white border border-mint-300 text-mint-800 text-[10px] font-bold hover:bg-mint-200 active:scale-95 transition">
+                                                                className="w-full px-1.5 py-1 rounded-md bg-white border border-dd-green/30 text-dd-green-700 text-[10px] font-bold hover:bg-dd-sage-50 hover:border-dd-green active:scale-95 transition">
                                                                 {p.label}
                                                             </button>
                                                         ))}
                                                         <div className="flex gap-1">
                                                             <button type="button"
                                                                 onClick={() => onQuickAddCustom && onQuickAddCustom()}
-                                                                className="flex-1 px-1 py-1 rounded bg-blue-50 border border-blue-300 text-blue-800 text-[10px] font-bold hover:bg-blue-100 active:scale-95 transition"
+                                                                className="flex-1 px-1 py-1 rounded-md bg-white border border-blue-200 text-blue-700 text-[10px] font-bold hover:bg-blue-50 active:scale-95 transition"
                                                                 title={isEn ? 'Open full editor' : 'Abrir editor completo'}>
                                                                 ✏️
                                                             </button>
                                                             <button type="button"
                                                                 onClick={() => onQuickAddClose && onQuickAddClose()}
-                                                                className="flex-1 px-1 py-1 rounded bg-gray-100 border border-gray-300 text-gray-600 text-[10px] font-bold hover:bg-gray-200 active:scale-95 transition"
+                                                                className="flex-1 px-1 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
                                                                 title={isEn ? 'Cancel' : 'Cancelar'}>
                                                                 ✕
                                                             </button>
@@ -3534,62 +3769,86 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                 e.dataTransfer.effectAllowed = 'move';
             }}
             title={auditLines.join('\n') || undefined}
-            className={`schedule-shift-cube relative rounded ${shift.published === false ? 'border-2 border-dashed border-gray-400 opacity-75' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 opacity-80' : ''} ${isPending ? 'ring-2 ring-purple-400' : ''} ${colors.bg} ${colors.text} px-1.5 py-1 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''}`}>
+            className={`schedule-shift-cube relative rounded-md shadow-sm ${shift.published === false ? 'border-2 border-dashed border-dd-text-2/40 opacity-80' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-white' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-white' : ''} ${colors.bg} ${colors.text} px-2 py-1.5 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} hover:shadow-card-hov hover:-translate-y-px transition group/cube`}>
             {editingTimes ? (
                 <div onClick={(e) => e.stopPropagation()} className="space-y-1">
                     <div className="flex items-center gap-1">
                         <input type="time" value={draftStart}
                             onChange={(e) => setDraftStart(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') commitTimeEdit(); if (e.key === 'Escape') cancelTimeEdit(); }}
-                            className="w-full px-1 py-0.5 text-[10px] border border-gray-300 rounded" />
+                            className="w-full px-1 py-0.5 text-[10px] border border-dd-line rounded focus:border-dd-green focus:ring-1 focus:ring-dd-green-50 outline-none" />
                         <input type="time" value={draftEnd}
                             onChange={(e) => setDraftEnd(e.target.value)}
                             onKeyDown={(e) => { if (e.key === 'Enter') commitTimeEdit(); if (e.key === 'Escape') cancelTimeEdit(); }}
-                            className="w-full px-1 py-0.5 text-[10px] border border-gray-300 rounded" />
+                            className="w-full px-1 py-0.5 text-[10px] border border-dd-line rounded focus:border-dd-green focus:ring-1 focus:ring-dd-green-50 outline-none" />
                     </div>
                     <div className="flex gap-1">
                         <button onClick={commitTimeEdit}
                             className="flex-1 py-0.5 rounded bg-dd-green text-white text-[10px] font-bold hover:bg-dd-green-700">✓ {isEn ? 'Save' : 'Guardar'}</button>
                         <button onClick={cancelTimeEdit}
-                            className="px-2 py-0.5 rounded bg-gray-200 text-gray-700 text-[10px] font-bold hover:bg-gray-300">✕</button>
+                            className="px-2 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg">✕</button>
                     </div>
                 </div>
             ) : (
                 <button type="button" onClick={beginTimeEdit}
                     title={canEdit && onUpdateShiftTimes ? (isEn ? 'Tap to edit times' : 'Toca para editar horas') : undefined}
-                    className={`block w-full text-left font-bold ${canEdit && onUpdateShiftTimes ? 'hover:underline cursor-text' : ''}`}>
+                    className={`block w-full text-left font-black tabular-nums tracking-tight ${canEdit && onUpdateShiftTimes ? 'hover:underline decoration-dotted underline-offset-2 cursor-text' : ''}`}>
                     {formatTime12h(shift.startTime)}–{formatTime12h(shift.endTime)}
                 </button>
             )}
-            <div className="opacity-80">
+            <div className="opacity-75 font-semibold tabular-nums flex items-center gap-1 flex-wrap">
                 {formatHours(hours)}
-                {shift.isShiftLead && <span title="Shift Lead this shift" className="ml-0.5">🛡️</span>}
-                {shift.isDouble && <span title="Double shift" className="ml-0.5">⏱</span>}
-                {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."} className="ml-0.5">🔁</span>}
+                {shift.isShiftLead && <span title="Shift Lead this shift">🛡️</span>}
+                {shift.isDouble && <span title="Double shift">⏱</span>}
+                {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."}>🔁</span>}
             </div>
-            {isAutoDouble && !compact && (
-                <div className="text-[9px] mt-0.5 font-bold text-blue-700">🔁 {isEn ? 'Double day' : 'Día doble'}</div>
+            {/* Status pills — compact, consistent shape */}
+            {(shift.published === false || isAutoDouble || isCrossSide || isOffered || isPending) && (
+                <div className="flex flex-wrap gap-0.5 mt-1">
+                    {shift.published === false && (
+                        <span className="inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded bg-white/60 text-dd-text-2 border border-dd-text-2/30">
+                            📝 {isEn ? 'Draft' : 'Borrador'}
+                        </span>
+                    )}
+                    {isAutoDouble && !compact && (
+                        <span className="inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                            🔁 {isEn ? 'Double day' : 'Día doble'}
+                        </span>
+                    )}
+                    {isCrossSide && (
+                        <span className="inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                            🔀 {shift.side?.toUpperCase()}
+                        </span>
+                    )}
+                    {isOffered && (
+                        <span className="inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                            📣 {isEn ? 'Up for grabs' : 'Disponible'}
+                        </span>
+                    )}
+                    {isPending && (
+                        <span className="inline-flex items-center text-[9px] font-bold px-1 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200" title={`${isEn ? 'Pending swap to' : 'Pendiente a'} ${shift.pendingClaimBy}`}>
+                            ⏳ → {shift.pendingClaimBy?.split(' ')[0]}
+                        </span>
+                    )}
+                </div>
             )}
-            {shift.published === false && <div className="text-[9px] mt-0.5 font-bold text-gray-600">📝 {isEn ? 'Draft' : 'Borrador'}</div>}
-            {isCrossSide && <div className="text-[9px] mt-0.5 font-bold text-amber-700">🔀 {isEn ? `Cross-side (${shift.side?.toUpperCase()})` : `Lado cruzado (${shift.side?.toUpperCase()})`}</div>}
-            {isOffered && <div className="text-[9px] mt-0.5 font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</div>}
-            {isPending && <div className="text-[9px] mt-0.5 font-bold text-purple-700">⏳ {isEn ? 'Pending swap to' : 'Cambio pendiente a'} {shift.pendingClaimBy}</div>}
             {shift.notes && !compact && (
-                <div className="text-[10px] mt-0.5 italic opacity-80 truncate">{shift.notes}</div>
+                <div className="text-[10px] mt-1 italic opacity-75 truncate">{shift.notes}</div>
             )}
             {hasWarning && (
-                <div className="text-[9px] mt-0.5 font-bold text-amber-700">⚠ {warnings.join(' • ')}</div>
+                <div className="text-[9px] mt-1 font-bold text-amber-700">⚠ {warnings.join(' • ')}</div>
             )}
             {/* Offer / cancel-offer buttons (own-shift only, not when pending) */}
             {isMine && !isPending && onOfferShift && (
                 <button onClick={(e) => { e.stopPropagation(); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
-                    className={`mt-1 w-full text-[9px] font-bold px-1 py-0.5 rounded print:hidden ${isOffered ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                    className={`mt-1 w-full text-[9px] font-bold px-1 py-1 rounded print:hidden transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
                     {isOffered ? (isEn ? 'Cancel offer' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
                 </button>
             )}
             {canEdit && (
                 <button onClick={(e) => { e.stopPropagation(); onDelete(shift.id); }}
-                    className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-white text-[10px] leading-none hover:bg-red-600 print:hidden">
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[11px] leading-none hover:bg-red-600 print:hidden shadow-md opacity-0 group-hover/cube:opacity-100 transition"
+                    title={isEn ? 'Delete shift' : 'Eliminar turno'}>
                     ×
                 </button>
             )}
@@ -3632,20 +3891,28 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                     const isSelected = i === selectedDayIdx;
                     return (
                         <button key={i} onClick={() => setSelectedDayIdx(i)}
-                            className={`py-1.5 rounded text-center transition ${isSelected ? 'bg-dd-green text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-                            <div className="text-[10px] uppercase">{dayLabels[i]}</div>
-                            <div className="text-sm font-bold">{d.getDate()}</div>
+                            className={`py-2 rounded-lg text-center transition shadow-sm ${isSelected ? 'bg-dd-green text-white shadow-card' : 'bg-white text-dd-text-2 border border-dd-line hover:bg-dd-sage-50 hover:text-dd-text'}`}>
+                            <div className="text-[10px] uppercase font-bold tracking-wider">{dayLabels[i]}</div>
+                            <div className="text-sm font-black tabular-nums leading-tight">{d.getDate()}</div>
                         </button>
                     );
                 })}
             </div>
 
-            <h3 className="text-base font-bold text-mint-700 mb-2">
-                {dayLabelsFull[selectedDayIdx]} • {dayShifts.length} {isEn ? 'shifts' : 'turnos'}
-            </h3>
+            <div className="flex items-center justify-between mb-3">
+                <h3 className="text-base font-bold text-dd-text">
+                    {dayLabelsFull[selectedDayIdx]}
+                </h3>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 bg-dd-bg px-2 py-1 rounded-md border border-dd-line">
+                    {dayShifts.length} {isEn ? 'shifts' : 'turnos'}
+                </span>
+            </div>
 
             {dayShifts.length === 0 ? (
-                <p className="text-center text-gray-400 py-4 text-sm">{isEn ? 'No shifts scheduled.' : 'Sin turnos programados.'}</p>
+                <div className="text-center py-8 bg-white rounded-xl border border-dashed border-dd-line">
+                    <div className="text-3xl mb-1 opacity-50">😌</div>
+                    <p className="text-sm text-dd-text-2">{isEn ? 'No shifts scheduled.' : 'Sin turnos programados.'}</p>
+                </div>
             ) : (
                 <div className="space-y-1">
                     {dayShifts.map(sh => {
@@ -3681,38 +3948,38 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
     return (
-        <div className={`flex items-center justify-between p-2 rounded border-2 ${colors.border} ${isCurrentStaff ? 'bg-green-50' : colors.bg} ${warnings.length ? 'ring-2 ring-amber-400' : ''} ${isOffered ? 'ring-2 ring-blue-400' : ''} ${isPending ? 'ring-2 ring-purple-400' : ''}`}>
+        <div className={`flex items-center justify-between gap-2 p-3 rounded-lg border-2 transition shadow-sm hover:shadow-card-hov ${colors.border} ${isCurrentStaff ? 'bg-dd-green-50' : colors.bg} ${warnings.length ? 'ring-2 ring-amber-400 ring-offset-1' : ''} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1' : ''}`}>
             <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
-                    <span className={`font-bold ${isCurrentStaff ? 'text-green-800' : colors.text}`}>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className={`font-bold ${isCurrentStaff ? 'text-dd-green-700' : colors.text}`}>
                         {isCurrentStaff && '✓ '}{shift.staffName}
                     </span>
                     {staffRole && <span className={`text-[10px] font-semibold ${colors.text} opacity-70`}>· {staffRole}</span>}
                     {shift.isShiftLead && <span title="Shift Lead">🛡️</span>}
                     {shift.isDouble && <span title="Double shift">⏱</span>}
-                    {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."} className="text-[10px] font-bold text-blue-700">🔁 {isEn ? 'Double day' : 'Día doble'}</span>}
-                    {isOffered && <span className="text-[10px] font-bold text-blue-700">📣 {isEn ? 'Up for grabs' : 'Disponible'}</span>}
-                    {isPending && <span className="text-[10px] font-bold text-purple-700">⏳ {isEn ? 'Pending' : 'Pendiente'}: {shift.pendingClaimBy}</span>}
+                    {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."} className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">🔁 {isEn ? 'Double day' : 'Día doble'}</span>}
+                    {isOffered && <span className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">📣 {isEn ? 'Up for grabs' : 'Disponible'}</span>}
+                    {isPending && <span className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">⏳ → {shift.pendingClaimBy?.split(' ')[0]}</span>}
                 </div>
-                <div className="text-xs text-gray-700">
+                <div className="text-xs text-dd-text-2 mt-0.5 tabular-nums">
                     {formatTime12h(shift.startTime)} – {formatTime12h(shift.endTime)}
-                    <span className="ml-2 font-semibold">{formatHours(hours)}</span>
+                    <span className="ml-2 font-bold text-dd-text">{formatHours(hours)}</span>
                     {shift.notes && <span className="italic ml-2">"{shift.notes}"</span>}
                 </div>
                 {warnings.length > 0 && (
-                    <div className="text-[10px] font-bold text-amber-700 mt-0.5">⚠ {warnings.join(' • ')}</div>
+                    <div className="text-[10px] font-bold text-amber-700 mt-1">⚠ {warnings.join(' • ')}</div>
                 )}
             </div>
-            <div className="flex items-center gap-1 print:hidden">
+            <div className="flex items-center gap-1.5 print:hidden">
                 {isMine && !isPending && onOfferShift && (
                     <button onClick={() => isOffered ? onCancelOffer(shift) : onOfferShift(shift)}
-                        className={`px-2 py-1 text-xs rounded font-bold ${isOffered ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                        className={`px-2.5 py-1.5 text-xs rounded-md font-bold transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
                         {isOffered ? (isEn ? 'Cancel' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
                     </button>
                 )}
                 {canEdit && (
                     <button onClick={() => onDelete(shift.id)}
-                        className="px-2 py-1 text-xs rounded bg-red-100 text-red-700 hover:bg-red-200">
+                        className="px-2.5 py-1.5 text-xs rounded-md bg-white border border-red-200 text-red-700 hover:bg-red-50 font-bold transition">
                         {isEn ? 'Delete' : 'Borrar'}
                     </button>
                 )}
@@ -3761,22 +4028,25 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
 
     return (
         <div>
-            <div className="flex gap-2 mb-2 text-xs print:hidden">
+            <div className="flex gap-2 mb-3 text-xs print:hidden">
                 <select value={sortKey} onChange={e => setSortKey(e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1">
+                    className="bg-white border border-dd-line rounded-lg px-2.5 py-2 text-dd-text font-semibold focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
                     <option value="date">{isEn ? 'Sort: Date' : 'Ordenar: Fecha'}</option>
                     <option value="staff">{isEn ? 'Sort: Staff' : 'Ordenar: Personal'}</option>
                 </select>
                 <select value={filterStaff} onChange={e => setFilterStaff(e.target.value)}
-                    className="border border-gray-300 rounded px-2 py-1 flex-1">
+                    className="bg-white border border-dd-line rounded-lg px-2.5 py-2 text-dd-text flex-1 focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
                     <option value="">{isEn ? 'All staff' : 'Todo el personal'}</option>
                     {allStaff.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
             </div>
             {sorted.length === 0 ? (
-                <p className="text-center text-gray-400 py-4 text-sm">{isEn ? 'No shifts.' : 'Sin turnos.'}</p>
+                <div className="text-center py-8 bg-white rounded-xl border border-dashed border-dd-line">
+                    <div className="text-3xl mb-1 opacity-50">📭</div>
+                    <p className="text-sm text-dd-text-2">{isEn ? 'No shifts.' : 'Sin turnos.'}</p>
+                </div>
             ) : (
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                     {sorted.map(sh => {
                         const date = parseLocalDate(sh.date);
                         const dayName = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
@@ -3790,35 +4060,35 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                             ? hoursBetween(sh.startTime, sh.endTime, false)
                             : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
                         return (
-                            <div key={sh.id} className={`flex items-center justify-between gap-2 p-2 rounded border-2 text-xs ${isMine ? 'bg-green-50 border-green-300' : `${colors.bg} ${colors.border}`}`}>
-                                <div className="text-center w-12 flex-shrink-0">
-                                    <div className="text-[10px] uppercase text-gray-500">{dayName}</div>
-                                    <div className="text-sm font-bold text-gray-700">{date ? date.getDate() : ''}</div>
+                            <div key={sh.id} className={`flex items-center justify-between gap-2 p-2.5 rounded-lg border-2 text-xs shadow-sm hover:shadow-card-hov transition ${isMine ? 'bg-dd-green-50 border-dd-green/30' : `${colors.bg} ${colors.border}`}`}>
+                                <div className="text-center w-12 flex-shrink-0 border-r border-dd-line/50 pr-2">
+                                    <div className="text-[9px] uppercase text-dd-text-2 font-bold tracking-wider">{dayName}</div>
+                                    <div className="text-base font-black tabular-nums leading-tight text-dd-text">{date ? date.getDate() : ''}</div>
                                 </div>
                                 <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1">
-                                        <span className={`font-bold truncate ${isMine ? 'text-green-800' : colors.text}`}>{sh.staffName}</span>
+                                    <div className="flex items-center gap-1 flex-wrap">
+                                        <span className={`font-bold truncate ${isMine ? 'text-dd-green-700' : colors.text}`}>{sh.staffName}</span>
                                         {staff?.role && <span className={`text-[10px] opacity-70 ${colors.text}`}>· {staff.role}</span>}
                                         {sh.isShiftLead && <span>🛡️</span>}
                                         {sh.isDouble && <span>⏱</span>}
                                         {isAutoDouble && <span title={isEn ? 'Double day' : 'Día doble'} className="text-blue-700 font-bold">🔁</span>}
                                     </div>
-                                    <div className="text-gray-700">
+                                    <div className="text-dd-text-2 tabular-nums">
                                         {formatTime12h(sh.startTime)}–{formatTime12h(sh.endTime)}
-                                        <span className="ml-2 font-semibold">{formatHours(hours)}</span>
+                                        <span className="ml-2 font-bold text-dd-text">{formatHours(hours)}</span>
                                     </div>
                                     {warnings.length > 0 && <div className="text-amber-700 font-bold">⚠ {warnings.join(' • ')}</div>}
                                 </div>
                                 <div className="flex items-center gap-1 print:hidden">
                                     {sh.staffName === currentStaffName && sh.offerStatus !== 'pending' && onOfferShift && (
                                         <button onClick={() => sh.offerStatus === 'open' ? onCancelOffer(sh) : onOfferShift(sh)}
-                                            className={`px-2 py-1 rounded font-bold ${sh.offerStatus === 'open' ? 'bg-gray-200 text-gray-700' : 'bg-blue-600 text-white'}`}>
+                                            className={`px-2 py-1.5 rounded-md font-bold text-[11px] transition ${sh.offerStatus === 'open' ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
                                             {sh.offerStatus === 'open' ? (isEn ? 'Cancel' : 'Cancelar') : '📣'}
                                         </button>
                                     )}
                                     {canEdit && (
                                         <button onClick={() => onDeleteShift(sh.id)}
-                                            className="px-2 py-1 rounded bg-red-100 text-red-700 hover:bg-red-200">×</button>
+                                            className="px-2 py-1.5 rounded-md bg-white border border-red-200 text-red-700 hover:bg-red-50 font-bold transition">×</button>
                                     )}
                                 </div>
                             </div>
@@ -3861,100 +4131,106 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
     const renderPtoLine = (t) => t.startDate + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '') + (t.reason ? ` · ${t.reason}` : '');
 
+    // Reusable card chrome — clean white card with semantic accent stripe.
+    const Panel = ({ accent, icon, title, count, children }) => (
+        <div className="rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
+            <div className="flex items-center gap-2 px-3 py-2 border-b border-dd-line bg-dd-bg/40">
+                <span className={`w-1 h-5 rounded-full ${accent}`} />
+                <span className="text-sm font-bold text-dd-text flex items-center gap-1.5">
+                    <span>{icon}</span> {title}
+                </span>
+                {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
+            </div>
+            <div className="p-2.5 space-y-1.5">{children}</div>
+        </div>
+    );
     return (
         <div className="mb-3 space-y-2 print:hidden">
             {/* My own open offers — gentle reminder this is still mine */}
             {myOpenOffers.length > 0 && (
-                <div className="rounded-lg p-2 bg-blue-50 border border-blue-300 text-xs">
-                    <div className="font-bold text-blue-800 mb-1">📣 {tx('Your offered shifts (still your responsibility)', 'Tus turnos ofrecidos (siguen siendo tu responsabilidad)')}</div>
+                <Panel accent="bg-blue-500" icon="📣" title={tx('Your offered shifts', 'Tus turnos ofrecidos')} count={`${myOpenOffers.length} ${tx('still yours', 'aún tuyos')}`}>
                     {myOpenOffers.map(sh => (
-                        <div key={sh.id} className="flex items-center justify-between gap-2 mt-1">
-                            <span className="text-blue-900">{renderShiftLine(sh)}</span>
+                        <div key={sh.id} className="flex items-center justify-between gap-2 text-xs">
+                            <span className="text-dd-text">{renderShiftLine(sh)}</span>
                             <button onClick={() => onCancelOffer(sh)}
-                                className="px-2 py-0.5 rounded bg-white border border-blue-300 text-blue-700 font-bold">{tx('Cancel offer', 'Cancelar oferta')}</button>
+                                className="px-2 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">{tx('Cancel offer', 'Cancelar oferta')}</button>
                         </div>
                     ))}
-                </div>
+                </Panel>
             )}
 
             {/* Open shifts up for grabs (others can take) */}
             {openOffers.length > 0 && (
-                <div className="rounded-lg p-2 bg-blue-50 border-2 border-blue-400 text-xs">
-                    <div className="font-bold text-blue-900 mb-1">📣 {tx('Shifts available to pick up', 'Turnos disponibles para tomar')}</div>
+                <Panel accent="bg-blue-500" icon="📣" title={tx('Available to pick up', 'Disponibles para tomar')} count={openOffers.length}>
                     {openOffers.map(sh => (
-                        <div key={sh.id} className="flex items-center justify-between gap-2 mt-1 bg-white rounded p-1.5 border border-blue-200">
+                        <div key={sh.id} className="flex items-center justify-between gap-2 bg-blue-50 rounded-lg p-2 border border-blue-200 text-xs">
                             <div className="min-w-0">
-                                <div className="font-bold text-gray-800">{sh.staffName}</div>
-                                <div className="text-gray-600">{renderShiftLine(sh)}</div>
+                                <div className="font-bold text-dd-text">{sh.staffName}</div>
+                                <div className="text-dd-text-2 text-[11px]">{renderShiftLine(sh)}</div>
                             </div>
                             <button onClick={() => onTake(sh)}
-                                className="px-2 py-1 rounded bg-blue-600 text-white font-bold whitespace-nowrap">{tx('Take', 'Tomar')}</button>
+                                className="px-3 py-1.5 rounded-md bg-blue-600 text-white font-bold hover:bg-blue-700 whitespace-nowrap shadow-sm text-[11px]">{tx('Take', 'Tomar')}</button>
                         </div>
                     ))}
-                </div>
+                </Panel>
             )}
 
             {/* Manager / admin pending approval queue */}
             {pending.length > 0 && (
-                <div className="rounded-lg p-2 bg-purple-50 border-2 border-purple-400 text-xs">
-                    <div className="font-bold text-purple-900 mb-1">⏳ {tx('Pending swap approvals', 'Cambios pendientes de aprobar')} ({pending.length})</div>
+                <Panel accent="bg-purple-500" icon="⏳" title={tx('Pending swap approvals', 'Cambios pendientes')} count={pending.length}>
                     {pending.map(sh => (
-                        <div key={sh.id} className="bg-white rounded p-1.5 border border-purple-200 mt-1">
-                            <div className="text-gray-800">
-                                <b>{sh.staffName}</b> → <b className="text-purple-800">{sh.pendingClaimBy}</b>
+                        <div key={sh.id} className="bg-purple-50 rounded-lg p-2 border border-purple-200 text-xs">
+                            <div className="text-dd-text">
+                                <b>{sh.staffName}</b> <span className="text-dd-text-2">→</span> <b className="text-purple-700">{sh.pendingClaimBy}</b>
                             </div>
-                            <div className="text-gray-600">{renderShiftLine(sh)}</div>
-                            <div className="flex gap-1 mt-1">
+                            <div className="text-dd-text-2 text-[11px]">{renderShiftLine(sh)}</div>
+                            <div className="flex gap-1.5 mt-2">
                                 <button onClick={() => onApprove(sh)}
-                                    className="flex-1 px-2 py-1 rounded bg-green-600 text-white font-bold">✓ {tx('Approve', 'Aprobar')}</button>
+                                    className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve', 'Aprobar')}</button>
                                 <button onClick={() => onDeny(sh)}
-                                    className="flex-1 px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold">✕ {tx('Deny', 'Negar')}</button>
+                                    className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
                             </div>
                         </div>
                     ))}
-                </div>
+                </Panel>
             )}
 
             {/* My PTO requests (status visible to me) */}
             {myPto.length > 0 && (
-                <div className="rounded-lg p-2 bg-amber-50 border border-amber-300 text-xs">
-                    <div className="font-bold text-amber-800 mb-1">🌴 {tx('My time-off requests', 'Mis solicitudes de tiempo libre')}</div>
+                <Panel accent="bg-amber-500" icon="🌴" title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}>
                     {myPto.map(t => (
-                        <div key={t.id} className="flex items-center justify-between gap-2 mt-1 bg-white rounded p-1.5 border border-amber-200">
-                            <div className="min-w-0">
-                                <div className="text-gray-700">{renderPtoLine(t)}</div>
-                            </div>
-                            <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${
-                                t.status === 'approved' ? 'bg-green-200 text-green-900' :
-                                t.status === 'denied' ? 'bg-red-200 text-red-900' :
-                                'bg-yellow-200 text-yellow-900'
+                        <div key={t.id} className="flex items-center justify-between gap-2 bg-amber-50 rounded-lg p-2 border border-amber-200 text-xs">
+                            <div className="min-w-0 text-dd-text">{renderPtoLine(t)}</div>
+                            <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap text-[10px] border ${
+                                t.status === 'approved' ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30' :
+                                t.status === 'denied'   ? 'bg-red-50 text-red-700 border-red-200' :
+                                                           'bg-amber-100 text-amber-800 border-amber-300'
                             }`}>
-                                {t.status === 'approved' ? '✅ ' + tx('Approved', 'Aprobado') :
-                                 t.status === 'denied'   ? '❌ ' + tx('Denied', 'Negado') :
+                                {t.status === 'approved' ? '✓ ' + tx('Approved', 'Aprobado') :
+                                 t.status === 'denied'   ? '✕ ' + tx('Denied', 'Negado') :
                                                            '⏳ ' + tx('Pending', 'Pendiente')}
                             </span>
                         </div>
                     ))}
-                </div>
+                </Panel>
             )}
 
             {/* Manager / admin pending PTO queue */}
             {canEdit && pendingPto.length > 0 && (
-                <div className="rounded-lg p-2 bg-amber-50 border-2 border-amber-500 text-xs">
-                    <div className="font-bold text-amber-900 mb-1">🌴 {tx('Pending time-off requests', 'Solicitudes de tiempo libre pendientes')} ({pendingPto.length})</div>
+                <Panel accent="bg-amber-500" icon="🌴" title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}>
                     {pendingPto.map(t => (
-                        <div key={t.id} className="bg-white rounded p-1.5 border border-amber-300 mt-1">
-                            <div className="font-bold text-gray-800">{t.staffName}</div>
-                            <div className="text-gray-600">{renderPtoLine(t)}</div>
-                            <div className="flex gap-1 mt-1">
+                        <div key={t.id} className="bg-amber-50 rounded-lg p-2 border border-amber-200 text-xs">
+                            <div className="font-bold text-dd-text">{t.staffName}</div>
+                            <div className="text-dd-text-2 text-[11px]">{renderPtoLine(t)}</div>
+                            <div className="flex gap-1.5 mt-2">
                                 <button onClick={() => onApprovePto(t)}
-                                    className="flex-1 px-2 py-1 rounded bg-green-600 text-white font-bold">✓ {tx('Approve', 'Aprobar')}</button>
+                                    className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve', 'Aprobar')}</button>
                                 <button onClick={() => onDenyPto(t)}
-                                    className="flex-1 px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold">✕ {tx('Deny', 'Negar')}</button>
+                                    className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
                             </div>
                         </div>
                     ))}
-                </div>
+                </Panel>
             )}
         </div>
     );
@@ -3966,33 +4242,47 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
     const overtime = scheduled.filter(s => s.totalHours >= HOURS_YELLOW_MAX);
     const minorOver = scheduled.filter(s => s.isMinor && s.totalHours > MINOR_WEEKLY_HOURS_MAX);
     return (
-        <div className="mt-6 pt-4 border-t border-gray-200">
-            <h3 className="text-sm font-bold text-gray-700 mb-2">
-                {isEn ? 'Weekly Hours' : 'Horas Semanales'} ({scheduled.length})
-            </h3>
-            {overtime.length > 0 && (
-                <div className="mb-2 p-2 rounded bg-red-50 border border-red-200 text-xs text-red-800">
-                    🚨 <b>{overtime.length}</b> {isEn ? 'staff at/over 40 hrs (overtime triggered)' : 'personas en/sobre 40 hrs (tiempo extra activado)'}: {overtime.map(s => s.name).join(', ')}
-                </div>
-            )}
-            {minorOver.length > 0 && (
-                <div className="mb-2 p-2 rounded bg-amber-50 border border-amber-300 text-xs text-amber-800">
-                    ⚠ <b>{minorOver.length}</b> {isEn ? `minor(s) over ${MINOR_WEEKLY_HOURS_MAX} hrs/week:` : `menor(es) sobre ${MINOR_WEEKLY_HOURS_MAX} hrs/semana:`} {minorOver.map(s => s.name).join(', ')}
-                </div>
-            )}
-            <div className="grid grid-cols-2 gap-1.5">
-                {scheduled.map(s => (
-                    <div key={s.id || s.name} className={`flex items-center justify-between gap-2 p-1.5 rounded border text-xs ${s.name === currentStaffName ? 'bg-green-50 border-green-300' : 'bg-white border-gray-200'}`}>
-                        <span className="font-semibold truncate">
-                            {s.name === currentStaffName && '✓ '}
-                            {s.name}
-                            {s.isMinor && <span className="ml-1">🔑</span>}
-                        </span>
-                        <span className={`flex-shrink-0 px-1.5 py-0.5 rounded border font-bold ${hoursColor(s.totalHours)}`}>
-                            {formatHours(s.totalHours)}
-                        </span>
+        <div className="mt-6 bg-white border border-dd-line rounded-xl shadow-card overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-dd-line bg-dd-bg/60">
+                <h3 className="text-sm font-bold text-dd-text flex items-center gap-2">
+                    <span className="w-1 h-5 bg-dd-green rounded-full" />
+                    {isEn ? 'Weekly Hours' : 'Horas Semanales'}
+                </h3>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                    {scheduled.length} {isEn ? 'scheduled' : 'asignados'}
+                </span>
+            </div>
+            <div className="p-4 space-y-2">
+                {overtime.length > 0 && (
+                    <div className="p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-800">
+                        <div className="font-bold flex items-center gap-1.5 mb-0.5">
+                            <span>🚨</span> {overtime.length} {isEn ? 'at/over 40 hrs' : 'en/sobre 40 hrs'}
+                        </div>
+                        <div className="text-[11px] opacity-90">{overtime.map(s => s.name).join(', ')}</div>
                     </div>
-                ))}
+                )}
+                {minorOver.length > 0 && (
+                    <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                        <div className="font-bold flex items-center gap-1.5 mb-0.5">
+                            <span>⚠</span> {minorOver.length} {isEn ? `minor(s) over ${MINOR_WEEKLY_HOURS_MAX}h` : `menor(es) sobre ${MINOR_WEEKLY_HOURS_MAX}h`}
+                        </div>
+                        <div className="text-[11px] opacity-90">{minorOver.map(s => s.name).join(', ')}</div>
+                    </div>
+                )}
+                <div className="grid grid-cols-2 gap-1.5">
+                    {scheduled.map(s => (
+                        <div key={s.id || s.name} className={`flex items-center justify-between gap-2 p-2 rounded-lg border text-xs transition ${s.name === currentStaffName ? 'bg-dd-green-50 border-dd-green/30' : 'bg-white border-dd-line hover:border-dd-text-2/30'}`}>
+                            <span className="font-semibold truncate text-dd-text">
+                                {s.name === currentStaffName && <span className="text-dd-green-700">✓ </span>}
+                                {s.name}
+                                {s.isMinor && <span className="ml-1">🔑</span>}
+                            </span>
+                            <span className={`flex-shrink-0 px-1.5 py-0.5 rounded-md border font-bold tabular-nums ${hoursColor(s.totalHours)}`}>
+                                {formatHours(s.totalHours)}
+                            </span>
+                        </div>
+                    ))}
+                </div>
             </div>
         </div>
     );
@@ -4058,9 +4348,9 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                 <div className="p-4 space-y-3">
                     {/* Staff */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Staff', 'Personal')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Staff', 'Personal')}</label>
                         <select value={form.staffName} onChange={e => updateField('staffName', e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition">
                             <option value="">{tx('— Select —', '— Selecciona —')}</option>
                             {eligibleStaff.map(s => (
                                 <option key={s.id || s.name} value={s.name}>
@@ -4078,7 +4368,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     {/* Side override — defaults to staff's home side, can flip per shift */}
                     {form.staffName && staffDefaultSide && (
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">
                                 {tx('Working side this shift', 'Lado de este turno')}
                             </label>
                             <div className="grid grid-cols-2 gap-2">
@@ -4110,16 +4400,16 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
                     {/* Date */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Date', 'Fecha')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Date', 'Fecha')}</label>
                         <input type="date" value={form.date} onChange={e => updateField('date', e.target.value)}
                             min={toDateStr(addDays(weekStart, -14))}
                             max={toDateStr(addDays(weekStart, 28))}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
 
                     {/* Quick presets — tap to fill start/end. Preset list adapts to FOH/BOH. */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Quick presets', 'Presets rápidos')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Quick presets', 'Presets rápidos')}</label>
                         <div className="flex flex-wrap gap-1.5">
                             {SHIFT_PRESETS.map(p => (
                                 <button key={p.label} type="button"
@@ -4143,14 +4433,14 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     {/* Times */}
                     <div className="grid grid-cols-2 gap-2">
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Start', 'Inicio')}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Start', 'Inicio')}</label>
                             <input type="time" value={form.startTime} onChange={e => updateField('startTime', e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('End', 'Fin')}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('End', 'Fin')}</label>
                             <input type="time" value={form.endTime} onChange={e => updateField('endTime', e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         </div>
                     </div>
                     <div className="text-xs text-gray-600">
@@ -4190,7 +4480,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
                     {/* Location */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Location', 'Ubicación')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Location', 'Ubicación')}</label>
                         <div className="grid grid-cols-2 gap-2">
                             {['webster', 'maryland'].map(loc => (
                                 <button key={loc} onClick={() => updateField('location', loc)}
@@ -4222,10 +4512,10 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
                     {/* Notes */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Notes (optional)', 'Notas (opcional)')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Notes (optional)', 'Notas (opcional)')}</label>
                         <input type="text" value={form.notes} onChange={e => updateField('notes', e.target.value)}
                             placeholder={tx('e.g. catering, training', 'p.ej. catering, capacitación')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
 
                     {/* Minor warning */}
@@ -4243,9 +4533,9 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     )}
                 </div>
 
-                <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2">
+                <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2 shadow-[0_-4px_8px_-4px_rgba(15,23,42,0.06)]">
                     <button onClick={onClose}
-                        className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                        className="flex-1 py-2.5 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg transition">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={() => {
                         if (!canSubmit) return;
                         // If the manager never tapped the side toggle, default to
@@ -4254,7 +4544,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                         const finalSide = form.side || staffDefaultSide || 'foh';
                         onSave({ ...form, side: finalSide });
                     }} disabled={!canSubmit}
-                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-gray-300'}`}>
+                        className={`flex-1 py-2.5 rounded-lg font-bold text-white shadow-sm transition ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-dd-text-2/30 cursor-not-allowed'}`}>
                         {tx('Save Shift', 'Guardar Turno')}
                     </button>
                 </div>
@@ -4314,16 +4604,16 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn 
                             </button>
                         </div>
                         <input type="date" value={form.date} onChange={e => update('date', e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         <select value={form.location} onChange={e => update('location', e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition">
                             <option value="both">{LOCATION_LABELS.both}</option>
                             <option value="webster">{LOCATION_LABELS.webster}</option>
                             <option value="maryland">{LOCATION_LABELS.maryland}</option>
                         </select>
                         <input type="text" value={form.reason} onChange={e => update('reason', e.target.value)}
                             placeholder={tx('Reason (e.g. Christmas Day)', 'Razón (ej. Navidad)')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         <button onClick={() => canSubmit && onAdd(form)} disabled={!canSubmit}
                             className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-gray-300'}`}>
                             {tx('Add Blackout', 'Agregar Bloqueo')}
@@ -4418,7 +4708,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
                     <div className="border border-gray-300 rounded-lg p-3 space-y-2">
                         <div className="text-xs font-bold text-gray-700">+ {tx("Add new entry", "Agregar entrada")}</div>
                         <select value={form.staffName} onChange={e => update("staffName", e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition">
                             <option value="">{tx("— Staff —", "— Personal —")}</option>
                             {sortedStaff.map(s => <option key={s.id || s.name} value={s.name}>{s.name}</option>)}
                         </select>
@@ -4426,17 +4716,17 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
                             <div>
                                 <label className="text-[10px] text-gray-500 block">{tx("From", "Desde")}</label>
                                 <input type="date" value={form.startDate} onChange={e => update("startDate", e.target.value)}
-                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                             </div>
                             <div>
                                 <label className="text-[10px] text-gray-500 block">{tx("To", "Hasta")}</label>
                                 <input type="date" value={form.endDate} onChange={e => update("endDate", e.target.value)}
-                                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                             </div>
                         </div>
                         <input type="text" value={form.reason} onChange={e => update("reason", e.target.value)}
                             placeholder={tx("Reason (e.g. vacation, sick)", "Razón (ej. vacaciones, enfermo)")}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         <button onClick={() => canSubmit && onAdd(form)} disabled={!canSubmit}
                             className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? "bg-amber-600 hover:bg-amber-700" : "bg-gray-300"}`}>
                             {tx("Approve & Save", "Aprobar y Guardar")}
@@ -4522,23 +4812,23 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('From', 'Desde')}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('From', 'Desde')}</label>
                             <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
                                 min={today}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('To', 'Hasta')}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('To', 'Hasta')}</label>
                             <input type="date" value={form.endDate} onChange={e => update('endDate', e.target.value)}
                                 min={form.startDate}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         </div>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Reason', 'Razón')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Reason', 'Razón')}</label>
                         <input type="text" value={form.reason} onChange={e => update('reason', e.target.value)}
                             placeholder={tx('e.g. vacation, family, doctor', 'p.ej. vacaciones, familia, doctor')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                 </div>
                 <div className="border-t border-gray-200 p-4 flex gap-2">
@@ -5057,12 +5347,12 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         {tx('Define a time block — e.g. "morning needs 5, evening needs 7." Then assign staff one slot at a time. Each fill creates a real shift.', 'Define un bloque de tiempo — ej. "mañana 5, noche 7." Luego asigna personal un espacio a la vez. Cada asignación crea un turno real.')}
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Date', 'Fecha')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Date', 'Fecha')}</label>
                         <input type="date" value={form.date} onChange={e => update('date', e.target.value)}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Side', 'Lado')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Side', 'Lado')}</label>
                         <div className="grid grid-cols-2 gap-2">
                             <button onClick={() => update('side', 'foh')}
                                 className={`py-2 rounded-lg text-sm font-bold border ${form.side === 'foh' ? 'bg-dd-green text-white border-dd-green' : 'bg-white text-gray-700 border-gray-300'}`}>FOH</button>
@@ -5072,7 +5362,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                     </div>
                     {/* Common time presets — tap to fill start/end */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Quick presets', 'Presets rápidos')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Quick presets', 'Presets rápidos')}</label>
                         <div className="flex flex-wrap gap-1.5">
                             {presets.map(p => (
                                 <button key={p.label} type="button"
@@ -5090,21 +5380,21 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Start', 'Inicio')}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Start', 'Inicio')}</label>
                             <input type="time" value={form.startTime} onChange={e => update('startTime', e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx('End', 'Fin')}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('End', 'Fin')}</label>
                             <input type="time" value={form.endTime} onChange={e => update('endTime', e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         </div>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('How many people?', '¿Cuántas personas?')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('How many people?', '¿Cuántas personas?')}</label>
                         <input type="number" min="1" max="20" value={form.count}
                             onChange={e => update('count', Math.max(1, parseInt(e.target.value) || 1))}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         {isEditing && (initial.filledStaff || []).length > 0 && (
                             <p className="text-[10px] text-amber-700 mt-1">
                                 {tx(`⚠ ${(initial.filledStaff || []).length} already assigned. Lowering below this won't unassign — remove individually.`,
@@ -5114,7 +5404,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                     </div>
                     {/* Role filter — restricts who can fill the slot */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Role required', 'Rol requerido')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Role required', 'Rol requerido')}</label>
                         <div className="grid grid-cols-3 gap-1.5">
                             {SLOT_ROLE_GROUPS.map(g => (
                                 <button key={g.id} type="button"
@@ -5130,7 +5420,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         </div>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Location', 'Ubicación')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Location', 'Ubicación')}</label>
                         <div className="grid grid-cols-2 gap-2">
                             {['webster', 'maryland'].map(loc => (
                                 <button key={loc} onClick={() => update('location', loc)}
@@ -5141,10 +5431,10 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         </div>
                     </div>
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx('Notes (e.g. "morning crew")', 'Notas (ej. "equipo de mañana")')}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Notes (e.g. "morning crew")', 'Notas (ej. "equipo de mañana")')}</label>
                         <input type="text" value={form.notes} onChange={e => update('notes', e.target.value)}
                             placeholder={tx('Optional label', 'Etiqueta opcional')}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                 </div>
                 <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2">
@@ -5436,21 +5726,21 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     {/* Name + Side + Location */}
                     <div>
-                        <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Template name", "Nombre")}</label>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx("Template name", "Nombre")}</label>
                         <input type="text" value={tpl.name} onChange={e => update("name", e.target.value)}
                             placeholder={tx("e.g. Friday FOH, Sunday Brunch", "ej. Viernes FOH")}
-                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Side", "Lado")}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx("Side", "Lado")}</label>
                             <div className="grid grid-cols-2 gap-1">
                                 <button onClick={() => update("side", "foh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "foh" ? "bg-dd-green text-white border-dd-green" : "bg-white text-gray-600 border-gray-300"}`}>FOH</button>
                                 <button onClick={() => update("side", "boh")} className={`py-1.5 rounded-md text-xs font-bold border ${tpl.side === "boh" ? "bg-orange-600 text-white border-orange-600" : "bg-white text-gray-600 border-gray-300"}`}>BOH</button>
                             </div>
                         </div>
                         <div>
-                            <label className="text-xs font-bold text-gray-700 block mb-1">{tx("Location", "Ubicación")}</label>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx("Location", "Ubicación")}</label>
                             <select value={tpl.location} onChange={e => update("location", e.target.value)}
                                 className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs">
                                 <option value="webster">{LOCATION_LABELS.webster}</option>
@@ -5606,7 +5896,7 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                         <div className="border-t border-gray-200 pt-3 space-y-2">
                             <div className="text-xs font-bold text-gray-700">{tx("Apply", "Aplicar")} "{pickedTemplate.name}" {tx("to date:", "a fecha:")}</div>
                             <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                             <button onClick={() => onApply(pickedTemplate, dateStr)}
                                 className="w-full py-2 rounded-lg bg-green-600 text-white font-bold text-sm hover:bg-green-700">
                                 ✓ {tx("Apply Template", "Aplicar Plantilla")}
@@ -5706,7 +5996,7 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                         <div className="border-2 border-cyan-300 rounded-lg p-3 space-y-2 bg-cyan-50">
                             <div className="text-xs font-bold text-cyan-800">{editing.id ? tx("Edit rule", "Editar regla") : tx("New rule", "Nueva regla")}</div>
                             <select value={editing.staffName} onChange={e => update("staffName", e.target.value)}
-                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition">
                                 <option value="">{tx("— Staff —", "— Personal —")}</option>
                                 {sortedStaff.map(s => <option key={s.id || s.name} value={s.name}>{s.name} ({s.role || "?"})</option>)}
                             </select>
