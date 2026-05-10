@@ -20,7 +20,7 @@ export default function AppShellV2({ children, language = 'en', staffName = '', 
     const [collapsed, setCollapsed] = useState(false);     // desktop rail mode
 
     return (
-        <div className="min-h-screen bg-dd-bg text-dd-text font-sans">
+        <div className="min-h-screen bg-dd-sage text-dd-text font-sans">
             {/* Mobile drawer scrim */}
             {sidebarOpen && (
                 <div
