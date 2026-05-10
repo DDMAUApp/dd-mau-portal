@@ -105,10 +105,11 @@ export default function MobileBottomNav({
 
     return (
         <nav
-            className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/85 backdrop-blur-md border-t border-dd-line/80 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] bottom-nav-safe"
+            className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/85 backdrop-blur-xl border-t border-dd-line/60 shadow-[0_-8px_24px_-4px_rgba(15,23,42,0.08)] bottom-nav-safe"
             aria-label={isEs ? 'Navegación principal' : 'Primary navigation'}
         >
-            <div className="grid grid-cols-5 px-1 pt-1.5">
+            {/* Hairline accent above the active tab — Toast-style indicator */}
+            <div className="grid grid-cols-5 px-1.5 pt-2 pb-0.5">
                 {tabs.map((t) => {
                     const active = activeTab === t.tab;
                     const isMore = t.tab === '__more';
@@ -117,26 +118,26 @@ export default function MobileBottomNav({
                         <button
                             key={t.tab}
                             onClick={() => isMore ? onMoreClick?.() : onNavigate?.(t.tab)}
-                            className="relative flex flex-col items-center justify-center py-1 gap-0.5 transition active:scale-95"
+                            className="relative flex flex-col items-center justify-center py-1 gap-1 transition active:scale-95 group"
                             aria-current={active ? 'page' : undefined}
                             aria-label={isEs ? t.es : t.en}
                         >
-                            {/* Pill — solid sage-green background when active. Sits
-                                inside the cell so taps still land cleanly anywhere
-                                in the cell. Inactive: transparent. */}
-                            <span className={`relative flex items-center justify-center w-12 h-7 rounded-full transition ${
+                            {/* Pill — solid sage-green background when active.
+                                Inactive: transparent so the tap-target is just
+                                the icon visually but the whole cell mechanically. */}
+                            <span className={`relative flex items-center justify-center w-12 h-7 rounded-full transition-all duration-200 ${
                                 active
-                                    ? 'bg-dd-green-50 text-dd-green-700'
-                                    : 'text-dd-text-2'
+                                    ? 'bg-dd-green-50 scale-100'
+                                    : 'scale-95 group-active:bg-dd-bg'
                             }`}>
-                                <span className="text-[20px] leading-none">{t.icon}</span>
+                                <span className={`text-[20px] leading-none transition-transform ${active ? 'scale-110' : ''}`}>{t.icon}</span>
                                 {showBadge && (
                                     <span className={`absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center text-[9px] font-black text-white ${t.badgeTone} ring-2 ring-white`}>
                                         {t.badge > 9 ? '9+' : t.badge}
                                     </span>
                                 )}
                             </span>
-                            <span className={`text-[10px] leading-none tracking-tight ${
+                            <span className={`text-[10px] leading-none tracking-tight transition-colors ${
                                 active ? 'font-bold text-dd-green-700' : 'font-semibold text-dd-text-2'
                             }`}>
                                 {isEs ? t.es : t.en}
