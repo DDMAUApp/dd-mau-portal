@@ -40,7 +40,7 @@ function buildInviteUrl(token) {
     return `${base}/?onboard=${token}`;
 }
 
-export default function Onboarding({ language, staffName, staffList, storeLocation }) {
+export default function Onboarding({ language, staffName, staffList, storeLocation, onBack }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
@@ -125,7 +125,13 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     return (
         <div className="space-y-3 p-3 sm:p-4">
             <header className="flex items-start justify-between gap-3 flex-wrap">
-                <div>
+                <div className="min-w-0">
+                    {onBack && (
+                        <button onClick={onBack}
+                            className="text-[11px] font-bold text-dd-text-2 hover:text-dd-text mb-1 inline-flex items-center gap-1 active:scale-95 transition">
+                            ← {tx('Back to Admin', 'Volver a Admin')}
+                        </button>
+                    )}
                     <h2 className="text-xl sm:text-2xl font-black text-dd-text tracking-tight">
                         🪪 {tx('Onboarding', 'Onboarding')}
                     </h2>

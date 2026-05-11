@@ -248,8 +248,10 @@ export default function MobileHome({
         { tab: 'ai',         icon: '🤖', en: 'AI Assist',    es: 'Asistente AI' },
         { tab: 'maintenance',icon: '🔧', en: 'Maintenance',  es: 'Mantenimiento' },
         { tab: 'insurance',  icon: '📑', en: 'Insurance',    es: 'Seguro' },
-        ...(hasOnboardingAccess ? [{ tab: 'onboarding', icon: '🪪', en: 'Onboarding', es: 'Onboarding', badge: pendingApplications, badgeTone: 'amber' }] : []),
-        ...(isAdmin ? [{ tab: 'admin', icon: '⚙️', en: 'Admin', es: 'Admin', badge: pendingPto, badgeTone: 'amber' }] : []),
+        // Onboarding is intentionally NOT a top-level tile — it lives behind
+        // the Admin page (owners-only PII). The Admin tile's badge reflects
+        // both PTO and onboarding applications so it still surfaces here.
+        ...(isAdmin ? [{ tab: 'admin', icon: '⚙️', en: 'Admin', es: 'Admin', badge: pendingPto + pendingApplications, badgeTone: 'amber' }] : []),
     ];
 
     return (

@@ -62,8 +62,10 @@ const NAV_GROUPS = [
         items: [
             { tab: 'maintenance', icon: '🔧', en: 'Maintenance', es: 'Mantenimiento' },
             { tab: 'insurance',   icon: '📑', en: 'Insurance',   es: 'Seguro' },
-            { tab: 'onboarding',  icon: '🪪', en: 'Onboarding',  es: 'Onboarding', requires: 'onboardingAccess' },
             { tab: 'admin',       icon: '⚙️', en: 'Admin',       es: 'Admin', requires: 'admin' },
+            // Onboarding is intentionally NOT in the main nav. It lives behind
+            // the Admin page (owners-only PII) — admins enter it via the
+            // launcher card at the top of AdminPanel.jsx.
         ],
     },
 ];

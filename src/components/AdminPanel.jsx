@@ -42,7 +42,7 @@ export default function AdminPanel(props) {
     return <AdminPanelInner {...props} />;
 }
 
-function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLocation }) {
+function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLocation, onNavigate, hasOnboardingAccess }) {
             const [editingId, setEditingId] = useState(null);
             const [editPin, setEditPin] = useState("");
             const [editRole, setEditRole] = useState("");
@@ -74,6 +74,28 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Bulk toggles panel is collapsed by default so the staff list gets
             // the most room. Expand on demand for mass on/off operations.
             const [bulkTogglesOpen, setBulkTogglesOpen] = useState(false);
+            // Live counts for the Onboarding launcher card. Only subscribe when
+            // the current admin actually has PII access — defaults to off for
+            // everyone except owners (Julie + Andrew).
+            const [onboardingPendingApps, setOnboardingPendingApps] = useState(0);
+            const [onboardingActiveHires, setOnboardingActiveHires] = useState(0);
+            useEffect(() => {
+                if (!hasOnboardingAccess) return;
+                const unsubA = onSnapshot(collection(db, 'onboarding_applications'),
+                    (snap) => setOnboardingPendingApps(snap.size),
+                    () => setOnboardingPendingApps(0));
+                const unsubH = onSnapshot(collection(db, 'onboarding_hires'),
+                    (snap) => {
+                        let active = 0;
+                        snap.forEach(d => {
+                            const s = (d.data() || {}).status;
+                            if (s !== 'archived' && s !== 'complete') active++;
+                        });
+                        setOnboardingActiveHires(active);
+                    },
+                    () => setOnboardingActiveHires(0));
+                return () => { unsubA(); unsubH(); };
+            }, [hasOnboardingAccess]);
             // Two-step confirmation for the System Refresh broadcast.
             // First tap arms the button; second tap (within 10s) fires it.
             const [confirmingRefresh, setConfirmingRefresh] = useState(false);
@@ -536,6 +558,38 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         <div className="mb-3 p-2 bg-green-100 border border-green-300 rounded-lg text-center text-green-700 font-bold text-sm">
                             ✅ {t("saved", language)}
                         </div>
+                    )}
+
+                    {/* ── ONBOARDING LAUNCHER ──
+                        Onboarding lives behind the admin page (not in the main
+                        nav) because it handles PII and is owner-only. Tapping
+                        the card switches the active tab to the full-screen
+                        Onboarding view. Badge count surfaces new applications
+                        + active hires so admins notice attention-worthy state. */}
+                    {hasOnboardingAccess && onNavigate && (
+                        <button
+                            onClick={() => onNavigate('onboarding')}
+                            className="w-full mb-4 flex items-center justify-between bg-gradient-to-r from-rose-50 to-amber-50 border-2 border-rose-200 rounded-xl p-4 hover:from-rose-100 hover:to-amber-100 active:scale-[0.99] transition shadow-sm group">
+                            <div className="flex items-center gap-3 min-w-0">
+                                <span className="text-3xl flex-shrink-0">🪪</span>
+                                <div className="text-left min-w-0">
+                                    <h3 className="font-black text-rose-800 text-base flex items-center gap-2 flex-wrap">
+                                        {language === "es" ? "Onboarding" : "Onboarding"}
+                                        {onboardingPendingApps > 0 && (
+                                            <span className="text-[10px] font-bold bg-amber-200 text-amber-900 border border-amber-300 px-1.5 py-0.5 rounded-full">
+                                                {onboardingPendingApps} {language === "es" ? "nueva" : "new"}{onboardingPendingApps !== 1 ? 's' : ''}
+                                            </span>
+                                        )}
+                                    </h3>
+                                    <p className="text-[11px] text-rose-700/80 truncate">
+                                        {language === "es"
+                                            ? `${onboardingActiveHires} contrataciones activas · papeleo W-4/I-9/DL · PII solo dueños`
+                                            : `${onboardingActiveHires} active hires · W-4/I-9/DL paperwork · owners-only PII`}
+                                    </p>
+                                </div>
+                            </div>
+                            <span className="text-rose-600 text-2xl flex-shrink-0 group-hover:translate-x-0.5 transition-transform">→</span>
+                        </button>
                     )}
 
                     {/* ── MAINTENANCE REQUESTS ── */}
