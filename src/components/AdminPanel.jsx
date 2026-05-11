@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/staff';
+import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory'; 
 import { toast, undoToast } from '../toast';
@@ -488,7 +489,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 let latest = null;
                 setStaffList(prev => {
                     const maxId = Math.max(...prev.map(s => s.id), 0);
-                    const newStaff = { id: maxId + 1, name: newName.trim(), role: newRole, pin: newPin, location: newLocation, opsAccess: newOpsAccess, recipesAccess: newRecipesAccess, shiftLead: newShiftLead, isMinor: newIsMinor, scheduleSide: newScheduleSide };
+                    // Auto-apply the position template for this role so new
+                    // hires land with reasonable access defaults (homeView,
+                    // hiddenPages, viewLabor, scheduler flags). The visible
+                    // form toggles below intentionally take precedence so an
+                    // admin who flipped, say, opsAccess OFF gets that intent.
+                    const template = getPositionTemplate(newRole) || {};
+                    const newStaff = {
+                        id: maxId + 1,
+                        ...template,
+                        name: newName.trim(),
+                        role: newRole,
+                        pin: newPin,
+                        location: newLocation,
+                        opsAccess: newOpsAccess,
+                        recipesAccess: newRecipesAccess,
+                        shiftLead: newShiftLead,
+                        isMinor: newIsMinor,
+                        scheduleSide: newScheduleSide,
+                    };
                     latest = [...prev, newStaff];
                     return latest;
                 });
@@ -794,6 +813,51 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-mint-700 focus:outline-none text-sm">
                                                             {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
                                                         </select>
+                                                        {/* Position template — one-tap fill of every access toggle below
+                                                            based on the current role. NOT auto-applied on role change,
+                                                            so a manual customization isn't silently clobbered. */}
+                                                        {hasPositionTemplate(editRole) ? (
+                                                            <button type="button"
+                                                                onClick={() => {
+                                                                    const t = getPositionTemplate(editRole);
+                                                                    if (!t) return;
+                                                                    const has = Object.keys(t).some(k => {
+                                                                        if (k === 'scheduleSide') return editScheduleSide !== t[k];
+                                                                        if (k === 'opsAccess') return editOpsAccess !== t[k];
+                                                                        if (k === 'recipesAccess') return editRecipesAccess !== t[k];
+                                                                        if (k === 'viewLabor') return editViewLabor !== t[k];
+                                                                        if (k === 'shiftLead') return editShiftLead !== t[k];
+                                                                        if (k === 'canEditScheduleFOH') return editCanEditScheduleFOH !== t[k];
+                                                                        if (k === 'canEditScheduleBOH') return editCanEditScheduleBOH !== t[k];
+                                                                        if (k === 'homeView') return editHomeView !== t[k];
+                                                                        if (k === 'hiddenPages') return JSON.stringify(editHiddenPages.slice().sort()) !== JSON.stringify((t[k] || []).slice().sort());
+                                                                        return false;
+                                                                    });
+                                                                    if (has && !confirm(language === "es"
+                                                                        ? `Aplicar plantilla "${editRole}"? Sobrescribirá los toggles actuales.`
+                                                                        : `Apply "${editRole}" template? This will overwrite your current toggles.`)) return;
+                                                                    if (typeof t.scheduleSide === 'string') setEditScheduleSide(t.scheduleSide);
+                                                                    if (typeof t.opsAccess === 'boolean') setEditOpsAccess(t.opsAccess);
+                                                                    if (typeof t.recipesAccess === 'boolean') setEditRecipesAccess(t.recipesAccess);
+                                                                    if (typeof t.viewLabor === 'boolean') setEditViewLabor(t.viewLabor);
+                                                                    if (typeof t.shiftLead === 'boolean') setEditShiftLead(t.shiftLead);
+                                                                    if (typeof t.canEditScheduleFOH === 'boolean') setEditCanEditScheduleFOH(t.canEditScheduleFOH);
+                                                                    if (typeof t.canEditScheduleBOH === 'boolean') setEditCanEditScheduleBOH(t.canEditScheduleBOH);
+                                                                    if (typeof t.homeView === 'string') setEditHomeView(t.homeView);
+                                                                    if (Array.isArray(t.hiddenPages)) setEditHiddenPages([...t.hiddenPages]);
+                                                                }}
+                                                                className="mt-1.5 w-full py-1.5 rounded-lg text-[11px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95 transition">
+                                                                ⚡ {language === "es"
+                                                                    ? `Aplicar plantilla "${editRole}"`
+                                                                    : `Apply "${editRole}" template`}
+                                                            </button>
+                                                        ) : (
+                                                            <p className="mt-1.5 text-[10px] text-gray-400 italic">
+                                                                {language === "es"
+                                                                    ? "Sin plantilla para este rol — ajusta los toggles manualmente."
+                                                                    : "No template for this role — toggle access manually."}
+                                                            </p>
+                                                        )}
                                                     </div>
                                                     <div>
                                                         <label className="text-xs text-gray-600 font-semibold">{language === "es" ? "Ubicación" : "Location"}</label>
@@ -1076,6 +1140,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 className="w-full px-2 py-2 border-2 border-gray-300 rounded-lg focus:border-green-700 focus:outline-none text-sm">
                                                 {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
                                             </select>
+                                            {hasPositionTemplate(newRole) ? (
+                                                <p className="mt-1 text-[10px] text-indigo-700 font-bold">
+                                                    ⚡ {language === "es"
+                                                        ? `Se aplicarán los accesos predeterminados de "${newRole}" al guardar.`
+                                                        : `"${newRole}" template will apply default access on save.`}
+                                                </p>
+                                            ) : (
+                                                <p className="mt-1 text-[10px] text-gray-400 italic">
+                                                    {language === "es"
+                                                        ? "Sin plantilla — ajusta el acceso luego en Editar."
+                                                        : "No template — tweak access later via Edit."}
+                                                </p>
+                                            )}
                                         </div>
                                         <div>
                                             <label className="text-xs text-gray-600 font-semibold">{language === "es" ? "Ubicación" : "Location"}</label>
