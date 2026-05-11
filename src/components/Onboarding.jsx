@@ -936,14 +936,20 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <form onSubmit={submit} className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
-                <div className="border-b border-dd-line p-4 flex items-center justify-between">
+            {/* Modal layout: header + footer flex-shrink-0, middle body
+                gets flex-1 + overflow-y-auto so the form scrolls when its
+                content (especially the Custom doc checkbox list) exceeds
+                viewport height. Save / Cancel stay pinned at the bottom
+                — they were getting pushed off-screen on mobile when the
+                Custom preset was selected. */}
+            <form onSubmit={submit} className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0">
                     <h3 className="text-lg font-black text-dd-text">
                         🪪 {tx('New hire', 'Nueva contratación')}
                     </h3>
                     <button type="button" onClick={onClose} className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg">×</button>
                 </div>
-                <div className="p-4 space-y-3">
+                <div className="p-4 space-y-3 flex-1 overflow-y-auto">
                     <Field label={tx('Legal name', 'Nombre legal')} required>
                         <input value={name} onChange={e => setName(e.target.value)}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm" required />
@@ -1043,7 +1049,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                         )}
                     </p>
                 </div>
-                <div className="border-t border-dd-line p-4 flex gap-2">
+                <div className="border-t border-dd-line p-4 flex gap-2 flex-shrink-0">
                     <button type="button" onClick={onClose}
                         className="flex-1 py-2 rounded-lg bg-dd-bg text-dd-text-2 font-bold">
                         {tx('Cancel', 'Cancelar')}
