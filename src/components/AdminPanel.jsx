@@ -64,6 +64,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // FOH staff landing on Schedule, kitchen on Recipes, trainees on
             // Training, etc. Empty/'auto' = the default unified Home page.
             const [editHomeView, setEditHomeView] = useState("auto");
+            // Per-staff tab visibility — array of HIDEABLE_PAGES ids that are
+            // FORCE-HIDDEN. Empty array = sees everything. Mirrors the
+            // staff.hiddenPages field. Edit form drives this; bulk-tag panel
+            // also writes to it from a different surface.
+            const [editHiddenPages, setEditHiddenPages] = useState([]);
             // Designated-scheduler toggles. Per-side so the FOH scheduler
             // can't accidentally publish over BOH shifts and vice versa.
             const [editCanEditScheduleFOH, setEditCanEditScheduleFOH] = useState(false);
@@ -457,7 +462,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView } : s);
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -897,6 +902,67 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </select>
                                                     </div>
 
+                                                    {/* Per-staff tab access — toggle which optional tabs this
+                                                        person sees in the sidebar / mobile launcher. Default
+                                                        (empty array) = sees everything. Toggling OFF adds the
+                                                        tab id to hiddenPages, hiding it from this person's view.
+                                                        Schedule/Home are never hideable (they're core). Recipes,
+                                                        Operations have their own access flags above. */}
+                                                    {(() => {
+                                                        const visibleCount = HIDEABLE_PAGES.length - editHiddenPages.length;
+                                                        const allVisible = editHiddenPages.length === 0;
+                                                        const allHidden = editHiddenPages.length === HIDEABLE_PAGES.length;
+                                                        const toggle = (id) => {
+                                                            setEditHiddenPages(prev => prev.includes(id)
+                                                                ? prev.filter(x => x !== id)
+                                                                : [...prev, id]);
+                                                        };
+                                                        return (
+                                                            <div className="bg-gray-50 rounded-lg p-3">
+                                                                <div className="flex items-center justify-between mb-1 flex-wrap gap-1">
+                                                                    <p className="text-sm font-bold text-gray-700">
+                                                                        👁 {language === "es" ? "Acceso a pestañas" : "Tab access"}
+                                                                    </p>
+                                                                    <span className="text-[10px] font-bold text-gray-500">
+                                                                        {visibleCount}/{HIDEABLE_PAGES.length} {language === "es" ? "visibles" : "visible"}
+                                                                    </span>
+                                                                </div>
+                                                                <p className="text-xs text-gray-500 mb-2">
+                                                                    {language === "es"
+                                                                        ? "Activa/desactiva qué pestañas opcionales ve esta persona. Horario/Inicio siempre visibles. Recetas y Operaciones tienen sus propios accesos arriba."
+                                                                        : "Toggle which optional tabs this person sees. Home/Schedule always visible. Recipes & Operations have their own access above."}
+                                                                </p>
+                                                                <div className="flex gap-1 mb-2">
+                                                                    <button type="button" onClick={() => setEditHiddenPages([])}
+                                                                        className={`flex-1 py-1 rounded text-[10px] font-bold border ${allVisible ? 'bg-green-600 text-white border-green-600' : 'bg-white text-green-700 border-green-300 hover:bg-green-50'}`}>
+                                                                        ✓ {language === "es" ? "Todas visibles" : "All on"}
+                                                                    </button>
+                                                                    <button type="button" onClick={() => setEditHiddenPages(HIDEABLE_PAGES.map(p => p.id))}
+                                                                        className={`flex-1 py-1 rounded text-[10px] font-bold border ${allHidden ? 'bg-red-600 text-white border-red-600' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}`}>
+                                                                        ✕ {language === "es" ? "Todas ocultas" : "All off"}
+                                                                    </button>
+                                                                </div>
+                                                                <div className="grid grid-cols-2 gap-1.5">
+                                                                    {HIDEABLE_PAGES.map(pg => {
+                                                                        const isVisible = !editHiddenPages.includes(pg.id);
+                                                                        return (
+                                                                            <button key={pg.id} type="button" onClick={() => toggle(pg.id)}
+                                                                                className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] font-bold border-2 transition active:scale-95 ${
+                                                                                    isVisible
+                                                                                        ? 'bg-white text-dd-text border-dd-line hover:border-dd-green/50'
+                                                                                        : 'bg-gray-100 text-gray-400 border-gray-200 line-through'
+                                                                                }`}>
+                                                                                <span className="text-sm">{pg.emoji}</span>
+                                                                                <span className="flex-1 text-left truncate">{language === "es" ? pg.labelEs : pg.labelEn}</span>
+                                                                                <span className={`w-3.5 h-3.5 rounded-full flex-shrink-0 ${isVisible ? 'bg-green-500' : 'bg-gray-300'}`} />
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
+
                                                     {/* Preferred language for this person's notifications. */}
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <p className="text-sm font-bold text-gray-700 mb-1">🗣 {language === "es" ? "Idioma de notificaciones" : "Notification language"}</p>
@@ -956,7 +1022,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -969,7 +1035,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
