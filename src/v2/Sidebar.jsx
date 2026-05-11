@@ -240,7 +240,12 @@ export default function Sidebar({
                             {group.items.map(item => {
                                 const active = activeTab === item.tab;
                                 const badge = badges[item.tab];
-                                const showBadge = badge && badge > 0;
+                                // React-gotcha fix: `badge && badge > 0` returns 0
+                                // when badge=0 — and React renders that 0 as
+                                // literal text "0" (the "extra o's" the user
+                                // saw on Schedule and 86 Board sidebar items).
+                                // Strict `> 0` returns true/false, never 0.
+                                const showBadge = badge > 0;
                                 return (
                                     <button
                                         key={item.tab}

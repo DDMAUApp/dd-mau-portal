@@ -366,7 +366,7 @@ function Kpi({ label, value, unit, tone = 'neutral' }) {
 //   └──────────────────────────┘
 // Icon is visually anchored but no longer the headline; the LABEL is.
 function Tile({ tab, icon, en, es, isEs, primary = false, badge, badgeTone, onTap }) {
-    const showBadge = badge && badge > 0;
+    const showBadge = badge > 0;
     const badgeBg = badgeTone === 'danger' ? 'bg-red-500'
                   : badgeTone === 'amber'  ? 'bg-amber-500'
                   :                          'bg-dd-green';

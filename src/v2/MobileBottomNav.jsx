@@ -113,7 +113,7 @@ export default function MobileBottomNav({
                 {tabs.map((t) => {
                     const active = activeTab === t.tab;
                     const isMore = t.tab === '__more';
-                    const showBadge = !isMore && t.badge && t.badge > 0;
+                    const showBadge = !isMore && t.badge > 0;
                     return (
                         <button
                             key={t.tab}

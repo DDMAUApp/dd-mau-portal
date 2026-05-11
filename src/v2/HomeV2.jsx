@@ -283,8 +283,11 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         </div>
                     ) : upcomingShifts.length === 0 ? (
                         <div className="text-center py-8">
-                            <div className="text-3xl mb-1">😌</div>
-                            <p className="text-sm text-dd-text-2">{tx('No published shifts in the next 2 days.', 'Sin turnos publicados próximos.')}</p>
+                            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-dd-bg flex items-center justify-center text-xl text-dd-text-2/60">
+                                📅
+                            </div>
+                            <p className="text-sm font-semibold text-dd-text">{tx('No published shifts', 'Sin turnos publicados')}</p>
+                            <p className="text-xs text-dd-text-2 mt-0.5">{tx('Today and tomorrow look clear.', 'Hoy y mañana están libres.')}</p>
                         </div>
                     ) : (
                         <ul className="divide-y divide-dd-line">
@@ -312,27 +315,33 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                     )}
                 </Card>
 
-                {/* Publish CTA */}
-                <Card className="p-5 bg-gradient-to-br from-dd-sage-50 to-dd-surface border-dd-sage">
-                    <div className="text-2xl mb-2">📢</div>
+                {/* Publish CTA — solid sage tint when there are drafts to
+                    drive attention; when zero, downgrades to a calm "all
+                    caught up" surface so it doesn't shout. The previous
+                    megaphone emoji at small size rendered as a smudge —
+                    using a clean checkmark / megaphone disc instead. */}
+                <Card className={`p-5 ${draftCount > 0 ? 'bg-gradient-to-br from-amber-50 to-dd-surface border-amber-200' : 'bg-gradient-to-br from-dd-sage-50 to-dd-surface border-dd-sage/40'}`}>
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl mb-3 ${draftCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-dd-green-50 text-dd-green-700'}`}>
+                        {draftCount > 0 ? '📢' : '✓'}
+                    </div>
                     <h3 className="text-base font-bold text-dd-text mb-1">
                         {draftCount > 0
                             ? tx(`${draftCount} draft shift${draftCount === 1 ? '' : 's'}`, `${draftCount} borrador${draftCount === 1 ? '' : 'es'}`)
-                            : tx('No drafts to publish', 'Sin borradores')}
+                            : tx('All caught up', 'Todo al día')}
                     </h3>
                     <p className="text-xs text-dd-text-2 mb-4">
                         {draftCount > 0
                             ? tx('Publish to release them to your team. Staff get push notifications instantly.',
                                  'Publica para liberarlos al equipo. El staff recibe notificaciones al instante.')
-                            : tx('Add new shifts in Schedule, then publish them here.',
-                                 'Agrega turnos en Horario, luego publícalos aquí.')}
+                            : tx('No drafts to publish. Add new shifts in Schedule.',
+                                 'Sin borradores. Agrega turnos en Horario.')}
                     </p>
                     <Button variant={draftCount > 0 ? 'primary' : 'secondary'}
                         size="md"
                         className="w-full"
                         onClick={() => onNavigate?.('schedule')}>
                         {draftCount > 0
-                            ? `📢 ${tx('Review & publish', 'Revisar y publicar')}`
+                            ? tx('Review & publish', 'Revisar y publicar')
                             : tx('Open schedule', 'Abrir horario')}
                     </Button>
                 </Card>
