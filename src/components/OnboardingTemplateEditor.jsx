@@ -481,16 +481,92 @@ export default function OnboardingTemplateEditor({
                             <p className="text-[10px] font-bold uppercase text-gray-500">
                                 {tx('Selected field', 'Campo seleccionado')}
                             </p>
+
+                            {/* Who fills this — hire fills (default) vs admin
+                                pre-fills once on the template (static). Static
+                                fields are baked into every hire's PDF: company
+                                info, EIN, manager signature, etc. */}
+                            <div>
+                                <label className="text-[10px] font-bold text-gray-500">
+                                    {tx('Who fills this?', '¿Quién lo llena?')}
+                                </label>
+                                <div className="grid grid-cols-2 gap-1 mt-0.5">
+                                    <button type="button"
+                                        onClick={() => updateField(selected.id, { filledBy: 'hire' })}
+                                        className={`py-1 rounded text-[10px] font-bold border ${
+                                            (selected.filledBy || 'hire') === 'hire'
+                                                ? 'bg-blue-600 text-white border-blue-600'
+                                                : 'bg-white text-gray-700 border-gray-300'
+                                        }`}>
+                                        {tx('🧑 Hire', '🧑 Nuevo')}
+                                    </button>
+                                    <button type="button"
+                                        onClick={() => updateField(selected.id, { filledBy: 'static' })}
+                                        className={`py-1 rounded text-[10px] font-bold border ${
+                                            selected.filledBy === 'static'
+                                                ? 'bg-amber-500 text-white border-amber-500'
+                                                : 'bg-white text-gray-700 border-gray-300'
+                                        }`}>
+                                        {tx('🔒 Pre-fill', '🔒 Pre-lleno')}
+                                    </button>
+                                </div>
+                            </div>
+
                             <div>
                                 <label className="text-[10px] font-bold text-gray-500">
                                     {tx('Label (optional)', 'Etiqueta (opcional)')}
                                 </label>
                                 <input value={selected.label}
                                     onChange={e => updateField(selected.id, { label: e.target.value })}
-                                    placeholder={tx('e.g. "Box 1c"', 'ej: "Casilla 1c"')}
+                                    placeholder={tx('e.g. "Company name"', 'ej: "Nombre empresa"')}
                                     className="w-full border border-gray-300 rounded px-2 py-1 text-xs" />
                             </div>
-                            {(selected.type === 'text' || selected.type === 'date') && (
+
+                            {/* STATIC value input — what gets baked into every
+                                hire's PDF. Different control per field type:
+                                  • text/date/initials → text input
+                                  • checkbox          → checked toggle
+                                  • signature         → inline sig pad
+                            */}
+                            {selected.filledBy === 'static' && (
+                                <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1.5">
+                                    <p className="text-[10px] font-bold text-amber-900 uppercase">
+                                        🔒 {tx('Pre-filled value', 'Valor predefinido')}
+                                    </p>
+                                    {(selected.type === 'text' || selected.type === 'date' || selected.type === 'initials') && (
+                                        <input
+                                            type={selected.type === 'date' ? 'date' : 'text'}
+                                            value={selected.staticValue || ''}
+                                            onChange={e => updateField(selected.id, { staticValue: e.target.value })}
+                                            placeholder={tx('e.g. DD Mau LLC, EIN, address…', 'ej: DD Mau LLC, EIN, dirección…')}
+                                            className="w-full border border-amber-300 rounded px-2 py-1 text-xs bg-white" />
+                                    )}
+                                    {selected.type === 'checkbox' && (
+                                        <label className="flex items-center gap-2 text-[11px] font-bold text-amber-900">
+                                            <input type="checkbox"
+                                                checked={!!selected.staticValue}
+                                                onChange={e => updateField(selected.id, { staticValue: e.target.checked })}
+                                                className="w-4 h-4 accent-amber-600" />
+                                            {tx('Pre-checked', 'Pre-marcado')}
+                                        </label>
+                                    )}
+                                    {(selected.type === 'signature' || selected.type === 'initials') && selected.type === 'signature' && (
+                                        <InlineSigPad
+                                            value={typeof selected.staticValue === 'string' && selected.staticValue.startsWith('data:image') ? selected.staticValue : null}
+                                            onChange={(dataUrl) => updateField(selected.id, { staticValue: dataUrl })}
+                                            isEs={isEs}
+                                        />
+                                    )}
+                                    <p className="text-[10px] text-amber-800 italic">
+                                        {tx('This value goes into every hire\'s PDF. They won\'t see an input here.',
+                                            'Este valor va en el PDF de cada contratado. Ellos no verán un campo aquí.')}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* AUTOFILL binding — only for HIRE-FILLED text fields.
+                                Static fields use staticValue instead. */}
+                            {(selected.filledBy || 'hire') === 'hire' && (selected.type === 'text' || selected.type === 'date') && (
                                 <div>
                                     <label className="text-[10px] font-bold text-gray-500">
                                         {tx('Auto-fill from hire data', 'Auto-llenar desde datos del contratado')}
@@ -505,6 +581,7 @@ export default function OnboardingTemplateEditor({
                                     </select>
                                 </div>
                             )}
+
                             {(selected.type === 'text' || selected.type === 'date' || selected.type === 'initials') && (
                                 <div>
                                     <label className="text-[10px] font-bold text-gray-500">
@@ -623,7 +700,9 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
             className={`absolute cursor-move border-2 group touch-none ${
                 selected
                     ? 'border-dd-green bg-dd-green/15 z-10'
-                    : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
+                    : field.filledBy === 'static'
+                        ? 'border-amber-500 bg-amber-100/50 hover:border-amber-600'
+                        : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
             }`}
             style={{
                 left: `${field.x * 100}%`,
@@ -631,8 +710,10 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                 width: `${field.w * 100}%`,
                 height: `${field.h * 100}%`,
             }}>
-            <div className="absolute top-0 left-0 -translate-y-full bg-dd-green text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none">
-                {field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
+            <div className={`absolute top-0 left-0 -translate-y-full text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none ${
+                field.filledBy === 'static' ? 'bg-amber-600' : 'bg-dd-green'
+            }`}>
+                {field.filledBy === 'static' ? '🔒 ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
             </div>
             {selected && (
                 <>
@@ -656,6 +737,92 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                     </div>
                 </>
             )}
+        </div>
+    );
+}
+
+// Inline signature pad for the editor sidebar — admin signs ONCE, value
+// stored as a PNG data URL on the field. Reused for every hire's PDF.
+// Smaller + simpler than the hire-side modal version since this is admin
+// UX where they sign once per template.
+function InlineSigPad({ value, onChange, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const canvasRef = useRef(null);
+    const drawing = useRef(false);
+    const lastPoint = useRef(null);
+    const [empty, setEmpty] = useState(!value);
+
+    useEffect(() => {
+        const c = canvasRef.current;
+        if (!c) return;
+        const r = c.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        c.width = r.width * dpr;
+        c.height = r.height * dpr;
+        const ctx = c.getContext('2d');
+        ctx.scale(dpr, dpr);
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#1f2937';
+        if (value) {
+            const img = new Image();
+            img.onload = () => ctx.drawImage(img, 0, 0, r.width, r.height);
+            img.src = value;
+        }
+    }, []);
+
+    const pos = (e) => {
+        const c = canvasRef.current;
+        const r = c.getBoundingClientRect();
+        const t = e.touches ? e.touches[0] : e;
+        return { x: t.clientX - r.left, y: t.clientY - r.top };
+    };
+    const start = (e) => { e.preventDefault(); drawing.current = true; lastPoint.current = pos(e); setEmpty(false); };
+    const move = (e) => {
+        if (!drawing.current) return;
+        e.preventDefault();
+        const ctx = canvasRef.current.getContext('2d');
+        const p = pos(e);
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.current.x, lastPoint.current.y);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        lastPoint.current = p;
+    };
+    const end = () => {
+        if (drawing.current && !empty) {
+            onChange(canvasRef.current.toDataURL('image/png'));
+        }
+        drawing.current = false;
+        lastPoint.current = null;
+    };
+    const clear = () => {
+        const c = canvasRef.current;
+        c.getContext('2d').clearRect(0, 0, c.width, c.height);
+        setEmpty(true);
+        onChange('');
+    };
+
+    return (
+        <div>
+            <canvas
+                ref={canvasRef}
+                className="w-full h-24 bg-white border-2 border-dashed border-amber-400 rounded touch-none"
+                onMouseDown={start} onMouseMove={move} onMouseUp={end} onMouseLeave={end}
+                onTouchStart={start} onTouchMove={move} onTouchEnd={end}
+            />
+            <div className="flex gap-1 mt-1">
+                <button type="button" onClick={clear}
+                    className="flex-1 py-1 rounded bg-amber-200 text-amber-900 text-[10px] font-bold">
+                    {tx('Clear', 'Borrar')}
+                </button>
+                {value && (
+                    <span className="flex-1 py-1 rounded bg-green-100 text-green-800 text-[10px] font-bold text-center">
+                        ✓ {tx('Saved', 'Guardado')}
+                    </span>
+                )}
+            </div>
         </div>
     );
 }

@@ -94,8 +94,12 @@ export default function OnboardingFillablePdf({
                 if (!alive) return;
                 setTemplate(chosen);
                 // Initialize values from autofill bindings.
+                // Static fields are admin-prefilled at template time — they're
+                // not editable here, so we don't pre-populate the values map
+                // for them (PDF generation reads field.staticValue directly).
                 const initial = {};
                 (chosen.fields || []).forEach(f => {
+                    if (f.filledBy === 'static') return;
                     if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
                 });
                 setValues(initial);
@@ -140,13 +144,14 @@ export default function OnboardingFillablePdf({
         if (!submitting && typeof onStart === 'function') onStart();
     };
 
-    // Validate required fields are filled before submit. Treat all
-    // non-autofilled fields as required (hires complain less than admins
-    // when something needed gets skipped).
+    // Validate required fields are filled before submit. Static fields
+    // are admin-prefilled at template time — they're always considered
+    // filled. Checkboxes can be unchecked (we don't force).
     const validate = () => {
         const missing = (template?.fields || []).filter(f => {
+            if (f.filledBy === 'static') return false;
             const v = values[f.id];
-            if (f.type === 'checkbox') return false; // checkboxes can be unchecked
+            if (f.type === 'checkbox') return false;
             return !v || (typeof v === 'string' && !v.trim());
         });
         return missing;
@@ -184,7 +189,9 @@ export default function OnboardingFillablePdf({
                 const h = f.h * ph;
                 const yPdf = ph - yTop - h;
 
-                const val = values[f.id];
+                // Static fields use the admin-set staticValue; everything
+                // else reads from the hire's `values` map.
+                const val = f.filledBy === 'static' ? f.staticValue : values[f.id];
 
                 if (f.type === 'signature' || f.type === 'initials') {
                     if (!val || !val.startsWith('data:image')) continue;
@@ -265,12 +272,16 @@ export default function OnboardingFillablePdf({
                     <div key={idx} className="relative bg-white shadow">
                         <img src={src} alt={`Page ${idx + 1}`} className="w-full h-auto block" draggable={false} />
                         {(template.fields || []).filter(f => f.page === idx).map(f => (
-                            <FieldInput key={f.id}
-                                field={f}
-                                value={values[f.id]}
-                                onChange={(v) => setValue(f.id, v)}
-                                onOpenSig={() => setSigField(f)}
-                                isEs={isEs} />
+                            f.filledBy === 'static' ? (
+                                <StaticOverlay key={f.id} field={f} isEs={isEs} />
+                            ) : (
+                                <FieldInput key={f.id}
+                                    field={f}
+                                    value={values[f.id]}
+                                    onChange={(v) => setValue(f.id, v)}
+                                    onOpenSig={() => setSigField(f)}
+                                    isEs={isEs} />
+                            )
                         ))}
                     </div>
                 ))}
@@ -293,6 +304,40 @@ export default function OnboardingFillablePdf({
                     onClose={() => setSigField(null)}
                     onSave={(dataUrl) => { setValue(sigField.id, dataUrl); setSigField(null); }} />
             )}
+        </div>
+    );
+}
+
+// StaticOverlay — read-only display of an admin-prefilled field.
+// Hire sees the value (so they know what's there) but can't interact.
+// Amber chrome so it visually reads as "locked" vs the yellow editable fields.
+function StaticOverlay({ field, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const style = {
+        left: `${field.x * 100}%`,
+        top: `${field.y * 100}%`,
+        width: `${field.w * 100}%`,
+        height: `${field.h * 100}%`,
+    };
+    const isSig = field.type === 'signature' || field.type === 'initials';
+    const hasSig = isSig && typeof field.staticValue === 'string' && field.staticValue.startsWith('data:image');
+    return (
+        <div className="absolute border-2 border-amber-400 bg-amber-50/70 rounded flex items-center justify-center overflow-hidden"
+             style={style}
+             title={tx('Pre-filled by management', 'Pre-llenado por gerencia')}>
+            {hasSig ? (
+                <img src={field.staticValue} alt="" className="max-w-full max-h-full" />
+            ) : field.type === 'checkbox' ? (
+                <span className="text-base font-black text-amber-700">{field.staticValue ? 'X' : ''}</span>
+            ) : (
+                <span className="text-[10px] leading-tight text-amber-900 px-1 truncate w-full text-left"
+                      style={{ fontSize: (field.fontSize || 11) + 'px' }}>
+                    {field.staticValue || ''}
+                </span>
+            )}
+            <span className="absolute -top-3 -right-1 bg-amber-500 text-white text-[8px] font-black px-1 py-0.5 rounded">
+                🔒
+            </span>
         </div>
     );
 }
