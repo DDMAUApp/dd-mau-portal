@@ -2851,20 +2851,27 @@ ${dayBlocks}
                     {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
                     {viewMode === 'grid' && (
                         <>
-                            <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
-                            {/* SPLH advisor + weather. Foldable so it doesn't dominate
-                                the grid by default. The summary chip ALWAYS shows
-                                under/over-staffed counts so even collapsed it's useful. */}
-                            <SplhAdvisor
-                                splhForecast={splhForecast}
-                                advisory={splhAdvisory}
-                                weatherTips={weatherTips}
-                                weather={weather}
-                                open={splhAdvisorOpen}
-                                onToggle={() => setSplhAdvisorOpen(o => !o)}
-                                isEn={isEn}
-                                side={side}
-                            />
+                            {/* Scoreboard + SPLH advisor are scheduler-only.
+                                Per Andrew (2026-05-12): staff without an
+                                editor toggle shouldn't see forecast / target
+                                / weekly-hours bars — those are planning
+                                tools for the scheduler, not status info for
+                                the line. Hidden entirely if !canEdit. */}
+                            {canEdit && (
+                                <>
+                                    <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
+                                    <SplhAdvisor
+                                        splhForecast={splhForecast}
+                                        advisory={splhAdvisory}
+                                        weatherTips={weatherTips}
+                                        weather={weather}
+                                        open={splhAdvisorOpen}
+                                        onToggle={() => setSplhAdvisorOpen(o => !o)}
+                                        isEn={isEn}
+                                        side={side}
+                                    />
+                                </>
+                            )}
                             <WeeklyGrid
                                 weekStart={weekStart}
                                 staffSummary={staffSummary}
@@ -4063,9 +4070,12 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         </span>
                                     </span>
                                 </button>
-                                <div className={`text-[10px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded-md border ${hoursColor(s.totalHours)}`}>
-                                    {formatHours(s.totalHours)}
-                                </div>
+                                {/* Per-staff weekly-hours pill — scheduler-only. */}
+                                {canEdit && (
+                                    <div className={`text-[10px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded-md border ${hoursColor(s.totalHours)}`}>
+                                        {formatHours(s.totalHours)}
+                                    </div>
+                                )}
                             </td>
                             {days.map((d, i) => {
                                 const dStr = toDateStr(d);
