@@ -71,6 +71,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [bulkSearch, setBulkSearch] = useState("");
             const [bulkFilter, setBulkFilter] = useState("all"); // all | untagged | foh | boh
+            // Bulk toggles panel is collapsed by default so the staff list gets
+            // the most room. Expand on demand for mass on/off operations.
+            const [bulkTogglesOpen, setBulkTogglesOpen] = useState(false);
             // Two-step confirmation for the System Refresh broadcast.
             // First tap arms the button; second tap (within 10s) fires it.
             const [confirmingRefresh, setConfirmingRefresh] = useState(false);
@@ -1275,12 +1278,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         {/* Bulk toggle section — sweep ON/OFF for every staff currently
                                             visible (after search + filter). Operates on `visibleIds`,
                                             so first narrow the list with the filter chips + search box,
-                                            then hit a button. Acts on the displayed staff only. */}
+                                            then hit a button. Acts on the displayed staff only.
+                                            COLLAPSED by default to give the staff list more room —
+                                            click the header to expand. */}
                                         {visible.length > 0 && (
                                             <div className="mt-2 pt-2 border-t border-gray-200">
-                                                <p className="text-[10px] text-gray-500 font-bold mb-1">
-                                                    🔁 {language === "es" ? `Toggles para ${visible.length} visibles` : `Toggles for ${visible.length} visible`}
-                                                </p>
+                                                <button
+                                                    onClick={() => setBulkTogglesOpen(o => !o)}
+                                                    className="w-full flex items-center justify-between px-2 py-1.5 rounded-md text-[10px] font-bold text-gray-700 bg-gray-50 hover:bg-gray-100 border border-gray-200"
+                                                    aria-expanded={bulkTogglesOpen}>
+                                                    <span>
+                                                        🔁 {language === "es" ? `Toggles en lote (${visible.length} visibles)` : `Bulk toggles (${visible.length} visible)`}
+                                                    </span>
+                                                    <span className="text-gray-400">{bulkTogglesOpen ? '▴' : '▾'}</span>
+                                                </button>
+                                            </div>
+                                        )}
+                                        {visible.length > 0 && bulkTogglesOpen && (
+                                            <div className="mt-2 px-2 py-2 rounded-md bg-gray-50 border border-gray-200">
                                                 {[
                                                     { field: "recipesAccess",        labelEn: "Recipes",      labelEs: "Recetas",      emoji: "🧑‍🍳", onColor: "bg-green-600",  offColor: "bg-gray-300" },
                                                     { field: "opsAccess",            labelEn: "Operations",   labelEs: "Operaciones",  emoji: "📋", onColor: "bg-mint-700",   offColor: "bg-gray-300" },
