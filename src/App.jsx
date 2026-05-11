@@ -154,6 +154,42 @@ const SS = {
     set: (k, v) => { try { v == null ? localStorage.removeItem("ddmau:" + k) : localStorage.setItem("ddmau:" + k, v); } catch {} },
 };
 
+// ── Lock on app close (PWA + tab) ──────────────────────────────────────
+//
+// Andrew's request: closing the app on his iPhone should require a PIN on
+// reopen. localStorage alone keeps the user signed in across closes (the
+// browser persists it forever). To get "stays signed in on refresh, locks
+// on close" we add two layers:
+//
+//   1. Cold-launch detection via sessionStorage: this storage SURVIVES a
+//      page refresh (same tab/PWA) but is CLEARED when the tab is fully
+//      closed or the iOS PWA is swiped away. We set a marker on every
+//      page load; if the marker wasn't already there, this is a fresh
+//      launch — clear staffName so the lock screen shows. Runs at module
+//      load, BEFORE any React state initializes.
+//
+//   2. Idle-timeout (below, inside App): if the page is left in the
+//      background for more than IDLE_LOCK_MS, lock on return-to-visible.
+//      Backstop for the "I left my phone unlocked on the counter" case.
+//
+// Manual logout still works via setStaffName(null) which clears the
+// localStorage key directly — no special handling needed.
+const IDLE_LOCK_MS = 5 * 60 * 1000;   // 5 minutes of being hidden = relock
+try {
+    if (typeof window !== 'undefined') {
+        const alive = sessionStorage.getItem('ddmau:sessionAlive');
+        if (!alive) {
+            // Cold launch — wipe the persisted auth state so the PIN screen
+            // is the first thing the user sees.
+            localStorage.removeItem('ddmau:staffName');
+            // We deliberately don't clear activeTab/language/etc — those
+            // are preferences, not credentials, and the user will want
+            // them restored after they unlock.
+        }
+        sessionStorage.setItem('ddmau:sessionAlive', '1');
+    }
+} catch {}
+
 // v2 design is the ONLY shell now (2026-05-10). The legacy v1 sidebar,
 // bottom nav, and main rendering have been removed entirely. Previously
 // v1 lived at the bottom of this file as a fallback when ?v2=0 was set;
@@ -233,6 +269,42 @@ export default function App() {
         }, (err) => { console.warn('forceRefresh listener error:', err); });
         return () => unsub();
     }, []);
+
+    // ── Idle-timeout relock ──────────────────────────────────────────
+    // When the app is sent to the background (tab hidden / iPhone home
+    // button), mark the timestamp. When the user returns and the gap
+    // exceeds IDLE_LOCK_MS, log them out so the PIN screen shows.
+    //
+    // This is the "I left the app open then walked away" case. The
+    // cold-launch handler at module load handles the "I closed the
+    // PWA and reopened it" case. Both together give the strict lock
+    // behavior Andrew expects.
+    useEffect(() => {
+        if (!staffName) return;
+        // Anchor lastActive on first render so an immediate visibility
+        // event doesn't immediately log out a user who just signed in.
+        try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch {}
+        const onVisibility = () => {
+            if (typeof document === 'undefined') return;
+            if (document.visibilityState === 'hidden') {
+                try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch {}
+                return;
+            }
+            // visibilityState === 'visible' — coming back. Compare gap.
+            let lastActive = 0;
+            try { lastActive = parseInt(localStorage.getItem('ddmau:lastActive') || '0', 10) || 0; } catch {}
+            if (lastActive && Date.now() - lastActive > IDLE_LOCK_MS) {
+                console.log('[lock] idle for >5min, locking');
+                setStaffName(null);
+                setActiveTab('home');
+            } else {
+                try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch {}
+            }
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+    }, [staffName]);
+
     const { isAtDDMau, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
     const updateAvailable = useVersionCheck();
     // Mobile pull-down-to-refresh — bypasses the cached SW and forces the
