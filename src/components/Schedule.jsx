@@ -272,6 +272,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Single-person filter — when set, every view scopes to ONE staff member.
     // Cleared with the "Show all" button.
     const [personFilter, setPersonFilter] = useState(null);
+    // Multi-shift select — shift+click any cube to add it to the selection,
+    // then act on all selected at once via the floating bulk-action bar.
+    // Stored as a Set of shift ids so add/remove is O(1).
+    const [selectedShiftIds, setSelectedShiftIds] = useState(() => new Set());
+    const toggleShiftSelection = (shiftId) => {
+        setSelectedShiftIds(prev => {
+            const next = new Set(prev);
+            if (next.has(shiftId)) next.delete(shiftId);
+            else next.add(shiftId);
+            return next;
+        });
+    };
+    const clearSelection = () => setSelectedShiftIds(new Set());
     // Date blocks ("restaurant closed" / "no time-off allowed"). Manager-defined.
     const [dateBlocks, setDateBlocks] = useState([]);
     const [showBlockModal, setShowBlockModal] = useState(false);
@@ -1109,6 +1122,72 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             console.error('Offer shift failed:', e);
             toast(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message);
         }
+    };
+
+    // Bulk delete — deletes every selected shift in one shot. Wrapped in
+    // an undoToast like single delete so an accidental click can be
+    // recovered for 5 seconds. Mass deletes are higher-stakes than singles
+    // so we require explicit confirm AND the undo window.
+    const handleBulkDelete = async () => {
+        const ids = Array.from(selectedShiftIds);
+        if (ids.length === 0) return;
+        const ok = confirm(tx(
+            `Delete ${ids.length} selected shift${ids.length === 1 ? '' : 's'}? This will be undoable for 5 seconds.`,
+            `¿Eliminar ${ids.length} turno${ids.length === 1 ? '' : 's'} seleccionado${ids.length === 1 ? '' : 's'}? Tendrás 5 segundos para deshacer.`
+        ));
+        if (!ok) return;
+        const snapshot = ids.map(id => shifts.find(s => s.id === id)).filter(Boolean);
+        clearSelection();
+        undoToast(
+            tx(`🗑 Deleted ${snapshot.length} shifts`, `🗑 Eliminados ${snapshot.length} turnos`),
+            async () => {
+                for (const sh of snapshot) {
+                    try { await deleteDoc(doc(db, 'shifts', sh.id)); }
+                    catch (e) { console.warn('bulk-delete failed for', sh.id, e); }
+                }
+            },
+            { delayMs: 5000, undoLabel: tx('Undo', 'Deshacer'), kind: 'warn' }
+        );
+    };
+
+    // Bulk give-up — staff selects all THEIR shifts (or admin selects any
+    // staff's shifts) and offers them all up at once. Skips shifts that are
+    // already offered or pending. Skips shifts the user doesn't own (unless
+    // they're an admin).
+    const handleBulkGiveUp = async () => {
+        const ids = Array.from(selectedShiftIds);
+        if (ids.length === 0) return;
+        const candidates = ids
+            .map(id => shifts.find(s => s.id === id))
+            .filter(s => s && !s.offerStatus && (canEdit || s.staffName === staffName));
+        if (candidates.length === 0) {
+            toast(tx('No eligible shifts to offer (already offered, or not yours).',
+                     'No hay turnos elegibles (ya ofrecidos o no son tuyos).'));
+            return;
+        }
+        const ok = confirm(tx(
+            `Offer ${candidates.length} shift${candidates.length === 1 ? '' : 's'} up for grabs? You're still responsible until taken.`,
+            `¿Ofrecer ${candidates.length} turno${candidates.length === 1 ? '' : 's'}? Sigues siendo responsable hasta que alguien los tome.`
+        ));
+        if (!ok) return;
+        let okCount = 0, failCount = 0;
+        for (const sh of candidates) {
+            try {
+                await updateDoc(doc(db, 'shifts', sh.id), {
+                    offerStatus: 'open',
+                    offeredBy: staffName,
+                    offeredAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                });
+                okCount += 1;
+            } catch (e) {
+                console.warn('bulk-offer failed for', sh.id, e);
+                failCount += 1;
+            }
+        }
+        clearSelection();
+        toast(tx(`📣 Offered ${okCount} shifts${failCount > 0 ? ` (${failCount} failed)` : ''}`,
+                 `📣 Ofrecidos ${okCount} turnos${failCount > 0 ? ` (${failCount} fallidos)` : ''}`));
     };
 
     const handleCancelOffer = async (shift) => {
@@ -2720,6 +2799,8 @@ ${dayBlocks}
                                         ));
                                     }
                                 }}
+                                selectedShiftIds={selectedShiftIds}
+                                onToggleShiftSelection={toggleShiftSelection}
                                 onCellClick={(staff, dateStr) => {
                                     if (!canEdit) return;
                                     if (dateClosed(dateStr)) {
@@ -2864,6 +2945,37 @@ ${dayBlocks}
                         </div>
                     )}
                 </>
+            )}
+
+            {/* FLOATING BULK ACTION BAR — appears when shifts are selected
+                via shift+click. Sits fixed above the bottom nav so it
+                doesn't compete with primary scroll content. Closes on
+                Clear or after a successful bulk action. */}
+            {selectedShiftIds.size > 0 && (
+                <div className="fixed bottom-4 md:bottom-6 left-1/2 -translate-x-1/2 z-30 print:hidden bottom-nav-safe">
+                    <div className="flex items-center gap-2 bg-dd-charcoal text-white px-3 py-2 rounded-2xl shadow-card-hov">
+                        <span className="px-2 py-1 rounded-full bg-white/15 text-xs font-bold tabular-nums">
+                            {selectedShiftIds.size} {tx('selected', 'sel.')}
+                        </span>
+                        <button onClick={handleBulkGiveUp}
+                            className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 active:scale-95 transition">
+                            📣 {tx('Give up', 'Liberar')}
+                        </button>
+                        {canEdit && (
+                            <button onClick={handleBulkDelete}
+                                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-red-600 hover:bg-red-700 active:scale-95 transition">
+                                🗑 {tx('Delete', 'Eliminar')}
+                            </button>
+                        )}
+                        <button onClick={clearSelection}
+                            className="px-2 py-1.5 rounded-lg text-xs font-semibold text-white/70 hover:text-white hover:bg-white/10 transition">
+                            ✕ {tx('Clear', 'Limpiar')}
+                        </button>
+                    </div>
+                    <p className="mt-1 text-center text-[10px] text-dd-text-2 bg-white/80 backdrop-blur rounded-md mx-2 px-2 py-0.5">
+                        {tx('Shift-click any cube to add', 'Mayús+clic para agregar')}
+                    </p>
+                </div>
             )}
 
             {showAddModal && canEdit && (
@@ -3539,6 +3651,8 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     // openOffers: from shifts.offerStatus === 'open', per-day chips ("📣 Sara")
     openSlots = [], openOffers = [], side = 'foh', storeLocation = 'webster',
     onFillSlot,
+    // Multi-select pass-through for ShiftCube children
+    selectedShiftIds, onToggleShiftSelection,
 }) {
     // Pre-compute per-day staffing-need stats (filled / total / open) so the
     // day header can show a live countdown badge as slots get assigned.
@@ -3899,7 +4013,9 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     draggable={canEdit}
                                                     isDoubleDay={cellShifts.length >= 2}
                                                     dayShiftCount={cellShifts.length}
-                                                    onUpdateShiftTimes={onUpdateShiftTimes} />
+                                                    onUpdateShiftTimes={onUpdateShiftTimes}
+                                                    isSelected={selectedShiftIds && selectedShiftIds.has(sh.id)}
+                                                    onToggleSelection={onToggleShiftSelection} />
                                             ))}
                                             {canEdit && cellShifts.length === 0 && !onPTO && (() => {
                                                 // Inline quick-add chip strip — only renders when
@@ -3958,7 +4074,10 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     );
 }
 
-function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes }) {
+function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
+    // Multi-select: shift+click toggles. Parent owns the Set of selected ids.
+    isSelected = false, onToggleSelection,
+}) {
     // Inline resize picker — opens via the right-edge handle. Lets the user
     // nudge the end time by ±15min / ±30min / ±1h with one tap. Real
     // pointer-drag on a scrolling table cell is finicky; this gives the
@@ -4054,13 +4173,22 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                 e.dataTransfer.setData('text/shift-id', shift.id);
                 e.dataTransfer.effectAllowed = 'move';
             }}
+            onClick={(e) => {
+                // Shift+click adds/removes the cube from the multi-select.
+                // Plain click is a no-op (existing behaviors — time edit,
+                // offer, delete — are on inner buttons).
+                if (e.shiftKey && onToggleSelection) {
+                    e.preventDefault();
+                    onToggleSelection(shift.id);
+                }
+            }}
             onContextMenu={(e) => { if (!canEdit) return; e.preventDefault(); setMenuOpen(true); }}
             onTouchStart={beginLongPress}
             onTouchEnd={cancelLongPress}
             onTouchMove={cancelLongPress}
             onTouchCancel={cancelLongPress}
             title={auditLines.join('\n') || undefined}
-            className={`schedule-shift-cube relative rounded-md shadow-sm ${shift.published === false ? 'border-2 border-dashed border-dd-text-2/40 opacity-80' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-white' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-white' : ''} ${colors.bg} ${colors.text} px-2 py-1.5 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} hover:shadow-card-hov hover:-translate-y-px transition group/cube`}>
+            className={`schedule-shift-cube relative rounded-md shadow-sm ${shift.published === false ? 'border-2 border-dashed border-dd-text-2/40 opacity-80' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-white' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-white' : ''} ${isSelected ? 'ring-2 ring-dd-green ring-offset-1 ring-offset-white' : ''} ${colors.bg} ${colors.text} px-2 py-1.5 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} hover:shadow-card-hov hover:-translate-y-px transition group/cube`}>
             {editingTimes ? (
                 <div onClick={(e) => e.stopPropagation()} className="space-y-1">
                     <div className="flex items-center gap-1">

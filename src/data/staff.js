@@ -52,6 +52,40 @@ export function canEditSchedule(staffName, staffList, side) {
   return me.canEditScheduleFOH === true || me.canEditScheduleBOH === true;
 }
 
+// PAGE VISIBILITY MATRIX — admin can hide specific tabs per staff.
+//
+// Stored as `hiddenPages: ['ai', 'catering']` on each staff record.
+// Default empty / undefined = ALL visible. The "force-hide" model
+// (vs "explicitly-grant" model) keeps the new-staff UX intact —
+// new hires see everything until an admin curates their view.
+//
+// PAGES_LIST is the canonical set of tabs that can be hidden. Some
+// tabs are NOT in this list because they have their own access flag:
+//   - operations: opsAccess
+//   - recipes:    recipesAccess
+//   - tardies / handoff: gated to managers automatically
+//   - labor:      gated to admins automatically + viewLabor flag
+//   - admin:      gated to admins only
+// Everything else here is "visible to everyone unless admin hides it".
+export const HIDEABLE_PAGES = [
+    { id: 'menu',        labelEn: 'Menu',         labelEs: 'Menú',           emoji: '🍜' },
+    { id: 'eighty6',     labelEn: '86 Board',     labelEs: 'Tablero 86',     emoji: '🚫' },
+    { id: 'training',    labelEn: 'Training',     labelEs: 'Capacitación',   emoji: '📚' },
+    { id: 'catering',    labelEn: 'Catering',     labelEs: 'Catering',       emoji: '🥘' },
+    { id: 'ai',          labelEn: 'AI Assistant', labelEs: 'Asistente AI',   emoji: '🤖' },
+    { id: 'maintenance', labelEn: 'Maintenance',  labelEs: 'Mantenimiento',  emoji: '🔧' },
+    { id: 'insurance',   labelEn: 'Insurance',    labelEs: 'Seguro',         emoji: '📑' },
+];
+
+// Returns true iff this staff is allowed to see the named tab.
+// Always returns true for tabs not in the hideable list (they have
+// their own gates).
+export function canSeePage(staff, pageId) {
+    if (!staff) return true; // pre-login: don't false-negative
+    const hidden = Array.isArray(staff.hiddenPages) ? staff.hiddenPages : [];
+    return !hidden.includes(pageId);
+}
+
 // Per-staff page visibility / sensitive-data access.
 //
 // Determines whether a given staff member can SEE manager-only data

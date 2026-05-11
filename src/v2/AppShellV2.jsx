@@ -21,6 +21,7 @@ import { useState } from 'react';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import MobileBottomNav from './MobileBottomNav';
+import NotificationsDrawer from './NotificationsDrawer';
 
 export default function AppShellV2({
     children,
@@ -33,6 +34,7 @@ export default function AppShellV2({
     hasRecipesAccess = true,
     isAdmin = false,
     isManager = false,
+    hiddenPages = [],
     onLogout,
     onForceRefresh,
     onLanguageToggle,
@@ -41,6 +43,7 @@ export default function AppShellV2({
 }) {
     const [sidebarOpen, setSidebarOpen] = useState(false); // mobile "More" drawer
     const [collapsed, setCollapsed] = useState(false);     // desktop rail mode
+    const [notifOpen, setNotifOpen] = useState(false);     // cross-app notifications drawer
 
     return (
         <div className="min-h-screen bg-dd-sage text-dd-text font-sans">
@@ -65,6 +68,7 @@ export default function AppShellV2({
                 isManager={isManager}
                 hasOpsAccess={hasOpsAccess}
                 hasRecipesAccess={hasRecipesAccess}
+                hiddenPages={hiddenPages}
                 onLogout={() => { setSidebarOpen(false); onLogout?.(); }}
                 onForceRefresh={() => { setSidebarOpen(false); onForceRefresh?.(); }}
                 onLanguageToggle={() => onLanguageToggle?.()}
@@ -79,7 +83,9 @@ export default function AppShellV2({
                     onLanguageToggle={onLanguageToggle}
                     onLogout={onLogout}
                     onLocationChange={onLocationChange}
-                    onBellClick={onBellClick}
+                    /* Prefer the local drawer; fall back to parent's
+                       onBellClick (Schedule jump) only if no drawer wanted. */
+                    onBellClick={() => setNotifOpen(true)}
                 />
                 {/* Mobile gets pb-bottom-nav so the bottom tab bar doesn't cover
                     the last row of content. Desktop has no bottom bar so the
@@ -93,6 +99,16 @@ export default function AppShellV2({
                 </main>
             </div>
 
+            {/* Cross-app notifications drawer — opens via the header bell.
+                Subscribes to /notifications where forStaff == staffName. */}
+            <NotificationsDrawer
+                open={notifOpen}
+                onClose={() => setNotifOpen(false)}
+                staffName={staffName}
+                language={language}
+                onNavigate={(tab) => onNavigate?.(tab)}
+            />
+
             {/* Mobile bottom nav — fixed, hidden on md+ */}
             <MobileBottomNav
                 language={language}
@@ -103,6 +119,7 @@ export default function AppShellV2({
                 staffName={staffName}
                 hasOpsAccess={hasOpsAccess}
                 hasRecipesAccess={hasRecipesAccess}
+                hiddenPages={hiddenPages}
             />
         </div>
     );

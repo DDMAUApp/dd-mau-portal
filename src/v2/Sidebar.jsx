@@ -77,6 +77,7 @@ export default function Sidebar({
     isManager = false,
     hasOpsAccess = true,
     hasRecipesAccess = true,
+    hiddenPages = [],
     // Action handlers — wired from App.jsx via AppShellV2.
     onLogout,
     onForceRefresh,
@@ -96,7 +97,7 @@ export default function Sidebar({
     };
     const filteredGroups = NAV_GROUPS.map(g => ({
         ...g,
-        items: g.items.filter(it => accessOk(it.requires)),
+        items: g.items.filter(it => accessOk(it.requires) && !hiddenPages.includes(it.tab)),
     })).filter(g => g.items.length > 0);
     // Mobile drawer is wider (88vw, capped) so the More-menu shows the full
     // group labels comfortably with thumb-friendly tap targets. Desktop keeps

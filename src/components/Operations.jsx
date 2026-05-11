@@ -3873,7 +3873,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
             return (
                 <div className="p-4 pb-bottom-nav">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-4">{"\u{1F4CB}"} {t("dailyOps", language)}</h2>
+                    <h2 className="text-2xl font-black text-dd-text mb-4 tracking-tight">📋 {t("dailyOps", language)}</h2>
 
                     {/* Labor % Card — gated by canViewLabor (admins/managers by default,
                         staff opt-in via Admin Panel toggle). Percentage only (no dollar
@@ -3924,27 +3924,32 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         );
                     })()}
 
-                    <div className="flex gap-2 mb-6 flex-wrap">
-                        <button onClick={() => { setActiveTab("checklist"); setEditMode(false); setEditingIdx(null); setShowAddForm(false); }}
-                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "checklist" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
-                            {language === "es" ? "Tareas" : "Tasks"}
-                        </button>
-                        <button onClick={() => { setActiveTab("saucelog"); setEditMode(false); }}
-                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "saucelog" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
-                            🥢 {language === "es" ? "Salsas" : "Sauce Log"}
-                        </button>
-                        <button onClick={() => { setActiveTab("inventory"); setEditMode(false); }}
-                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "inventory" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
-                            {t("inventory", language)}
-                        </button>
-                        <button onClick={() => { setActiveTab("breaks"); setEditMode(false); }}
-                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "breaks" ? "bg-mint-700 text-white" : "bg-gray-200 text-gray-700"}`}>
-                            Breaks
-                        </button>
-                        <button onClick={() => { setActiveTab("prep"); setEditMode(false); }}
-                            className={`flex-1 min-w-[80px] py-2 rounded-lg font-bold transition ${activeTab === "prep" ? "bg-orange-600 text-white" : "bg-gray-200 text-gray-700"}`}>
-                            {language === "es" ? "Prep" : "Prep"}
-                        </button>
+                    {/* Operations sub-tabs — v2 segmented control matching the
+                        FOH/BOH selector + Schedule view tabs. Was: 5 wide
+                        gray pills with mint-700 active state. Now: clean
+                        segmented bar with dd-green active state, smaller
+                        emoji icons, consistent active scaling for tactile
+                        feedback. */}
+                    <div className="flex gap-1 mb-4 bg-white border border-dd-line rounded-lg p-1 shadow-card overflow-x-auto">
+                        {[
+                            { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
+                            { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
+                            { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
+                            { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
+                            { id: 'prep',      en: 'Prep',      es: 'Prep',       icon: '🔪' },
+                        ].map(t2 => {
+                            const isActive = activeTab === t2.id;
+                            return (
+                                <button key={t2.id}
+                                    onClick={() => { setActiveTab(t2.id); setEditMode(false); setEditingIdx?.(null); setShowAddForm?.(false); }}
+                                    className={`flex-1 min-w-[72px] py-2 px-2 rounded-md font-bold text-sm transition active:scale-95 flex items-center justify-center gap-1 ${
+                                        isActive ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'
+                                    }`}>
+                                    <span className="text-xs opacity-80">{t2.icon}</span>
+                                    <span>{language === "es" ? t2.es : t2.en}</span>
+                                </button>
+                            );
+                        })}
                     </div>
 
                     {/* {"\u{2500}"}{"\u{2500}"} TASK DEADLINE ALERTS {"\u{2500}"}{"\u{2500}"} */}

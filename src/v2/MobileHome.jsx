@@ -62,6 +62,7 @@ export default function MobileHome({
     isAdmin = false,
     isManager = false,
     staffList = [],
+    hiddenPages = [],
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -312,7 +313,7 @@ export default function MobileHome({
                     {tx('Open', 'Abrir')}
                 </h2>
                 <div className="grid grid-cols-2 gap-2.5">
-                    {allTiles.map(t => (
+                    {allTiles.filter(t => !hiddenPages.includes(t.tab)).map(t => (
                         <Tile key={t.tab} {...t} onTap={() => onNavigate?.(t.tab)} isEs={isEs} />
                     ))}
                 </div>

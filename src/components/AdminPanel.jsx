@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
-import { isAdmin, ADMIN_IDS, LOCATION_LABELS } from '../data/staff';
+import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/staff';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory'; 
 import { toast, undoToast } from '../toast';
@@ -1416,6 +1416,46 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                 onClick={() => handleBulkUpdate(s.id, { isMinor: !s.isMinor })} />
                                                         </div>
                                                     </div>
+
+                                                    {/* HIDDEN PAGES ROW — admin can hide tabs from this
+                                                        staff. Default = nothing hidden (all visible).
+                                                        Click a chip to toggle hidden state. */}
+                                                    {(() => {
+                                                        const hidden = Array.isArray(s.hiddenPages) ? s.hiddenPages : [];
+                                                        const togglePage = (pageId) => {
+                                                            const next = hidden.includes(pageId)
+                                                                ? hidden.filter(p => p !== pageId)
+                                                                : [...hidden, pageId];
+                                                            handleBulkUpdate(s.id, { hiddenPages: next });
+                                                        };
+                                                        return (
+                                                            <div className="mb-3">
+                                                                <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                                                                    {language === "es" ? "Pestañas ocultas" : "Hidden tabs"}
+                                                                </div>
+                                                                <div className="flex flex-wrap gap-1.5">
+                                                                    {HIDEABLE_PAGES.map(pg => {
+                                                                        const isHidden = hidden.includes(pg.id);
+                                                                        return (
+                                                                            <button key={pg.id} onClick={() => togglePage(pg.id)}
+                                                                                title={language === "es"
+                                                                                    ? (isHidden ? `${pg.labelEs} está OCULTA — clic para mostrar` : `${pg.labelEs} es VISIBLE — clic para ocultar`)
+                                                                                    : (isHidden ? `${pg.labelEn} is HIDDEN — click to show` : `${pg.labelEn} is VISIBLE — click to hide`)}
+                                                                                className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-bold border transition active:scale-95 ${
+                                                                                    isHidden
+                                                                                        ? 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
+                                                                                        : 'bg-white text-dd-text-2 border-dd-line opacity-60 hover:opacity-100'
+                                                                                }`}>
+                                                                                <span className="text-sm">{pg.emoji}</span>
+                                                                                <span>{language === "es" ? pg.labelEs : pg.labelEn}</span>
+                                                                                {isHidden && <span className="text-[10px]">🚫</span>}
+                                                                            </button>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        );
+                                                    })()}
 
                                                     {/* SETTINGS ROW — quick prefs the admin tunes per-staff.
                                                         Always visible, never hidden behind another modal. */}

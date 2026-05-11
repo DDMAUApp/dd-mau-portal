@@ -3,7 +3,7 @@ import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
-import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS } from './data/staff';
+import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage } from './data/staff';
 import { enableFcmPush, onForegroundMessage } from './messaging';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
@@ -392,6 +392,7 @@ export default function App() {
                         hasRecipesAccess={hasRecipesAccess}
                         isAdmin={staffIsAdmin}
                         isManager={isManager}
+                        hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}
                     />
                 ) : (
                     <HomeV2
@@ -406,17 +407,17 @@ export default function App() {
             // sit on the sage page background; cards inside them stay white.
             // We negate the top-level dark backgrounds some legacy components
             // ship with via a CSS reset class that the tab itself defines.
-            if (activeTab === 'training') return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
+            if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
             if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
-            if (activeTab === 'menu') return <MenuReference language={language} />;
+            if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;
             if (activeTab === 'schedule') return <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />;
             if (activeTab === 'recipes' && hasRecipesAccess) return <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} />;
             if (activeTab === 'labor' && staffIsAdmin) return <LaborDashboard language={language} storeLocation={effectiveLocation} />;
-            if (activeTab === 'eighty6') return <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />;
-            if (activeTab === 'catering') return <CateringOrder language={language} staffName={staffName} />;
-            if (activeTab === 'maintenance') return <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />;
-            if (activeTab === 'insurance') return <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />;
-            if (activeTab === 'ai') return <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />;
+            if (activeTab === 'catering' && canSeePage(currentStaffRecord, 'catering')) return <CateringOrder language={language} staffName={staffName} />;
+            if (activeTab === 'maintenance' && canSeePage(currentStaffRecord, 'maintenance')) return <MaintenanceRequest language={language} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'insurance' && canSeePage(currentStaffRecord, 'insurance')) return <InsuranceEnrollment language={language} staffName={staffName} staffList={staffList} />;
+            if (activeTab === 'ai' && canSeePage(currentStaffRecord, 'ai')) return <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />;
             if (activeTab === 'tardies' && isManager) return <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'admin' && staffIsAdmin) return <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />;
@@ -459,6 +460,7 @@ export default function App() {
                     hasRecipesAccess={hasRecipesAccess}
                     isAdmin={staffIsAdmin}
                     isManager={isManager}
+                    hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}
                     // Logout returns the app to the lock screen by clearing
                     // the active staffName. The render branches at the top
                     // of App() route to <HomePage /> when staffName is null.

@@ -43,6 +43,7 @@ export default function MobileBottomNav({
     staffName = '',
     hasOpsAccess = true,
     hasRecipesAccess = true,
+    hiddenPages = [],
 }) {
     const isEs = language === 'es';
 
@@ -89,11 +90,15 @@ export default function MobileBottomNav({
     // Slot 3 is dynamic — Operations for staff with ops access (pre-shift
     // checklists, inventory), Recipes for those who only have recipes
     // access, Menu as a fallback.
-    const slot3 = hasOpsAccess
+    // Slot 3 — pick the most relevant tab the user can access. Skip anything
+    // in their hiddenPages list so we don't surface a tab the admin hid.
+    const slot3 = hasOpsAccess && !hiddenPages.includes('operations')
         ? { tab: 'operations', icon: '📋', en: 'Ops', es: 'Ops' }
-        : hasRecipesAccess
+        : hasRecipesAccess && !hiddenPages.includes('recipes')
         ? { tab: 'recipes', icon: '📖', en: 'Recipes', es: 'Recetas' }
-        : { tab: 'menu', icon: '🍜', en: 'Menu', es: 'Menú' };
+        : !hiddenPages.includes('menu')
+        ? { tab: 'menu', icon: '🍜', en: 'Menu', es: 'Menú' }
+        : { tab: 'training', icon: '📚', en: 'Train', es: 'Capac.' };
 
     const tabs = [
         { tab: 'home',     icon: '🏠', en: 'Home',     es: 'Inicio',  badge: unreadNotifs, badgeTone: 'bg-dd-green' },

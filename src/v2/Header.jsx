@@ -1,3 +1,7 @@
+import { useEffect, useState } from 'react';
+import { db } from '../firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+
 // V2 header — Toast/Sling-style mission-control strip.
 //
 // 2026-05-10 designer pass: tightened proportions, refined the location
@@ -25,6 +29,18 @@ export default function Header({
     const isEs = language === 'es';
     const initials = (staffName || 'U')
         .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    // Live unread-notification count for the bell badge.
+    const [unreadCount, setUnreadCount] = useState(0);
+    useEffect(() => {
+        if (!staffName) return;
+        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
+        const unsub = onSnapshot(q, (snap) => {
+            let n = 0;
+            snap.forEach(d => { if (!d.data().read) n++; });
+            setUnreadCount(n);
+        }, () => setUnreadCount(0));
+        return () => unsub();
+    }, [staffName]);
     const loc = LOCATIONS.find(l => l.id === storeLocation) || LOCATIONS[0];
     const fullLabel = isEs ? loc.esLabel : loc.enLabel;
     const shortLabel = loc.short;
@@ -100,10 +116,14 @@ export default function Header({
                     )}
                     <button onClick={onBellClick}
                         className="relative min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg active:scale-95 transition"
-                        title={isEs ? 'Notificaciones' : 'Notifications'}
+                        title={isEs ? `Notificaciones${unreadCount > 0 ? ` (${unreadCount})` : ''}` : `Notifications${unreadCount > 0 ? ` (${unreadCount})` : ''}`}
                         aria-label={isEs ? 'Notificaciones' : 'Notifications'}>
                         <span className="text-base">🔔</span>
-                        <span className="absolute top-2 right-2.5 w-1.5 h-1.5 rounded-full bg-red-500" />
+                        {unreadCount > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white">
+                                {unreadCount > 9 ? '9+' : unreadCount}
+                            </span>
+                        )}
                     </button>
                     {/* AVATAR — clean disc, no subtitle on mobile (was noise).
                         Desktop gets the name + role label. */}
