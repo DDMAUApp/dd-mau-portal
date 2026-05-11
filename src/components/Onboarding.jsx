@@ -1122,19 +1122,32 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
 // ── ApplicationsList ──────────────────────────────────────────────────────
 function ApplicationsList({ applications, isEs, onConvert, onDismiss }) {
     const tx = (en, es) => (isEs ? es : en);
-    if (applications.length === 0) {
-        return (
-            <div className="bg-white border border-dd-line rounded-xl p-8 text-center">
-                <p className="text-4xl mb-2">📭</p>
-                <p className="text-sm font-semibold text-dd-text-2">
-                    {tx('No pending applications.', 'Sin aplicaciones pendientes.')}
-                </p>
-                <p className="text-[11px] text-dd-text-2 mt-1">
-                    {tx('Lock-screen "Apply" submissions show up here.', 'Las aplicaciones desde la pantalla de bloqueo aparecen aquí.')}
-                </p>
-            </div>
-        );
-    }
+    return (
+        <div className="space-y-3">
+            <HiringQrPanel isEs={isEs} />
+            {applications.length === 0 ? (
+                <div className="bg-white border border-dd-line rounded-xl p-8 text-center">
+                    <p className="text-4xl mb-2">📭</p>
+                    <p className="text-sm font-semibold text-dd-text-2">
+                        {tx('No pending applications.', 'Sin aplicaciones pendientes.')}
+                    </p>
+                    <p className="text-[11px] text-dd-text-2 mt-1">
+                        {tx('Share the Hiring QR above on flyers, Indeed posts, etc. Submissions land here.',
+                            'Comparte el QR de arriba en folletos, anuncios, etc. Las solicitudes llegan aquí.')}
+                    </p>
+                </div>
+            ) : (
+                <ApplicationsListInner applications={applications} isEs={isEs}
+                    onConvert={onConvert} onDismiss={onDismiss} />
+            )}
+        </div>
+    );
+}
+
+// Inner list — extracted so ApplicationsList can render the HiringQrPanel
+// at the top regardless of whether there are applications yet.
+function ApplicationsListInner({ applications, isEs, onConvert, onDismiss }) {
+    const tx = (en, es) => (isEs ? es : en);
     return (
         <div className="space-y-2">
             {applications.map(a => {
@@ -1271,5 +1284,142 @@ function ReminderEmailButton({ hire, docs, isEs, onWriteAudit, staffName }) {
             className="text-[11px] px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-800 font-bold hover:bg-amber-200 disabled:opacity-50 disabled:cursor-not-allowed">
             📧 {tx(`Remind${missing.length > 0 ? ` (${missing.length})` : ''}`, `Recordar${missing.length > 0 ? ` (${missing.length})` : ''}`)}
         </button>
+    );
+}
+
+// ── HiringQrPanel ────────────────────────────────────────────────────────
+// Generates a QR code pointing at /?apply=1 so admins can share it on
+// flyers, window decals, Indeed posts, etc. The applicant scans → lands
+// directly on the job-application form. The staff lock screen (PIN pad)
+// is never shown, so prospective hires don't see the staff portal exists.
+//
+// QR generation is lazy-loaded — same qrcode package as the new-hire
+// invite sheet. Admin can copy the link, download the PNG, or print.
+function HiringQrPanel({ isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const url = (typeof window !== 'undefined')
+        ? `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}/?apply=1`
+        : '';
+    const [qrDataUrl, setQrDataUrl] = useState(null);
+    const [copied, setCopied] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+
+    useEffect(() => {
+        if (!expanded || qrDataUrl) return;
+        let alive = true;
+        (async () => {
+            try {
+                const QRCode = (await import('qrcode')).default;
+                const dataUrl = await QRCode.toDataURL(url, {
+                    width: 512,
+                    margin: 1,
+                    errorCorrectionLevel: 'M',
+                });
+                if (alive) setQrDataUrl(dataUrl);
+            } catch (e) { console.warn('QR gen failed', e); }
+        })();
+        return () => { alive = false; };
+    }, [expanded, qrDataUrl, url]);
+
+    const copy = async () => {
+        try {
+            await navigator.clipboard.writeText(url);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch {}
+    };
+
+    const download = () => {
+        if (!qrDataUrl) return;
+        const a = document.createElement('a');
+        a.href = qrDataUrl;
+        a.download = 'dd-mau-hiring-qr.png';
+        a.click();
+    };
+
+    const printQr = () => {
+        if (!qrDataUrl) return;
+        // Open a new window with a print-friendly layout: big QR + the URL +
+        // hire-now headline. Stick it on a window, give it to staff for
+        // referral handoffs, etc.
+        const w = window.open('', '_blank');
+        if (!w) return;
+        w.document.write(`
+            <html>
+                <head>
+                    <title>DD Mau — Hiring QR</title>
+                    <style>
+                        body { font-family: -apple-system, system-ui, sans-serif; text-align: center; padding: 48px 24px; }
+                        h1 { font-size: 32px; margin: 0 0 8px; }
+                        h2 { font-size: 20px; color: #444; margin: 0 0 32px; font-weight: 600; }
+                        img { width: 360px; max-width: 80vw; height: auto; border: 1px solid #ddd; padding: 16px; background: white; }
+                        .url { margin-top: 24px; font-family: monospace; font-size: 14px; color: #666; }
+                        .tag { margin-top: 8px; font-size: 12px; color: #999; }
+                        @media print { @page { margin: 0.5in; } }
+                    </style>
+                </head>
+                <body>
+                    <h1>👋 We're hiring at DD Mau</h1>
+                    <h2>Scan to apply — takes 1 minute</h2>
+                    <img src="${qrDataUrl}" alt="Apply QR" />
+                    <div class="url">${url}</div>
+                    <div class="tag">Or visit the link above</div>
+                </body>
+            </html>
+        `);
+        w.document.close();
+        setTimeout(() => { try { w.print(); } catch {} }, 300);
+    };
+
+    return (
+        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl">
+            <button onClick={() => setExpanded(!expanded)}
+                className="w-full flex items-center justify-between p-3 text-left">
+                <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-xl">🪧</span>
+                    <div className="min-w-0">
+                        <p className="text-[12px] font-black text-indigo-900">
+                            {tx('Hiring QR code', 'QR de contratación')}
+                        </p>
+                        <p className="text-[10px] text-indigo-700 leading-snug">
+                            {tx('Stick on a window, share on Indeed, send in a text. Applicants never see the staff portal.',
+                                'Pega en una ventana, comparte en Indeed. Los aplicantes no ven el portal de personal.')}
+                        </p>
+                    </div>
+                </div>
+                <span className="text-indigo-700 text-sm">{expanded ? '▴' : '▾'}</span>
+            </button>
+            {expanded && (
+                <div className="p-3 pt-0 space-y-2">
+                    <div className="bg-white rounded-lg p-3 flex justify-center">
+                        {qrDataUrl ? (
+                            <img src={qrDataUrl} alt="Hiring QR" className="w-48 h-48" />
+                        ) : (
+                            <div className="w-48 h-48 flex items-center justify-center text-[11px] text-dd-text-2">
+                                {tx('Generating…', 'Generando…')}
+                            </div>
+                        )}
+                    </div>
+                    <div className="bg-white rounded-lg p-2 border border-indigo-100">
+                        <div className="text-[10px] font-bold uppercase text-indigo-800 mb-0.5">{tx('Apply link', 'Enlace para aplicar')}</div>
+                        <div className="text-[11px] font-mono break-all text-dd-text">{url}</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                        <button onClick={copy}
+                            className="py-1.5 rounded bg-white border border-indigo-200 text-indigo-800 text-[11px] font-bold hover:bg-indigo-50">
+                            {copied ? '✓ ' + tx('Copied', 'Copiado') : '📋 ' + tx('Copy', 'Copiar')}
+                        </button>
+                        <button onClick={download} disabled={!qrDataUrl}
+                            className="py-1.5 rounded bg-white border border-indigo-200 text-indigo-800 text-[11px] font-bold hover:bg-indigo-50 disabled:opacity-50">
+                            ↓ {tx('PNG', 'PNG')}
+                        </button>
+                        <button onClick={printQr} disabled={!qrDataUrl}
+                            className="py-1.5 rounded bg-indigo-600 text-white text-[11px] font-bold hover:bg-indigo-700 disabled:opacity-50">
+                            🖨 {tx('Print', 'Imprimir')}
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
     );
 }

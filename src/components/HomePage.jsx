@@ -37,6 +37,20 @@ function writeLockUntil(ts) {
     } catch {}
 }
 
+// NOTE — the "👋 New hire? Apply here" CTA was removed from this screen on
+// 2026-05-11. Reasoning: showing the apply entry point on the staff lock
+// screen meant prospective applicants briefly saw the staff portal exists
+// before clicking through. Per Andrew's security concern, the two paths
+// are now completely separated:
+//
+//   • Staff URL  → app.ddmaustl.com (PIN screen only — what you see here)
+//   • Apply URL  → app.ddmaustl.com/?apply=1 (job application form, no
+//     staff-portal branding shown)
+//
+// Admins generate a dedicated "Hiring QR" in the Onboarding tab to share
+// the apply URL on flyers, Indeed listings, window decals, etc. The
+// onApplyClick prop is intentionally unused — left in the signature so
+// older App.jsx paths still mount cleanly during the deploy transition.
 export default function HomePage({ onSelectStaff, language, staffList, onApplyClick }) {
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
@@ -199,28 +213,7 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     </div>
                 </>
             )}
-            {/* New-hire entry point — promoted to a primary CTA card above
-                the install chip. Prospective hires aren't staff yet; they
-                shouldn't have to hunt for a small underline link. */}
-            {onApplyClick && (
-                <button
-                    onClick={onApplyClick}
-                    className="mt-6 w-full max-w-sm bg-gradient-to-br from-mint-50 to-white border-2 border-mint-300 rounded-2xl p-4 text-left hover:border-mint-500 hover:shadow-md active:scale-[0.98] transition group">
-                    <div className="flex items-center gap-3">
-                        <span className="text-3xl flex-shrink-0">👋</span>
-                        <div className="flex-1 min-w-0">
-                            <div className="font-black text-mint-700 text-base">
-                                {isEs ? '¿Buscando trabajo?' : 'Looking for a job?'}
-                            </div>
-                            <div className="text-[12px] font-semibold text-gray-600">
-                                {isEs ? 'Aplica aquí en 1 minuto' : 'Apply here — takes 1 minute'}
-                            </div>
-                        </div>
-                        <span className="text-mint-600 text-xl group-hover:translate-x-0.5 transition-transform">→</span>
-                    </div>
-                </button>
-            )}
-            <div className="mt-4">
+            <div className="mt-6">
                 <InstallAppButton language={language} compact />
             </div>
         </div>
