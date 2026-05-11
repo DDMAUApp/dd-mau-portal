@@ -2128,6 +2128,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setCapturingPhoto(null);
             };
 
+            // Reorder a task within its period array. fromIdx / toIdx are
+            // both indices into the ORIGINAL customTasks[side][period] array
+            // (i.e. `_origIdx` values from the rendered list). Swaps them
+            // and persists. Used by the up/down arrow buttons that show on
+            // each task card in edit mode — even though tasks have times,
+            // Andrew wants control over the visual order for setup/grouping.
+            const moveChecklistTask = async (fromIdx, toIdx) => {
+                const tasks = customTasksRef.current;
+                if (!tasks?.[checklistSide]?.[PERIOD_KEY]) return;
+                const updated = JSON.parse(JSON.stringify(tasks));
+                const arr = updated[checklistSide][PERIOD_KEY];
+                if (fromIdx < 0 || toIdx < 0 || fromIdx >= arr.length || toIdx >= arr.length) return;
+                [arr[fromIdx], arr[toIdx]] = [arr[toIdx], arr[fromIdx]];
+                setCustomTasks(updated);
+                await saveChecklistState(checksRef.current, updated);
+            };
+
             const deleteChecklistTask = async (idx) => {
                 const tasks = customTasksRef.current;
                 const removed = tasks?.[checklistSide]?.[PERIOD_KEY]?.[idx];
@@ -3629,6 +3646,23 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         </div>
                                         {editMode && (
                                             <div className="flex flex-col gap-1 pr-2">
+                                                {/* Up / Down arrows reorder this task in the
+                                                    period array. Swap with the VISIBLE neighbor
+                                                    (using their _origIdx) so the order works as
+                                                    the admin sees it on screen, even with a
+                                                    category filter active. */}
+                                                <button onClick={() => moveChecklistTask(origIdx, idx > 0 ? tasks[idx - 1]._origIdx : origIdx)}
+                                                    disabled={idx === 0}
+                                                    title={language === "es" ? "Mover arriba" : "Move up"}
+                                                    className={`px-1.5 py-0.5 rounded-lg text-gray-600 text-xs leading-none ${idx === 0 ? 'opacity-30 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200'}`}>
+                                                    ▲
+                                                </button>
+                                                <button onClick={() => moveChecklistTask(origIdx, idx < tasks.length - 1 ? tasks[idx + 1]._origIdx : origIdx)}
+                                                    disabled={idx === tasks.length - 1}
+                                                    title={language === "es" ? "Mover abajo" : "Move down"}
+                                                    className={`px-1.5 py-0.5 rounded-lg text-gray-600 text-xs leading-none ${idx === tasks.length - 1 ? 'opacity-30 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200'}`}>
+                                                    ▼
+                                                </button>
                                                 <button onClick={() => { setEditingIdx(origIdx); setEditTask(item.task); setEditCategory(item.category || "other"); setEditRecurrence(item.recurrence || "daily"); setEditRequirePhoto(!!item.requirePhoto); setEditCompleteBy(item.completeBy || ""); setEditAssignTo(item.assignTo ? (Array.isArray(item.assignTo) ? [...item.assignTo] : [item.assignTo]) : []); setEditFollowUp(item.followUp ? {...item.followUp, options: item.followUp.options ? [...item.followUp.options] : []} : null); setEditSubtasks(item.subtasks ? item.subtasks.map(s => ({...s})) : []); setShowAddForm(false); }}
                                                     className="p-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100">{String.fromCodePoint(0x270F, 0xFE0F)}</button>
                                                 <button onClick={() => deleteChecklistTask(origIdx)}
