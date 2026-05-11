@@ -324,7 +324,7 @@ function TemplatesList({ templates, isEs, onNew, onEdit }) {
                 )}
             </div>
             <button onClick={onNew}
-                className="w-full p-3 rounded-xl border-2 border-dashed border-mint-300 bg-white hover:border-mint-500 hover:bg-mint-50 active:scale-[0.99] transition text-sm font-bold text-mint-700">
+                className="w-full p-3 rounded-xl border-2 border-dashed border-dd-green/40 bg-white hover:border-dd-green hover:bg-dd-sage-50 active:scale-[0.99] transition text-sm font-bold text-dd-green-700">
                 + {tx('New template (upload PDF)', 'Nueva plantilla (subir PDF)')}
             </button>
             {templates.length === 0 ? (
@@ -335,7 +335,7 @@ function TemplatesList({ templates, isEs, onNew, onEdit }) {
                 <div className="space-y-2">
                     {templates.map(t => (
                         <button key={t.id} onClick={() => onEdit(t)}
-                            className="w-full text-left bg-white border border-dd-line rounded-xl p-3 hover:border-mint-500 transition">
+                            className="w-full text-left bg-white border border-dd-line rounded-xl p-3 hover:border-dd-green/60 active:scale-[0.99] transition">
                             <div className="flex items-center gap-3">
                                 <span className="text-2xl">📄</span>
                                 <div className="flex-1 min-w-0">

@@ -135,12 +135,12 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     const allDone = counts.total > 0 && counts.needed === 0 && counts.started === 0;
 
     return (
-        <div className="min-h-screen bg-gradient-to-b from-mint-50 to-white">
+        <div className="min-h-screen bg-dd-sage">
             <div className="max-w-lg mx-auto p-3 sm:p-6 space-y-4">
                 {/* Header */}
                 <header className="text-center pt-4">
                     <p className="text-3xl mb-1">🍜</p>
-                    <h1 className="text-2xl font-black text-mint-700">DD Mau</h1>
+                    <h1 className="text-2xl font-black text-dd-green-700">DD Mau</h1>
                     <p className="text-sm text-gray-700 mt-1">
                         {tx(`Welcome ${hire.name?.split(' ')[0] || ''}!`, `¡Bienvenido ${hire.name?.split(' ')[0] || ''}!`)}
                     </p>
@@ -154,12 +154,12 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 <div className="bg-white rounded-2xl p-3 border border-gray-200 shadow-sm">
                     <div className="flex items-center justify-between mb-1">
                         <span className="text-xs font-bold text-gray-600 uppercase">{tx('Progress', 'Progreso')}</span>
-                        <span className="text-xs font-bold text-mint-700">
+                        <span className="text-xs font-bold text-dd-green-700">
                             {counts.approved + counts.submitted}/{counts.total} {tx('submitted', 'enviado')}
                         </span>
                     </div>
                     <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                        <div className="h-full bg-mint-500 transition-all"
+                        <div className="h-full bg-dd-green transition-all"
                              style={{ width: counts.total ? `${Math.round((counts.approved + counts.submitted) / counts.total * 100)}%` : '0%' }} />
                     </div>
                 </div>
@@ -203,7 +203,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
 
 function CenterCard({ children }) {
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-mint-50 to-white p-4">
+        <div className="min-h-screen flex items-center justify-center bg-dd-sage p-4">
             <div className="max-w-sm w-full bg-white rounded-2xl border border-gray-200 shadow-sm p-6 text-center">
                 {children}
             </div>
@@ -351,7 +351,7 @@ function FormInputs({ docId, initial, isEs, onSave }) {
                 </label>
             ))}
             <button type="submit" disabled={!ok || saving}
-                className="w-full mt-2 py-2.5 rounded-lg bg-mint-700 text-white font-bold disabled:opacity-50">
+                className="w-full mt-2 py-2.5 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">
                 {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
             </button>
         </form>
@@ -408,7 +408,7 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
                 type="button"
                 onClick={() => inputRef.current?.click()}
                 disabled={uploading}
-                className="w-full py-4 rounded-xl border-2 border-dashed border-mint-300 bg-white text-mint-700 font-bold text-sm hover:bg-mint-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+                className="w-full py-4 rounded-xl border-2 border-dashed border-dd-green/40 bg-white text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
                 {uploading ? (
                     <span>{tx(`Uploading ${progress}%…`, `Subiendo ${progress}%…`)}</span>
                 ) : (
@@ -492,7 +492,7 @@ function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
             <input ref={inputRef} type="file" accept="image/*,application/pdf" multiple
                 onChange={e => handleFiles(e.target.files)} disabled={uploading} className="hidden" />
             <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading || !idType}
-                className="w-full py-4 rounded-xl border-2 border-dashed border-mint-300 bg-white text-mint-700 font-bold text-sm hover:bg-mint-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+                className="w-full py-4 rounded-xl border-2 border-dashed border-dd-green/40 bg-white text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
                 {uploading ? tx('Uploading…', 'Subiendo…') : tx('📸 Take photo / upload', '📸 Tomar foto / subir')}
             </button>
             <p className="text-[10px] text-gray-500 text-center">

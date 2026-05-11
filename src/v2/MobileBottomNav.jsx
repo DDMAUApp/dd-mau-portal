@@ -127,12 +127,17 @@ export default function MobileBottomNav({
                             aria-current={active ? 'page' : undefined}
                             aria-label={isEs ? t.es : t.en}
                         >
-                            {/* Pill — solid sage-green background when active.
-                                Inactive: transparent so the tap-target is just
-                                the icon visually but the whole cell mechanically. */}
+                            {/* Top accent — 3px dd-green bar over the active tab.
+                                Toast / Sling pattern: makes the active state
+                                unmissable even when the screen is bright. */}
+                            {active && (
+                                <span className="absolute -top-2 left-1/2 -translate-x-1/2 w-8 h-[3px] rounded-full bg-dd-green" />
+                            )}
+                            {/* Icon pill — solid sage when active, transparent
+                                otherwise. Slightly larger active state. */}
                             <span className={`relative flex items-center justify-center w-12 h-7 rounded-full transition-all duration-200 ${
                                 active
-                                    ? 'bg-dd-green-50 scale-100'
+                                    ? 'bg-dd-sage-50'
                                     : 'scale-95 group-active:bg-dd-bg'
                             }`}>
                                 <span className={`text-[20px] leading-none transition-transform ${active ? 'scale-110' : ''}`}>{t.icon}</span>
@@ -143,7 +148,7 @@ export default function MobileBottomNav({
                                 )}
                             </span>
                             <span className={`text-[10px] leading-none tracking-tight transition-colors ${
-                                active ? 'font-bold text-dd-green-700' : 'font-semibold text-dd-text-2'
+                                active ? 'font-black text-dd-green-700' : 'font-semibold text-dd-text-2'
                             }`}>
                                 {isEs ? t.es : t.en}
                             </span>

@@ -111,7 +111,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
 
     if (done) {
         return (
-            <div className="fixed inset-0 z-50 bg-gradient-to-b from-mint-50 to-white flex items-center justify-center p-4">
+            <div className="fixed inset-0 z-50 bg-dd-sage flex items-center justify-center p-4">
                 <div className="max-w-sm w-full bg-white rounded-2xl border-2 border-green-200 shadow-lg p-6 text-center">
                     <p className="text-5xl mb-3">🎉</p>
                     <h2 className="text-xl font-black text-green-800 mb-2">
@@ -124,7 +124,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                         )}
                     </p>
                     <button onClick={onClose}
-                        className="mt-5 w-full py-2.5 rounded-lg bg-mint-700 text-white font-bold">
+                        className="mt-5 w-full py-2.5 rounded-lg bg-dd-green text-white font-bold">
                         {tx('Done', 'Listo')}
                     </button>
                 </div>
@@ -133,12 +133,12 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-gradient-to-b from-mint-50 to-white overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-dd-sage overflow-y-auto">
             <div className="max-w-lg mx-auto p-3 sm:p-6 space-y-4">
                 <header className="flex items-start justify-between gap-2 pt-2">
                     <div>
                         <p className="text-3xl">🍜</p>
-                        <h1 className="text-xl font-black text-mint-700 mt-1">
+                        <h1 className="text-xl font-black text-dd-green-700 mt-1">
                             {tx('Apply at DD Mau', 'Solicitud de empleo en DD Mau')}
                         </h1>
                         <p className="text-xs text-gray-600 mt-1">
@@ -166,7 +166,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                                 <button key={v} type="button" onClick={() => setAge18(v)}
                                     className={`flex-1 py-2 rounded-lg text-sm font-bold border-2 transition ${
                                         age18 === v
-                                            ? 'bg-mint-50 border-mint-500 text-mint-800'
+                                            ? 'bg-dd-sage-50 border-dd-green text-dd-green-700'
                                             : 'bg-white border-gray-300 text-gray-600'
                                     }`}>
                                     {v === 'yes' ? tx('Yes', 'Sí') : tx('No (under 18)', 'No (menor de 18)')}
@@ -200,7 +200,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                                     <button key={i} type="button" onClick={() => setPosition(v)}
                                         className={`w-full text-left px-3 py-2 rounded-lg text-sm font-semibold border-2 transition ${
                                             position === v
-                                                ? 'bg-mint-50 border-mint-500 text-mint-800'
+                                                ? 'bg-dd-sage-50 border-dd-green text-dd-green-700'
                                                 : 'bg-white border-gray-300 text-gray-700'
                                         }`}>
                                         {isEs ? p.es : p.en}
@@ -239,7 +239,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                             {tx('Cancel', 'Cancelar')}
                         </button>
                         <button type="submit" disabled={!ok}
-                            className="flex-1 py-2.5 rounded-lg bg-mint-700 text-white font-bold text-sm disabled:opacity-50">
+                            className="flex-1 py-2.5 rounded-lg bg-dd-green text-white font-bold text-sm disabled:opacity-50">
                             {saving ? tx('Sending…', 'Enviando…') : tx('Send application', 'Enviar')}
                         </button>
                     </div>
