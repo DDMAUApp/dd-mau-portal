@@ -1487,7 +1487,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // (so each role gets its own fillable slot). Apply is non-destructive —
     // existing needs/shifts on that date are NOT touched.
     const handleSaveTemplate = async (tpl) => {
-        if (!canEdit) return;
+        // Templates can target FOH, BOH, or both. Gate by the template's
+        // target side; fall back to page side if template doesn't declare.
+        if (!canEditSide(tpl?.side || side)) return;
         try {
             if (tpl.id) {
                 const { id, ...data } = tpl;
@@ -1512,7 +1514,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleDeleteTemplate = async (id) => {
-        if (!canEdit) return;
+        const tpl = scheduleTemplates.find(t => t.id === id);
+        if (!canEditSide(tpl?.side || side)) return;
         if (!confirm(tx('Delete this template? Already-applied needs will NOT be removed.', '¿Eliminar esta plantilla? Las necesidades ya aplicadas NO se quitarán.'))) return;
         try {
             await deleteDoc(doc(db, 'schedule_templates', id));
@@ -1522,7 +1525,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleApplyTemplate = async (tpl, dateStr) => {
-        if (!canEdit) return;
+        if (!canEditSide(tpl?.side || side)) return;
         if (!tpl || !dateStr) return;
         try {
             // Each block × slot becomes one staffing_need.
@@ -1559,7 +1562,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // 2026-05-12 onward (no end date)." We store rules separately and generate
     // real shifts on-demand via the "Generate this week" button.
     const handleSaveRecurring = async (rule) => {
-        if (!canEdit) return;
+        // A recurring rule pins a staff member to a weekly shift. The
+        // staff's scheduleSide drives which editor toggle is required.
+        const ruleSide = rule?.side || (() => {
+            const s = staffList?.find(x => x.name === rule?.staffName);
+            return s?.scheduleSide || side;
+        })();
+        if (!canEditSide(ruleSide)) return;
         try {
             if (rule.id) {
                 const { id, ...data } = rule;
@@ -1574,7 +1583,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleDeleteRecurring = async (id) => {
-        if (!canEdit) return;
+        const rule = recurringShifts.find(r => r.id === id);
+        const ruleSide = rule?.side || (() => {
+            const s = staffList?.find(x => x.name === rule?.staffName);
+            return s?.scheduleSide || side;
+        })();
+        if (!canEditSide(ruleSide)) return;
         if (!confirm(tx('Delete this recurring rule? Already-generated shifts stay.', '¿Eliminar esta regla? Los turnos ya generados se quedan.'))) return;
         try {
             await deleteDoc(doc(db, 'recurring_shifts', id));
@@ -1594,6 +1608,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const skipped = [];
         for (const rule of recurringShifts) {
             if (!rule.staffName || !rule.startTime || !rule.endTime) continue;
+            // Skip rules for sides the runner can't edit — a FOH-only
+            // editor running Generate should produce FOH shifts only.
+            const ruleStaff = staffList?.find(x => x.name === rule.staffName);
+            const ruleSide = rule.side || ruleStaff?.scheduleSide || side;
+            if (!canEditSide(ruleSide)) {
+                skipped.push(`${rule.staffName}: ${tx('no editor access for this side', 'sin acceso de editor para este lado')}`);
+                continue;
+            }
             // Bi-weekly cadence: anchor off the rule's validFrom week. The rule
             // is active only on weeks where (weeksSinceAnchor % 2) === 0.
             // If validFrom is empty, REJECT — without an anchor the rule
@@ -2224,7 +2246,9 @@ ${dayBlocks}
 
     // ── Phase 3: copy last week's shifts into this week ──
     const handleCopyLastWeek = async () => {
-        if (!canEdit) return;
+        // Copies last week's shifts for the currently-viewed side. Gate
+        // against the editor toggle for that specific side.
+        if (!canEditSide(side)) return;
         const lastWeekStart = addDays(weekStart, -7);
         const lastWeekStartStr = toDateStr(lastWeekStart);
         const lastWeekEndStr = toDateStr(weekStart);
@@ -2295,7 +2319,10 @@ ${dayBlocks}
     // time-off). Greedy strategy: spread hours roughly evenly across available days.
     // Generated shifts are marked published=false (drafts) so manager can review.
     const handleAutoPopulate = async () => {
-        if (!canEdit) return;
+        // Auto-fill operates on the CURRENTLY-VIEWED side. If the user
+        // lacks the toggle for that side they can't run it. (FOH-only
+        // editor on the BOH tab gets blocked.)
+        if (!canEditSide(side)) return;
         const ok = confirm(tx(
             `Auto-fill the week of ${toDateStr(weekStart)} for ${side === 'foh' ? 'FOH' : 'BOH'}?\n\nThis will generate DRAFT shifts based on each staff's availability + target hours, skipping closed dates and approved time-off. Existing shifts are NOT overwritten.`,
             `¿Auto-rellenar la semana de ${toDateStr(weekStart)} para ${side === 'foh' ? 'FOH' : 'BOH'}?\n\nEsto generará turnos BORRADOR según la disponibilidad y horas objetivo de cada persona, saltando fechas cerradas y tiempo libre aprobado. Los turnos existentes NO se sobrescriben.`,
@@ -2340,11 +2367,18 @@ ${dayBlocks}
                 // Don't double-book this person on a day they already have a shift.
                 if (myExisting.some(sh => sh.date === dStr)) continue;
                 const dayAvail = avail[dayKeys[date.getDay()]];
-                if (!dayAvail || dayAvail.available === false) continue;
-                if (!dayAvail.from || !dayAvail.to) continue;
-                const slotHours = hoursBetween(dayAvail.from, dayAvail.to, false);
+                // Skip ONLY when the staff explicitly marked the day off.
+                // Empty / partial availability now defaults to AVAILABLE
+                // (per Andrew 2026-05-12): staff opt OUT of days, not in.
+                if (dayAvail && dayAvail.available === false) continue;
+                // Resolve a working time window. Use the staff's explicit
+                // from/to if they set one; otherwise default to a generic
+                // 10am–9pm window covering DD Mau's normal operating hours.
+                const from = (dayAvail && dayAvail.from) || '10:00';
+                const to = (dayAvail && dayAvail.to) || '21:00';
+                const slotHours = hoursBetween(from, to, false);
                 if (slotHours <= 0) continue;
-                candidates.push({ date: dStr, from: dayAvail.from, to: dayAvail.to, slotHours });
+                candidates.push({ date: dStr, from, to, slotHours });
             }
 
             if (candidates.length === 0) { skipped.push(`${s.name}: ${tx('no available days', 'sin días disponibles')}`); continue; }
@@ -5470,7 +5504,12 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
-                    <p className="text-xs text-gray-500 mb-1">{tx("This is when you're available to work each week. Auto-fill uses this.", 'Cuándo estás disponible para trabajar cada semana. Auto-rellenar lo usa.')}</p>
+                    <p className="text-xs text-gray-500 mb-1">
+                        {tx(
+                            "Mark any day you can't work as Off. Leave the rest as Available — you don't need to set specific hours unless your availability is limited.",
+                            "Marca como No Disponible cualquier día que no puedas trabajar. Deja el resto como Disponible — solo ajusta las horas si tu disponibilidad es limitada.",
+                        )}
+                    </p>
                     {DAYS.map(d => {
                         const dayData = avail[d.k] || { available: true, from: '09:00', to: '21:00' };
                         const available = dayData.available !== false;
@@ -5559,9 +5598,15 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
             !(sh.endTime <= slotStart || sh.startTime >= slotEnd)
         ) : false;
         const isDoubleDay = sameDayShifts.length > 0 && !hasOverlap;
-        // Availability for this weekday
+        // Availability for this weekday. Default semantics flipped per
+        // Andrew (2026-05-12): missing or empty day data = AVAILABLE all
+        // day. Staff only need to opt OUT of days they can't work, not
+        // opt IN to days they can. Only `dayAvail.available === false` is
+        // a true "unavailable" — any other shape (undefined, partial,
+        // from/to set) counts as available.
         const dayAvail = (s.availability || {})[dayKey];
-        const availableThisDay = dayAvail && dayAvail.available !== false && dayAvail.from && dayAvail.to;
+        const explicitlyOff = dayAvail && dayAvail.available === false;
+        const availableThisDay = !explicitlyOff;
         // PTO?
         const onPto = isStaffOffOn(s.name, dateStr);
 
@@ -5569,7 +5614,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
         let reason = '';
         if (onPto) { status = 'pto'; reason = tx('on time-off', 'tiempo libre'); }
         else if (hasOverlap) { status = 'scheduled'; reason = tx('time overlaps existing shift', 'choca con turno existente'); }
-        else if (!availableThisDay) { status = 'unavailable'; reason = tx('not available this day', 'no disponible este día'); }
+        else if (!availableThisDay) { status = 'unavailable'; reason = tx('marked off this day', 'marcado como no disponible'); }
 
         return { ...s, weeklyHours, status, reason, dayAvail, sameDayShifts, isDoubleDay };
     });
@@ -5631,7 +5676,9 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                                                 )}
                                             </div>
                                             <div className="text-[10px] text-gray-500">
-                                                {r.role} · {tx('Avail', 'Disp')} {r.dayAvail?.from}–{r.dayAvail?.to}
+                                                {r.role} · {r.dayAvail?.from && r.dayAvail?.to
+                                                    ? `${tx('Avail', 'Disp')} ${r.dayAvail.from}–${r.dayAvail.to}`
+                                                    : tx('Avail all day', 'Todo el día')}
                                                 {r.targetHours ? ` · ${tx('target', 'objetivo')} ${r.targetHours}h` : ''}
                                                 {r.isDoubleDay && r.sameDayShifts.length > 0 && (
                                                     <> · {tx('has', 'tiene')} {r.sameDayShifts.map(sh => `${sh.startTime}–${sh.endTime}`).join(', ')}</>
