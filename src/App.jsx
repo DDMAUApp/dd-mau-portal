@@ -233,7 +233,7 @@ export default function App() {
         }, (err) => { console.warn('forceRefresh listener error:', err); });
         return () => unsub();
     }, []);
-    const { isAtDDMau, checking: geoChecking, error: geoError, retry: geoRetry } = useGeofence();
+    const { isAtDDMau, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
     const updateAvailable = useVersionCheck();
     // Mobile pull-down-to-refresh — bypasses the cached SW and forces the
     // app to re-download HTML+JS. Without this, PWAs installed on iOS get
@@ -478,7 +478,7 @@ export default function App() {
             if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;
             if (activeTab === 'schedule') return <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />;
-            if (activeTab === 'recipes' && hasRecipesAccess) return <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} geoRetry={geoRetry} />;
+            if (activeTab === 'recipes' && hasRecipesAccess) return <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} geoRetry={geoRetry} geoPermState={geoPermState} />;
             if (activeTab === 'labor' && staffIsAdmin) return <LaborDashboard language={language} storeLocation={effectiveLocation} />;
             if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <Eighty6Dashboard language={language} storeLocation={effectiveLocation} />;
             if (activeTab === 'catering' && canSeePage(currentStaffRecord, 'catering')) return <CateringOrder language={language} staffName={staffName} />;

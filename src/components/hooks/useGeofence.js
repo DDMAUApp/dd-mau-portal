@@ -31,18 +31,44 @@ export function isWithinGeofence(lat, lng) {
 //   isAtDDMau  — boolean, true when last known position is within radius
 //   checking   — true while we're waiting for the first fix
 //   error      — 'noGeo' | 'denied' | 'unavailable' | null
-//   retry()    — re-request a position. Useful when a staff member
-//                accidentally denied the prompt: the button on the
-//                Recipes blocked screen calls this. Note: once the
-//                browser has remembered a "denied" choice, it will
-//                NOT re-prompt — the user has to reset permission in
-//                browser/OS settings. retry() still flips error state
-//                so we can show the right hint.
+//   permState  — 'prompt' | 'granted' | 'denied' | 'unknown'
+//                Set via the Permissions API when supported. Lets the UI
+//                tell the difference between "user hasn't decided yet"
+//                (calling getCurrentPosition will pop the native prompt)
+//                and "user explicitly denied" (no API will re-prompt;
+//                only Settings will). Falls back to 'unknown' on iOS
+//                Safari < 16.4 etc.
+//   retry()    — re-request a position. If permState is 'prompt' or
+//                'unknown', this triggers the native dialog. If permState
+//                is 'denied', this returns immediately with denied error
+//                and the UI shows the Settings hint.
 export default function useGeofence() {
     const [isAtDDMau, setIsAtDDMau] = useState(false);
     const [checking, setChecking] = useState(true);
     const [error, setError] = useState(null);
+    const [permState, setPermState] = useState('unknown');
     const watchIdRef = useRef(null);
+
+    // Query the Permissions API on mount + subscribe to changes. Not every
+    // browser supports it (iOS Safari only added geolocation support in
+    // 16.4; older Safari throws on this query). Wrap in try/catch and
+    // fall back to 'unknown'.
+    useEffect(() => {
+        if (!('permissions' in navigator) || typeof navigator.permissions.query !== 'function') return;
+        let status;
+        (async () => {
+            try {
+                status = await navigator.permissions.query({ name: 'geolocation' });
+                setPermState(status.state);
+                status.onchange = () => setPermState(status.state);
+            } catch {
+                setPermState('unknown');
+            }
+        })();
+        return () => {
+            if (status) status.onchange = null;
+        };
+    }, []);
 
     // Start (or restart) the watcher. Cleans up any prior watcher first.
     const start = useCallback(() => {
@@ -104,5 +130,5 @@ export default function useGeofence() {
         start();
     }, [start]);
 
-    return { isAtDDMau, checking, error, retry };
+    return { isAtDDMau, checking, error, retry, permState };
 }

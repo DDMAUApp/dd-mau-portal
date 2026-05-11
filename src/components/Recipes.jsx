@@ -183,7 +183,7 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
     );
 }
 
-export default function Recipes({ language, staffName, staffList, storeLocation, isAtDDMau, geoChecking, geoError, geoRetry }) {
+export default function Recipes({ language, staffName, staffList, storeLocation, isAtDDMau, geoChecking, geoError, geoRetry, geoPermState }) {
     const [expandedRecipe, setExpandedRecipe] = useState(null);
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
@@ -671,6 +671,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 language={language}
                 geoStatusKind={geoStatusKind}
                 geoChecking={geoChecking}
+                geoPermState={geoPermState}
                 onRetry={geoRetry}
             />
         );
@@ -993,43 +994,52 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
 }
 
 // ── RecipesGeoBlocked ──────────────────────────────────────────────────────
-// Full-screen block when the user fails the geofence gate. Tells them
-// precisely why (denied / unavailable / outside / checking / no GPS),
-// offers a Retry button that re-runs getCurrentPosition, and surfaces
-// OS-specific "how to re-enable" instructions for the denied case (since
-// the browser remembers the denied choice and won't re-prompt — the user
-// has to flip it in Settings).
-function RecipesGeoBlocked({ language, geoStatusKind, geoChecking, onRetry }) {
+// Full-screen block when the user fails the geofence gate.
+//
+// Two paths depending on the live Permissions API state:
+//   • permState === 'denied'  — browser has remembered a Deny choice. No
+//                               API will re-trigger the prompt. We show a
+//                               one-liner pointing at Settings. (Andrew's
+//                               feedback: no mega instructions panel.)
+//   • permState === 'prompt' | 'unknown' — never decided, or no Permissions
+//                               API. Tapping Enable Location calls
+//                               getCurrentPosition, which triggers the
+//                               native OS prompt directly. This is what
+//                               Andrew wanted: button → phone asks.
+function RecipesGeoBlocked({ language, geoStatusKind, geoChecking, geoPermState, onRetry }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [retrying, setRetrying] = useState(false);
-    const [showHelp, setShowHelp] = useState(false);
+
+    // The Permissions API tells us if a fresh getCurrentPosition() call
+    // would trigger the native dialog (`prompt` / `unknown`) or just bounce
+    // because the user already said no (`denied`). When it's denied, the
+    // button can't fix it — only Settings can.
+    const isHardDenied = geoPermState === 'denied' || geoStatusKind === 'denied';
 
     const handleRetry = () => {
         setRetrying(true);
         if (typeof onRetry === 'function') onRetry();
-        // Give the geolocation API a beat to respond before flipping the
-        // button back to its idle state. 2s covers a normal fix.
         setTimeout(() => setRetrying(false), 2000);
     };
 
-    const { title, body, hint } = (() => {
+    const { title, body } = (() => {
         if (geoChecking) {
             return {
                 title: tx('Checking your location…', 'Verificando ubicación…'),
                 body: tx('One moment — confirming you\'re at DD Mau.',
                         'Un momento — verificando que estés en DD Mau.'),
-                hint: null,
             };
         }
-        if (geoStatusKind === 'denied') {
+        if (isHardDenied) {
             return {
-                title: tx('Location permission needed', 'Se necesita permiso de ubicación'),
+                title: tx('Turn on location for DD Mau', 'Activa la ubicación para DD Mau'),
+                // Tight, settings-aimed copy. Andrew asked for no big
+                // expandable how-to — just the one obvious next step.
                 body: tx(
-                    'Recipes are only available while you\'re at DD Mau. Your browser is blocking location access — re-enable it to view recipes.',
-                    'Las recetas solo están disponibles cuando estás en DD Mau. Tu navegador está bloqueando la ubicación — actívala para ver las recetas.',
+                    'You tapped Don\'t Allow earlier — the browser won\'t let us ask again. Open Settings → Location and switch DD Mau on, then return here.',
+                    'Tocaste No permitir antes — el navegador no nos deja preguntar otra vez. Abre Ajustes → Ubicación y activa DD Mau, luego regresa.',
                 ),
-                hint: 'denied',
             };
         }
         if (geoStatusKind === 'nogeo') {
@@ -1039,17 +1049,26 @@ function RecipesGeoBlocked({ language, geoStatusKind, geoChecking, onRetry }) {
                     'This device doesn\'t support location. Open the app on your phone while at DD Mau.',
                     'Este dispositivo no soporta ubicación. Abre la app en tu teléfono dentro de DD Mau.',
                 ),
-                hint: null,
             };
         }
         if (geoStatusKind === 'error') {
             return {
                 title: tx('Location unavailable', 'Ubicación no disponible'),
                 body: tx(
-                    'Couldn\'t get a GPS fix. Make sure you\'re connected to the restaurant Wi-Fi and try again.',
-                    'No se pudo obtener una ubicación. Conéctate al Wi-Fi del restaurante e intenta de nuevo.',
+                    'Couldn\'t get a GPS fix. Move closer to a window or try again.',
+                    'No se pudo obtener una ubicación. Acércate a una ventana o intenta de nuevo.',
                 ),
-                hint: 'error',
+            };
+        }
+        if (geoPermState === 'prompt') {
+            // User hasn't decided yet — clicking the button WILL pop the
+            // native prompt. Frame it as a positive action, not a retry.
+            return {
+                title: tx('Turn on location to view recipes', 'Activa la ubicación para ver las recetas'),
+                body: tx(
+                    'Tap the button below to allow location. Recipes are only available while you\'re at DD Mau.',
+                    'Toca el botón para permitir la ubicación. Las recetas solo están disponibles en DD Mau.',
+                ),
             };
         }
         // outside
@@ -1059,122 +1078,25 @@ function RecipesGeoBlocked({ language, geoStatusKind, geoChecking, onRetry }) {
                 'Recipes are only available while you\'re at DD Mau Webster Groves or Maryland Heights.',
                 'Las recetas solo están disponibles cuando estás en DD Mau Webster Groves o Maryland Heights.',
             ),
-            hint: null,
         };
     })();
 
     return (
         <div className="p-4 pb-bottom-nav">
-            <div className="max-w-md mx-auto mt-10 sm:mt-16 text-center bg-white border-2 border-mint-200 rounded-2xl p-6 shadow-sm">
+            <div className="max-w-md mx-auto mt-8 sm:mt-16 text-center bg-white border-2 border-mint-200 rounded-2xl p-6 shadow-sm">
                 <div className="text-6xl mb-3">📍</div>
                 <h2 className="text-xl font-black text-gray-800 mb-2">{title}</h2>
-                <p className="text-sm text-gray-600 mb-5">{body}</p>
+                <p className="text-sm text-gray-600 mb-5 leading-relaxed">{body}</p>
 
-                <button onClick={handleRetry} disabled={retrying || geoChecking}
-                    className="w-full py-3 rounded-xl bg-mint-700 text-white font-bold text-sm hover:bg-mint-700 active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed">
-                    {retrying || geoChecking
-                        ? '📍 ' + tx('Checking…', 'Verificando…')
-                        : '🔄 ' + tx('Try again', 'Intentar de nuevo')}
-                </button>
-
-                {hint === 'denied' && (
-                    <>
-                        <button onClick={() => setShowHelp(!showHelp)}
-                            className="mt-3 w-full text-xs text-mint-700 font-bold underline hover:text-mint-700">
-                            {showHelp
-                                ? tx('Hide instructions', 'Ocultar instrucciones')
-                                : tx('How to re-enable location ▾', 'Cómo activar la ubicación ▾')}
-                        </button>
-                        {showHelp && <ReEnableHelp language={language} />}
-                    </>
-                )}
-                {hint === 'error' && (
-                    <p className="mt-3 text-[11px] text-gray-500 italic">
-                        {tx(
-                            'If "Try again" keeps failing, restart the app or move closer to a window.',
-                            'Si sigue fallando, reinicia la app o muévete cerca de una ventana.',
-                        )}
-                    </p>
+                {!isHardDenied && (
+                    <button onClick={handleRetry} disabled={retrying || geoChecking}
+                        className="w-full py-3.5 rounded-xl bg-mint-700 text-white font-black text-base hover:bg-mint-700 active:scale-95 transition disabled:opacity-60 disabled:cursor-not-allowed">
+                        {retrying || geoChecking
+                            ? '📍 ' + tx('Checking…', 'Verificando…')
+                            : '📍 ' + tx('Enable Location', 'Activar Ubicación')}
+                    </button>
                 )}
             </div>
-        </div>
-    );
-}
-
-// Browser/OS-specific steps to undo a denied location permission. We can\'t
-// re-prompt programmatically once the user clicked Deny — the spec
-// explicitly forbids it — so the only path is to walk them through their
-// device\'s settings. Covers the platforms DD Mau staff actually use:
-// iOS (Safari standalone PWA + Safari + Chrome), Android Chrome, desktop
-// Chrome / Safari.
-function ReEnableHelp({ language }) {
-    const isEs = language === 'es';
-    const blocks = [
-        {
-            heading: isEs ? '📱 iPhone — App instalada (recomendado)' : '📱 iPhone — Installed app (recommended)',
-            steps: isEs ? [
-                'Abre Ajustes (en el iPhone)',
-                'Baja hasta DD Mau (o el ícono del navegador si lo abres en Safari)',
-                'Toca "Ubicación"',
-                'Selecciona "Al usar la app"',
-                'Vuelve a la app y toca Intentar de nuevo',
-            ] : [
-                'Open Settings on your iPhone',
-                'Scroll to DD Mau (or your browser if you opened it in Safari)',
-                'Tap "Location"',
-                'Choose "While Using the App"',
-                'Come back here and tap Try again',
-            ],
-        },
-        {
-            heading: isEs ? '🦊 Safari (sin instalar la app)' : '🦊 Safari (without installing the app)',
-            steps: isEs ? [
-                'Abre Ajustes › Safari › Ubicación',
-                'Cámbialo a "Preguntar" o "Permitir"',
-                'Recarga la página de recetas',
-            ] : [
-                'Open Settings › Safari › Location',
-                'Set it to "Ask" or "Allow"',
-                'Reload the recipes page',
-            ],
-        },
-        {
-            heading: isEs ? '🤖 Android Chrome' : '🤖 Android Chrome',
-            steps: isEs ? [
-                'Toca el candado 🔒 a la izquierda de la URL',
-                'Toca Permisos › Ubicación',
-                'Cámbialo a "Permitir"',
-                'Recarga la página',
-            ] : [
-                'Tap the 🔒 lock to the left of the URL',
-                'Tap Permissions › Location',
-                'Set it to "Allow"',
-                'Reload the page',
-            ],
-        },
-        {
-            heading: isEs ? '💻 Computadora (Chrome / Safari)' : '💻 Desktop (Chrome / Safari)',
-            steps: isEs ? [
-                'Haz clic en el candado 🔒 a la izquierda de la URL',
-                'Cambia Ubicación a "Permitir"',
-                'Recarga la página',
-            ] : [
-                'Click the 🔒 lock to the left of the URL',
-                'Set Location to "Allow"',
-                'Reload the page',
-            ],
-        },
-    ];
-    return (
-        <div className="mt-3 text-left bg-amber-50 border border-amber-200 rounded-xl p-3 space-y-3">
-            {blocks.map((b, i) => (
-                <div key={i}>
-                    <p className="text-[12px] font-black text-amber-900 mb-1">{b.heading}</p>
-                    <ol className="list-decimal pl-5 text-[11px] text-amber-900 space-y-0.5">
-                        {b.steps.map((s, j) => <li key={j}>{s}</li>)}
-                    </ol>
-                </div>
-            ))}
         </div>
     );
 }
