@@ -822,6 +822,11 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
     const [position, setPosition] = useState(prefill?.position || '');
     const [location, setLocation] = useState(prefill?.location || storeLocation || 'webster');
     const [hireDate, setHireDate] = useState('');
+    // Offer amount — free-form so the admin can type "$15.00/hr" or
+    // "$45,000/year" or whatever fits. Stored verbatim on the hire record
+    // and auto-filled into any template field bound to `offerAmount`
+    // (typically an offer letter blank).
+    const [offerAmount, setOfferAmount] = useState(prefill?.offerAmount || '');
     const [saving, setSaving] = useState(false);
     // Doc selection. Default 'full' = entire required-doc list. Picking
     // a preset auto-sets the customDocs list; 'custom' lets admin
@@ -851,6 +856,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 position: position.trim(),
                 location,
                 hireDate,
+                offerAmount: offerAmount.trim(),
                 status: HIRE_STATUS.INVITED,
                 checklist: {},
                 // subsetDocs: null/missing = full required-doc flow. Array
@@ -920,6 +926,19 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                                 className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm" />
                         </Field>
                     </div>
+
+                    {/* Offer amount — free-form text so it works for hourly,
+                        salaried, tipped, etc. Auto-fills the {offerAmount}
+                        autofill binding on any template (offer letter). */}
+                    <Field label={tx('Offer amount (optional)', 'Monto de oferta (opcional)')}>
+                        <input value={offerAmount} onChange={e => setOfferAmount(e.target.value)}
+                            placeholder={tx('$15.00 / hr', '$15.00 / hr')}
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm" />
+                        <p className="text-[10px] text-dd-text-2 mt-0.5 italic">
+                            {tx('Used in the offer letter template (if you upload one). Type whatever format fits.',
+                                'Se usa en la plantilla de la carta de oferta. Escribe el formato que te convenga.')}
+                        </p>
+                    </Field>
 
                     {/* Doc subset picker — pick a preset or hand-select.
                         Default 'full' sends the entire required-doc flow

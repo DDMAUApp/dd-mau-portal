@@ -187,9 +187,16 @@ export const TEMPLATE_FIELD_TYPES = [
     { id: 'initials',   en: 'Initials',   es: 'Iniciales',   defaultW: 0.08, defaultH: 0.030 },
 ];
 
-// Auto-fill bindings — values from the hire's `personal` payload that can
-// pre-populate text fields. Admin picks a binding when placing the field;
-// fields without a binding are blank for the hire to fill.
+// Auto-fill bindings — values that can pre-populate text fields on any
+// fillable template. Admin picks a binding when placing the field; fields
+// without a binding are blank for the hire to fill.
+//
+// Two source categories:
+//   • From the hire's `personal` payload (legalName, addressLine, etc.) —
+//     filled when the hire submits their personal info form.
+//   • From the hire RECORD itself (position, location, hireDate,
+//     offerAmount) — set by admin when creating the hire. Useful for
+//     offer letters and other admin-prepared docs.
 export const TEMPLATE_AUTOFILLS = [
     { id: 'legalName',   en: 'Full legal name',    es: 'Nombre legal completo' },
     { id: 'firstName',   en: 'First name only',    es: 'Solo nombre' },
@@ -202,10 +209,14 @@ export const TEMPLATE_AUTOFILLS = [
     { id: 'phone',       en: 'Phone',              es: 'Teléfono' },
     { id: 'email',       en: 'Email',              es: 'Correo' },
     { id: 'today',       en: 'Today\'s date',      es: 'Fecha de hoy' },
+    // From the hire record (admin-set at create time):
+    { id: 'position',    en: 'Position / role',    es: 'Puesto' },
+    { id: 'location',    en: 'Location',           es: 'Ubicación' },
+    { id: 'hireDate',    en: 'Start date',         es: 'Fecha de inicio' },
+    { id: 'offerAmount', en: 'Offer amount (hourly/salary)', es: 'Monto de oferta' },
     // SSN binding intentionally absent — we don't store SSN in Firestore.
     // For W-4/I-9 forms, leave SSN fields with no autofill so the hire
     // types it directly. The value ends up only in the resulting PDF.
-    // No binding = blank; hire fills it themselves.
 ];
 
 // Per-doc state on a hire record. Lives at

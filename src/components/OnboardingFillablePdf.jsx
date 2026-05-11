@@ -30,7 +30,12 @@ async function loadPdfLib() {
     return await import('pdf-lib');
 }
 
-// Auto-fill values from the hire's personal payload.
+// Auto-fill values. Two source categories:
+//   • From the hire's `personal` payload (filled by them when they submit
+//     the personal info form).
+//   • From the hire RECORD itself (admin-set when the hire is created):
+//     position, location, hireDate, offerAmount. These power offer-letter
+//     and other admin-prepared templates.
 function autofillValue(autofillId, hire) {
     if (!autofillId) return '';
     const p = hire?.personal || {};
@@ -38,6 +43,11 @@ function autofillValue(autofillId, hire) {
     const lastName = (p.legalName || hire?.name || '').split(' ').slice(-1)[0] || '';
     const ssn = hire?.ssn || p.ssn || '';
     const today = new Date().toISOString().slice(0, 10);
+    const locationLabel = hire?.location === 'maryland'
+        ? 'Maryland Heights'
+        : hire?.location === 'webster'
+            ? 'Webster Groves'
+            : (hire?.location || '');
     const map = {
         legalName: p.legalName || hire?.name || '',
         firstName, lastName,
@@ -50,6 +60,10 @@ function autofillValue(autofillId, hire) {
         email: p.email || hire?.email || '',
         ssn,
         today,
+        position: hire?.position || '',
+        location: locationLabel,
+        hireDate: hire?.hireDate || '',
+        offerAmount: hire?.offerAmount || '',
     };
     return map[autofillId] || '';
 }
