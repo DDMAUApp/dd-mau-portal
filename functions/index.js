@@ -189,15 +189,18 @@ function formatTime12h(time24) {
  * Idempotency: each (hireId, docId, day) gets at most one ping per day —
  * we stamp reminderSentDay on the doc's checklist entry.
  */
+// Kept in sync manually with src/data/onboarding.js. If you change one,
+// change the other — the React side reads ONBOARDING_DOCS for UI; the
+// Cloud Function reads this list for deadline calc + reminders.
 const ONBOARDING_DOCS_SERVER = [
     { id: 'w4_fed',             en: 'W-4 (Federal)',             required: true,  daysFromHire: 7  },
     { id: 'w4_mo',              en: 'Missouri W-4',              required: true,  daysFromHire: 7  },
     { id: 'direct_deposit',     en: 'Direct deposit',            required: true,  daysFromHire: 7  },
+    { id: 'voided_check',       en: 'Voided check / bank letter',required: true,  daysFromHire: 7  },
     { id: 'i9',                 en: 'I-9 work authorization',    required: true,  daysFromHire: 3  },
     { id: 'id_doc_1',           en: 'ID document #1',            required: true,  daysFromHire: 3  },
     { id: 'id_doc_2',           en: 'ID document #2',            required: true,  daysFromHire: 3  },
     { id: 'hep_a_record',       en: 'Hep A vaccination record',  required: true,  daysFromHire: 30 },
-    { id: 'food_handler_card',  en: 'Food Handler card',         required: true,  daysFromHire: 30 },
     { id: 'minor_permit',       en: 'Minor work permit',         required: false, daysFromHire: 7, minorOnly: true },
 ];
 

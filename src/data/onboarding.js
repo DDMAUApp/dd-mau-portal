@@ -97,6 +97,16 @@ export const ONBOARDING_DOCS = [
         description: 'Routing + account info, signed in the app.',
     },
     {
+        id: 'voided_check',
+        en: 'Voided check (or bank letter)',
+        es: 'Cheque cancelado (o carta del banco)',
+        emoji: '🧾',
+        kind: 'file',
+        required: true,
+        daysFromHire: 7,
+        description: 'A photo of a voided check, or a printed bank letter showing routing + account number. Pairs with the direct deposit form.',
+    },
+    {
         id: 'i9',
         en: 'I-9 work authorization',
         es: 'I-9 autorización de trabajo',
@@ -135,16 +145,6 @@ export const ONBOARDING_DOCS = [
         required: true,
         daysFromHire: 30,
         description: 'Photo of your Hep A vaccination card or doctor\'s record. Food-service requirement.',
-    },
-    {
-        id: 'food_handler_card',
-        en: 'Food Handler card',
-        es: 'Tarjeta de manipulador de alimentos',
-        emoji: '🍽',
-        kind: 'file',
-        required: true,
-        daysFromHire: 30,
-        description: 'Missouri food-handler permit. Take the online course if you don\'t have one.',
     },
     {
         id: 'minor_permit',
