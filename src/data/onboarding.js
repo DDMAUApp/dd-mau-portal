@@ -167,8 +167,10 @@ export const TEMPLATE_AUTOFILLS = [
     { id: 'dob',         en: 'Date of birth',      es: 'Fecha de nacimiento' },
     { id: 'phone',       en: 'Phone',              es: 'Teléfono' },
     { id: 'email',       en: 'Email',              es: 'Correo' },
-    { id: 'ssn',         en: 'SSN',                es: 'SSN' },
     { id: 'today',       en: 'Today\'s date',      es: 'Fecha de hoy' },
+    // SSN binding intentionally absent — we don't store SSN in Firestore.
+    // For W-4/I-9 forms, leave SSN fields with no autofill so the hire
+    // types it directly. The value ends up only in the resulting PDF.
     // No binding = blank; hire fills it themselves.
 ];
 

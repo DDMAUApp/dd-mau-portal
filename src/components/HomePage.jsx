@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { db } from '../firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import InstallAppButton from './InstallAppButton';
 
@@ -100,6 +102,19 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
         writeLockUntil(0);
         setError("");
         setCollisionMatches([]);
+        // Audit: which person claimed a shared PIN at what time. Helps a
+        // manager investigate "who made that schedule edit?" when two staff
+        // share a PIN (which they shouldn't, but it happens). Append-only
+        // collection — clients can write but can't update or delete.
+        try {
+            addDoc(collection(db, 'pin_audits'), {
+                kind: 'collision_pick',
+                pickedStaff: staff.name,
+                pickedStaffId: staff.id || null,
+                candidateNames: collisionMatches.map(s => s.name),
+                at: serverTimestamp(),
+            }).catch(() => {});
+        } catch {}
         onSelectStaff(staff.name);
     };
 

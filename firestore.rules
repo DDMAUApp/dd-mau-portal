@@ -1,9 +1,45 @@
 // DD Mau Firestore security rules
 //
-// PRIORITY: protect /config/staff from PIN corruption. The 2026-05-09
-// incident showed that any buggy client could overwrite the entire staff
-// list (including all PINs) by sending an `update` with stale data. These
-// rules enforce on the SERVER that:
+// ── SECURITY POSTURE (2026-05-11 audit) ─────────────────────────────────
+//
+// CURRENT STATE: this app uses ANONYMOUS Firestore access (no per-user
+// Firebase Auth). All access gates are client-side React checks. A
+// curious staff member with DevTools could in theory bypass the UI and
+// run getDocs() directly to read PII-heavy collections.
+//
+// MITIGATIONS IN PLACE TODAY (defense-in-depth around the client gate):
+//   • SSN is never written to Firestore — it lives only inside the
+//     hire's filled W-4 PDF in Storage, which uses a non-enumerable
+//     hireId in the path.
+//   • Hire records use Firestore-generated random doc IDs — they can be
+//     read in bulk if you can list the collection, but you can't guess
+//     a specific one to target.
+//   • All admin views/downloads/approvals on PII land in /onboarding_audits
+//     so any insider abuse leaves a trail.
+//   • Apply form submissions require createdAt == request.time so old
+//     payloads can't be replayed and timestamps can't be forged.
+//   • The PIN screen rate-limits attempts (HomePage.jsx) and locks on
+//     close + 5-min idle (App.jsx).
+//
+// PHASE 2 (MUST-DO before scaling beyond DD Mau's current team):
+//   1. Wire Firebase Auth — sign every staff in with email/password (or
+//      passwordless email link). Replace localStorage staffName with an
+//      Auth session.
+//   2. Set custom claims on each user: { admin: true, canViewOnboarding:
+//      true, opsAccess: true, ... } via a Cloud Function callable.
+//   3. Rewrite these rules to gate by claim:
+//        match /onboarding_hires/{hireId} {
+//          allow read: if request.auth.token.canViewOnboarding == true;
+//          allow write: if request.auth.token.canViewOnboarding == true;
+//        }
+//   4. Same in storage.rules using request.auth.token.canViewOnboarding.
+//   5. Enable App Check (recaptcha v3 + iOS DeviceCheck) to keep
+//      non-app traffic out entirely.
+//
+// ── PRIORITY: protect /config/staff from PIN corruption ────────────────
+// The 2026-05-09 incident showed that any buggy client could overwrite
+// the entire staff list (including all PINs) by sending an `update` with
+// stale data. These rules enforce on the SERVER that:
 //
 //   1. Every staff record in any write must have pin = exactly 4 digits.
 //      A write with empty / null / non-4-digit PIN on ANY record is REJECTED.
@@ -168,11 +204,24 @@ service cloud.firestore {
 
     // Public application submissions from the lock-screen Apply button.
     // Append-only from anyone; admins read + clean up after converting.
+    //
+    // RATE LIMITING: real anti-spam requires per-IP tracking which needs
+    // a Cloud Function. Honest best-effort here: require the submission's
+    // own createdAt to be a serverTimestamp (set by the client SDK to
+    // request.time). This prevents replay of old payloads and far-future
+    // submissions. Doesn't prevent flood from a single attacker, but
+    // raises the cost of automation (each request has to be live, not
+    // canned). Client-side 60s cooldown is the second line of defense.
+    //
+    // The shape narrowing (name is string, length 2..200) discourages
+    // empty-payload spam. Other fields are optional to keep the form
+    // permissive for legit applicants.
     match /onboarding_applications/{appId} {
       allow read: if true;
       allow create: if request.resource.data.name is string
                     && request.resource.data.name.size() > 1
-                    && request.resource.data.name.size() < 200;
+                    && request.resource.data.name.size() < 200
+                    && request.resource.data.createdAt == request.time;
       allow update, delete: if true;   // admin-only in practice (client gate)
     }
 

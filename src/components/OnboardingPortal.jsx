@@ -305,10 +305,15 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
 // Personal info + Emergency contact use this. Schema is hardcoded per docId.
 function FormInputs({ docId, initial, isEs, onSave }) {
     const tx = (en, es) => (isEs ? es : en);
+    // NOTE — SSN is intentionally NOT collected here. It would otherwise
+    // sit in Firestore as plaintext (the doc is server-readable since we
+    // don't have per-user Firebase Auth yet). The hire types SSN directly
+    // into the W-4 form fields, where it ends up only inside the resulting
+    // PDF in Storage (path-obscured, not enumerable). Phase 2: per-user
+    // Auth + custom claims will let us hold SSN in Firestore safely.
     const fields = docId === 'personal_info' ? [
         { id: 'legalName',   en: 'Legal name',           es: 'Nombre legal',           type: 'text', required: true },
         { id: 'dob',         en: 'Date of birth',         es: 'Fecha de nacimiento',    type: 'date', required: true },
-        { id: 'ssn',         en: 'Social Security Number', es: 'Número de Seguro Social', type: 'text', required: true },
         { id: 'phone',       en: 'Phone',                 es: 'Teléfono',               type: 'tel',  required: true },
         { id: 'email',       en: 'Email',                 es: 'Correo',                 type: 'email' },
         { id: 'addressLine', en: 'Address',               es: 'Dirección',              type: 'text', required: true },
