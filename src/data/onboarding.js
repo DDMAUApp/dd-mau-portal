@@ -26,15 +26,29 @@
 // Master document checklist. `required: true` means a hire can't be marked
 // "complete" until that doc is uploaded. Minor permit auto-required for
 // hires whose DOB indicates under-18.
+//
+// `kind`:
+//   - 'form'     — structured form filled in the portal (no file upload)
+//   - 'file'     — hire uploads photo/PDF straight to Storage
+//   - 'template' — admin-prepared fillable PDF template; hire fills inputs
+//                  + signs in-browser, we generate a flattened PDF on submit
+//   - 'id'       — flexible "any acceptable ID" slot. Hire labels the doc
+//                  type (passport, DL, state ID, SSN card, etc.) and uploads.
+//                  Two ID slots, hire picks whichever they have.
+//
+// Templates live in /onboarding_templates/{templateId} with a `forDocId`
+// matching one of these ids. If a doc has kind: 'template' but no template
+// exists yet, the hire portal falls back to plain file upload with a hint
+// that the admin will send the form separately.
 export const ONBOARDING_DOCS = [
     {
         id: 'personal_info',
         en: 'Personal info',
         es: 'Información personal',
         emoji: '👤',
-        kind: 'form',   // filled in the portal, no file upload
+        kind: 'form',
         required: true,
-        description: 'Legal name, address, DOB, phone',
+        description: 'Legal name, address, DOB, phone, SSN',
     },
     {
         id: 'emergency_contact',
@@ -46,22 +60,31 @@ export const ONBOARDING_DOCS = [
         description: 'Name, relation, phone',
     },
     {
-        id: 'w4',
-        en: 'W-4 (Federal tax)',
-        es: 'W-4 (Impuestos federales)',
+        id: 'w4_fed',
+        en: 'W-4 (Federal)',
+        es: 'W-4 (Federal)',
         emoji: '🧾',
-        kind: 'file',
+        kind: 'template',
         required: true,
-        description: 'IRS Form W-4. Print, fill, sign, upload a photo or PDF.',
+        description: 'IRS Form W-4 — fill and sign in the app.',
+    },
+    {
+        id: 'w4_mo',
+        en: 'Missouri W-4',
+        es: 'W-4 de Missouri',
+        emoji: '🧾',
+        kind: 'template',
+        required: true,
+        description: 'Missouri MO W-4 — fill and sign in the app.',
     },
     {
         id: 'direct_deposit',
         en: 'Direct deposit form',
         es: 'Depósito directo',
         emoji: '🏦',
-        kind: 'file',
+        kind: 'template',
         required: true,
-        description: 'Filled DD form + voided check or bank letter.',
+        description: 'Routing + account info, signed in the app.',
     },
     {
         id: 'i9',
@@ -73,31 +96,22 @@ export const ONBOARDING_DOCS = [
         description: 'Section 1 of Form I-9, signed.',
     },
     {
-        id: 'driver_license_front',
-        en: "Driver's license — front",
-        es: 'Licencia de conducir — frente',
+        id: 'id_doc_1',
+        en: 'ID document #1',
+        es: 'Identificación #1',
         emoji: '🪪',
-        kind: 'file',
+        kind: 'id',
         required: true,
-        description: 'Clear photo of the front of your DL or state ID.',
+        description: 'Any acceptable ID — driver\'s license, passport, state ID, etc. Label it when you upload.',
     },
     {
-        id: 'driver_license_back',
-        en: "Driver's license — back",
-        es: 'Licencia de conducir — reverso',
+        id: 'id_doc_2',
+        en: 'ID document #2',
+        es: 'Identificación #2',
         emoji: '🪪',
-        kind: 'file',
+        kind: 'id',
         required: true,
-        description: 'Clear photo of the back.',
-    },
-    {
-        id: 'ssn_card',
-        en: 'Social Security card',
-        es: 'Tarjeta de Seguro Social',
-        emoji: '🔐',
-        kind: 'file',
-        required: true,
-        description: 'Clear photo of your SS card.',
+        description: 'A second ID document (e.g. Social Security card if your first was a license).',
     },
     {
         id: 'minor_permit',
@@ -109,6 +123,53 @@ export const ONBOARDING_DOCS = [
         description: 'Required if you are under 18. School-issued work permit.',
         minorOnly: true,
     },
+];
+
+// Accepted ID document types — used by the id-kind doc cards as labels.
+// Hire picks one from this list when uploading. Admin sees the label in
+// the review UI so they know what each photo represents.
+export const ID_DOC_TYPES = [
+    { id: 'us_passport',     en: 'U.S. Passport',           es: 'Pasaporte EE.UU.' },
+    { id: 'drivers_license', en: 'Driver\'s License',       es: 'Licencia de conducir' },
+    { id: 'state_id',        en: 'State ID Card',           es: 'Identificación estatal' },
+    { id: 'ssn_card',        en: 'Social Security Card',    es: 'Tarjeta de Seguro Social' },
+    { id: 'birth_cert',      en: 'Birth Certificate',       es: 'Acta de nacimiento' },
+    { id: 'perm_resident',   en: 'Permanent Resident Card', es: 'Tarjeta de Residente Permanente' },
+    { id: 'work_permit',     en: 'Work Permit / EAD',       es: 'Permiso de trabajo / EAD' },
+    { id: 'foreign_passport',en: 'Foreign Passport',        es: 'Pasaporte extranjero' },
+    { id: 'school_id',       en: 'School ID (with photo)',  es: 'ID escolar (con foto)' },
+    { id: 'other',           en: 'Other (specify in notes)', es: 'Otro (especificar)' },
+];
+
+// Field types supported by the template editor. Coordinates stored as
+// fractions of page width/height (0–1) so they survive PDF resolution
+// changes. We render markers as absolutely-positioned overlays on a PDF
+// page image.
+export const TEMPLATE_FIELD_TYPES = [
+    { id: 'text',       en: 'Text',       es: 'Texto',       defaultW: 0.20, defaultH: 0.022 },
+    { id: 'date',       en: 'Date',       es: 'Fecha',       defaultW: 0.10, defaultH: 0.022 },
+    { id: 'checkbox',   en: 'Checkbox',   es: 'Casilla',     defaultW: 0.020, defaultH: 0.020 },
+    { id: 'signature',  en: 'Signature',  es: 'Firma',       defaultW: 0.25, defaultH: 0.045 },
+    { id: 'initials',   en: 'Initials',   es: 'Iniciales',   defaultW: 0.08, defaultH: 0.030 },
+];
+
+// Auto-fill bindings — values from the hire's `personal` payload that can
+// pre-populate text fields. Admin picks a binding when placing the field;
+// fields without a binding are blank for the hire to fill.
+export const TEMPLATE_AUTOFILLS = [
+    { id: 'legalName',   en: 'Full legal name',    es: 'Nombre legal completo' },
+    { id: 'firstName',   en: 'First name only',    es: 'Solo nombre' },
+    { id: 'lastName',    en: 'Last name only',     es: 'Solo apellido' },
+    { id: 'addressLine', en: 'Street address',     es: 'Dirección' },
+    { id: 'city',        en: 'City',               es: 'Ciudad' },
+    { id: 'state',       en: 'State',              es: 'Estado' },
+    { id: 'zip',         en: 'ZIP',                es: 'Código postal' },
+    { id: 'dob',         en: 'Date of birth',      es: 'Fecha de nacimiento' },
+    { id: 'phone',       en: 'Phone',              es: 'Teléfono' },
+    { id: 'email',       en: 'Email',              es: 'Correo' },
+    { id: 'ssn',         en: 'SSN',                es: 'SSN' },
+    { id: 'today',       en: 'Today\'s date',      es: 'Fecha de hoy' },
+    // No binding = blank; hire fills it themselves.
 ];
 
 // Per-doc state on a hire record. Lives at

@@ -25,6 +25,8 @@ import {
     INVITE_TTL_DAYS, makeInviteToken,
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
 } from '../data/onboarding';
+import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
+const OnboardingTemplateEditor = reactLazy(() => import('./OnboardingTemplateEditor'));
 
 // Lazy-load heavy deps only when needed. JSZip + QRCode are ~150 KB combined;
 // no reason to pay for them on every admin page load.
@@ -44,9 +46,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    const [view, setView] = useState('hires');          // 'hires' | 'applications' | 'archive'
+    const [view, setView] = useState('hires');          // 'hires' | 'applications' | 'archive' | 'templates'
     const [hires, setHires] = useState([]);
     const [applications, setApplications] = useState([]);
+    const [templates, setTemplates] = useState([]);
+    const [editingTemplate, setEditingTemplate] = useState(null); // null | 'new' | template object
     const [selectedId, setSelectedId] = useState(null);
     const [addOpen, setAddOpen] = useState(false);
     const [inviteSheet, setInviteSheet] = useState(null); // { hire, token, url }
@@ -74,6 +78,16 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setApplications(list);
+        }, () => {});
+        return () => unsub();
+    }, []);
+
+    // Subscribe to templates so we can show which docs have a PDF prepared.
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'onboarding_templates'), (snap) => {
+            const list = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            setTemplates(list);
         }, () => {});
         return () => unsub();
     }, []);
@@ -158,6 +172,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                 {[
                     { id: 'hires', en: `Active (${activeHires.length})`, es: `Activos (${activeHires.length})` },
                     { id: 'applications', en: `Applications (${applications.length})`, es: `Aplicaciones (${applications.length})` },
+                    { id: 'templates', en: `Templates (${templates.length})`, es: `Plantillas (${templates.length})` },
                     { id: 'archive', en: `Archive (${archivedHires.length})`, es: `Archivo (${archivedHires.length})` },
                 ].map(t => (
                     <button key={t.id}
@@ -183,6 +198,12 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                         writeAudit('application_dismissed', { appId });
                     }}
                 />
+            ) : view === 'templates' ? (
+                <TemplatesList
+                    templates={templates}
+                    isEs={isEs}
+                    onNew={() => setEditingTemplate('new')}
+                    onEdit={(t) => setEditingTemplate(t)} />
             ) : loading ? (
                 <p className="text-center text-dd-text-2 py-8 text-sm">
                     {tx('Loading…', 'Cargando…')}
@@ -275,6 +296,59 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     isEs={isEs}
                     onClose={() => setInviteSheet(null)}
                 />
+            )}
+
+            {editingTemplate && (
+                <ReactSuspense fallback={<div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center text-white">Loading editor…</div>}>
+                    <OnboardingTemplateEditor
+                        initialTemplate={editingTemplate === 'new' ? null : editingTemplate}
+                        isEs={isEs}
+                        onClose={() => setEditingTemplate(null)}
+                        onSaved={() => setEditingTemplate(null)}
+                    />
+                </ReactSuspense>
+            )}
+        </div>
+    );
+}
+
+// ── TemplatesList ─────────────────────────────────────────────────────────
+function TemplatesList({ templates, isEs, onNew, onEdit }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div className="space-y-3">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[12px] text-blue-900">
+                {tx(
+                    'Upload your blank W-4, Missouri W-4, and Direct Deposit PDFs once. Mark where each field goes by clicking. Every new hire fills the same template in-app — no print/scan.',
+                    'Sube tus PDFs en blanco de W-4, W-4 de Missouri y Depósito Directo una sola vez. Marca dónde van los campos haciendo clic. Cada nueva contratación llena la misma plantilla — sin imprimir.',
+                )}
+            </div>
+            <button onClick={onNew}
+                className="w-full p-3 rounded-xl border-2 border-dashed border-mint-300 bg-white hover:border-mint-500 hover:bg-mint-50 active:scale-[0.99] transition text-sm font-bold text-mint-700">
+                + {tx('New template (upload PDF)', 'Nueva plantilla (subir PDF)')}
+            </button>
+            {templates.length === 0 ? (
+                <p className="text-center text-dd-text-2 text-xs py-3">
+                    {tx('No templates yet. Upload your first PDF above.', 'Sin plantillas aún. Sube tu primer PDF arriba.')}
+                </p>
+            ) : (
+                <div className="space-y-2">
+                    {templates.map(t => (
+                        <button key={t.id} onClick={() => onEdit(t)}
+                            className="w-full text-left bg-white border border-dd-line rounded-xl p-3 hover:border-mint-500 transition">
+                            <div className="flex items-center gap-3">
+                                <span className="text-2xl">📄</span>
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-bold text-sm text-dd-text">{t.name}</div>
+                                    <div className="text-[11px] text-dd-text-2">
+                                        {t.forDocId} · {(t.fields || []).length} {tx('fields', 'campos')}
+                                    </div>
+                                </div>
+                                <span className="text-dd-text-2">→</span>
+                            </div>
+                        </button>
+                    ))}
+                </div>
             )}
         </div>
     );

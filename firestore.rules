@@ -184,6 +184,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Onboarding fillable PDF templates — admin uploads W-4, MO W-4, DD
+    // form once, marks field positions, and every hire fills the same
+    // template in-browser. Templates are not PII themselves; the PDF
+    // bytes live in Storage at onboarding_templates/{templateId}.pdf.
+    match /onboarding_templates/{templateId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.name is string
+                            && request.resource.data.forDocId is string;
+      allow delete: if true;
+    }
+
     // All other documents inherit a permissive default (matches current
     // app behavior). Tighten per-collection as the app evolves.
     match /{document=**} {

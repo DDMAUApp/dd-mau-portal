@@ -40,6 +40,16 @@ service firebase.storage {
       allow delete: if true;     // admin re-uploads / cleanup
     }
 
+    // Onboarding fillable PDF templates — admin uploads the blank source
+    // PDFs (W-4, MO W-4, Direct Deposit). 15 MB cap is generous so
+    // multi-page forms with embedded images fit comfortably. PDF only.
+    match /onboarding_templates/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 15 * 1024 * 1024
+                   && request.resource.contentType == 'application/pdf';
+      allow delete: if true;
+    }
+
     // Everything else — match existing app behavior (open). Tighten
     // per-path as new features land.
     match /{allPaths=**} {

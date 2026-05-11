@@ -27,7 +27,10 @@ import { ref as sref, uploadBytes } from 'firebase/storage';
 import {
     DOC_STATUS, DOC_STATUS_META,
     docsForHire, isHireMinor, hireProgressCounts,
+    ID_DOC_TYPES,
 } from '../data/onboarding';
+import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
+const OnboardingFillablePdf = reactLazy(() => import('./OnboardingFillablePdf'));
 
 const INSTALL_NOTE_KEY = 'ddmau:onboardInstallSeen';
 
@@ -264,6 +267,25 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                             isEs={isEs}
                             onSave={(payload) => onSaveForm(doc.id, payload)}
                         />
+                    ) : doc.kind === 'template' ? (
+                        <ReactSuspense fallback={<p className="text-xs text-gray-500 italic">Loading template…</p>}>
+                            <OnboardingFillablePdf
+                                docDef={doc}
+                                hire={hire}
+                                hireId={hireId}
+                                isEs={isEs}
+                                onSubmitted={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
+                                onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)} />
+                        </ReactSuspense>
+                    ) : doc.kind === 'id' ? (
+                        <IdDocUpload
+                            doc={doc}
+                            hireId={hireId}
+                            isEs={isEs}
+                            currentLabel={(hire.checklist?.[doc.id]?.idType) || ''}
+                            onUploaded={(idType) => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString(), idType })}
+                            onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)}
+                        />
                     ) : (
                         <FileUpload
                             doc={doc}
@@ -286,6 +308,7 @@ function FormInputs({ docId, initial, isEs, onSave }) {
     const fields = docId === 'personal_info' ? [
         { id: 'legalName',   en: 'Legal name',           es: 'Nombre legal',           type: 'text', required: true },
         { id: 'dob',         en: 'Date of birth',         es: 'Fecha de nacimiento',    type: 'date', required: true },
+        { id: 'ssn',         en: 'Social Security Number', es: 'Número de Seguro Social', type: 'text', required: true },
         { id: 'phone',       en: 'Phone',                 es: 'Teléfono',               type: 'tel',  required: true },
         { id: 'email',       en: 'Email',                 es: 'Correo',                 type: 'email' },
         { id: 'addressLine', en: 'Address',               es: 'Dirección',              type: 'text', required: true },
@@ -395,6 +418,86 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
             <p className="text-[10px] text-gray-500 text-center">
                 {tx('Photos (JPG/PNG/HEIC) or PDF. Max 10 MB each. You can pick multiple.',
                     'Fotos (JPG/PNG/HEIC) o PDF. Máx 10 MB cada uno. Puedes elegir varios.')}
+            </p>
+            {err && <p className="text-[11px] text-red-600">{err}</p>}
+        </div>
+    );
+}
+
+// ── IdDocUpload ───────────────────────────────────────────────────────────
+// Generic "any acceptable ID" slot. Hire labels the doc (driver's license,
+// passport, etc.) and uploads a photo. Two of these slots cover the
+// I-9 "List A" or "List B + C" requirement without forcing a hardcoded
+// type per slot.
+function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [idType, setIdType] = useState(currentLabel || '');
+    const [otherText, setOtherText] = useState('');
+    const inputRef = useRef(null);
+    const [uploading, setUploading] = useState(false);
+    const [err, setErr] = useState('');
+
+    const handleFiles = async (filesList) => {
+        const files = Array.from(filesList || []);
+        if (files.length === 0) return;
+        if (!idType) {
+            setErr(tx('Pick the ID type first.', 'Elige el tipo de identificación primero.'));
+            return;
+        }
+        setErr('');
+        setUploading(true);
+        onStart?.();
+        try {
+            const finalLabel = idType === 'other' && otherText.trim() ? `other:${otherText.trim()}` : idType;
+            for (let i = 0; i < files.length; i++) {
+                const f = files[i];
+                if (f.size > 10 * 1024 * 1024) {
+                    throw new Error(tx('File too large (max 10 MB).', 'Archivo muy grande (máx 10 MB).'));
+                }
+                if (!/^image\/|^application\/pdf$/.test(f.type)) {
+                    throw new Error(tx('Photos or PDFs only.', 'Solo fotos o PDFs.'));
+                }
+                const safeName = `${finalLabel.replace(/[^a-z0-9_-]+/gi, '_')}_${Date.now()}_${i}_${f.name.replace(/[^a-z0-9._-]+/gi, '_')}`;
+                const path = `onboarding/${hireId}/${doc.id}/${safeName}`;
+                await uploadBytes(sref(storage, path), f, { contentType: f.type });
+            }
+            onUploaded?.(finalLabel);
+        } catch (e) {
+            console.error(e);
+            setErr(e.message || String(e));
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    return (
+        <div className="space-y-2">
+            <label className="block">
+                <span className="text-[11px] font-bold uppercase text-gray-500">
+                    {tx('Which type of ID is this?', '¿Qué tipo de identificación es?')}
+                </span>
+                <select value={idType} onChange={e => setIdType(e.target.value)}
+                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+                    <option value="">{tx('Pick one…', 'Elige uno…')}</option>
+                    {ID_DOC_TYPES.map(t => (
+                        <option key={t.id} value={t.id}>{isEs ? t.es : t.en}</option>
+                    ))}
+                </select>
+            </label>
+            {idType === 'other' && (
+                <input value={otherText} onChange={e => setOtherText(e.target.value)}
+                    placeholder={tx('Describe the document', 'Describe el documento')}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            )}
+            <input ref={inputRef} type="file" accept="image/*,application/pdf" multiple
+                onChange={e => handleFiles(e.target.files)} disabled={uploading} className="hidden" />
+            <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading || !idType}
+                className="w-full py-4 rounded-xl border-2 border-dashed border-mint-300 bg-white text-mint-700 font-bold text-sm hover:bg-mint-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+                {uploading ? tx('Uploading…', 'Subiendo…') : tx('📸 Take photo / upload', '📸 Tomar foto / subir')}
+            </button>
+            <p className="text-[10px] text-gray-500 text-center">
+                {tx('Front and back if it\'s a card. Multiple files OK.',
+                    'Frente y reverso si es tarjeta. Varios archivos OK.')}
             </p>
             {err && <p className="text-[11px] text-red-600">{err}</p>}
         </div>
