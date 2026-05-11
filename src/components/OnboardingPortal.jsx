@@ -32,6 +32,7 @@ import {
 } from '../data/onboarding';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingFillablePdf = reactLazy(() => import('./OnboardingFillablePdf'));
+const OnboardingOfferLetter = reactLazy(() => import('./OnboardingOfferLetter'));
 
 const INSTALL_NOTE_KEY = 'ddmau:onboardInstallSeen';
 
@@ -358,6 +359,15 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                             isEs={isEs}
                             onSave={(payload) => onSaveForm(doc.id, payload)}
                         />
+                    ) : doc.kind === 'offer_letter' ? (
+                        <ReactSuspense fallback={<p className="text-xs text-gray-500 italic">Loading letter…</p>}>
+                            <OnboardingOfferLetter
+                                hire={hire}
+                                hireId={hireId}
+                                isEs={isEs}
+                                onSubmitted={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
+                                onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)} />
+                        </ReactSuspense>
                     ) : doc.kind === 'template' ? (
                         <ReactSuspense fallback={<p className="text-xs text-gray-500 italic">Loading template…</p>}>
                             <OnboardingFillablePdf

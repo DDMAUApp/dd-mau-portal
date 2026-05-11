@@ -23,6 +23,26 @@
 //   onboarding_applications/{appId} — lock-screen "apply" submissions
 //   onboarding_audits/{auditId} — admin view/download audit log
 
+// Location → legal entity + street address. DD Mau the BRAND operates
+// under two different LLCs depending on the physical store:
+//   • Webster Groves  = DD Mau LLC
+//   • Maryland Heights = Forsis LLC (DBA DD Mau)
+// The offer letter pulls the right entity + address from this map based
+// on the hire's assigned location. Edit here when addresses change.
+// TODO: Maryland Heights street address — update once Andrew provides it.
+export const LOCATION_INFO = {
+    webster: {
+        legalEntity: 'DD Mau LLC',
+        address: '8169 Big Bend Blvd, Saint Louis, MO 63119',
+        label: 'Webster Groves',
+    },
+    maryland: {
+        legalEntity: 'Forsis LLC',
+        address: 'Maryland Heights, MO',  // TODO: full street address
+        label: 'Maryland Heights',
+    },
+};
+
 // Master document checklist. `required: true` means a hire can't be marked
 // "complete" until that doc is uploaded. Minor permit auto-required for
 // hires whose DOB indicates under-18.
@@ -48,6 +68,20 @@
 // vaccine form, employee handbook page) and the hire sees a View / Download
 // link to reference before they upload their own filled-out copy.
 export const ONBOARDING_DOCS = [
+    {
+        // Offer letter — the very first thing a hire sees. Auto-generated
+        // from the company template + the hire's record (name, position,
+        // location → legal entity, hire date, offer amount). The hire reads
+        // and signs in-app; we render a PDF on submit and upload as their
+        // signed copy. No deadline (they typically sign immediately).
+        id: 'offer_letter',
+        en: 'Offer letter',
+        es: 'Carta de oferta',
+        emoji: '📄',
+        kind: 'offer_letter',
+        required: true,
+        description: 'Read and sign your offer letter to accept the position.',
+    },
     {
         id: 'personal_info',
         en: 'Personal info',
@@ -210,10 +244,13 @@ export const TEMPLATE_AUTOFILLS = [
     { id: 'email',       en: 'Email',              es: 'Correo' },
     { id: 'today',       en: 'Today\'s date',      es: 'Fecha de hoy' },
     // From the hire record (admin-set at create time):
-    { id: 'position',    en: 'Position / role',    es: 'Puesto' },
-    { id: 'location',    en: 'Location',           es: 'Ubicación' },
-    { id: 'hireDate',    en: 'Start date',         es: 'Fecha de inicio' },
-    { id: 'offerAmount', en: 'Offer amount (hourly/salary)', es: 'Monto de oferta' },
+    { id: 'position',       en: 'Position / role',          es: 'Puesto' },
+    { id: 'location',       en: 'Location',                 es: 'Ubicación' },
+    { id: 'hireDate',       en: 'Start date',               es: 'Fecha de inicio' },
+    { id: 'offerAmount',    en: 'Offer amount (hourly/salary)', es: 'Monto de oferta' },
+    // Resolved from hire.location via LOCATION_INFO:
+    { id: 'legalEntity',    en: 'Legal entity (DD Mau LLC / Forsis LLC)', es: 'Entidad legal' },
+    { id: 'locationAddress', en: 'Location street address', es: 'Dirección de la ubicación' },
     // SSN binding intentionally absent — we don't store SSN in Firestore.
     // For W-4/I-9 forms, leave SSN fields with no autofill so the hire
     // types it directly. The value ends up only in the resulting PDF.

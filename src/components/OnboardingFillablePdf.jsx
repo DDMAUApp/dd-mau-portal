@@ -16,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { LOCATION_INFO } from '../data/onboarding';
 
 // Lazy loaders — keep pdfjs + pdf-lib out of the main bundle.
 async function loadPdfJs() {
@@ -43,11 +44,7 @@ function autofillValue(autofillId, hire) {
     const lastName = (p.legalName || hire?.name || '').split(' ').slice(-1)[0] || '';
     const ssn = hire?.ssn || p.ssn || '';
     const today = new Date().toISOString().slice(0, 10);
-    const locationLabel = hire?.location === 'maryland'
-        ? 'Maryland Heights'
-        : hire?.location === 'webster'
-            ? 'Webster Groves'
-            : (hire?.location || '');
+    const locInfo = (hire?.location && LOCATION_INFO[hire.location]) || null;
     const map = {
         legalName: p.legalName || hire?.name || '',
         firstName, lastName,
@@ -61,9 +58,11 @@ function autofillValue(autofillId, hire) {
         ssn,
         today,
         position: hire?.position || '',
-        location: locationLabel,
+        location: locInfo?.label || (hire?.location || ''),
         hireDate: hire?.hireDate || '',
         offerAmount: hire?.offerAmount || '',
+        legalEntity: locInfo?.legalEntity || 'DD Mau',
+        locationAddress: locInfo?.address || '',
     };
     return map[autofillId] || '';
 }
