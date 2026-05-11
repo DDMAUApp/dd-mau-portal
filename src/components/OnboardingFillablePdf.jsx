@@ -169,12 +169,14 @@ export default function OnboardingFillablePdf({
         if (!submitting && typeof onStart === 'function') onStart();
     };
 
-    // Validate required fields are filled before submit. Static fields
-    // are admin-prefilled at template time — they're always considered
-    // filled. Checkboxes can be unchecked (we don't force).
+    // Validate required fields are filled before submit. Skip:
+    //  • static  — pre-filled by admin at template time
+    //  • employer — filled by admin AFTER hire submits (I-9 Section 2 pattern)
+    // Checkboxes can be left unchecked (we don't force).
     const validate = () => {
         const missing = (template?.fields || []).filter(f => {
             if (f.filledBy === 'static') return false;
+            if (f.filledBy === 'employer') return false;
             const v = values[f.id];
             if (f.type === 'checkbox') return false;
             return !v || (typeof v === 'string' && !v.trim());
@@ -214,8 +216,10 @@ export default function OnboardingFillablePdf({
                 const h = f.h * ph;
                 const yPdf = ph - yTop - h;
 
-                // Static fields use the admin-set staticValue; everything
-                // else reads from the hire's `values` map.
+                // Static fields use the admin-set staticValue; employer
+                // fields are skipped (admin completes them after submit);
+                // everything else reads from the hire's `values` map.
+                if (f.filledBy === 'employer') continue;
                 const val = f.filledBy === 'static' ? f.staticValue : values[f.id];
 
                 if (f.type === 'signature' || f.type === 'initials') {
@@ -297,7 +301,11 @@ export default function OnboardingFillablePdf({
                     <div key={idx} className="relative bg-white shadow">
                         <img src={src} alt={`Page ${idx + 1}`} className="w-full h-auto block" draggable={false} />
                         {(template.fields || []).filter(f => f.page === idx).map(f => (
-                            f.filledBy === 'static' ? (
+                            // Employer fields are hidden from the hire entirely —
+                            // they don't even see the empty box. Admin completes
+                            // them after the hire submits, in a separate flow.
+                            f.filledBy === 'employer' ? null
+                            : f.filledBy === 'static' ? (
                                 <StaticOverlay key={f.id} field={f} isEs={isEs} />
                             ) : (
                                 <FieldInput key={f.id}

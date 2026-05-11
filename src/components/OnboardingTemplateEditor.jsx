@@ -511,15 +511,18 @@ export default function OnboardingTemplateEditor({
                                 {tx('Selected field', 'Campo seleccionado')}
                             </p>
 
-                            {/* Who fills this — hire fills (default) vs admin
-                                pre-fills once on the template (static). Static
-                                fields are baked into every hire's PDF: company
-                                info, EIN, manager signature, etc. */}
+                            {/* Who fills this — three modes:
+                                • hire     — new hire fills via portal (default)
+                                • static   — admin pre-fills once on template (company info etc.)
+                                • employer — admin fills AFTER hire submits (I-9 Section 2 pattern)
+                                Employer fields are hidden from the hire portal
+                                entirely; admin completes them in a separate
+                                review step once the hire's portion is in. */}
                             <div>
                                 <label className="text-[10px] font-bold text-gray-500">
                                     {tx('Who fills this?', '¿Quién lo llena?')}
                                 </label>
-                                <div className="grid grid-cols-2 gap-1 mt-0.5">
+                                <div className="grid grid-cols-3 gap-1 mt-0.5">
                                     <button type="button"
                                         onClick={() => updateField(selected.id, { filledBy: 'hire' })}
                                         className={`py-1 rounded text-[10px] font-bold border ${
@@ -538,7 +541,22 @@ export default function OnboardingTemplateEditor({
                                         }`}>
                                         {tx('🔒 Pre-fill', '🔒 Pre-lleno')}
                                     </button>
+                                    <button type="button"
+                                        onClick={() => updateField(selected.id, { filledBy: 'employer' })}
+                                        className={`py-1 rounded text-[10px] font-bold border ${
+                                            selected.filledBy === 'employer'
+                                                ? 'bg-purple-600 text-white border-purple-600'
+                                                : 'bg-white text-gray-700 border-gray-300'
+                                        }`}>
+                                        {tx('👔 Employer', '👔 Empleador')}
+                                    </button>
                                 </div>
+                                {selected.filledBy === 'employer' && (
+                                    <p className="text-[10px] text-purple-700 italic mt-1">
+                                        {tx('Hidden from the hire. You complete this AFTER they submit.',
+                                            'Oculto del nuevo. Tú lo llenas DESPUÉS de que envíen.')}
+                                    </p>
+                                )}
                             </div>
 
                             <div>
@@ -731,7 +749,9 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                     ? 'border-dd-green bg-dd-green/15 z-10'
                     : field.filledBy === 'static'
                         ? 'border-amber-500 bg-amber-100/50 hover:border-amber-600'
-                        : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
+                        : field.filledBy === 'employer'
+                            ? 'border-purple-500 bg-purple-100/50 hover:border-purple-600'
+                            : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
             }`}
             style={{
                 left: `${field.x * 100}%`,
@@ -740,9 +760,11 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                 height: `${field.h * 100}%`,
             }}>
             <div className={`absolute top-0 left-0 -translate-y-full text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none ${
-                field.filledBy === 'static' ? 'bg-amber-600' : 'bg-dd-green'
+                field.filledBy === 'static' ? 'bg-amber-600'
+                    : field.filledBy === 'employer' ? 'bg-purple-600'
+                    : 'bg-dd-green'
             }`}>
-                {field.filledBy === 'static' ? '🔒 ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
+                {field.filledBy === 'static' ? '🔒 ' : field.filledBy === 'employer' ? '👔 ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
             </div>
             {selected && (
                 <>

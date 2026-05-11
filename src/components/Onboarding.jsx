@@ -28,6 +28,7 @@ import {
 } from '../data/onboarding';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingTemplateEditor = reactLazy(() => import('./OnboardingTemplateEditor'));
+const OnboardingEmployerFill = reactLazy(() => import('./OnboardingEmployerFill'));
 
 // Lazy-load heavy deps only when needed. JSZip + QRCode are ~150 KB combined;
 // no reason to pay for them on every admin page load.
@@ -672,6 +673,31 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
     const [files, setFiles] = useState(null);   // [{name, url, size, contentType}]
     const [loadingFiles, setLoadingFiles] = useState(false);
     const [expanded, setExpanded] = useState(false);
+    // Check if this doc's template has any employer-fill fields. If so,
+    // and the hire has submitted, surface a "Complete employer section"
+    // button so admin can fill the I-9 Section 2 style fields.
+    const [hasEmployerFields, setHasEmployerFields] = useState(false);
+    const [employerFillOpen, setEmployerFillOpen] = useState(false);
+    useEffect(() => {
+        if (docDef.kind !== 'template') return;
+        let alive = true;
+        (async () => {
+            try {
+                const tSnap = await getDocs(query(
+                    collection(db, 'onboarding_templates'),
+                    where('forDocId', '==', docDef.id),
+                ));
+                let found = false;
+                tSnap.forEach(d => {
+                    const data = d.data();
+                    if ((data.mode || 'fillable') !== 'fillable') return;
+                    if ((data.fields || []).some(f => f.filledBy === 'employer')) found = true;
+                });
+                if (alive) setHasEmployerFields(found);
+            } catch {}
+        })();
+        return () => { alive = false; };
+    }, [docDef.id, docDef.kind]);
 
     const loadFiles = async () => {
         if (files !== null) return;
@@ -753,6 +779,16 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
                             {expanded ? '▴' : '▾'} {tx('Files', 'Archivos')}
                         </button>
                     )}
+                    {/* Complete employer section — only for template docs
+                        that have employer-fill fields AND the hire has
+                        already submitted. Lets admin fill I-9 Section 2
+                        style fields without reverting to a paper workflow. */}
+                    {hasEmployerFields && status === DOC_STATUS.SUBMITTED && (
+                        <button onClick={() => setEmployerFillOpen(true)}
+                            className="text-[10px] px-2 py-1 rounded bg-purple-600 text-white font-bold">
+                            👔 {tx('Complete employer', 'Completar empleador')}
+                        </button>
+                    )}
                     {(status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.REJECTED) && (
                         <button onClick={() => setStatus(DOC_STATUS.APPROVED)}
                             className="text-[10px] px-2 py-1 rounded bg-green-600 text-white font-bold">
@@ -767,6 +803,20 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
                     )}
                 </div>
             </div>
+            {employerFillOpen && (
+                <ReactSuspense fallback={<div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center text-white text-sm">Loading…</div>}>
+                    <OnboardingEmployerFill
+                        docDef={docDef}
+                        hire={hire}
+                        hireId={hire.id}
+                        isEs={isEs}
+                        staffName={staffName}
+                        onWriteAudit={onWriteAudit}
+                        onClose={() => setEmployerFillOpen(false)}
+                        onCompleted={() => setEmployerFillOpen(false)}
+                    />
+                </ReactSuspense>
+            )}
             {expanded && docDef.kind === 'file' && (
                 <div className="mt-2 pl-9 space-y-1">
                     {loadingFiles ? (
