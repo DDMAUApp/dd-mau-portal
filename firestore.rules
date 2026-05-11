@@ -144,6 +144,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Inventory change audit log — one doc per +/- count change. Two
+    // collections (one per location): inventory_audits_webster and
+    // inventory_audits_maryland. Append-only so the audit trail can't
+    // be tampered with after the fact.
+    // Use case (Andrew, 2026-05-12): reconstruct who tweaked counts when,
+    // for items that ended up missing from the order.
+    match /inventory_audits_{location}/{auditId} {
+      allow read, create: if true;
+      allow update, delete: if false;
+    }
+
     // Recipe audit log — append-only from clients, captures BEFORE/AFTER
     // state of every recipe save/delete (paired with writeRecipeAudit() in
     // Recipes.jsx). Lets us roll back any single recipe to any point in

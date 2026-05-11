@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
@@ -298,6 +298,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [pricingVendor, setPricingVendor] = useState("sysco"); // "sysco" or "usfoods"
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
+            // Recent inventory audits — subscribed below per location, drives
+            // the "Recent changes" expander at the bottom of the inventory page.
+            const [inventoryAudits, setInventoryAudits] = useState([]);
+            const [showInventoryAudits, setShowInventoryAudits] = useState(false);
             const [invSearch, setInvSearch] = useState("");
             const [writeInValues, setWriteInValues] = useState({});
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
@@ -1490,7 +1494,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus(); };
+                // Inventory audit log — last 50 changes for this location.
+                // Drives the expandable "Recent changes" panel below the
+                // Save & Reset button. Server-side timestamp orders writes
+                // across devices; we display the most recent first.
+                const auditQ = query(
+                    collection(db, "inventory_audits_" + storeLocation),
+                    orderBy("at", "desc"),
+                    limit(50),
+                );
+                const unsubInvAudits = onSnapshot(auditQ, (snap) => {
+                    const rows = [];
+                    snap.forEach(d => rows.push({ id: d.id, ...d.data() }));
+                    setInventoryAudits(rows);
+                }, (err) => console.warn('inventory audits subscribe failed', err));
+
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus(); unsubInvAudits(); };
             }, [storeLocation]);
 
             // Midnight auto-reset: check every 60s if the business-day date has changed.
@@ -2233,6 +2252,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const updateInventoryCount = async (itemId, newCount) => {
                 const count = parseInt(newCount) || 0;
+                const prevCount = inventory[itemId] || 0;
                 const newInventory = { ...inventory, [itemId]: count };
                 setInventory(newInventory);
                 const now = new Date();
@@ -2240,6 +2260,41 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const newMeta = { ...invCountMeta, [itemId]: { by: staffName, at: timeStr } };
                 if (count === 0) delete newMeta[itemId];
                 setInvCountMeta(newMeta);
+
+                // ── Audit trail ───────────────────────────────────────
+                // Every count change writes an immutable row to
+                // inventory_audits_{location}. Use case Andrew flagged:
+                // "why weren't eggs ordered but it was on the list before"
+                // — with many hands on the inventory page, individual
+                // tweaks (someone bumping eggs down then forgetting) can
+                // be reconstructed. Audit is append-only via rules.
+                if (prevCount !== count) {
+                    try {
+                        // Resolve a human-readable item name for the audit row
+                        // so future renames don't make the log inscrutable.
+                        let itemName = itemId;
+                        for (const cat of customInventory) {
+                            const f = cat.items.find(it => it.id === itemId);
+                            if (f) { itemName = f.nameEn || f.name || itemId; break; }
+                        }
+                        await addDoc(collection(db, 'inventory_audits_' + storeLocation), {
+                            itemId,
+                            itemName,
+                            previous: prevCount,
+                            next: count,
+                            delta: count - prevCount,
+                            byStaff: staffName,
+                            at: serverTimestamp(),
+                            atLocal: timeStr,
+                            dateKey: now.toISOString().slice(0, 10),
+                        });
+                    } catch (e) {
+                        // Audit is best-effort — don't block the count save if
+                        // the audit write fails for any reason.
+                        console.warn('inventory audit write failed', e);
+                    }
+                }
+
                 const ref = doc(db, "ops", "inventory_" + storeLocation);
                 // Targeted update via dotted paths so concurrent edits on other items aren't clobbered.
                 const update = {
@@ -5711,9 +5766,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 );
                             })()}
 
-                            {/* ── SAVE & RESET ── */}
+                            {/* ── SAVE & RESET ──
+                                Moved off `sticky bottom-20` per Andrew (2026-05-12):
+                                the sticky button was covering inventory items as
+                                you scrolled, which was annoying mid-count. Now
+                                it sits in-flow below the list — scroll to the
+                                bottom to save. Still distinct visually (large
+                                mint button, rounded). */}
                             {!invEditMode && invViewMode !== "pricing" && (
-                                <div className="sticky bottom-20 pt-3">
+                                <div className="mt-6 pt-3">
                                     {showSaveConfirm ? (
                                         <div className="bg-white border-2 border-mint-700 rounded-xl p-4 shadow-xl">
                                             <p className="text-center text-lg font-bold text-gray-800 mb-4">
@@ -5735,6 +5796,69 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             className="w-full py-4 rounded-xl font-bold text-lg shadow-lg bg-mint-700 text-white hover:bg-mint-800 active:scale-95 transition">
                                             {language === "es" ? "\u{1F4BE} Guardar y Reiniciar Conteos" : "\u{1F4BE} Save & Reset Counts"}
                                         </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* ── INVENTORY CHANGE AUDIT ──
+                                Every +/- count change is recorded with who/when.
+                                Use case Andrew flagged 2026-05-12: with many
+                                hands on inventory, individual tweaks were hard
+                                to reconstruct ("why weren't eggs ordered when
+                                someone said it was on the list?"). This panel
+                                shows the last 50 changes for this location.
+                                Append-only at the rules level (see firestore.rules). */}
+                            {!invEditMode && invViewMode !== "pricing" && (
+                                <div className="mt-4">
+                                    <button onClick={() => setShowInventoryAudits(!showInventoryAudits)}
+                                        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-blue-50 border border-blue-200 hover:bg-blue-100 transition">
+                                        <span className="flex items-center gap-2 text-sm font-bold text-blue-800">
+                                            📜 {language === "es" ? "Cambios recientes" : "Recent changes"}
+                                            <span className="text-xs font-bold text-blue-600">({inventoryAudits.length})</span>
+                                        </span>
+                                        <span className="text-blue-700 text-xs">{showInventoryAudits ? "▼" : "▶"}</span>
+                                    </button>
+                                    {showInventoryAudits && (
+                                        <div className="mt-2 bg-white border border-blue-200 rounded-xl overflow-hidden max-h-96 overflow-y-auto">
+                                            {inventoryAudits.length === 0 ? (
+                                                <p className="text-center text-gray-400 text-xs py-6">
+                                                    {language === "es" ? "Sin cambios todavía." : "No changes yet."}
+                                                </p>
+                                            ) : (
+                                                <table className="w-full text-xs">
+                                                    <thead className="bg-blue-50 sticky top-0">
+                                                        <tr className="text-left text-[10px] uppercase font-bold text-blue-900">
+                                                            <th className="px-2 py-1.5">{language === "es" ? "Cuándo" : "When"}</th>
+                                                            <th className="px-2 py-1.5">{language === "es" ? "Artículo" : "Item"}</th>
+                                                            <th className="px-2 py-1.5 text-right">{language === "es" ? "Cambio" : "Change"}</th>
+                                                            <th className="px-2 py-1.5">{language === "es" ? "Por" : "By"}</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {inventoryAudits.map(a => {
+                                                            const at = a.at && typeof a.at.toDate === 'function' ? a.at.toDate() : null;
+                                                            const whenStr = at
+                                                                ? `${at.toLocaleDateString()} ${at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                                                                : (a.atLocal || '—');
+                                                            const deltaSign = a.delta > 0 ? '+' : '';
+                                                            const deltaCls = a.delta > 0 ? 'text-green-700 font-bold'
+                                                                : a.delta < 0 ? 'text-red-700 font-bold'
+                                                                : 'text-gray-500';
+                                                            return (
+                                                                <tr key={a.id} className="border-t border-blue-50 hover:bg-blue-50/50">
+                                                                    <td className="px-2 py-1.5 text-gray-600 whitespace-nowrap">{whenStr}</td>
+                                                                    <td className="px-2 py-1.5 text-gray-800 font-semibold">{a.itemName || a.itemId}</td>
+                                                                    <td className={"px-2 py-1.5 text-right tabular-nums " + deltaCls}>
+                                                                        {a.previous} → {a.next} ({deltaSign}{a.delta})
+                                                                    </td>
+                                                                    <td className="px-2 py-1.5 text-gray-700">{a.byStaff || '—'}</td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             )}
