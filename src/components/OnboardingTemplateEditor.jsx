@@ -45,6 +45,10 @@ export default function OnboardingTemplateEditor({
     const [name, setName] = useState(initialTemplate?.name || '');
     const [forDocId, setForDocId] = useState(initialTemplate?.forDocId || 'w4_fed');
     const [fields, setFields] = useState(initialTemplate?.fields || []);
+    // mode: 'fillable' = admin places fields, hire fills them in-app
+    //       'reference' = admin uploads a PDF for the hire to download/print/fill
+    //                     offline; no fields, no signature pad
+    const [mode, setMode] = useState(initialTemplate?.mode || 'fillable');
     const [pdfBytes, setPdfBytes] = useState(null);       // ArrayBuffer of the PDF (new uploads)
     const [pageImages, setPageImages] = useState([]);     // rendered page data URLs
     const [pageDims, setPageDims] = useState([]);         // [{w,h}] in PDF points
@@ -290,12 +294,14 @@ export default function OnboardingTemplateEditor({
                 storagePath = `onboarding_templates/${safeId}.pdf`;
                 await uploadBytes(sref(storage, storagePath), new Blob([pdfBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
             }
-            // 2. Save metadata + fields.
+            // 2. Save metadata + fields. Reference-mode templates discard
+            //    field positions since the hire never fills them in-app.
             const meta = {
                 name: name.trim(),
                 forDocId,
+                mode,
                 storagePath,
-                fields,
+                fields: mode === 'reference' ? [] : fields,
                 pageDims,
                 updatedAt: new Date().toISOString(),
             };
@@ -346,10 +352,33 @@ export default function OnboardingTemplateEditor({
                         <label className="text-[10px] font-bold text-gray-500 uppercase">{tx('For doc:', 'Para doc:')}</label>
                         <select value={forDocId} onChange={e => setForDocId(e.target.value)}
                             className="text-[11px] border border-gray-300 rounded px-2 py-0.5 bg-white">
-                            {ONBOARDING_DOCS.filter(d => d.kind === 'template').map(d => (
+                            {/* All docs are eligible — fillable mode targets
+                                kind:'template' (W-4 etc.), reference mode can
+                                attach to ANY doc (Hep A form, employee
+                                handbook page, you-fill-it-out PDFs etc.) */}
+                            {ONBOARDING_DOCS.map(d => (
                                 <option key={d.id} value={d.id}>{isEs ? d.es : d.en}</option>
                             ))}
                         </select>
+                        <label className="text-[10px] font-bold text-gray-500 uppercase ml-2">{tx('Mode:', 'Modo:')}</label>
+                        <div className="flex gap-1">
+                            <button type="button" onClick={() => setMode('fillable')}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                                    mode === 'fillable'
+                                        ? 'bg-dd-green text-white border-dd-green'
+                                        : 'bg-white text-gray-700 border-gray-300'
+                                }`}>
+                                ✏ {tx('Fillable', 'Rellenable')}
+                            </button>
+                            <button type="button" onClick={() => setMode('reference')}
+                                className={`px-2 py-0.5 rounded text-[11px] font-bold border ${
+                                    mode === 'reference'
+                                        ? 'bg-amber-500 text-white border-amber-500'
+                                        : 'bg-white text-gray-700 border-gray-300'
+                                }`}>
+                                📎 {tx('Reference', 'Referencia')}
+                            </button>
+                        </div>
                     </div>
                 </div>
                 <button onClick={onClose} className="w-9 h-9 rounded-full bg-gray-100 text-gray-600 text-xl">×</button>

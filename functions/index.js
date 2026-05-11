@@ -175,6 +175,99 @@ function formatTime12h(time24) {
 }
 
 /* ──────────────────────────────────────────────────────────────────────
+ * onboardingReminderScan — daily check for overdue / due-soon onboarding docs.
+ *
+ * Runs every morning at 8am Central. Walks active hire records, computes
+ * the deadline for each required doc (hireDate + daysFromHire — kept in
+ * sync with src/data/onboarding.js), and fires a notification to the
+ * admins for anything overdue or due in <= 3 days.
+ *
+ * Admins receive a push via the existing dispatchNotification fan-out
+ * (FCM tokens already saved per staff record). The notification deep-
+ * links to /onboarding.
+ *
+ * Idempotency: each (hireId, docId, day) gets at most one ping per day —
+ * we stamp reminderSentDay on the doc's checklist entry.
+ */
+const ONBOARDING_DOCS_SERVER = [
+    { id: 'w4_fed',             en: 'W-4 (Federal)',             required: true,  daysFromHire: 7  },
+    { id: 'w4_mo',              en: 'Missouri W-4',              required: true,  daysFromHire: 7  },
+    { id: 'direct_deposit',     en: 'Direct deposit',            required: true,  daysFromHire: 7  },
+    { id: 'i9',                 en: 'I-9 work authorization',    required: true,  daysFromHire: 3  },
+    { id: 'id_doc_1',           en: 'ID document #1',            required: true,  daysFromHire: 3  },
+    { id: 'id_doc_2',           en: 'ID document #2',            required: true,  daysFromHire: 3  },
+    { id: 'hep_a_record',       en: 'Hep A vaccination record',  required: true,  daysFromHire: 30 },
+    { id: 'food_handler_card',  en: 'Food Handler card',         required: true,  daysFromHire: 30 },
+    { id: 'minor_permit',       en: 'Minor work permit',         required: false, daysFromHire: 7, minorOnly: true },
+];
+
+function dayKey(d = new Date()) {
+    return d.toISOString().slice(0, 10);
+}
+
+exports.onboardingReminderScan = onSchedule(
+    {
+        schedule: "0 8 * * *",
+        timeZone: "America/Chicago",
+        retryCount: 1,
+        memory: "256MiB",
+    },
+    async () => {
+        const today = dayKey();
+        const hiresSnap = await db.collection('onboarding_hires').get();
+        const staffDoc = await db.doc('config/staff').get();
+        const staffList = (staffDoc.exists ? staffDoc.data().list : []) || [];
+        const admins = staffList.filter(s =>
+            s.canViewOnboarding === true || s.id === 40 || s.id === 41
+        );
+        let pinged = 0;
+        for (const sd of hiresSnap.docs) {
+            const hire = sd.data();
+            if (!hire || hire.status === 'archived' || hire.status === 'complete') continue;
+            if (!hire.hireDate) continue;
+            const parts = String(hire.hireDate).split('-').map(Number);
+            if (parts.length !== 3 || parts.some(isNaN)) continue;
+            const [y, m, d] = parts;
+            const startMs = new Date(y, m - 1, d).getTime();
+            for (const docDef of ONBOARDING_DOCS_SERVER) {
+                if (!docDef.required) continue;
+                if (docDef.daysFromHire == null) continue;
+                if (docDef.minorOnly && !hire.isMinor) continue;
+                const deadline = startMs + docDef.daysFromHire * 24 * 60 * 60 * 1000;
+                const daysLeft = Math.ceil((deadline - Date.now()) / (24 * 60 * 60 * 1000));
+                if (daysLeft > 3) continue;
+                const cur = (hire.checklist && hire.checklist[docDef.id]) || {};
+                if (cur.status === 'submitted' || cur.status === 'approved') continue;
+                if (cur.reminderSentDay === today) continue;
+                const isOverdue = daysLeft < 0;
+                const body = isOverdue
+                    ? `${hire.name} · ${docDef.en} is ${Math.abs(daysLeft)} day${Math.abs(daysLeft) === 1 ? '' : 's'} overdue`
+                    : `${hire.name} · ${docDef.en} due ${daysLeft <= 0 ? 'today' : `in ${daysLeft} day${daysLeft === 1 ? '' : 's'}`}`;
+                const title = isOverdue ? '⚠ Onboarding overdue' : '⏰ Onboarding due soon';
+                await Promise.all(admins.map(a => db.collection('notifications').add({
+                    forStaff: a.name,
+                    type: isOverdue ? 'onboarding_overdue' : 'onboarding_due_soon',
+                    title,
+                    body,
+                    link: '/onboarding',
+                    createdAt: FieldValue.serverTimestamp(),
+                    read: false,
+                    createdBy: 'system',
+                }).catch(() => null)));
+                try {
+                    await sd.ref.update({
+                        [`checklist.${docDef.id}.reminderSentDay`]: today,
+                        [`checklist.${docDef.id}.reminderSentAt`]: FieldValue.serverTimestamp(),
+                    });
+                } catch {}
+                pinged++;
+            }
+        }
+        logger.info(`onboardingReminderScan: ${pinged} reminder(s) across ${hiresSnap.size} hires`);
+    }
+);
+
+/* ──────────────────────────────────────────────────────────────────────
  * scheduledFirestoreBackup — daily managed export to Cloud Storage.
  *
  * Uses Firestore's official MANAGED EXPORT API (REST). Output lands in

@@ -22,17 +22,56 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../firebase';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
-import { ref as sref, uploadBytes } from 'firebase/storage';
+import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
     DOC_STATUS, DOC_STATUS_META,
     docsForHire, isHireMinor, hireProgressCounts,
     ID_DOC_TYPES,
+    deadlineForDoc, deadlineStatus,
 } from '../data/onboarding';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingFillablePdf = reactLazy(() => import('./OnboardingFillablePdf'));
 
 const INSTALL_NOTE_KEY = 'ddmau:onboardInstallSeen';
+
+// Shared deadline pill used on both the hire's portal cards and the admin
+// hire detail. Color reflects urgency, copy is plain English so the hire
+// understands without context. Returns null when there's nothing useful
+// to render (no deadline configured or doc already done).
+function renderDeadlinePill(dlInfo, isEs) {
+    if (!dlInfo || dlInfo.status === 'no-deadline') return null;
+    const d = dlInfo.daysLeft;
+    if (dlInfo.status === 'overdue') {
+        const days = Math.abs(d);
+        return (
+            <span className="text-[10px] font-black px-1.5 py-0.5 rounded border bg-red-100 text-red-800 border-red-300">
+                ⚠ {isEs
+                    ? `${days} día${days === 1 ? '' : 's'} de retraso`
+                    : `${days} day${days === 1 ? '' : 's'} overdue`}
+            </span>
+        );
+    }
+    if (dlInfo.status === 'due-today') {
+        return (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-orange-50 text-orange-800 border-orange-300">
+                ⏰ {isEs ? 'Vence hoy' : 'Due today'}
+            </span>
+        );
+    }
+    if (dlInfo.status === 'due-soon') {
+        return (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-800 border-amber-300">
+                {isEs ? `Vence en ${d} días` : `Due in ${d} days`}
+            </span>
+        );
+    }
+    return (
+        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">
+            {isEs ? `Vence en ${d} días` : `Due in ${d} days`}
+        </span>
+    );
+}
 
 export default function OnboardingPortal({ token, language = 'en' }) {
     const isEs = language === 'es';
@@ -221,6 +260,42 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
 
     const isDone = status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED;
 
+    // Deadline status — drives the "Due in N days" / "Overdue" pill.
+    const deadline = deadlineForDoc(hire, doc);
+    const dlInfo = deadlineStatus(deadline);
+    const dlPill = !isDone && deadline ? renderDeadlinePill(dlInfo, isEs) : null;
+
+    // Look up a reference template (admin-uploaded PDF for this doc) once.
+    // Reference mode = the hire downloads the PDF, fills offline, uploads
+    // back through the normal file upload flow. Independent of `kind`.
+    const [refTemplate, setRefTemplate] = useState(null);
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const q = query(
+                    collection(db, 'onboarding_templates'),
+                    where('forDocId', '==', doc.id),
+                    where('mode', '==', 'reference'),
+                );
+                const snap = await getDocs(q);
+                if (!alive || snap.empty) return;
+                let chosen = null;
+                snap.forEach(d => {
+                    const data = { id: d.id, ...d.data() };
+                    if (!chosen || (data.updatedAt || '') > (chosen.updatedAt || '')) chosen = data;
+                });
+                if (chosen) {
+                    try {
+                        const url = await getDownloadURL(sref(storage, chosen.storagePath));
+                        if (alive) setRefTemplate({ ...chosen, url });
+                    } catch {}
+                }
+            } catch {}
+        })();
+        return () => { alive = false; };
+    }, [doc.id]);
+
     return (
         <div className={`bg-white rounded-2xl border ${
             status === DOC_STATUS.REJECTED ? 'border-red-300' :
@@ -238,10 +313,11 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                             </span>
                         )}
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
+                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.tone}`}>
                             {meta.emoji} {isEs ? meta.es : meta.en}
                         </span>
+                        {dlPill}
                     </div>
                 </div>
                 <span className="text-gray-400">{expanded ? '▴' : '▾'}</span>
@@ -249,6 +325,21 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
             {expanded && (
                 <div className="p-3 border-t border-gray-100 bg-gray-50/50">
                     <p className="text-xs text-gray-600 mb-3">{doc.description}</p>
+                    {refTemplate && (
+                        <div className="mb-3 p-2 rounded bg-amber-50 border border-amber-200 flex items-center gap-2">
+                            <span className="text-lg flex-shrink-0">📎</span>
+                            <div className="flex-1 min-w-0">
+                                <p className="text-[11px] font-bold text-amber-900 truncate">
+                                    {tx('Reference from manager', 'Referencia del gerente')}
+                                </p>
+                                <p className="text-[10px] text-amber-800 truncate">{refTemplate.name}</p>
+                            </div>
+                            <a href={refTemplate.url} target="_blank" rel="noopener noreferrer"
+                                className="text-[10px] px-2 py-1 rounded bg-amber-600 text-white font-bold hover:bg-amber-700 flex-shrink-0">
+                                {tx('View / Download', 'Ver / Descargar')}
+                            </a>
+                        </div>
+                    )}
                     {state.note && status === DOC_STATUS.REJECTED && (
                         <div className="mb-2 p-2 rounded bg-red-50 border border-red-200">
                             <p className="text-[11px] font-bold text-red-800">

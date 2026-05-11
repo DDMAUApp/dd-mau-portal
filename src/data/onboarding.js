@@ -36,10 +36,17 @@
 //                  type (passport, DL, state ID, SSN card, etc.) and uploads.
 //                  Two ID slots, hire picks whichever they have.
 //
+// `daysFromHire` (optional): deadline in days from hire start date. Used
+// for "due in N days" / "overdue" pills and reminders. Federal hard
+// deadlines: W-4 = 7 days, I-9 Section 1 = first day of work, I-9
+// docs = 3 days. Health certs vary by jurisdiction; defaults here are
+// conservative for Missouri food-service.
+//
 // Templates live in /onboarding_templates/{templateId} with a `forDocId`
-// matching one of these ids. If a doc has kind: 'template' but no template
-// exists yet, the hire portal falls back to plain file upload with a hint
-// that the admin will send the form separately.
+// matching one of these ids. ANY doc (any kind) can have a template
+// attached in mode: 'reference' — admin uploads a blank PDF (e.g. a Hep A
+// vaccine form, employee handbook page) and the hire sees a View / Download
+// link to reference before they upload their own filled-out copy.
 export const ONBOARDING_DOCS = [
     {
         id: 'personal_info',
@@ -66,6 +73,7 @@ export const ONBOARDING_DOCS = [
         emoji: '🧾',
         kind: 'template',
         required: true,
+        daysFromHire: 7,
         description: 'IRS Form W-4 — fill and sign in the app.',
     },
     {
@@ -75,6 +83,7 @@ export const ONBOARDING_DOCS = [
         emoji: '🧾',
         kind: 'template',
         required: true,
+        daysFromHire: 7,
         description: 'Missouri MO W-4 — fill and sign in the app.',
     },
     {
@@ -84,6 +93,7 @@ export const ONBOARDING_DOCS = [
         emoji: '🏦',
         kind: 'template',
         required: true,
+        daysFromHire: 7,
         description: 'Routing + account info, signed in the app.',
     },
     {
@@ -93,6 +103,7 @@ export const ONBOARDING_DOCS = [
         emoji: '✅',
         kind: 'file',
         required: true,
+        daysFromHire: 3,         // federal: I-9 docs within 3 business days of hire
         description: 'Section 1 of Form I-9, signed.',
     },
     {
@@ -102,6 +113,7 @@ export const ONBOARDING_DOCS = [
         emoji: '🪪',
         kind: 'id',
         required: true,
+        daysFromHire: 3,
         description: 'Any acceptable ID — driver\'s license, passport, state ID, etc. Label it when you upload.',
     },
     {
@@ -111,7 +123,28 @@ export const ONBOARDING_DOCS = [
         emoji: '🪪',
         kind: 'id',
         required: true,
+        daysFromHire: 3,
         description: 'A second ID document (e.g. Social Security card if your first was a license).',
+    },
+    {
+        id: 'hep_a_record',
+        en: 'Hepatitis A vaccination record',
+        es: 'Registro de vacuna de Hepatitis A',
+        emoji: '💉',
+        kind: 'file',
+        required: true,
+        daysFromHire: 30,
+        description: 'Photo of your Hep A vaccination card or doctor\'s record. Food-service requirement.',
+    },
+    {
+        id: 'food_handler_card',
+        en: 'Food Handler card',
+        es: 'Tarjeta de manipulador de alimentos',
+        emoji: '🍽',
+        kind: 'file',
+        required: true,
+        daysFromHire: 30,
+        description: 'Missouri food-handler permit. Take the online course if you don\'t have one.',
     },
     {
         id: 'minor_permit',
@@ -120,6 +153,7 @@ export const ONBOARDING_DOCS = [
         emoji: '🧒',
         kind: 'file',
         required: false,            // auto-required when DOB indicates under 18
+        daysFromHire: 7,
         description: 'Required if you are under 18. School-issued work permit.',
         minorOnly: true,
     },
@@ -294,6 +328,60 @@ export function deriveHireStatus(hire) {
         return allApproved ? HIRE_STATUS.COMPLETE : HIRE_STATUS.AWAITING_REVIEW;
     }
     return HIRE_STATUS.IN_PROGRESS;
+}
+
+// Compute the deadline timestamp for a doc on a specific hire.
+// Returns null if no deadline applies (doc has no daysFromHire, or hire
+// has no hireDate set).
+//
+// hire.hireDate is "YYYY-MM-DD" — we treat it as midnight local time on
+// that day. Deadline = hireDate + daysFromHire * 24h.
+export function deadlineForDoc(hire, doc) {
+    if (!hire || !doc || !doc.daysFromHire) return null;
+    if (!hire.hireDate) return null;
+    const parts = String(hire.hireDate).split('-').map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return null;
+    const [y, m, d] = parts;
+    const start = new Date(y, m - 1, d).getTime();
+    return start + doc.daysFromHire * 24 * 60 * 60 * 1000;
+}
+
+// Classify a deadline relative to "now" into a UX-friendly status.
+// Used to choose pill color + copy in the admin + hire UIs.
+//
+// Buckets:
+//   overdue        — deadline is in the past
+//   due-today      — within 24h
+//   due-soon       — within 3 days
+//   on-track       — more than 3 days away
+//   no-deadline    — null deadline
+//
+// Returns { status, daysLeft } where daysLeft is signed (negative = overdue).
+export function deadlineStatus(deadline) {
+    if (!deadline) return { status: 'no-deadline', daysLeft: null };
+    const diffMs = deadline - Date.now();
+    const daysLeft = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+    if (daysLeft < 0) return { status: 'overdue', daysLeft };
+    if (daysLeft <= 1) return { status: 'due-today', daysLeft };
+    if (daysLeft <= 3) return { status: 'due-soon', daysLeft };
+    return { status: 'on-track', daysLeft };
+}
+
+// Quick check used by the admin HireList "overdue" filter: does this hire
+// have at least one required doc past its deadline AND not yet submitted?
+export function hireHasOverdueDocs(hire) {
+    if (!hire) return false;
+    const docs = docsForHire(hire);
+    const checklist = hire.checklist || {};
+    for (const d of docs) {
+        if (!d.required) continue;
+        const st = (checklist[d.id] && checklist[d.id].status) || DOC_STATUS.NEEDED;
+        if (st === DOC_STATUS.APPROVED || st === DOC_STATUS.SUBMITTED) continue;
+        const deadline = deadlineForDoc(hire, d);
+        if (!deadline) continue;
+        if (deadline < Date.now()) return true;
+    }
+    return false;
 }
 
 // Counts {needed, started, submitted, approved} across the required docs
