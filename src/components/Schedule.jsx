@@ -260,11 +260,26 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return 'grid';
     });
     const [side, setSide] = useState('foh'); // 'foh' | 'boh'
-    // Side-aware edit gate. MUST be declared AFTER `side` — used to be one
+    // Side-aware edit gates. MUST be declared AFTER `side` — used to be one
     // line before the `useState`, which threw a TDZ ReferenceError on first
     // render of Schedule and broke the whole tab. Same class of bug as the
-    // May 2026 outage. Keep this BELOW the side useState always.
-    const canEdit = canEditSchedule(staffName, staffList, side);
+    // May 2026 outage. Keep these BELOW the side useState always.
+    //
+    // Three flavors:
+    //   canEditFOH     — does this user have the FOH editor toggle?
+    //   canEditBOH     — does this user have the BOH editor toggle?
+    //   canEdit        — page-level "are they ever an editor on any side?"
+    //                    used to show/hide the editor UI at all
+    //
+    // For any action that targets a SPECIFIC shift (save, delete, drag,
+    // resize, swap, give-up, etc.), use canEditSide(shift.side) — never
+    // the plain `canEdit`, because the user's view side and the shift's
+    // side can differ (e.g. they're viewing FOH but try to create a BOH
+    // shift via the Add modal's side picker).
+    const canEditFOH = canEditSchedule(staffName, staffList, 'foh');
+    const canEditBOH = canEditSchedule(staffName, staffList, 'boh');
+    const canEdit = canEditFOH || canEditBOH;
+    const canEditSide = (s) => s === 'foh' ? canEditFOH : s === 'boh' ? canEditBOH : canEdit;
     const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
     const [selectedDayIdx, setSelectedDayIdx] = useState(() => (new Date().getDay() - WEEK_START_DOW + 7) % 7);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -917,6 +932,23 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // publish.") If a manager wants to push a quick mid-week add immediately,
     // they tap Publish right after Save — the badge on the button shows N drafts.
     const handleAddShift = async (shiftData) => {
+        // Defense in depth — the modal restricts the side picker, but this
+        // is the actual write site so we also enforce here. A FOH-only
+        // editor must not be able to create a BOH shift via any path
+        // (modal, dev tools, future code that calls handleAddShift, etc.).
+        const targetSide = shiftData?.side
+            || (() => {
+                // Resolve the same way AddShiftModal does — staff's default
+                // side from their record. If we can't determine, default 'foh'.
+                const s = staffList?.find(x => x.name === shiftData?.staffName);
+                if (!s) return 'foh';
+                if (s.scheduleSide === 'foh' || s.scheduleSide === 'boh') return s.scheduleSide;
+                return 'foh';
+            })();
+        if (!canEditSide(targetSide)) {
+            console.warn(`[Schedule] blocked add for side=${targetSide} — user lacks editor toggle`);
+            return;
+        }
         try {
             await addDoc(collection(db, 'shifts'), {
                 ...shiftData,
@@ -968,13 +1000,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleDeleteShift = async (shiftId) => {
-        if (!canEdit) return;
         // Capture the shift's pre-delete details so we can notify the
         // affected staffer AFTER the delete commits — only if it was
         // published (drafts haven't been released to staff so silent
         // delete is fine).
         const sh = shifts.find(s => s.id === shiftId);
         if (!sh) return;
+        // Gate by the SHIFT's side, not the page view. A FOH-only editor
+        // shouldn't be able to delete BOH shifts even if the UI somehow
+        // exposed them.
+        if (!canEditSide(sh.side)) return;
         const wasPublished = sh.published !== false;
         const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
         // Replace the blocking confirm() with a 5-second undo toast.
@@ -1011,13 +1046,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Validates: end > start, both present. Other edits (assignee, role,
     // notes, double-flag, location, etc.) still go through the full modal.
     const handleUpdateShiftTimes = async (shiftId, startTime, endTime) => {
-        if (!canEdit) return;
         if (!startTime || !endTime) return;
         if (endTime <= startTime) {
             toast(tx('End time must be after start time.', 'La hora de fin debe ser después del inicio.'));
             return;
         }
         const sh = shifts.find(s => s.id === shiftId);
+        if (!sh) return;
+        if (!canEditSide(sh.side)) return;
         const wasPublished = sh && sh.published !== false;
         const oldDetail = sh ? `${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}` : '';
         const newDetail = `${formatTime12h(startTime)}–${formatTime12h(endTime)}`;
@@ -1044,9 +1080,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleDropShift = async (shiftId, newStaffName, newDate) => {
-        if (!canEdit) return;
         const shift = shifts.find(s => s.id === shiftId);
         if (!shift) return;
+        if (!canEditSide(shift.side)) return;
         // No-op if dropped on its own cell.
         if (shift.staffName === newStaffName && shift.date === newDate) return;
         // Refuse to drop on a closed date.
@@ -1250,7 +1286,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // 'open' — approval is invalid, refuse). First manager wins; second sees
     // a clear "already approved by X" message.
     const handleApproveSwap = async (shift) => {
-        if (!canEdit) return;
+        if (!canEditSide(shift?.side)) return;
         const oldOwner = shift.staffName;
         const newOwner = shift.pendingClaimBy;
         let detail = '';
@@ -1298,7 +1334,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleDenySwap = async (shift) => {
-        if (!canEdit) return;
+        if (!canEditSide(shift?.side)) return;
         try {
             await updateDoc(doc(db, 'shifts', shift.id), {
                 offerStatus: 'open', // back to open offer; original owner still on hook
@@ -1322,7 +1358,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // creates a real shift in the `shifts` collection so the rest of the app
     // (auto-fill, hours, swap, ICS export, etc.) treats it like any shift.
     const handleAddNeed = async (need) => {
-        if (!canEdit) return;
+        if (!canEditSide(need?.side)) return;
         try {
             await addDoc(collection(db, 'staffing_needs'), {
                 ...need,
@@ -1339,7 +1375,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleRemoveNeed = async (needId) => {
-        if (!canEdit) return;
+        const need = staffingNeeds.find(n => n.id === needId);
+        if (!canEditSide(need?.side)) return;
         if (!confirm(tx('Remove this staffing need? Shifts already filled will NOT be deleted.', '¿Quitar esta necesidad? Los turnos ya asignados NO se eliminarán.'))) return;
         try {
             await deleteDoc(doc(db, 'staffing_needs', needId));
@@ -1372,7 +1409,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // append to the need's filledStaff[] + filledShiftIds[]. Used by the
     // AvailableStaffModal flow when fillingNeed is set.
     const fillNeedWithStaff = async (need, staffMember) => {
-        if (!canEdit) return;
+        if (!canEditSide(need?.side)) return;
         try {
             const shiftRef = await addDoc(collection(db, 'shifts'), {
                 staffName: staffMember.name,
@@ -1405,7 +1442,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const unfillNeedSlot = async (need, staffMemberName) => {
-        if (!canEdit) return;
+        if (!canEditSide(need?.side)) return;
         // Find the matching shift and delete it, then prune the need.
         const idx = (need.filledStaff || []).indexOf(staffMemberName);
         if (idx < 0) return;
@@ -2989,6 +3026,8 @@ ${dayBlocks}
                     weekStart={weekStart}
                     dateClosed={dateClosed}
                     existingShifts={shifts}
+                    canEditFOH={canEditFOH}
+                    canEditBOH={canEditBOH}
                     timeOff={timeOff}
                 />
             )}
@@ -4783,7 +4822,7 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────
 
-function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts, timeOff = [] }) {
+function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts, timeOff = [], canEditFOH = true, canEditBOH = true }) {
     const today = toDateStr(new Date());
     const tx = (en, es) => (isEn ? en : es);
 
@@ -4812,6 +4851,19 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     // Used to pick the right preset chip set.
     const presetSide = form.side || staffDefaultSide || 'foh';
     const isCrossSide = form.side && staffDefaultSide && form.side !== staffDefaultSide;
+
+    // If the user only has one side's editor toggle, force every shift
+    // they create through this modal to that side — overriding whatever
+    // the staff member's default side is, whatever prefill said, etc.
+    // The picker buttons are disabled for the other side, so this just
+    // keeps the form in sync visually + at save time.
+    useEffect(() => {
+        if (canEditFOH && !canEditBOH && presetSide !== 'foh') {
+            setForm(f => ({ ...f, side: 'foh' }));
+        } else if (!canEditFOH && canEditBOH && presetSide !== 'boh') {
+            setForm(f => ({ ...f, side: 'boh' }));
+        }
+    }, [canEditFOH, canEditBOH, presetSide]);
     const SHIFT_PRESETS = getShiftPresets(presetSide);
     const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end && form.isDouble === !!p.isDouble;
 
@@ -4890,20 +4942,24 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                                 {tx('Working side this shift', 'Lado de este turno')}
                             </label>
                             <div className="grid grid-cols-2 gap-2">
-                                <button type="button" onClick={() => updateField('side', 'foh')}
+                                <button type="button" onClick={() => canEditFOH && updateField('side', 'foh')}
+                                    disabled={!canEditFOH}
+                                    title={!canEditFOH ? tx('You don\'t have FOH editor access', 'No tienes acceso de editor FOH') : ''}
                                     className={`py-2 rounded-lg text-sm font-bold border ${
                                         presetSide === 'foh'
                                             ? 'bg-dd-green text-white border-dd-green'
                                             : 'bg-white text-gray-700 border-gray-300'
-                                    }`}>
+                                    } ${!canEditFOH ? 'opacity-40 cursor-not-allowed line-through' : ''}`}>
                                     🧑‍💼 FOH {staffDefaultSide === 'foh' ? `(${tx('home', 'casa')})` : ''}
                                 </button>
-                                <button type="button" onClick={() => updateField('side', 'boh')}
+                                <button type="button" onClick={() => canEditBOH && updateField('side', 'boh')}
+                                    disabled={!canEditBOH}
+                                    title={!canEditBOH ? tx('You don\'t have BOH editor access', 'No tienes acceso de editor BOH') : ''}
                                     className={`py-2 rounded-lg text-sm font-bold border ${
                                         presetSide === 'boh'
                                             ? 'bg-orange-600 text-white border-orange-600'
                                             : 'bg-white text-gray-700 border-gray-300'
-                                    }`}>
+                                    } ${!canEditBOH ? 'opacity-40 cursor-not-allowed line-through' : ''}`}>
                                     🔥 BOH {staffDefaultSide === 'boh' ? `(${tx('home', 'casa')})` : ''}
                                 </button>
                             </div>
