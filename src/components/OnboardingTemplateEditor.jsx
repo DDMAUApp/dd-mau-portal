@@ -120,6 +120,126 @@ export default function OnboardingTemplateEditor({
         }
     };
 
+    // Auto-detect form fields from the PDF's AcroForm metadata.
+    //
+    // Official forms like the IRS W-4 are "fillable PDFs" — they ship with
+    // form fields (text inputs, signature blocks, checkboxes) embedded in
+    // the PDF structure. pdfjs's getAnnotations() returns those widgets
+    // with exact coordinates and types. We convert them to our fractional
+    // coord system and drop a pre-positioned field for each.
+    //
+    // For non-fillable PDFs (scans, image-only exports) no AcroForm exists
+    // and we fall back to a "0 detected" message — the admin keeps using
+    // click-to-drop.
+    //
+    // We also try to guess an autofill binding from the field's name
+    // ("name", "ssn", "dob", "address", etc.) so common fields land
+    // pre-bound to the hire's personal payload.
+    const [detecting, setDetecting] = useState(false);
+    const [detectMsg, setDetectMsg] = useState('');
+
+    const guessAutofill = (rawName, altText) => {
+        const candidates = [rawName, altText].filter(Boolean).join(' ').toLowerCase();
+        if (!candidates) return '';
+        const n = candidates.replace(/[\s_\-\.\[\]\(\)0-9]/g, '');
+        if (/(legalname|fullname)/.test(n)) return 'legalName';
+        if (/firstname|givenname/.test(n)) return 'firstName';
+        if (/lastname|familyname|surname/.test(n)) return 'lastName';
+        if (/^name$|employeename|workername|applicantname/.test(n)) return 'legalName';
+        if (/street|addressline|address1|homeaddress|mailingaddress|address(?!.*city)/.test(n)) return 'addressLine';
+        if (/^city|cityname|cityof/.test(n)) return 'city';
+        if (/^state(?!.*tax|wages)|statename|stateof/.test(n)) return 'state';
+        if (/zip|postalcode|postal/.test(n)) return 'zip';
+        if (/dob|birthdate|dateofbirth|birthday/.test(n)) return 'dob';
+        if (/phone|telephone|cellphone|mobile/.test(n)) return 'phone';
+        if (/email|emailaddress/.test(n)) return 'email';
+        if (/ssn|socialsecurity|socialsecuritynumber|tin/.test(n)) return 'ssn';
+        if (/todaysdate|signdate|datesigned|currentdate|^date$/.test(n)) return 'today';
+        return '';
+    };
+
+    const detectFields = async () => {
+        if (!pdfBytes) {
+            setDetectMsg(tx('Upload a PDF first.', 'Sube un PDF primero.'));
+            return;
+        }
+        setDetecting(true);
+        setDetectMsg('');
+        try {
+            const pdfjs = await loadPdfJs();
+            const pdf = await pdfjs.getDocument({ data: new Uint8Array(pdfBytes.slice(0)) }).promise;
+            const detected = [];
+            for (let p = 1; p <= pdf.numPages; p++) {
+                const page = await pdf.getPage(p);
+                const viewport = page.getViewport({ scale: 1 });
+                const pw = viewport.width;
+                const ph = viewport.height;
+                const annotations = await page.getAnnotations();
+                for (const ann of annotations) {
+                    if (ann.subtype !== 'Widget') continue;
+                    const [x1, y1, x2, y2] = ann.rect || [0, 0, 0, 0];
+                    const x = Math.min(x1, x2);
+                    const y = Math.min(y1, y2);
+                    const w = Math.abs(x2 - x1);
+                    const h = Math.abs(y2 - y1);
+                    // Drop micro-fields that are almost certainly artifacts
+                    // (some PDFs have invisible 1-px widgets for tab order).
+                    if (w < 5 || h < 4) continue;
+                    let type = 'text';
+                    if (ann.fieldType === 'Sig') type = 'signature';
+                    else if (ann.fieldType === 'Btn') {
+                        // checkbox vs radio — both render as 'X' marks in pdf-lib
+                        type = 'checkbox';
+                    } else if (ann.fieldType === 'Tx') {
+                        type = 'text';
+                    } else {
+                        // Choice, dropdowns, etc. — treat as text for v1
+                        type = 'text';
+                    }
+                    const fxFrac = x / pw;
+                    // PDF y-axis runs UP from bottom-left. Our fractional
+                    // coords run DOWN from top-left. So:
+                    //   yFrac_top = 1 - (y + h) / pageHeight
+                    const fyFrac = 1 - (y + h) / ph;
+                    detected.push({
+                        id: `f_auto_${Date.now()}_${detected.length}`,
+                        page: p - 1,
+                        x: Math.max(0, Math.min(1, fxFrac)),
+                        y: Math.max(0, Math.min(1, fyFrac)),
+                        w: Math.max(0.005, Math.min(1, w / pw)),
+                        h: Math.max(0.005, Math.min(1, h / ph)),
+                        type,
+                        label: ann.fieldName || ann.alternativeText || '',
+                        autofill: type === 'text' || type === 'date'
+                            ? guessAutofill(ann.fieldName, ann.alternativeText)
+                            : '',
+                        fontSize: Math.max(8, Math.min(14, Math.round(h * 0.65))),
+                    });
+                }
+            }
+            if (detected.length === 0) {
+                setDetectMsg(tx(
+                    'No fillable form fields found in this PDF. It\'s probably a scan — drop fields manually by clicking.',
+                    'No se encontraron campos en este PDF. Probablemente es un escaneo — colócalos manualmente.',
+                ));
+                return;
+            }
+            // Replace existing fields wholesale rather than append. Running
+            // detect twice should be idempotent, not a multiplier.
+            setFields(detected);
+            setSelectedFieldId(null);
+            setDetectMsg(tx(
+                `Auto-detected ${detected.length} field${detected.length === 1 ? '' : 's'}. Drag any one to fine-tune.`,
+                `Detectados ${detected.length} campo${detected.length === 1 ? '' : 's'}. Arrastra para ajustar.`,
+            ));
+        } catch (e) {
+            console.error('auto-detect failed', e);
+            setDetectMsg(tx('Auto-detect failed: ', 'Falló: ') + (e.message || e));
+        } finally {
+            setDetecting(false);
+        }
+    };
+
     // Click on a rendered page → drop a marker at the click position.
     const handlePageClick = (e, pageIdx) => {
         const rect = e.currentTarget.getBoundingClientRect();
@@ -285,6 +405,40 @@ export default function OnboardingTemplateEditor({
 
                 {/* Right: Tool palette + field details */}
                 <aside className="w-72 bg-white border-l border-gray-200 overflow-y-auto p-3 space-y-3">
+                    {/* Auto-detect — reads embedded form fields out of the
+                        PDF's AcroForm metadata (the IRS W-4, MO W-4, and most
+                        government forms are fillable PDFs and have this).
+                        Drops a pre-positioned marker for every field, with
+                        common autofill bindings (name/SSN/dob/address) guessed
+                        from the field's internal name. Manual drag still works
+                        on top for fine-tuning. */}
+                    {pageImages.length > 0 && (
+                        <div className="bg-gradient-to-r from-indigo-50 to-blue-50 border border-indigo-200 rounded-xl p-3">
+                            <p className="text-[10px] font-bold uppercase text-indigo-700 mb-1">
+                                ✨ {tx('Auto-detect fields', 'Detectar campos')}
+                            </p>
+                            <p className="text-[11px] text-indigo-900 mb-2 leading-snug">
+                                {tx(
+                                    'For fillable PDFs (IRS W-4, MO W-4, etc.) this places every text/signature/checkbox automatically — drag any one after to adjust.',
+                                    'Para PDFs rellenables (W-4 del IRS, W-4 de Missouri, etc.) coloca cada campo automáticamente — arrastra después para ajustar.',
+                                )}
+                            </p>
+                            <button onClick={detectFields} disabled={detecting}
+                                className="w-full py-1.5 rounded-lg text-[12px] font-bold bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition">
+                                {detecting
+                                    ? tx('Scanning…', 'Escaneando…')
+                                    : (fields.length > 0
+                                        ? tx('🔄 Re-scan PDF', '🔄 Volver a escanear')
+                                        : tx('🔍 Scan PDF', '🔍 Escanear PDF'))}
+                            </button>
+                            {detectMsg && (
+                                <p className="mt-1.5 text-[10px] text-indigo-900 italic">
+                                    {detectMsg}
+                                </p>
+                            )}
+                        </div>
+                    )}
+
                     <div>
                         <p className="text-[10px] font-bold uppercase text-gray-500 mb-1.5">
                             {tx('Drop tool', 'Herramienta')}
@@ -298,7 +452,7 @@ export default function OnboardingTemplateEditor({
                                 <button key={t.id} onClick={() => setActiveType(t.id)}
                                     className={`py-1.5 rounded-lg text-[11px] font-bold border transition ${
                                         activeType === t.id
-                                            ? 'bg-mint-700 text-white border-mint-700'
+                                            ? 'bg-dd-green text-white border-dd-green'
                                             : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                                     }`}>
                                     {isEs ? t.es : t.en}
