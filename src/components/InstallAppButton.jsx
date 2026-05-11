@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 let deferredInstallPrompt = null;
 
-export default function InstallAppButton({ language }) {
+export default function InstallAppButton({ language, compact = false }) {
     const [installable, setInstallable] = useState(!!deferredInstallPrompt);
     const [installed, setInstalled] = useState(false);
     const [showIOSGuide, setShowIOSGuide] = useState(false);
@@ -45,6 +45,23 @@ export default function InstallAppButton({ language }) {
         );
     }
 
+    // Compact variant — a slim chip-style button (one line, no big icon).
+    // Used on the lock screen as a secondary action below the larger
+    // "Apply here" CTA. Set compact={true} from the parent.
+    if (compact) {
+        return (
+            <div>
+                <button
+                    onClick={handleInstall}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-50 border border-cyan-200 rounded-full text-[12px] font-semibold text-cyan-700 hover:bg-cyan-100 transition"
+                >
+                    <span className="text-base leading-none">📲</span>
+                    <span>{language === "es" ? "Instalar app" : "Install app"}</span>
+                </button>
+                {showIOSGuide && renderIOSGuide(language, setShowIOSGuide)}
+            </div>
+        );
+    }
     return (
         <div>
             <button
@@ -60,46 +77,52 @@ export default function InstallAppButton({ language }) {
                 </div>
             </button>
 
-            {showIOSGuide && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50" onClick={() => setShowIOSGuide(false)}>
-                    <div className="bg-white rounded-t-2xl w-full max-w-lg p-6 pb-10 animate-slide-up" onClick={e => e.stopPropagation()}>
-                        <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4"></div>
-                        <h3 className="text-lg font-bold text-gray-800 mb-4 text-center">
-                            {language === "es" ? "Instalar DD Mau" : "Install DD Mau"}
-                        </h3>
-                        <div className="space-y-4">
-                            <div className="flex items-start gap-3">
-                                <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">1</div>
-                                <div>
-                                    <p className="font-bold text-gray-700">{language === "es" ? "Toca el botón de Compartir" : "Tap the Share button"}</p>
-                                    <p className="text-sm text-gray-500">{language === "es" ? "El ícono de cuadrado con flecha hacia arriba en la barra inferior" : "The square with arrow icon at the bottom of Safari"}</p>
-                                    <div className="mt-1 text-2xl">⬆️</div>
-                                </div>
-                            </div>
-                            <div className="flex items-start gap-3">
-                                <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">2</div>
-                                <div>
-                                    <p className="font-bold text-gray-700">{language === "es" ? "Desplázate y toca" : "Scroll down and tap"}</p>
-                                    <p className="text-sm text-gray-500 font-bold">"➕ {language === "es" ? "Agregar a Inicio" : "Add to Home Screen"}"</p>
-                                </div>
-                            </div>
-                            <div className="flex items-start gap-3">
-                                <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">3</div>
-                                <div>
-                                    <p className="font-bold text-gray-700">{language === "es" ? "Toca \"Agregar\"" : "Tap \"Add\""}</p>
-                                    <p className="text-sm text-gray-500">{language === "es" ? "DD Mau aparecerá en tu pantalla de inicio como una app" : "DD Mau will appear on your home screen as an app"}</p>
-                                </div>
-                            </div>
+            {showIOSGuide && renderIOSGuide(language, setShowIOSGuide)}
+        </div>
+    );
+}
+
+// Shared iOS install-guide bottom sheet, used by both the full and compact
+// variants. The 3-step "tap Share → Add to Home Screen → Add" walkthrough.
+function renderIOSGuide(language, setShowIOSGuide) {
+    return (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50" onClick={() => setShowIOSGuide(false)}>
+            <div className="bg-white rounded-t-2xl w-full max-w-lg p-6 pb-10 animate-slide-up" onClick={e => e.stopPropagation()}>
+                <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4"></div>
+                <h3 className="text-lg font-bold text-gray-800 mb-4 text-center">
+                    {language === "es" ? "Instalar DD Mau" : "Install DD Mau"}
+                </h3>
+                <div className="space-y-4">
+                    <div className="flex items-start gap-3">
+                        <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">1</div>
+                        <div>
+                            <p className="font-bold text-gray-700">{language === "es" ? "Toca el botón de Compartir" : "Tap the Share button"}</p>
+                            <p className="text-sm text-gray-500">{language === "es" ? "El ícono de cuadrado con flecha hacia arriba en la barra inferior" : "The square with arrow icon at the bottom of Safari"}</p>
+                            <div className="mt-1 text-2xl">⬆️</div>
                         </div>
-                        <button
-                            onClick={() => setShowIOSGuide(false)}
-                            className="mt-6 w-full bg-cyan-600 text-white py-3 rounded-lg font-bold text-sm hover:bg-cyan-700 transition"
-                        >
-                            {language === "es" ? "Entendido" : "Got it!"}
-                        </button>
+                    </div>
+                    <div className="flex items-start gap-3">
+                        <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">2</div>
+                        <div>
+                            <p className="font-bold text-gray-700">{language === "es" ? "Desplázate y toca" : "Scroll down and tap"}</p>
+                            <p className="text-sm text-gray-500 font-bold">"➕ {language === "es" ? "Agregar a Inicio" : "Add to Home Screen"}"</p>
+                        </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                        <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">3</div>
+                        <div>
+                            <p className="font-bold text-gray-700">{language === "es" ? "Toca \"Agregar\"" : "Tap \"Add\""}</p>
+                            <p className="text-sm text-gray-500">{language === "es" ? "DD Mau aparecerá en tu pantalla de inicio como una app" : "DD Mau will appear on your home screen as an app"}</p>
+                        </div>
                     </div>
                 </div>
-            )}
+                <button
+                    onClick={() => setShowIOSGuide(false)}
+                    className="mt-6 w-full bg-cyan-600 text-white py-3 rounded-lg font-bold text-sm hover:bg-cyan-700 transition"
+                >
+                    {language === "es" ? "Entendido" : "Got it!"}
+                </button>
+            </div>
         </div>
     );
 }

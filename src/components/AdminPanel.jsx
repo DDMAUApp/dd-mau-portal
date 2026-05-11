@@ -1400,8 +1400,23 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     side-by-side without crowding. Two-column staff list on
                                     lg+ screens so admins can edit ~12 rows at a time without
                                     scrolling. */}
-                                <div className="bg-white w-full sm:max-w-3xl lg:max-w-5xl xl:max-w-6xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[92vh] flex flex-col">
-                                    <div className="border-b border-gray-200 p-4">
+                                {/* Modal is one big scroll container instead of
+                                    a sticky-header + flex-body split. Per
+                                    Andrew: makes scrolling through staff
+                                    much easier — the search/filters scroll
+                                    out of view but the staff list gets the
+                                    full vertical space. The 'Done' button at
+                                    the bottom + the X in the (now scrolling)
+                                    header are both reachable. */}
+                                <div className="bg-white w-full sm:max-w-3xl lg:max-w-5xl xl:max-w-6xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[92vh] overflow-y-auto">
+                                    <div className="border-b border-gray-200 p-4 sticky top-0 bg-white z-10">
+                                        <div className="flex items-center justify-between mb-2">
+                                            <h3 className="text-lg font-bold text-purple-700">🏷 {language === "es" ? "Etiquetar Personal en Lote" : "Bulk Tag Staff"}</h3>
+                                            <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
+                                                className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                                        </div>
+                                    </div>
+                                    <div className="p-4">
                                         <div className="flex items-center justify-between mb-2">
                                             <h3 className="text-lg font-bold text-purple-700">🏷 {language === "es" ? "Etiquetar Personal en Lote" : "Bulk Tag Staff"}</h3>
                                             <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
@@ -1560,7 +1575,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         )}
                                     </div>
 
-                                    <div className="flex-1 overflow-y-auto p-2 space-y-1 lg:grid lg:grid-cols-2 lg:gap-2 lg:space-y-0">
+                                    <div className="p-2 space-y-1 lg:grid lg:grid-cols-2 lg:gap-2 lg:space-y-0">
                                         {visible.length === 0 && (
                                             <p className="text-center text-gray-400 text-sm py-8">{language === "es" ? "Sin resultados." : "No results."}</p>
                                         )}

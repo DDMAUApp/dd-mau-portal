@@ -199,17 +199,30 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     </div>
                 </>
             )}
-            <InstallAppButton language={language} />
-            {/* New-hire entry point. Same vocabulary as the typical "Register"
-                button on a sign-in screen, but for prospective hires:
-                fills the public application form, sends a push to Julie +
-                Andrew, and shows up in the admin Onboarding tab. */}
+            {/* New-hire entry point — promoted to a primary CTA card above
+                the install chip. Prospective hires aren't staff yet; they
+                shouldn't have to hunt for a small underline link. */}
             {onApplyClick && (
-                <button onClick={onApplyClick}
-                    className="mt-6 text-xs text-gray-500 hover:text-mint-700 underline-offset-2 hover:underline transition">
-                    👋 {isEs ? '¿Buscando trabajo? Aplica aquí' : 'New hire? Apply here'}
+                <button
+                    onClick={onApplyClick}
+                    className="mt-6 w-full max-w-sm bg-gradient-to-br from-mint-50 to-white border-2 border-mint-300 rounded-2xl p-4 text-left hover:border-mint-500 hover:shadow-md active:scale-[0.98] transition group">
+                    <div className="flex items-center gap-3">
+                        <span className="text-3xl flex-shrink-0">👋</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-black text-mint-700 text-base">
+                                {isEs ? '¿Buscando trabajo?' : 'Looking for a job?'}
+                            </div>
+                            <div className="text-[12px] font-semibold text-gray-600">
+                                {isEs ? 'Aplica aquí en 1 minuto' : 'Apply here — takes 1 minute'}
+                            </div>
+                        </div>
+                        <span className="text-mint-600 text-xl group-hover:translate-x-0.5 transition-transform">→</span>
+                    </div>
                 </button>
             )}
+            <div className="mt-4">
+                <InstallAppButton language={language} compact />
+            </div>
         </div>
     );
 }
