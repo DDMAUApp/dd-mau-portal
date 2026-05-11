@@ -111,10 +111,10 @@ export const ONBOARDING_DOCS = [
         en: 'I-9 work authorization',
         es: 'I-9 autorización de trabajo',
         emoji: '✅',
-        kind: 'file',
+        kind: 'template',
         required: true,
         daysFromHire: 3,         // federal: I-9 docs within 3 business days of hire
-        description: 'Section 1 of Form I-9, signed.',
+        description: 'Section 1 of Form I-9 — fill and sign in the app. Employer (Section 2) completed after.',
     },
     {
         id: 'id_doc_1',
@@ -276,15 +276,28 @@ export function makeInviteToken() {
     return out.join('');
 }
 
-// Compute the doc list for a given hire — returns the master list with
-// the minor permit included only when the DOB indicates under 18 (or
-// when the admin explicitly flagged isMinor on the record).
+// Compute the doc list for a given hire.
+//
+// Two filters apply, in order:
+//   1. Minor permit is hidden unless the hire is under 18 (DOB or flag).
+//   2. If hire.subsetDocs is a non-empty array, return ONLY those doc IDs.
+//      This supports "send just Direct Deposit + Voided Check" workflows
+//      for existing employees who want to update specific forms — they
+//      shouldn't see (or be forced to refill) every onboarding doc.
+//      Empty/undefined subsetDocs = the full required-doc list (normal
+//      new-hire flow).
 export function docsForHire(hire) {
     const isMinor = isHireMinor(hire);
-    return ONBOARDING_DOCS.filter(d => !d.minorOnly || isMinor).map(d => ({
-        ...d,
-        required: d.required || (d.minorOnly && isMinor),
-    }));
+    const subset = Array.isArray(hire?.subsetDocs) && hire.subsetDocs.length > 0
+        ? new Set(hire.subsetDocs)
+        : null;
+    return ONBOARDING_DOCS
+        .filter(d => !d.minorOnly || isMinor)
+        .filter(d => !subset || subset.has(d.id))
+        .map(d => ({
+            ...d,
+            required: d.required || (d.minorOnly && isMinor),
+        }));
 }
 
 export function isHireMinor(hire) {

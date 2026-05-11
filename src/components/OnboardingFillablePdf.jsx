@@ -81,17 +81,29 @@ export default function OnboardingFillablePdf({
             setErr('');
             try {
                 const snap = await getDocs(query(collection(db, 'onboarding_templates'), where('forDocId', '==', docDef.id)));
-                if (snap.empty) {
+                // Filter to FILLABLE-mode templates only. Reference-mode
+                // templates (admin-uploaded reference PDFs) are surfaced
+                // by DocCard at the parent layer and shouldn't be loaded
+                // here. Templates saved before `mode` was introduced default
+                // to fillable.
+                const fillable = [];
+                snap.forEach(d => {
+                    const data = { id: d.id, ...d.data() };
+                    const m = data.mode || 'fillable';
+                    if (m === 'fillable') fillable.push(data);
+                });
+                if (fillable.length === 0) {
+                    console.warn(`[FillablePdf] no fillable template found for ${docDef.id}`);
                     if (alive) { setTemplate(null); setLoading(false); }
                     return;
                 }
-                // Pick the most-recently-updated template per docId.
-                let chosen = null;
-                snap.forEach(d => {
-                    const data = { id: d.id, ...d.data() };
-                    if (!chosen || (data.updatedAt || '') > (chosen.updatedAt || '')) chosen = data;
-                });
+                // Pick the most-recently-updated.
+                let chosen = fillable[0];
+                for (const data of fillable) {
+                    if ((data.updatedAt || '') > (chosen.updatedAt || '')) chosen = data;
+                }
                 if (!alive) return;
+                console.log(`[FillablePdf] loaded template for ${docDef.id}:`, chosen.name);
                 setTemplate(chosen);
                 // Initialize values from autofill bindings.
                 // Static fields are admin-prefilled at template time — they're

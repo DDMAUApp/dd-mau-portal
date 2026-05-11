@@ -356,9 +356,23 @@ function TemplatesList({ templates, isEs, onNew, onEdit }) {
         <div className="space-y-3">
             <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[12px] text-blue-900">
                 {tx(
-                    'Upload your blank W-4, Missouri W-4, and Direct Deposit PDFs once. Mark where each field goes by clicking. Every new hire fills the same template in-app — no print/scan.',
-                    'Sube tus PDFs en blanco de W-4, W-4 de Missouri y Depósito Directo una sola vez. Marca dónde van los campos haciendo clic. Cada nueva contratación llena la misma plantilla — sin imprimir.',
+                    'Upload your blank W-4, Missouri W-4, I-9, and Direct Deposit PDFs once. Mark where each field goes by clicking — or hit Scan PDF for fillable forms to auto-detect. Every new hire fills the same template in-app.',
+                    'Sube tus PDFs en blanco de W-4, W-4 de Missouri, I-9 y Depósito Directo una sola vez. Marca campos haciendo clic o usa Escanear PDF.',
                 )}
+            </div>
+            <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3">
+                <p className="text-[11px] font-bold text-indigo-900 mb-1">
+                    📥 {tx('Get official forms (latest versions)', 'Obtén formularios oficiales')}
+                </p>
+                <ul className="text-[11px] text-indigo-800 space-y-0.5">
+                    <li>• <a href="https://www.uscis.gov/sites/default/files/document/forms/i-9.pdf" target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-indigo-600">USCIS Form I-9</a> {tx('— work authorization', '— autorización de trabajo')}</li>
+                    <li>• <a href="https://www.irs.gov/pub/irs-pdf/fw4.pdf" target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-indigo-600">IRS Form W-4</a> {tx('— federal tax withholding', '— impuestos federales')}</li>
+                    <li>• <a href="https://dor.mo.gov/forms/MO%20W-4.pdf" target="_blank" rel="noopener noreferrer" className="underline font-bold hover:text-indigo-600">Missouri MO W-4</a> {tx('— state tax withholding', '— impuestos estatales')}</li>
+                </ul>
+                <p className="text-[10px] text-indigo-700 italic mt-1">
+                    {tx('All three are AcroForm fillable — use "Scan PDF" in the editor after uploading.',
+                        'Los tres tienen campos rellenables — usa "Escanear PDF" después de subir.')}
+                </p>
             </div>
             <button onClick={onNew}
                 className="w-full p-3 rounded-xl border-2 border-dashed border-dd-green/40 bg-white hover:border-dd-green hover:bg-dd-sage-50 active:scale-[0.99] transition text-sm font-bold text-dd-green-700">
@@ -787,6 +801,19 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
 }
 
 // ── AddHireModal ──────────────────────────────────────────────────────────
+// Quick-pick presets for the doc subset picker. Each preset is a list of
+// doc IDs from ONBOARDING_DOCS. Used by the AddHireModal so an admin can
+// say "just send the W-4s" or "just send direct deposit" without manually
+// unchecking 9 other boxes.
+const SUBSET_PRESETS = [
+    { id: 'full',     en: 'Full onboarding (all docs)',         es: 'Onboarding completo',           docs: null /* = all */ },
+    { id: 'dd',       en: 'Direct deposit only',                es: 'Solo depósito directo',         docs: ['direct_deposit', 'voided_check'] },
+    { id: 'tax',      en: 'Tax forms only (W-4s)',              es: 'Solo formularios de impuestos', docs: ['w4_fed', 'w4_mo'] },
+    { id: 'i9',       en: 'I-9 + IDs only',                     es: 'Solo I-9 + IDs',                docs: ['i9', 'id_doc_1', 'id_doc_2'] },
+    { id: 'hep_a',    en: 'Hep A vaccination record only',      es: 'Solo registro de Hep A',        docs: ['hep_a_record'] },
+    { id: 'custom',   en: 'Custom — pick docs below',           es: 'Personalizado — elige abajo',   docs: 'custom' },
+];
+
 function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCreated }) {
     const tx = (en, es) => (isEs ? es : en);
     const [name, setName] = useState(prefill?.name || '');
@@ -796,7 +823,19 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
     const [location, setLocation] = useState(prefill?.location || storeLocation || 'webster');
     const [hireDate, setHireDate] = useState('');
     const [saving, setSaving] = useState(false);
-    const canSubmit = name.trim().length > 1 && !saving;
+    // Doc selection. Default 'full' = entire required-doc list. Picking
+    // a preset auto-sets the customDocs list; 'custom' lets admin
+    // hand-pick from a checkbox grid.
+    const [presetId, setPresetId] = useState('full');
+    const [customDocs, setCustomDocs] = useState(() => ONBOARDING_DOCS.map(d => d.id));
+    const activePreset = SUBSET_PRESETS.find(p => p.id === presetId) || SUBSET_PRESETS[0];
+    const selectedDocs = activePreset.docs === null
+        ? null   // null = all required docs (default new-hire flow)
+        : activePreset.docs === 'custom'
+            ? customDocs
+            : activePreset.docs;
+    const canSubmit = name.trim().length > 1 && !saving
+        && (presetId !== 'custom' || customDocs.length > 0);
 
     const submit = async (e) => {
         e?.preventDefault();
@@ -814,6 +853,10 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 hireDate,
                 status: HIRE_STATUS.INVITED,
                 checklist: {},
+                // subsetDocs: null/missing = full required-doc flow. Array
+                // of doc IDs = ONLY those docs visible to this hire (used
+                // for "send just one form" follow-ups).
+                subsetDocs: selectedDocs,
                 createdAt: new Date().toISOString(),
                 createdBy: staffName || 'admin',
             };
@@ -877,10 +920,57 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                                 className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm" />
                         </Field>
                     </div>
+
+                    {/* Doc subset picker — pick a preset or hand-select.
+                        Default 'full' sends the entire required-doc flow
+                        (new-hire onboarding). The other presets target
+                        common follow-up cases: "I just need a new W-4
+                        from Maria" → tax preset → only the W-4s appear
+                        in her portal. */}
+                    <Field label={tx('Which docs to send?', '¿Qué documentos enviar?')}>
+                        <select value={presetId} onChange={e => setPresetId(e.target.value)}
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
+                            {SUBSET_PRESETS.map(p => (
+                                <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
+                            ))}
+                        </select>
+                        {presetId === 'custom' && (
+                            <div className="mt-2 bg-dd-bg rounded-lg p-2 max-h-48 overflow-y-auto">
+                                <div className="grid grid-cols-1 gap-1">
+                                    {ONBOARDING_DOCS.map(d => {
+                                        const checked = customDocs.includes(d.id);
+                                        return (
+                                            <label key={d.id} className="flex items-center gap-2 p-1 cursor-pointer hover:bg-white rounded text-[12px]">
+                                                <input type="checkbox" checked={checked}
+                                                    onChange={() => setCustomDocs(prev => checked
+                                                        ? prev.filter(x => x !== d.id)
+                                                        : [...prev, d.id])}
+                                                    className="w-4 h-4 accent-dd-green" />
+                                                <span className="text-base">{d.emoji}</span>
+                                                <span className="flex-1 text-dd-text font-semibold truncate">{isEs ? d.es : d.en}</span>
+                                            </label>
+                                        );
+                                    })}
+                                </div>
+                                <p className="text-[10px] text-dd-text-2 italic mt-1 px-1">
+                                    {customDocs.length} {tx('docs selected', 'docs seleccionados')}
+                                </p>
+                            </div>
+                        )}
+                        {presetId !== 'full' && presetId !== 'custom' && activePreset.docs && (
+                            <p className="text-[10px] text-dd-text-2 mt-1 italic">
+                                {activePreset.docs.length} {tx('docs:', 'docs:')} {activePreset.docs.map(id => {
+                                    const d = ONBOARDING_DOCS.find(x => x.id === id);
+                                    return d ? (isEs ? d.es : d.en) : id;
+                                }).join(', ')}
+                            </p>
+                        )}
+                    </Field>
+
                     <p className="text-[11px] text-dd-text-2 mt-2 bg-dd-bg p-2 rounded">
                         {tx(
-                            'A one-time invite link + QR will be generated. The hire fills out personal info, emergency contact, and uploads docs. You\'ll see live progress here.',
-                            'Se generará un enlace + QR de invitación. El contratado llena información personal, contacto de emergencia, y sube documentos. Verás el progreso aquí.',
+                            'A one-time invite link + QR will be generated. The hire only sees the selected docs.',
+                            'Se generará un enlace + QR. El contratado solo verá los documentos seleccionados.',
                         )}
                     </p>
                 </div>
