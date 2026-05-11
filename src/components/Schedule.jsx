@@ -1956,8 +1956,23 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     .summary { margin-top: 14px; padding: 10px; background: #f9fafb; border-radius: 6px; border: 1px solid #e5e7eb; }
     .summary b { color: #255a37; font-size: 16px; }
     .footer { margin-top: 12px; font-size: 9px; color: #9ca3af; text-align: center; }
+    /* Top toolbar — shown only on-screen, hidden during print. Lets the
+       user get back to the schedule (close this tab) or re-trigger the
+       print dialog. Earlier the print window was a dead end. */
+    .toolbar { position: sticky; top: 0; background: white; border-bottom: 1px solid #e5e7eb; padding: 10px 16px; display: flex; gap: 8px; align-items: center; justify-content: space-between; }
+    .toolbar button { padding: 8px 14px; border-radius: 8px; border: 1px solid #d1d5db; background: white; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+    .toolbar button.primary { background: #255a37; color: white; border-color: #255a37; }
+    .toolbar .left { display: flex; gap: 8px; align-items: center; }
+    @media print { .toolbar { display: none !important; } }
 </style>
 </head><body>
+<div class="toolbar">
+    <div class="left">
+        <button onclick="window.close()" title="Close this tab and go back">← ${escape(isEn ? 'Done · Close' : 'Listo · Cerrar')}</button>
+        <span style="font-size: 12px; color: #6b7280;">${escape(isEn ? 'Print preview' : 'Vista previa')}</span>
+    </div>
+    <button class="primary" onclick="window.print()">🖨 ${escape(isEn ? 'Print' : 'Imprimir')}</button>
+</div>
 <div class="header">
     <h1>📅 ${escape(personFilter)}</h1>
     <span class="subhead">${escape(weekRange)} · ${escape(locLabel)}</span>
@@ -2072,9 +2087,22 @@ ${dayBlocks}
     .pto { color: #92400e; text-align: center; font-size: 8px; font-weight: 700; padding: 8px 0; }
     .closed { color: #6b7280; text-align: center; font-size: 8px; font-weight: 700; padding: 8px 0; }
     .footer { margin-top: 8px; font-size: 8px; color: #6b7280; display: flex; justify-content: space-between; }
-    @media print { .noprint { display: none; } }
+    /* Top toolbar — on-screen only, hidden during print. Without this the
+       print window was a dead end after the print dialog closed. */
+    .toolbar { position: sticky; top: 0; background: white; border-bottom: 1px solid #e5e7eb; padding: 10px 16px; display: flex; gap: 8px; align-items: center; justify-content: space-between; margin: -10px -10px 12px -10px; }
+    .toolbar button { padding: 8px 14px; border-radius: 8px; border: 1px solid #d1d5db; background: white; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; }
+    .toolbar button.primary { background: #255a37; color: white; border-color: #255a37; }
+    .toolbar .left { display: flex; gap: 8px; align-items: center; }
+    @media print { .noprint { display: none; } .toolbar { display: none !important; } }
 </style>
 </head><body>
+<div class="toolbar">
+    <div class="left">
+        <button onclick="window.close()" title="Close this tab and go back">← ${escape(isEn ? 'Done · Close' : 'Listo · Cerrar')}</button>
+        <span style="font-size: 12px; color: #6b7280;">${escape(isEn ? 'Print preview' : 'Vista previa')}</span>
+    </div>
+    <button class="primary" onclick="window.print()">🖨 ${escape(isEn ? 'Print' : 'Imprimir')}</button>
+</div>
 <div class="header">
     <h1>📅 DD Mau Schedule — ${escape(sideLabel)}</h1>
     <div class="subhead">${escape(weekRange)} · ${escape(locLabel)}${personFilter ? ` · ${escape(personFilter)}` : ''}</div>
@@ -2506,7 +2534,7 @@ ${dayBlocks}
                     { key: 'grid', labelEn: 'Week', labelEs: 'Semana', icon: '⊞' },
                     { key: 'day', labelEn: 'Day', labelEs: 'Día', icon: '☰' },
                     { key: 'list', labelEn: 'List', labelEs: 'Lista', icon: '≡' },
-                    { key: 'pto', labelEn: 'PTO', labelEs: 'PTO', icon: '🌴' },
+                    { key: 'pto', labelEn: 'Time Off', labelEs: 'Tiempo libre', icon: '🌴' },
                 ].map(v => (
                     <button key={v.key} onClick={() => setViewMode(v.key)}
                         className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${viewMode === v.key ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
@@ -2621,7 +2649,7 @@ ${dayBlocks}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowTimeOffModal(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>🌴</span>{tx('All PTO requests', 'Todas las solicitudes')}
+                                            <span>🌴</span>{tx('All Time Off requests', 'Todas las solicitudes')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); handleCopyLastWeek(); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
@@ -4075,10 +4103,10 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         className={`border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
                                         <div className="space-y-1">
                                             {onPTO && cellShifts.length === 0 && (
-                                                <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'PTO' : 'PTO'}</div>
+                                                <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'Time Off' : 'Libre'}</div>
                                             )}
                                             {onPendingPTO && cellShifts.length === 0 && (
-                                                <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'PTO pending' : 'PTO pendiente'}</div>
+                                                <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'Time off pending' : 'Libre pendiente'}</div>
                                             )}
                                             {cellShifts.map(sh => (
                                                 <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
@@ -5135,7 +5163,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                     {/* CONFLICT WARNINGS — non-blocking but visible. */}
                     {ptoConflict && (
                         <div className="p-2.5 rounded-lg bg-red-50 border border-red-300 text-xs text-red-900">
-                            <b>🌴 {ptoConflict.status === 'approved' ? tx('PTO conflict:', 'Conflicto de PTO:') : tx('Pending PTO:', 'PTO pendiente:')}</b>{' '}
+                            <b>🌴 {ptoConflict.status === 'approved' ? tx('Time off conflict:', 'Conflicto de tiempo libre:') : tx('Pending time off:', 'Tiempo libre pendiente:')}</b>{' '}
                             {tx(`${form.staffName} requested off this date`, `${form.staffName} pidió este día libre`)}
                             {ptoConflict.reason && ` (${ptoConflict.reason})`}.
                             {tx(' You can still save, but this is unusual.', ' Puedes guardar, pero es inusual.')}
@@ -5212,7 +5240,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn 
                 <div className="p-4 space-y-3">
                     <div className="text-xs text-gray-600 leading-relaxed bg-gray-50 rounded-lg p-2 border border-gray-200">
                         <b>{tx('Closed', 'Cerrado')}</b> = {tx('restaurant is not open. No shifts can be scheduled.', 'restaurante no está abierto. No se pueden agendar turnos.')}<br/>
-                        <b>{tx('No time off', 'Sin tiempo libre')}</b> = {tx('restaurant is open, but no PTO requests will be approved (busy season, holidays, special events).', 'restaurante está abierto, pero no se aprobará tiempo libre (temporada alta, días feriados, eventos especiales).')}
+                        <b>{tx('No time off', 'Sin tiempo libre')}</b> = {tx('restaurant is open, but no time-off requests will be approved (busy season, holidays, special events).', 'restaurante está abierto, pero no se aprobará tiempo libre (temporada alta, días feriados, eventos especiales).')}
                     </div>
 
                     {/* Add form */}
@@ -5225,7 +5253,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn 
                             </button>
                             <button onClick={() => update('type', 'no_timeoff')}
                                 className={`py-2 rounded-md text-xs font-bold border ${form.type === 'no_timeoff' ? 'bg-amber-600 text-white border-amber-600' : 'bg-white border-gray-300 text-gray-600'}`}>
-                                🛑 {tx('No PTO', 'Sin PTO')}
+                                🛑 {tx('No time off', 'Sin tiempo libre')}
                             </button>
                         </div>
                         <input type="date" value={form.date} onChange={e => update('date', e.target.value)}
