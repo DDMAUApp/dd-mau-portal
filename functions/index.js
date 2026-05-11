@@ -173,3 +173,122 @@ function formatTime12h(time24) {
     const h12 = h % 12 || 12;
     return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, "0")}${period}`;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * scheduledFirestoreBackup — daily managed export to Cloud Storage.
+ *
+ * Uses Firestore's official MANAGED EXPORT API (REST). Output lands in
+ * the GCS bucket `dd-mau-staff-app-backups` under a date-stamped folder
+ * (YYYY-MM-DD). Each export is queryable by gsutil and importable back
+ * into Firestore via the same managed API if needed.
+ *
+ * Why this approach:
+ *   - Built-in Firebase tooling — no third-party deps, no maintenance
+ *   - Atomic, consistent — exports a snapshot of the entire DB, not a
+ *     stream of best-effort gets like the npm-script backup-firestore.mjs
+ *   - Importable straight back — recovery is a console click + import call
+ *
+ * Setup (one-time, by user):
+ *   1. Create a GCS bucket named `dd-mau-staff-app-backups` in the
+ *      same region as Firestore (us-central1):
+ *        gcloud storage buckets create gs://dd-mau-staff-app-backups \
+ *          --location=us-central1
+ *   2. Grant the App Engine default service account the
+ *      "Cloud Datastore Import Export Admin" role:
+ *        gcloud projects add-iam-policy-binding dd-mau-staff-app \
+ *          --member="serviceAccount:dd-mau-staff-app@appspot.gserviceaccount.com" \
+ *          --role="roles/datastore.importExportAdmin"
+ *   3. Same service account also needs Storage Admin on the bucket:
+ *        gcloud storage buckets add-iam-policy-binding \
+ *          gs://dd-mau-staff-app-backups \
+ *          --member="serviceAccount:dd-mau-staff-app@appspot.gserviceaccount.com" \
+ *          --role="roles/storage.admin"
+ *   4. Deploy: firebase deploy --only functions
+ *
+ * Schedule: every day at 03:00 America/Chicago (off-hours, no traffic).
+ * Output path: gs://dd-mau-staff-app-backups/YYYY-MM-DD/
+ *
+ * Recovery: from the GCP console, Firestore -> Import/Export -> pick
+ * the export folder. Or via gcloud:
+ *   gcloud firestore import gs://dd-mau-staff-app-backups/2026-05-10
+ *
+ * Cost: each export reads every doc once (~$0.06 per million reads).
+ * DD Mau has ~40K docs. Cost per backup: ~$0.0024. Per month: ~$0.07.
+ */
+const { GoogleAuth } = require("google-auth-library");
+const PROJECT_ID = "dd-mau-staff-app";
+const BACKUP_BUCKET = "dd-mau-staff-app-backups";
+
+exports.scheduledFirestoreBackup = onSchedule(
+    {
+        schedule: "0 3 * * *",            // 3:00am every day
+        timeZone: "America/Chicago",      // restaurant operates on Central
+        retryCount: 1,
+        memory: "256MiB",
+    },
+    async (event) => {
+        const auth = new GoogleAuth({
+            scopes: ["https://www.googleapis.com/auth/datastore"],
+        });
+        const client = await auth.getClient();
+        const accessToken = (await client.getAccessToken()).token;
+
+        const today = new Date();
+        const dateStr = today.getFullYear() + "-" +
+                        String(today.getMonth() + 1).padStart(2, "0") + "-" +
+                        String(today.getDate()).padStart(2, "0");
+        const outputUriPrefix = `gs://${BACKUP_BUCKET}/${dateStr}`;
+
+        const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default):exportDocuments`;
+        const body = {
+            outputUriPrefix,
+            // Empty array = export ALL collections.
+            collectionIds: [],
+        };
+
+        try {
+            const res = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify(body),
+            });
+            const text = await res.text();
+            if (!res.ok) {
+                logger.error(`backup failed (${res.status}): ${text}`);
+                throw new Error(`Firestore export failed: ${res.status} ${text}`);
+            }
+            const data = JSON.parse(text);
+            logger.info(`✓ Firestore backup started: ${dateStr}`, {
+                outputUriPrefix,
+                operationName: data.name,
+            });
+
+            // Audit trail: write a backup_history doc so admins can see
+            // when the last backup ran without checking GCP console.
+            await db.collection("backup_history").add({
+                date: dateStr,
+                outputUriPrefix,
+                operationName: data.name,
+                triggeredAt: FieldValue.serverTimestamp(),
+                status: "started",
+                kind: "scheduled_daily",
+            });
+        } catch (err) {
+            logger.error("scheduledFirestoreBackup failed:", err);
+            // Audit the failure too so we notice silent breakage.
+            try {
+                await db.collection("backup_history").add({
+                    date: dateStr,
+                    error: String(err.message || err),
+                    triggeredAt: FieldValue.serverTimestamp(),
+                    status: "failed",
+                    kind: "scheduled_daily",
+                });
+            } catch {}
+            throw err;
+        }
+    }
+);

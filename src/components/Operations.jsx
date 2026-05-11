@@ -1,13 +1,20 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
-import InventoryHistory from './InventoryHistory';
-import PrepList from './PrepList';
-import SauceLog from './SauceLog';
+// Lazy-loaded sub-views — these are 500-1000+ line components that only
+// render when their specific sub-tab is active. Eager-importing them
+// added ~70KB gzip to the Operations chunk that wasn't needed for the
+// initial Tasks view. With React.lazy + Vite, each becomes its own
+// chunk loaded on first navigation to its tab.
+const InventoryHistory   = lazy(() => import('./InventoryHistory'));
+const PrepList           = lazy(() => import('./PrepList'));
+const SauceLog           = lazy(() => import('./SauceLog'));
+// SauceLogBohBanner stays eager — it's small (128 lines) and renders
+// inline as a banner above the Tasks list, not behind a sub-tab.
 import SauceLogBohBanner from './SauceLogBohBanner';
 import { toast, undoToast } from '../toast';
 
@@ -3983,12 +3990,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     {activeTab === "checklist" && renderChecklist()}
 
                     {activeTab === "saucelog" && (
-                        <SauceLog
-                            language={language}
-                            staffName={staffName}
-                            staffList={staffList}
-                            storeLocation={storeLocation}
-                        />
+                        <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
+                            <SauceLog
+                                language={language}
+                                staffName={staffName}
+                                staffList={staffList}
+                                storeLocation={storeLocation}
+                            />
+                        </Suspense>
                     )}
 
                     {/* ── Merge Items Modal — pick a target master item to merge the source into ── */}
@@ -5729,7 +5738,9 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 <p className="text-xs text-gray-500 mb-3">{language === "es"
                                     ? "Revisa conteos anteriores, marca lo que ya se pidió."
                                     : "Review past counts, check off what's been ordered."}</p>
-                                <InventoryHistory language={language} customInventory={customInventory} storeLocation={storeLocation} />
+                                <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
+                                    <InventoryHistory language={language} customInventory={customInventory} storeLocation={storeLocation} />
+                                </Suspense>
                             </div>
                         </div>
                     )}
@@ -6199,12 +6210,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     )}
 
                     {activeTab === "prep" && (
-                        <PrepList
-                            language={language}
-                            staffName={staffName}
-                            storeLocation={storeLocation}
-                            staffList={staffList}
-                        />
+                        <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
+                            <PrepList
+                                language={language}
+                                staffName={staffName}
+                                storeLocation={storeLocation}
+                                staffList={staffList}
+                            />
+                        </Suspense>
                     )}
                 </div>
             );

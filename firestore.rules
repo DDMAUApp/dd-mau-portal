@@ -118,6 +118,16 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Backup history — written by the scheduledFirestoreBackup Cloud
+    // Function (admin SDK bypasses these rules). Clients can READ to
+    // surface "last backup ran X hours ago" indicators in the admin
+    // dashboard. Append-only to clients (in case we ever want to log
+    // a manual-trigger backup from the UI).
+    match /backup_history/{auditId} {
+      allow read, create: if true;
+      allow update, delete: if false;
+    }
+
     // All other documents inherit a permissive default (matches current
     // app behavior). Tighten per-collection as the app evolves.
     match /{document=**} {
