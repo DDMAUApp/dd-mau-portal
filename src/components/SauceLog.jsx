@@ -272,6 +272,38 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
         } catch (e) { console.error('Unmark made failed:', e); }
     };
 
+    // Clear a single made entry — wipes the request so the sauce goes back
+    // to its default "normal" state on the grid (no green / no strikethrough).
+    // The entry is still preserved in the daily archive at end-of-day rollover
+    // since it's only removed from the live doc, not the history collection.
+    const resetSauce = async (sauceId) => {
+        try {
+            await updateDoc(docRef, {
+                [`requests.${sauceId}`]: deleteField(),
+                updatedAt: new Date().toISOString(),
+            });
+        } catch (e) { console.error('Reset sauce failed:', e); }
+    };
+
+    // Bulk: clear ALL made entries at once. Common pattern: BOH finishes a
+    // batch wave, wants to wipe the slate clean before the next round of
+    // requests starts coming in. Pending requests are untouched.
+    const clearAllMade = async () => {
+        const madeIds = Object.entries(doc_data.requests || {})
+            .filter(([, r]) => r && r.status === 'made')
+            .map(([id]) => id);
+        if (madeIds.length === 0) return;
+        if (!confirm(tx(
+            `Clear all ${madeIds.length} made sauces from the log?`,
+            `¿Limpiar las ${madeIds.length} salsas hechas del registro?`,
+        ))) return;
+        const updates = { updatedAt: new Date().toISOString() };
+        madeIds.forEach(id => { updates[`requests.${id}`] = deleteField(); });
+        try {
+            await updateDoc(docRef, updates);
+        } catch (e) { console.error('Clear all made failed:', e); }
+    };
+
     // Admin: save edits to the master sauce list.
     const saveSauceList = async (newSauces) => {
         try {
@@ -368,14 +400,23 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
             {/* MADE TODAY (collapsed-ish) */}
             {made.length > 0 && (
                 <details className="bg-white rounded-xl border border-gray-200">
-                    <summary className="px-3 py-2 cursor-pointer text-sm font-bold text-gray-700 hover:bg-gray-50">
-                        ✅ {tx(`Made today (${made.length})`, `Hechas hoy (${made.length})`)}
+                    <summary className="px-3 py-2 cursor-pointer text-sm font-bold text-gray-700 hover:bg-gray-50 flex items-center justify-between gap-2">
+                        <span>✅ {tx(`Made today (${made.length})`, `Hechas hoy (${made.length})`)}</span>
+                        {canMarkMade && (
+                            <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); clearAllMade(); }}
+                                className="text-[10px] px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold hover:bg-gray-300"
+                                title={tx('Clear all made entries', 'Limpiar todas las hechas')}>
+                                🗑 {tx('Clear all', 'Limpiar todo')}
+                            </button>
+                        )}
                     </summary>
                     <div className="divide-y divide-gray-100">
                         {made.map(({ id, sauce, req }) => (
                             <MadeRow key={id} sauce={sauce} req={req} isEs={isEs}
                                 canUnmark={canMarkMade}
-                                onUnmark={() => unmarkMade(id)} />
+                                onUnmark={() => unmarkMade(id)}
+                                onReset={() => resetSauce(id)} />
                         ))}
                     </div>
                 </details>
@@ -480,7 +521,7 @@ function PendingRow({ sauce, req, isEs, isMine, canMarkMade, onMarkMade, onCance
 }
 
 // ── MadeRow ───────────────────────────────────────────────────────────────
-function MadeRow({ sauce, req, isEs, canUnmark, onUnmark }) {
+function MadeRow({ sauce, req, isEs, canUnmark, onUnmark, onReset }) {
     const completedAt = new Date(req.completedAt);
     const timeStr = isNaN(completedAt) ? '' : completedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return (
@@ -494,12 +535,22 @@ function MadeRow({ sauce, req, isEs, canUnmark, onUnmark }) {
                     {req.completedBy ? `by ${req.completedBy}` : ''}{timeStr ? ` · ${timeStr}` : ''}
                 </div>
             </div>
-            {canUnmark && (
-                <button onClick={onUnmark}
-                    className="text-[10px] px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold">
-                    ↺ {isEs ? 'Deshacer' : 'Undo'}
-                </button>
-            )}
+            <div className="flex items-center gap-1 flex-shrink-0">
+                {canUnmark && onUnmark && (
+                    <button onClick={onUnmark}
+                        className="text-[10px] px-2 py-1 rounded bg-gray-200 text-gray-700 font-bold"
+                        title={isEs ? 'Volver a pendiente' : 'Move back to pending'}>
+                        ↺ {isEs ? 'Deshacer' : 'Undo'}
+                    </button>
+                )}
+                {canUnmark && onReset && (
+                    <button onClick={onReset}
+                        className="text-[10px] px-2 py-1 rounded bg-blue-100 text-blue-700 font-bold hover:bg-blue-200"
+                        title={isEs ? 'Quitar y volver a normal' : 'Clear and return sauce to normal'}>
+                        ✓ {isEs ? 'Listo' : 'Reset'}
+                    </button>
+                )}
+            </div>
         </div>
     );
 }
