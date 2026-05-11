@@ -32,6 +32,7 @@ export default function AppShellV2({
     onNavigate,
     hasOpsAccess = true,
     hasRecipesAccess = true,
+    hasOnboardingAccess = false,
     isAdmin = false,
     isManager = false,
     hiddenPages = [],
@@ -68,6 +69,7 @@ export default function AppShellV2({
                 isManager={isManager}
                 hasOpsAccess={hasOpsAccess}
                 hasRecipesAccess={hasRecipesAccess}
+                hasOnboardingAccess={hasOnboardingAccess}
                 hiddenPages={hiddenPages}
                 onLogout={() => { setSidebarOpen(false); onLogout?.(); }}
                 onForceRefresh={() => { setSidebarOpen(false); onForceRefresh?.(); }}

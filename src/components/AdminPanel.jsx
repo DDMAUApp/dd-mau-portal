@@ -1288,6 +1288,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     { field: "shiftLead",            labelEn: "Shift Lead",   labelEs: "Líder",        emoji: "🛡️", onColor: "bg-purple-600", offColor: "bg-gray-300" },
                                                     { field: "canEditScheduleFOH",   labelEn: "FOH editor",   labelEs: "Editor FOH",   emoji: "📅", onColor: "bg-teal-600",   offColor: "bg-gray-300" },
                                                     { field: "canEditScheduleBOH",   labelEn: "BOH editor",   labelEs: "Editor BOH",   emoji: "📅", onColor: "bg-orange-600", offColor: "bg-gray-300" },
+                                                    { field: "canViewOnboarding",    labelEn: "Onboarding (PII)", labelEs: "Onboarding (PII)", emoji: "🪪", onColor: "bg-rose-700",   offColor: "bg-gray-300" },
                                                 ].map(t => (
                                                     <div key={t.field} className="flex items-center gap-1 mb-1">
                                                         <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">

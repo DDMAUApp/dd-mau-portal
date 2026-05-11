@@ -1,0 +1,49 @@
+// DD Mau Firebase Storage rules
+//
+// Onboarding documents live here under /onboarding/{hireId}/{docId}/...
+// These are HIGH-VALUE PII (SSN cards, DL photos, W4, direct deposit).
+//
+// Two access paths:
+//   1. New hire uploading via the portal — they have an invite token in
+//      their URL. The token is validated in Firestore by the client; for
+//      Storage, we currently allow public writes inside the onboarding
+//      path because token-validation at upload time would require a Cloud
+//      Function proxy. Mitigations:
+//        - Strict size cap (10 MB per file)
+//        - Content-type allowlist (image/* + pdf only)
+//        - Audit trail in Firestore for every upload
+//        - The PATH includes the hireId — abuse means dumping into a
+//          random hireId, which the admin will see and prune
+//   2. Admin reading/downloading — gated by the canViewOnboarding flag
+//      client-side. Until we wire per-user auth, Storage read is open;
+//      the protection is path obscurity (hireId is a UUID) + the admin-
+//      only UI surface.
+//
+// TODO (Phase 2): Wire Firebase Auth so admin reads can be gated by
+// custom claim. For now, treat this as defense-in-depth around the
+// client gate.
+//
+// Deploy: firebase deploy --only storage:rules
+
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Onboarding PII path. Allow upload + read; file size + content
+    // type checks here are server-side and can't be bypassed by a
+    // tampered client.
+    match /onboarding/{hireId}/{docId}/{fileName} {
+      allow read: if true;       // admin-only via client gate
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|application/pdf');
+      allow delete: if true;     // admin re-uploads / cleanup
+    }
+
+    // Everything else — match existing app behavior (open). Tighten
+    // per-path as new features land.
+    match /{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}

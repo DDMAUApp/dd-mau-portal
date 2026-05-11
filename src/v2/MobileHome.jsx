@@ -59,6 +59,7 @@ export default function MobileHome({
     onNavigate,
     hasOpsAccess = true,
     hasRecipesAccess = true,
+    hasOnboardingAccess = false,
     isAdmin = false,
     isManager = false,
     staffList = [],
@@ -75,6 +76,17 @@ export default function MobileHome({
     const [pendingPto, setPendingPto]   = useState(0);
     const [unreadNotifs, setUnreadNotifs] = useState(0);
     const [labor, setLabor] = useState(null);
+    const [pendingApplications, setPendingApplications] = useState(0);
+
+    // Pending lock-screen apply submissions — drives the badge on the
+    // Onboarding tile so the owner sees new candidates without opening the tab.
+    useEffect(() => {
+        if (!hasOnboardingAccess) return;
+        const unsub = onSnapshot(collection(db, 'onboarding_applications'), (snap) => {
+            setPendingApplications(snap.size);
+        }, () => setPendingApplications(0));
+        return () => unsub();
+    }, [hasOnboardingAccess]);
 
     useEffect(() => {
         if (!staffName) return;
@@ -236,6 +248,7 @@ export default function MobileHome({
         { tab: 'ai',         icon: '🤖', en: 'AI Assist',    es: 'Asistente AI' },
         { tab: 'maintenance',icon: '🔧', en: 'Maintenance',  es: 'Mantenimiento' },
         { tab: 'insurance',  icon: '📑', en: 'Insurance',    es: 'Seguro' },
+        ...(hasOnboardingAccess ? [{ tab: 'onboarding', icon: '🪪', en: 'Onboarding', es: 'Onboarding', badge: pendingApplications, badgeTone: 'amber' }] : []),
         ...(isAdmin ? [{ tab: 'admin', icon: '⚙️', en: 'Admin', es: 'Admin', badge: pendingPto, badgeTone: 'amber' }] : []),
     ];
 

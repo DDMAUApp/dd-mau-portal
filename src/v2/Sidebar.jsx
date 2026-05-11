@@ -62,6 +62,7 @@ const NAV_GROUPS = [
         items: [
             { tab: 'maintenance', icon: '🔧', en: 'Maintenance', es: 'Mantenimiento' },
             { tab: 'insurance',   icon: '📑', en: 'Insurance',   es: 'Seguro' },
+            { tab: 'onboarding',  icon: '🪪', en: 'Onboarding',  es: 'Onboarding', requires: 'onboardingAccess' },
             { tab: 'admin',       icon: '⚙️', en: 'Admin',       es: 'Admin', requires: 'admin' },
         ],
     },
@@ -77,6 +78,7 @@ export default function Sidebar({
     isManager = false,
     hasOpsAccess = true,
     hasRecipesAccess = true,
+    hasOnboardingAccess = false,
     hiddenPages = [],
     // Action handlers — wired from App.jsx via AppShellV2.
     onLogout,
@@ -93,6 +95,7 @@ export default function Sidebar({
         if (req === 'manager') return isManager;
         if (req === 'opsAccess') return hasOpsAccess;
         if (req === 'recipesAccess') return hasRecipesAccess;
+        if (req === 'onboardingAccess') return hasOnboardingAccess;
         return true;
     };
     const filteredGroups = NAV_GROUPS.map(g => ({

@@ -3,7 +3,7 @@ import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
-import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage } from './data/staff';
+import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding } from './data/staff';
 import { enableFcmPush, onForegroundMessage } from './messaging';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
@@ -32,6 +32,9 @@ const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'
 const AiAssistant = lazy(() => import('./components/AiAssistant'));
 const TardinessTracker = lazy(() => import('./components/TardinessTracker'));
 const ShiftHandoff = lazy(() => import('./components/ShiftHandoff'));
+const Onboarding = lazy(() => import('./components/Onboarding'));
+const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
+const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 
 // Error boundary — catches render errors in child components
 class ErrorBoundary extends Component {
@@ -163,8 +166,30 @@ const SS = {
 // localStorage opt-out key happens at module load below.
 try { if (typeof localStorage !== 'undefined') localStorage.removeItem('ddmau:v2_optout'); } catch {}
 
+// Detect onboarding URL params at mount time. Two modes bypass the PIN:
+//   ?onboard=TOKEN — a new hire opening their invite link
+//   ?apply=1       — anyone tapping the in-store "Apply" QR
+// Both bypass auth entirely; the routing happens before the lock screen.
+function readOnboardingMode() {
+    if (typeof window === 'undefined') return { mode: null };
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const token = params.get('onboard');
+        if (token) return { mode: 'portal', token };
+        if (params.get('apply') === '1' || params.get('apply') === 'true') {
+            return { mode: 'apply' };
+        }
+    } catch {}
+    return { mode: null };
+}
+
 export default function App() {
     const isMobile = useIsMobile();
+    // Onboarding URL routing — if the user landed here via an invite link or
+    // the in-store Apply QR, skip the lock screen entirely. Computed once at
+    // mount; if the user dismisses Apply, we clear the flag and fall through
+    // to the normal PIN flow.
+    const [onboardingMode, setOnboardingMode] = useState(() => readOnboardingMode());
     // Lazy-init from localStorage so the user stays on the same screen across reloads.
     const [staffName, setStaffName] = useState(() => SS.get("staffName"));
     const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
@@ -316,6 +341,10 @@ export default function App() {
     // initialization" error and BREAKS THE WHOLE APP. (This was the cause
     // of the May 2026 production outage.)
     const isManager = staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || ''));
+    // Onboarding access — tighter than isAdmin. Holds PII (SSN, W4, DL etc).
+    // Defaults true for owners (id 40/41) only; everyone else needs the
+    // explicit canViewOnboarding=true flag in their staff record.
+    const hasOnboardingAccess = canViewOnboarding(currentStaffRecord);
     // Guard: if a non-admin restored a session that landed on admin/labor,
     // bounce them back to Home. Otherwise the tab gate hides the content
     // and they see a blank screen + a sidebar item highlighted that they
@@ -334,7 +363,9 @@ export default function App() {
         // that tab).
         if (activeTab === "operations" && !hasOpsAccess) setActiveTab("home");
         if (activeTab === "recipes" && !hasRecipesAccess) setActiveTab("home");
-    }, [staffName, staffIsAdmin, isManager, hasOpsAccess, hasRecipesAccess, activeTab]);
+        // Onboarding holds PII — same defensive bounce if access removed.
+        if (activeTab === "onboarding" && !hasOnboardingAccess) setActiveTab("home");
+    }, [staffName, staffIsAdmin, isManager, hasOpsAccess, hasRecipesAccess, hasOnboardingAccess, activeTab]);
     const effectiveLocation = staffIsAdmin ? activeLocation : staffLocation;
     const handleSelectStaff = (name) => {
         setStaffName(name);
@@ -368,8 +399,43 @@ export default function App() {
         if (target === 'recipes' && !hasRecipesAccess) return;
         setActiveTab(target);
     }, [activeTab, currentStaffRecord?.homeView, hasOpsAccess, hasRecipesAccess]);
+    // Onboarding deep links (handled before auth):
+    //   /?onboard=TOKEN → token-gated public new-hire portal
+    //   /?apply=1       → public job-application form
+    // These bypass the PIN entirely. Hires don't have a DD Mau account;
+    // their token IS the credential.
+    if (onboardingMode.mode === 'portal') {
+        return (
+            <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
+                <OnboardingPortal token={onboardingMode.token} language={language} />
+            </Suspense>
+        );
+    }
+    if (onboardingMode.mode === 'apply') {
+        return (
+            <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
+                <OnboardingApply
+                    language={language}
+                    onClose={() => {
+                        // Drop the apply flag from the URL and fall through to the PIN screen.
+                        try {
+                            const u = new URL(window.location.href);
+                            u.searchParams.delete('apply');
+                            window.history.replaceState({}, '', u.toString());
+                        } catch {}
+                        setOnboardingMode({ mode: null });
+                    }}
+                />
+            </Suspense>
+        );
+    }
     if (!staffName) {
-        return <HomePage onSelectStaff={handleSelectStaff} language={language} staffList={staffList} />;
+        return <HomePage
+            onSelectStaff={handleSelectStaff}
+            language={language}
+            staffList={staffList}
+            onApplyClick={() => setOnboardingMode({ mode: 'apply' })}
+        />;
     }
     // ── v2 shell (the only shell) ────────────────────────────────────────
     // Renders the active tab's component inside the v2 shell. Same data
@@ -390,6 +456,7 @@ export default function App() {
                         onNavigate={(tab) => setActiveTab(tab)}
                         hasOpsAccess={hasOpsAccess}
                         hasRecipesAccess={hasRecipesAccess}
+                        hasOnboardingAccess={hasOnboardingAccess}
                         isAdmin={staffIsAdmin}
                         isManager={isManager}
                         hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}
@@ -421,6 +488,7 @@ export default function App() {
             if (activeTab === 'tardies' && isManager) return <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'admin' && staffIsAdmin) return <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} />;
+            if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).
             return isMobile ? (
                 <MobileHome
@@ -458,6 +526,7 @@ export default function App() {
                     onNavigate={(tab) => setActiveTab(tab)}
                     hasOpsAccess={hasOpsAccess}
                     hasRecipesAccess={hasRecipesAccess}
+                    hasOnboardingAccess={hasOnboardingAccess}
                     isAdmin={staffIsAdmin}
                     isManager={isManager}
                     hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}

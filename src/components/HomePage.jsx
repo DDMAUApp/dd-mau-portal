@@ -35,7 +35,7 @@ function writeLockUntil(ts) {
     } catch {}
 }
 
-export default function HomePage({ onSelectStaff, language, staffList }) {
+export default function HomePage({ onSelectStaff, language, staffList, onApplyClick }) {
     const [pin, setPin] = useState("");
     const [error, setError] = useState("");
     const [collisionMatches, setCollisionMatches] = useState([]); // multi-staff PIN collision
@@ -185,6 +185,16 @@ export default function HomePage({ onSelectStaff, language, staffList }) {
                 </>
             )}
             <InstallAppButton language={language} />
+            {/* New-hire entry point. Same vocabulary as the typical "Register"
+                button on a sign-in screen, but for prospective hires:
+                fills the public application form, sends a push to Julie +
+                Andrew, and shows up in the admin Onboarding tab. */}
+            {onApplyClick && (
+                <button onClick={onApplyClick}
+                    className="mt-6 text-xs text-gray-500 hover:text-mint-700 underline-offset-2 hover:underline transition">
+                    👋 {isEs ? '¿Buscando trabajo? Aplica aquí' : 'New hire? Apply here'}
+                </button>
+            )}
         </div>
     );
 }

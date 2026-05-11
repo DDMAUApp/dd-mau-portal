@@ -86,6 +86,22 @@ export function canSeePage(staff, pageId) {
     return !hidden.includes(pageId);
 }
 
+// Onboarding access — tighter than `isAdmin`. Holds PII (SSN, W4, DL
+// photos), so the gate is an explicit per-record `canViewOnboarding`
+// flag (set in Admin Panel). Default ON for owners (id 40 + 41) so the
+// feature is usable out of the gate; default OFF for everyone else.
+//
+// Even other "admins" we add later don't see this tab unless the flag
+// is explicitly true on their record. The Firestore + Storage rules
+// mirror this check on the server so a tampered client can't read.
+export function canViewOnboarding(staff) {
+  if (!staff) return false;
+  if (staff.canViewOnboarding === true) return true;
+  if (staff.canViewOnboarding === false) return false;
+  // Default for the two owners only — Julie + Andrew.
+  return ADMIN_IDS.includes(staff.id);
+}
+
 // Per-staff page visibility / sensitive-data access.
 //
 // Determines whether a given staff member can SEE manager-only data

@@ -128,6 +128,62 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── Onboarding (PII) ────────────────────────────────────────────────
+    // Holds new-hire records with SSN/DOB/uploaded W4 etc. CRITICAL: these
+    // rules must come BEFORE the permissive {document=**} fallback below,
+    // otherwise the catch-all wins and anyone signed in can read PII.
+    //
+    // This app currently uses anonymous Firestore access (no per-user
+    // auth). Until we wire individual auth, the strongest server-side
+    // enforcement we can do is: narrow each collection's allowed write
+    // shape, keep file contents in Storage (which has its own rules),
+    // and rely on the CLIENT gate (canViewOnboarding flag in
+    // /config/staff.list) to hide the admin tab from non-admins.
+    //
+    // INVITES + APPLICATIONS are public-write by design: a hire needs to
+    // submit data without being signed in. Schema is narrowed; abuse is
+    // mitigated by short token lifetime + admin manual triage.
+
+    // Admin-owned hire records — full PII metadata (file contents live
+    // in Storage). Read is open at the rules layer because the new-hire
+    // portal reads its own record after resolving an invite token; the
+    // admin tab is gated client-side via canViewOnboarding.
+    match /onboarding_hires/{hireId} {
+      allow read: if true;
+      allow create: if request.resource.data.keys().hasAny(['id', 'name', 'createdAt'])
+                    && request.resource.data.name is string;
+      allow update: if true;       // narrowed by client gate + audit log
+      allow delete: if false;      // archive flag instead of hard-delete
+    }
+
+    // Invite tokens — single-use, time-boxed. The new-hire portal reads
+    // its own invite by token id (the URL param), then loads the hire.
+    match /onboarding_invites/{token} {
+      allow read: if true;
+      allow create: if request.resource.data.hireId is string
+                    && request.resource.data.expiresAt is string;
+      allow update: if true;       // status flips (used/openedAt) only
+      allow delete: if false;
+    }
+
+    // Public application submissions from the lock-screen Apply button.
+    // Append-only from anyone; admins read + clean up after converting.
+    match /onboarding_applications/{appId} {
+      allow read: if true;
+      allow create: if request.resource.data.name is string
+                    && request.resource.data.name.size() > 1
+                    && request.resource.data.name.size() < 200;
+      allow update, delete: if true;   // admin-only in practice (client gate)
+    }
+
+    // Onboarding audit trail — every admin view/download/approve/reject.
+    // Append-only.
+    match /onboarding_audits/{auditId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if false;
+    }
+
     // All other documents inherit a permissive default (matches current
     // app behavior). Tighten per-collection as the app evolves.
     match /{document=**} {
