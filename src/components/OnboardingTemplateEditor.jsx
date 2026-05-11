@@ -49,6 +49,12 @@ export default function OnboardingTemplateEditor({
     //       'reference' = admin uploads a PDF for the hire to download/print/fill
     //                     offline; no fields, no signature pad
     const [mode, setMode] = useState(initialTemplate?.mode || 'fillable');
+    // pdfDirty: true once admin uploads a fresh PDF in EDIT mode. Drives
+    // whether Save uploads to Storage (replacing the old PDF) or reuses
+    // the existing storagePath. Without this flag, "Replace PDF" on an
+    // existing template silently no-op'd because the save logic thought
+    // there was no fresh upload to push.
+    const [pdfDirty, setPdfDirty] = useState(false);
     const [pdfBytes, setPdfBytes] = useState(null);       // ArrayBuffer of the PDF (new uploads)
     const [pageImages, setPageImages] = useState([]);     // rendered page data URLs
     const [pageDims, setPageDims] = useState([]);         // [{w,h}] in PDF points
@@ -60,22 +66,51 @@ export default function OnboardingTemplateEditor({
 
     // If editing an existing template, load its PDF from storage.
     useEffect(() => {
-        if (!initialTemplate?.storagePath) return;
+        // If we're editing an existing template that has a storagePath,
+        // pull the PDF from Storage and render it. If storagePath is missing
+        // (older templates from before the field existed), bail with a
+        // clear message so admin knows to re-upload rather than seeing a
+        // generic failure.
+        if (!initialTemplate) return;
+        if (!initialTemplate.storagePath) {
+            setError(tx(
+                'This template is missing a PDF file (older record). Re-upload the PDF to fix.',
+                'Esta plantilla no tiene archivo PDF (registro antiguo). Vuelve a subir el PDF.',
+            ));
+            return;
+        }
         let alive = true;
         (async () => {
             setLoadingPdf(true);
+            setError('');
             try {
+                console.log('[TemplateEditor] loading existing template:', initialTemplate.storagePath);
                 const url = await getDownloadURL(sref(storage, initialTemplate.storagePath));
+                console.log('[TemplateEditor] got download URL');
                 const res = await fetch(url);
+                if (!res.ok) throw new Error(`Storage fetch failed: ${res.status} ${res.statusText}`);
                 const buf = await res.arrayBuffer();
+                console.log('[TemplateEditor] downloaded', buf.byteLength, 'bytes');
                 if (!alive) return;
+                if (buf.byteLength === 0) throw new Error('Downloaded PDF is empty (file missing or zero bytes in Storage)');
                 setPdfBytes(buf);
                 await renderPdf(buf);
-            } catch (e) { console.warn('Load existing template failed', e); setError('Failed to load PDF.'); }
-            finally { setLoadingPdf(false); }
+            } catch (e) {
+                console.error('[TemplateEditor] load failed:', e);
+                // Surface the actual error so admin (or me, on next bug report)
+                // sees what went wrong instead of a generic "Failed to load PDF".
+                const msg = e?.code === 'storage/object-not-found'
+                    ? tx('PDF file not found in Storage. It may have been deleted — re-upload.',
+                         'No se encontró el PDF en Storage. Vuelve a subir.')
+                    : e?.code === 'storage/unauthorized'
+                        ? tx('Storage access denied. Check Storage rules / App Check.',
+                             'Acceso denegado en Storage.')
+                        : tx('Failed to load PDF: ', 'No se pudo cargar el PDF: ') + (e?.message || e?.code || String(e));
+                setError(msg);
+            } finally { if (alive) setLoadingPdf(false); }
         })();
         return () => { alive = false; };
-    }, [initialTemplate?.storagePath]);
+    }, [initialTemplate?.storagePath, initialTemplate?.id]);
 
     const renderPdf = async (buf) => {
         try {
@@ -117,6 +152,7 @@ export default function OnboardingTemplateEditor({
         try {
             const buf = await file.arrayBuffer();
             setPdfBytes(buf);
+            setPdfDirty(true);  // mark so Save knows to push to Storage
             if (!name) setName(file.name.replace(/\.pdf$/i, ''));
             await renderPdf(buf);
         } finally {
@@ -286,7 +322,12 @@ export default function OnboardingTemplateEditor({
             // 1. Upload the PDF (only if new bytes are present — re-uses existing
             //    storage path on edits that didn't replace the PDF).
             let storagePath = initialTemplate?.storagePath;
-            if (pdfBytes && (!initialTemplate || initialTemplate.pendingNewPdf)) {
+            // Upload the PDF to Storage if EITHER:
+            //   • This is a new template (no initialTemplate), OR
+            //   • Admin uploaded a fresh PDF in edit mode (pdfDirty)
+            // The OLD check (initialTemplate.pendingNewPdf) never got set
+            // anywhere, so Replace PDF silently no-op'd before this fix.
+            if (pdfBytes && (!initialTemplate || pdfDirty)) {
                 // Allocate a fresh storage path; templates are append-only —
                 // never overwrite the original so we can roll back.
                 const ts = Date.now();
