@@ -264,13 +264,13 @@ export default function OnboardingTemplateEditor({
                                     field={f}
                                     selected={selectedFieldId === f.id}
                                     onSelect={(e) => { e.stopPropagation(); setSelectedFieldId(f.id); }}
-                                    onMove={(dx, dy) => updateField(f.id, {
-                                        x: Math.max(0, Math.min(1 - f.w, f.x + dx)),
-                                        y: Math.max(0, Math.min(1 - f.h, f.y + dy)),
+                                    onMove={(newX, newY) => updateField(f.id, {
+                                        x: Math.max(0, Math.min(1 - f.w, newX)),
+                                        y: Math.max(0, Math.min(1 - f.h, newY)),
                                     })}
-                                    onResize={(dw, dh) => updateField(f.id, {
-                                        w: Math.max(0.02, Math.min(1 - f.x, f.w + dw)),
-                                        h: Math.max(0.015, Math.min(1 - f.y, f.h + dh)),
+                                    onResize={(newW, newH) => updateField(f.id, {
+                                        w: Math.max(0.02, Math.min(1 - f.x, newW)),
+                                        h: Math.max(0.015, Math.min(1 - f.y, newH)),
                                     })}
                                     onDelete={() => deleteField(f.id)}
                                     isEs={isEs}
@@ -399,46 +399,77 @@ export default function OnboardingTemplateEditor({
 
 // Field marker — absolutely positioned div on top of the rendered page.
 // Click to select, drag center to move, drag bottom-right corner to resize.
+//
+// DRAG MATH: every drag handler captures the field's x/y/w/h AT DRAG START
+// and the cursor's start position. On each pointer move, we compute the
+// total delta from the start (not increments) and call onMove/onResize
+// with the new ABSOLUTE position. This avoids the React closure pitfall
+// where window listeners hold the props from when the drag began (stale
+// `field` prop) and only managed a single-tick delta before snapping back.
+//
+// TOUCH: same path handles touch events for iPad/phone admin use. We
+// extract clientX/Y from either MouseEvent or TouchEvent uniformly.
 function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, isEs }) {
-    const dragState = useRef(null);
+    const getXY = (ev) => {
+        if (ev.touches && ev.touches[0]) return { x: ev.touches[0].clientX, y: ev.touches[0].clientY };
+        if (ev.changedTouches && ev.changedTouches[0]) return { x: ev.changedTouches[0].clientX, y: ev.changedTouches[0].clientY };
+        return { x: ev.clientX, y: ev.clientY };
+    };
+
     const startDrag = (e, mode) => {
+        // Stop the page-container onClick from firing AND prevent text
+        // selection / native touch panning during the drag gesture.
         e.stopPropagation();
         e.preventDefault();
-        const rect = e.currentTarget.closest('.relative').getBoundingClientRect();
-        dragState.current = {
-            mode,
-            startX: e.clientX,
-            startY: e.clientY,
-            rect,
-        };
-        const onMouseMove = (ev) => {
-            if (!dragState.current) return;
-            const dx = (ev.clientX - dragState.current.startX) / dragState.current.rect.width;
-            const dy = (ev.clientY - dragState.current.startY) / dragState.current.rect.height;
-            if (dragState.current.mode === 'move') {
-                onMove(dx, dy);
+        const pageEl = e.currentTarget.closest('.relative');
+        if (!pageEl) return;
+        const rect = pageEl.getBoundingClientRect();
+        const start = getXY(e);
+        // Snapshot the field at drag-start so subsequent move events
+        // compute against a stable base instead of stale React state.
+        const startFx = field.x;
+        const startFy = field.y;
+        const startFw = field.w;
+        const startFh = field.h;
+
+        const onPointerMove = (ev) => {
+            const cur = getXY(ev);
+            const totalDx = (cur.x - start.x) / rect.width;
+            const totalDy = (cur.y - start.y) / rect.height;
+            if (mode === 'move') {
+                onMove(startFx + totalDx, startFy + totalDy);
             } else {
-                onResize(dx, dy);
+                onResize(startFw + totalDx, startFh + totalDy);
             }
-            dragState.current.startX = ev.clientX;
-            dragState.current.startY = ev.clientY;
+            // Block native scroll on touch — without preventDefault inside
+            // touchmove, iOS swallows the gesture and the page scrolls
+            // instead of the marker moving.
+            if (ev.cancelable) ev.preventDefault();
         };
-        const onMouseUp = () => {
-            dragState.current = null;
-            window.removeEventListener('mousemove', onMouseMove);
-            window.removeEventListener('mouseup', onMouseUp);
+        const onPointerUp = () => {
+            window.removeEventListener('mousemove', onPointerMove);
+            window.removeEventListener('mouseup', onPointerUp);
+            window.removeEventListener('touchmove', onPointerMove);
+            window.removeEventListener('touchend', onPointerUp);
+            window.removeEventListener('touchcancel', onPointerUp);
         };
-        window.addEventListener('mousemove', onMouseMove);
-        window.addEventListener('mouseup', onMouseUp);
+        window.addEventListener('mousemove', onPointerMove);
+        window.addEventListener('mouseup', onPointerUp);
+        // passive:false so we can preventDefault inside touchmove.
+        window.addEventListener('touchmove', onPointerMove, { passive: false });
+        window.addEventListener('touchend', onPointerUp);
+        window.addEventListener('touchcancel', onPointerUp);
     };
+
     return (
         <div
-            onClick={onSelect}
+            onClick={(e) => { e.stopPropagation(); onSelect(e); }}
             onMouseDown={(e) => { onSelect(e); startDrag(e, 'move'); }}
-            className={`absolute cursor-move border-2 group ${
+            onTouchStart={(e) => { onSelect(e); startDrag(e, 'move'); }}
+            className={`absolute cursor-move border-2 group touch-none ${
                 selected
-                    ? 'border-mint-700 bg-mint-200/40 z-10'
-                    : 'border-blue-400 bg-blue-100/40 hover:border-mint-500'
+                    ? 'border-dd-green bg-dd-green/15 z-10'
+                    : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
             }`}
             style={{
                 left: `${field.x * 100}%`,
@@ -446,17 +477,29 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                 width: `${field.w * 100}%`,
                 height: `${field.h * 100}%`,
             }}>
-            <div className="absolute top-0 left-0 -translate-y-full bg-mint-700 text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap">
+            <div className="absolute top-0 left-0 -translate-y-full bg-dd-green text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none">
                 {field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
             </div>
             {selected && (
                 <>
-                    <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                        className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center shadow z-10">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        onTouchStart={(e) => e.stopPropagation()}
+                        className="absolute -top-2.5 -right-2.5 w-6 h-6 rounded-full bg-red-600 text-white text-xs font-bold flex items-center justify-center shadow z-20">
                         ×
                     </button>
-                    <div onMouseDown={(e) => startDrag(e, 'resize')}
-                        className="absolute -bottom-1 -right-1 w-3 h-3 bg-mint-700 cursor-nwse-resize rounded-sm z-10" />
+                    {/* Resize handle. Bigger hit target than the visible
+                        chip so it's easy to grab on touch. Pointer events
+                        on this element shouldn't bubble to the marker's
+                        move drag — we explicitly call startDrag('resize'). */}
+                    <div
+                        onMouseDown={(e) => { e.stopPropagation(); startDrag(e, 'resize'); }}
+                        onTouchStart={(e) => { e.stopPropagation(); startDrag(e, 'resize'); }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="absolute -bottom-2 -right-2 w-5 h-5 cursor-nwse-resize z-20 flex items-end justify-end touch-none">
+                        <span className="w-3 h-3 bg-dd-green rounded-sm shadow" />
+                    </div>
                 </>
             )}
         </div>
