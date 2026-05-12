@@ -16,8 +16,9 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import {
     collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot,
-    serverTimestamp, query, orderBy, getDoc,
+    serverTimestamp, query, orderBy, getDoc, deleteField,
 } from 'firebase/firestore';
+import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { ref as sref, listAll, getDownloadURL, getMetadata, deleteObject } from 'firebase/storage';
 import {
     ONBOARDING_DOCS, DOC_STATUS, DOC_STATUS_META,
@@ -501,6 +502,15 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend }
     const meta = HIRE_STATUS_META[status];
     const minor = isHireMinor(hire);
     const [exporting, setExporting] = useState(false);
+    // Offer letter customization — admin can preview + tweak the letter
+    // body for THIS hire before sending the invite. Saves to
+    // hire.offerLetterBody; the hire portal honors that override when
+    // rendering OnboardingOfferLetter. See OfferLetterEditor below.
+    const [showOfferEditor, setShowOfferEditor] = useState(false);
+    // Some hire flows don't include the offer letter (e.g. "Tax forms only"
+    // re-send subset). Hide the edit button in those cases so it doesn't
+    // dead-end.
+    const offerLetterInFlow = docs.some(d => d.id === 'offer_letter');
 
     const exportZip = async () => {
         setExporting(true);
@@ -595,6 +605,21 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend }
                 <div className="flex items-center gap-1.5 flex-wrap">
                     <ReminderEmailButton hire={hire} docs={docs} isEs={isEs}
                         onWriteAudit={onWriteAudit} staffName={staffName} />
+                    {offerLetterInFlow && (
+                        <button onClick={() => setShowOfferEditor(true)}
+                            className={`text-[11px] px-2.5 py-1.5 rounded-lg font-bold ${
+                                hire.offerLetterBody
+                                    ? 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'
+                                    : 'bg-dd-bg text-dd-text hover:bg-dd-sage-50 border border-dd-line'
+                            }`}
+                            title={hire.offerLetterBody
+                                ? tx('Letter customized for this hire', 'Carta personalizada para este contratado')
+                                : tx('Default letter — click to edit', 'Carta predeterminada — clic para editar')}>
+                            ✏️ {hire.offerLetterBody
+                                ? tx('Edit letter ✓', 'Editar carta ✓')
+                                : tx('Edit letter', 'Editar carta')}
+                        </button>
+                    )}
                     <button onClick={onResend}
                         className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
                         ↻ {tx('Resend invite', 'Reenviar invitación')}
@@ -659,6 +684,148 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend }
                         onWriteAudit={onWriteAudit}
                     />
                 ))}
+            </div>
+            {showOfferEditor && (
+                <OfferLetterEditor
+                    hire={hire}
+                    isEs={isEs}
+                    staffName={staffName}
+                    onWriteAudit={onWriteAudit}
+                    onClose={() => setShowOfferEditor(false)}
+                />
+            )}
+        </div>
+    );
+}
+
+// ── OfferLetterEditor ─────────────────────────────────────────────────────
+// Admin-side preview + edit for the offer letter THIS hire will see.
+//
+// Default state: rendered letter (default template) with this hire's
+// variables already filled in. Admin can tweak the text directly —
+// rename the position, sweeten the wage, add a personal note. Save
+// stores the result on hire.offerLetterBody; the hire portal then uses
+// that exact string instead of regenerating from the template.
+//
+// "Reset to default" wipes the override (uses Firestore deleteField())
+// so the hire snaps back to the live template — useful when the admin
+// later changes the wage and wants the letter to reflect it.
+function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const defaultBody = useMemo(() => {
+        const vars = letterVars(hire);
+        return isEs ? LETTER_BODY_ES(vars) : LETTER_BODY_EN(vars);
+    }, [hire, isEs]);
+    const [body, setBody] = useState(hire?.offerLetterBody || defaultBody);
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState('');
+    const hasCustom = !!hire?.offerLetterBody;
+    const isDirty = body !== (hire?.offerLetterBody || defaultBody);
+
+    const save = async () => {
+        if (!body.trim()) {
+            setErr(tx('Letter body cannot be empty.', 'El cuerpo no puede estar vacío.'));
+            return;
+        }
+        setSaving(true);
+        setErr('');
+        try {
+            await updateDoc(doc(db, 'onboarding_hires', hire.id), {
+                offerLetterBody: body,
+                offerLetterEditedAt: serverTimestamp(),
+                offerLetterEditedBy: staffName || 'admin',
+            });
+            onWriteAudit?.('offer_letter_edited', { hireId: hire.id, hireName: hire.name });
+            onClose();
+        } catch (e) {
+            console.error('Save offer letter failed:', e);
+            setErr(tx('Save failed: ', 'No se pudo guardar: ') + (e.message || e));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const resetToDefault = async () => {
+        if (!hasCustom) return;
+        if (!confirm(tx(
+            'Reset to the default letter? Any custom edits saved on this hire will be lost.',
+            '¿Restablecer la carta predeterminada? Las ediciones guardadas se perderán.',
+        ))) return;
+        setSaving(true);
+        try {
+            await updateDoc(doc(db, 'onboarding_hires', hire.id), {
+                offerLetterBody: deleteField(),
+                offerLetterEditedAt: deleteField(),
+                offerLetterEditedBy: deleteField(),
+            });
+            setBody(defaultBody);
+            onWriteAudit?.('offer_letter_reset', { hireId: hire.id, hireName: hire.name });
+        } catch (e) {
+            console.error('Reset offer letter failed:', e);
+            setErr(tx('Reset failed: ', 'No se pudo restablecer: ') + (e.message || e));
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] flex flex-col">
+                <div className="border-b border-dd-line p-4 flex items-start justify-between gap-2 flex-shrink-0">
+                    <div className="min-w-0">
+                        <h3 className="text-lg font-black text-dd-text flex items-center gap-2">
+                            ✉️ {tx('Edit offer letter', 'Editar carta de oferta')}
+                            {hasCustom && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">
+                                    {tx('CUSTOMIZED', 'PERSONALIZADA')}
+                                </span>
+                            )}
+                        </h3>
+                        <p className="text-[11px] text-dd-text-2 mt-0.5 truncate">
+                            {tx('For', 'Para')} <b>{hire?.name || ''}</b> — {tx(
+                                'this is what the hire will see when they open their invite link.',
+                                'esto es lo que el contratado verá al abrir el enlace.',
+                            )}
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg flex-shrink-0">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-2.5 text-[11px] text-amber-900 leading-relaxed">
+                        💡 {tx(
+                            "Variables (name, position, wage, hire date) are already filled in from this hire's record. Edit the text directly — what you save here is exactly what the hire will see.",
+                            'Las variables (nombre, puesto, salario, fecha de inicio) ya están rellenas. Edita el texto directamente — lo que guardes es lo que verá el contratado.',
+                        )}
+                    </div>
+                    <textarea
+                        value={body}
+                        onChange={e => setBody(e.target.value)}
+                        rows={20}
+                        className="w-full border border-dd-line rounded-lg px-3 py-2 text-[12px] font-mono leading-relaxed focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50"
+                        spellCheck
+                    />
+                    {err && <p className="text-[11px] text-red-600">{err}</p>}
+                    {hasCustom && (
+                        <button onClick={resetToDefault} disabled={saving}
+                            className="text-[11px] text-red-600 hover:text-red-700 underline disabled:opacity-50">
+                            ↺ {tx('Reset to default letter', 'Restablecer a la predeterminada')}
+                        </button>
+                    )}
+                </div>
+                <div className="border-t border-dd-line p-3 flex gap-2 flex-shrink-0">
+                    <button onClick={onClose} disabled={saving}
+                        className="flex-1 py-2.5 rounded-lg bg-dd-bg text-dd-text-2 font-bold hover:bg-gray-200 disabled:opacity-50">
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
+                    <button onClick={save} disabled={saving || !isDirty}
+                        className="flex-1 py-2.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90 disabled:opacity-50">
+                        {saving
+                            ? tx('Saving…', 'Guardando…')
+                            : isDirty
+                                ? tx('Save letter', 'Guardar carta')
+                                : tx('No changes', 'Sin cambios')}
+                    </button>
+                </div>
             </div>
         </div>
     );

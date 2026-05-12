@@ -24,15 +24,17 @@ async function loadPdfLib() {
     return await import('pdf-lib');
 }
 
-// Letter content. Use {{placeholder}} syntax — keys must match the map
-// in fillTemplate() below.
-const LETTER_BODY_EN = (vars) => `Hi ${vars.firstName},
+// Letter content. Both `LETTER_BODY_EN` / `LETTER_BODY_ES` and the
+// `letterVars` helper are EXPORTED so the admin-side editor in
+// Onboarding.jsx can pre-fill the textarea with the same default text
+// the hire would have seen. Keep these in sync if you ever split them.
+export const LETTER_BODY_EN = (vars) => `Hi ${vars.firstName},
 
 We are pleased to offer you a position at our company, ${vars.legalEntity}, as a ${vars.position}! We think that your experience and skills will be a valuable asset to our company!
 
 If you are to accept this offer you will be eligible for the following in accordance with our company's policies:
 
-Wage of ${vars.offerAmount} per Hour.
+Wage of ${vars.offerAmount} per Hour plus tip.
 
 - You will be working at the following location: ${vars.locationAddress}
 - Your expected hire date will be ${vars.hireDate}.
@@ -46,13 +48,13 @@ To accept this offer, please sign below.
 Sincerely,
 Julie Shih`;
 
-const LETTER_BODY_ES = (vars) => `Hola ${vars.firstName},
+export const LETTER_BODY_ES = (vars) => `Hola ${vars.firstName},
 
 Nos complace ofrecerte un puesto en nuestra empresa, ${vars.legalEntity}, como ${vars.position}. Creemos que tu experiencia y habilidades serán un activo valioso para nuestra empresa.
 
 Si aceptas esta oferta, serás elegible para lo siguiente de acuerdo con las políticas de la empresa:
 
-Salario de ${vars.offerAmount} por hora.
+Salario de ${vars.offerAmount} por hora más propina.
 
 - Trabajarás en la siguiente ubicación: ${vars.locationAddress}
 - Tu fecha de inicio prevista será el ${vars.hireDate}.
@@ -66,7 +68,7 @@ Para aceptar esta oferta, firma abajo.
 Atentamente,
 Julie Shih`;
 
-function letterVars(hire) {
+export function letterVars(hire) {
     const firstName = (hire?.personal?.legalName || hire?.name || '').split(' ')[0] || hire?.name || '';
     const locInfo = (hire?.location && LOCATION_INFO[hire.location]) || LOCATION_INFO.webster;
     // Format hire date as M/D/YYYY for readability (the PDF in Andrew's
@@ -98,7 +100,13 @@ export default function OnboardingOfferLetter({
 }) {
     const tx = (en, es) => (isEs ? es : en);
     const vars = letterVars(hire);
-    const body = isEs ? LETTER_BODY_ES(vars) : LETTER_BODY_EN(vars);
+    // Admin override: if the hire's record has offerLetterBody set,
+    // it's the admin-edited version of the letter — use it verbatim
+    // (admin already saw the live variables filled in while editing).
+    // Falls back to the default templated letter when no override.
+    const body = hire?.offerLetterBody
+        ? hire.offerLetterBody
+        : (isEs ? LETTER_BODY_ES(vars) : LETTER_BODY_EN(vars));
 
     const [sigDataUrl, setSigDataUrl] = useState(null);
     const [submitting, setSubmitting] = useState(false);
