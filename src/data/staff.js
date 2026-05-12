@@ -71,7 +71,7 @@ export const HIDEABLE_PAGES = [
     { id: 'menu',        labelEn: 'Menu',         labelEs: 'Menú',           emoji: '🍜' },
     { id: 'eighty6',     labelEn: '86 Board',     labelEs: 'Tablero 86',     emoji: '🚫' },
     { id: 'training',    labelEn: 'Training',     labelEs: 'Capacitación',   emoji: '📚' },
-    { id: 'catering',    labelEn: 'Catering',     labelEs: 'Catering',       emoji: '🥘' },
+    { id: 'catering',    labelEn: 'Orders',       labelEs: 'Pedidos',        emoji: '🥘' },
     { id: 'ai',          labelEn: 'AI Assistant', labelEs: 'Asistente AI',   emoji: '🤖' },
     { id: 'maintenance', labelEn: 'Maintenance',  labelEs: 'Mantenimiento',  emoji: '🔧' },
     { id: 'insurance',   labelEn: 'Insurance',    labelEs: 'Seguro',         emoji: '📑' },

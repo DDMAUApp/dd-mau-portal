@@ -241,7 +241,7 @@ export default function MobileHome({
         { tab: 'eighty6',    icon: '🚫', en: '86 Board',     es: 'Tablero 86',    badge: eighty6Count, badgeTone: 'danger' },
         { tab: 'menu',       icon: '🍜', en: 'Menu',         es: 'Menú' },
         { tab: 'training',   icon: '📚', en: 'Training',     es: 'Capacitación' },
-        { tab: 'catering',   icon: '🥘', en: 'Catering',     es: 'Catering' },
+        { tab: 'catering',   icon: '🥘', en: 'Orders',       es: 'Pedidos' },
         ...(isManager ? [{ tab: 'tardies', icon: '⏰', en: 'Tardies', es: 'Tardanzas' }] : []),
         ...(isManager ? [{ tab: 'handoff', icon: '🤝', en: 'Handoff', es: 'Entrega' }] : []),
         ...(isAdmin   ? [{ tab: 'labor',   icon: '📊', en: 'Labor',   es: 'Mano Obra' }] : []),

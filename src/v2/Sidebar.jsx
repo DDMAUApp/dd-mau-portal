@@ -59,7 +59,7 @@ const NAV_GROUPS = [
         labelEn: 'BUSINESS', labelEs: 'NEGOCIO',
         items: [
             { tab: 'labor',     icon: '📊', en: 'Labor',         es: 'Mano Obra',   requires: 'admin' },
-            { tab: 'catering',  icon: '🥘', en: 'Catering',      es: 'Catering' },
+            { tab: 'catering',  icon: '🥘', en: 'Orders',        es: 'Pedidos' },
             { tab: 'ai',        icon: '🤖', en: 'AI Assistant',  es: 'Asistente AI' },
         ],
     },
