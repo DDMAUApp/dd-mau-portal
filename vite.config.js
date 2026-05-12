@@ -42,6 +42,19 @@ export default defineConfig({
         // @firebase/component are shared by every firebase package and
         // must initialize before any individual firebase package uses
         // them. One firebase chunk = guaranteed-correct load order.
+        //
+        // 2026-05-11 bundle-trim pass: pdf-lib, pdfjs-dist, jszip, qrcode
+        // were all being swept into vendor-misc (~934 KB), which loaded
+        // on FIRST PAINT for every user even though none of them are
+        // imported eagerly. Verified import sites:
+        //   - pdf-lib       → OnboardingFillablePdf / OfferLetter /
+        //                     EmployerFill / TemplateEditor (all lazy)
+        //   - pdfjs-dist    → await import() inside lazy onboarding (double-lazy)
+        //   - jszip, qrcode → await import() inside lazy Onboarding.jsx
+        // Returning undefined for these lets Rollup co-locate them with
+        // the lazy route chunks that actually need them, so first-paint
+        // no longer ships ~900 KB of PDF infrastructure that 99% of
+        // sessions never touch.
         manualChunks: (id) => {
           if (!id.includes('node_modules')) return;
           // React + scheduler — app-wide, stable.
@@ -51,6 +64,18 @@ export default defineConfig({
           // ALL of firebase in one chunk. Do NOT split into sub-chunks.
           if (id.includes('@firebase/') || id.includes('firebase/')) {
             return 'vendor-firebase';
+          }
+          // Lazy-only deps — let Rollup attach them to the lazy route
+          // chunks instead of force-grouping them into vendor-misc.
+          // Note: pdf-lib has no slash in the path on every platform
+          // (npm hoists it as /pdf-lib/), match by the package name.
+          if (
+            id.includes('/pdf-lib/') ||
+            id.includes('/pdfjs-dist/') ||
+            id.includes('/jszip/') ||
+            id.includes('/qrcode/')
+          ) {
+            return;
           }
           // Everything else from node_modules → generic vendor chunk.
           return 'vendor-misc';
