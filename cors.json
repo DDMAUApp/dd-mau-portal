@@ -1,0 +1,27 @@
+[
+  {
+    "origin": [
+      "https://ddmauapp.github.io",
+      "https://app.ddmaustl.com",
+      "https://ddmaustl.com",
+      "http://localhost:5173",
+      "http://localhost:5174",
+      "http://localhost:5175",
+      "http://localhost:5176",
+      "http://localhost:5177",
+      "http://localhost:4173"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Disposition",
+      "Cache-Control",
+      "Authorization",
+      "X-Goog-Resumable",
+      "X-Goog-Acl",
+      "X-Goog-Meta-Firebasestoragedownloadtokens"
+    ],
+    "maxAgeSeconds": 3600
+  }
+]

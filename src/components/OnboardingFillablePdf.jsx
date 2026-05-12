@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as sref, uploadBytes, getDownloadURL, getBytes } from 'firebase/storage';
 import { LOCATION_INFO } from '../data/onboarding';
 
 // Lazy loaders — keep pdfjs + pdf-lib out of the main bundle.
@@ -128,10 +128,22 @@ export default function OnboardingFillablePdf({
                     if (f.autofill) initial[f.id] = autofillValue(f.autofill, hire);
                 });
                 setValues(initial);
-                // Render PDF background.
-                const url = await getDownloadURL(sref(storage, chosen.storagePath));
-                const res = await fetch(url);
-                const buf = await res.arrayBuffer();
+                // Render PDF background. getBytes() goes through the
+                // Storage SDK's XHR-based download channel + has built-in
+                // retry / metadata handling — cleaner than the old
+                // getDownloadURL() + plain fetch() pattern.
+                //
+                // IMPORTANT — CORS DEPENDENCY: Storage SDK downloads from
+                // cross-origin pages still require the GCS bucket itself
+                // to have a CORS config that allows the deploy origin.
+                // For the 2026-05-11 "no docs loading" outage, the bucket
+                // had NO cors set — every download from
+                // https://ddmauapp.github.io (and localhost dev) was
+                // blocked by the browser even though the file fetched
+                // fine via curl. Fix: run `npm run cors-setup` once to
+                // push cors.json to the bucket via firebase-admin. See
+                // scripts/setup-storage-cors.mjs.
+                const buf = await getBytes(sref(storage, chosen.storagePath));
                 if (!alive) return;
                 setPdfBytes(buf);
                 await renderPages(buf);

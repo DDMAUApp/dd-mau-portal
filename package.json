@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "backup": "node scripts/backup-firestore.mjs",
-    "backup-all": "node scripts/backup-all.mjs"
+    "backup-all": "node scripts/backup-all.mjs",
+    "cors-setup": "node scripts/setup-storage-cors.mjs"
   },
   "dependencies": {
     "firebase": "^10.12.0",
