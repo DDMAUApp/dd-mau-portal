@@ -176,7 +176,17 @@ export default function OnboardingPortal({ token, language = 'en' }) {
 
     return (
         <div className="min-h-screen bg-dd-sage">
-            <div className="max-w-lg mx-auto p-3 sm:p-6 space-y-4">
+            {/* Mobile-first column (max-w-lg = 512px) is right for the
+                phones most hires use. On desktop (Andrew reviewing a
+                hire's invite link from his laptop, or anyone opening
+                the portal in a browser tab) the narrow column squeezed
+                the embedded PDF previews down to mobile width and
+                they were unreadable. md/lg breakpoints bump the
+                container to ~896px so the US Letter PDFs render at
+                their natural 1.4x rasterized size (~856 px) with a
+                little gutter. PDFs stay scrollable inside their card,
+                so the page doesn't grow unmanageably tall. */}
+            <div className="max-w-lg md:max-w-4xl mx-auto p-3 sm:p-6 space-y-4">
                 {/* Header */}
                 <header className="text-center pt-4">
                     <p className="text-3xl mb-1">🍜</p>

@@ -161,8 +161,14 @@ export default function OnboardingFillablePdf({
         const pdfjs = await loadPdfJs();
         const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf.slice(0)) }).promise;
         const imgs = [];
-        // Render at lower scale on the hire side (mobile screens). 1.0 is
-        // plenty since we use the PDF dimensions for the canvas.
+        // 1.4x is the right render scale here. A US Letter page at 1.4x
+        // is ~856 × 1109 px, which fills the desktop portal's
+        // md:max-w-4xl card (~880 px inner width) at ~100% — already
+        // crisp. We tried 2x for desktop but rendering 3-4 PDFs
+        // concurrently at 2x was punishing CPU + memory with no visible
+        // improvement, so we held the line at 1.4x. The visual "make
+        // the docs bigger" win lives in the portal's responsive
+        // max-width bump, not in raster supersampling.
         for (let p = 1; p <= pdf.numPages; p++) {
             const page = await pdf.getPage(p);
             const viewport = page.getViewport({ scale: 1.4 });
