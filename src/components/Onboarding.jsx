@@ -1086,14 +1086,41 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
     // a preset auto-sets the customDocs list; 'custom' lets admin
     // hand-pick from a checkbox grid.
     //
-    // Hidden in EDIT mode: the hire's checklist is already keyed to the
-    // doc set chosen at create time. Changing subsetDocs after the fact
-    // could orphan submitted docs (e.g., hire already uploaded W-4,
-    // admin removes W-4 from the subset → it disappears from the portal
-    // but the file is still in Storage). Out of scope for the edit-info
-    // flow; create a new hire / new invite if the doc set needs changing.
-    const [presetId, setPresetId] = useState('full');
-    const [customDocs, setCustomDocs] = useState(() => ONBOARDING_DOCS.map(d => d.id));
+    // EDIT MODE init: derive the starting preset + customDocs from the
+    // hire's existing subsetDocs so the picker reflects what they
+    // currently see.
+    //   - prefill.subsetDocs missing/null  → preset 'full'
+    //   - prefill.subsetDocs matches a named preset exactly → that preset
+    //   - anything else → preset 'custom' with the array pre-loaded
+    //
+    // Note on "what happens to a submitted doc that's removed from the
+    // subset": the file stays in Storage (path includes hireId+docId so
+    // it's still accessible to admin via the zip export) and the
+    // checklist entry stays on the hire record. The portal + admin
+    // detail page just stop SHOWING it. If you re-add the doc later,
+    // the prior submission re-appears intact. So this is hide/show,
+    // not delete — safe to change at any point in the hire's flow.
+    const subsetEq = (a, b) => {
+        if (!Array.isArray(a) || !Array.isArray(b)) return false;
+        if (a.length !== b.length) return false;
+        const sa = [...a].sort();
+        const sb = [...b].sort();
+        return sa.every((v, i) => v === sb[i]);
+    };
+    const initialPresetId = (() => {
+        const prefSubset = prefill?.subsetDocs;
+        if (!Array.isArray(prefSubset)) return 'full';
+        // Try named presets (skip 'full'=null and 'custom'=string sentinel).
+        const match = SUBSET_PRESETS.find(p =>
+            Array.isArray(p.docs) && subsetEq(p.docs, prefSubset)
+        );
+        return match ? match.id : 'custom';
+    })();
+    const [presetId, setPresetId] = useState(initialPresetId);
+    const [customDocs, setCustomDocs] = useState(() => {
+        if (isEditing && Array.isArray(prefill?.subsetDocs)) return prefill.subsetDocs;
+        return ONBOARDING_DOCS.map(d => d.id);
+    });
     const activePreset = SUBSET_PRESETS.find(p => p.id === presetId) || SUBSET_PRESETS[0];
     const selectedDocs = activePreset.docs === null
         ? null   // null = all required docs (default new-hire flow)
@@ -1109,9 +1136,13 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
         setSaving(true);
         try {
             if (isEditing) {
-                // Patch the existing hire — only fields that this modal
-                // owns. Don't touch checklist, subsetDocs, status, or any
-                // hire-submitted payload (personal info, etc.).
+                // Patch the existing hire — fields this modal owns +
+                // subsetDocs. Don't touch checklist, status, or any
+                // hire-submitted payload (personal info, emergency
+                // contact). The hire's portal pulls fresh data on every
+                // open so subsetDocs changes take effect immediately —
+                // if a doc was hidden and you add it back, prior uploads
+                // re-appear (checklist entry is still on the record).
                 await updateDoc(doc(db, 'onboarding_hires', prefill.id), {
                     name: name.trim(),
                     email: email.trim(),
@@ -1120,6 +1151,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                     location,
                     hireDate,
                     offerAmount: offerAmount.trim(),
+                    subsetDocs: selectedDocs,
                     updatedAt: new Date().toISOString(),
                     updatedBy: staffName || 'admin',
                 });
@@ -1135,6 +1167,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                     location,
                     hireDate,
                     offerAmount: offerAmount.trim(),
+                    subsetDocs: selectedDocs,
                 }, null);
                 return;
             }
@@ -1240,60 +1273,64 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                     </Field>
 
                     {/* Doc subset picker — pick a preset or hand-select.
-                        Default 'full' sends the entire required-doc flow
-                        (new-hire onboarding). The other presets target
-                        common follow-up cases: "I just need a new W-4
-                        from Maria" → tax preset → only the W-4s appear
-                        in her portal.
-                        Hidden in EDIT mode — see the comment on the
-                        useState for `presetId` for rationale. */}
-                    {!isEditing && (
-                        <Field label={tx('Which docs to send?', '¿Qué documentos enviar?')}>
-                            <select value={presetId} onChange={e => setPresetId(e.target.value)}
-                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
-                                {SUBSET_PRESETS.map(p => (
-                                    <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
-                                ))}
-                            </select>
-                            {presetId === 'custom' && (
-                                <div className="mt-2 bg-dd-bg rounded-lg p-2 max-h-48 overflow-y-auto">
-                                    <div className="grid grid-cols-1 gap-1">
-                                        {ONBOARDING_DOCS.map(d => {
-                                            const checked = customDocs.includes(d.id);
-                                            return (
-                                                <label key={d.id} className="flex items-center gap-2 p-1 cursor-pointer hover:bg-white rounded text-[12px]">
-                                                    <input type="checkbox" checked={checked}
-                                                        onChange={() => setCustomDocs(prev => checked
-                                                            ? prev.filter(x => x !== d.id)
-                                                            : [...prev, d.id])}
-                                                        className="w-4 h-4 accent-dd-green" />
-                                                    <span className="text-base">{d.emoji}</span>
-                                                    <span className="flex-1 text-dd-text font-semibold truncate">{isEs ? d.es : d.en}</span>
-                                                </label>
-                                            );
-                                        })}
-                                    </div>
-                                    <p className="text-[10px] text-dd-text-2 italic mt-1 px-1">
-                                        {customDocs.length} {tx('docs selected', 'docs seleccionados')}
-                                    </p>
+                        Default 'full' sends the entire required-doc flow.
+                        Other presets target common follow-up cases:
+                        "I just need a new W-4 from Maria" → tax preset.
+                        Shown in EDIT mode too — admin can shrink or expand
+                        the hire's checklist after the invite was sent.
+                        Removing a doc with prior submissions just HIDES
+                        them; the files stay in Storage and the checklist
+                        entry on the hire record is preserved. Re-adding
+                        the doc later brings the prior submission back. */}
+                    <Field label={
+                        isEditing
+                            ? tx('Which docs do they fill out?', '¿Qué documentos llenan?')
+                            : tx('Which docs to send?', '¿Qué documentos enviar?')
+                    }>
+                        <select value={presetId} onChange={e => setPresetId(e.target.value)}
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
+                            {SUBSET_PRESETS.map(p => (
+                                <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
+                            ))}
+                        </select>
+                        {presetId === 'custom' && (
+                            <div className="mt-2 bg-dd-bg rounded-lg p-2 max-h-48 overflow-y-auto">
+                                <div className="grid grid-cols-1 gap-1">
+                                    {ONBOARDING_DOCS.map(d => {
+                                        const checked = customDocs.includes(d.id);
+                                        return (
+                                            <label key={d.id} className="flex items-center gap-2 p-1 cursor-pointer hover:bg-white rounded text-[12px]">
+                                                <input type="checkbox" checked={checked}
+                                                    onChange={() => setCustomDocs(prev => checked
+                                                        ? prev.filter(x => x !== d.id)
+                                                        : [...prev, d.id])}
+                                                    className="w-4 h-4 accent-dd-green" />
+                                                <span className="text-base">{d.emoji}</span>
+                                                <span className="flex-1 text-dd-text font-semibold truncate">{isEs ? d.es : d.en}</span>
+                                            </label>
+                                        );
+                                    })}
                                 </div>
-                            )}
-                            {presetId !== 'full' && presetId !== 'custom' && activePreset.docs && (
-                                <p className="text-[10px] text-dd-text-2 mt-1 italic">
-                                    {activePreset.docs.length} {tx('docs:', 'docs:')} {activePreset.docs.map(id => {
-                                        const d = ONBOARDING_DOCS.find(x => x.id === id);
-                                        return d ? (isEs ? d.es : d.en) : id;
-                                    }).join(', ')}
+                                <p className="text-[10px] text-dd-text-2 italic mt-1 px-1">
+                                    {customDocs.length} {tx('docs selected', 'docs seleccionados')}
                                 </p>
-                            )}
-                        </Field>
-                    )}
+                            </div>
+                        )}
+                        {presetId !== 'full' && presetId !== 'custom' && activePreset.docs && (
+                            <p className="text-[10px] text-dd-text-2 mt-1 italic">
+                                {activePreset.docs.length} {tx('docs:', 'docs:')} {activePreset.docs.map(id => {
+                                    const d = ONBOARDING_DOCS.find(x => x.id === id);
+                                    return d ? (isEs ? d.es : d.en) : id;
+                                }).join(', ')}
+                            </p>
+                        )}
+                    </Field>
 
                     <p className="text-[11px] text-dd-text-2 mt-2 bg-dd-bg p-2 rounded">
                         {isEditing
                             ? tx(
-                                'Edits apply immediately. The hire sees the new info next time they open their invite link.',
-                                'Los cambios se aplican al instante. El contratado verá la nueva info la próxima vez que abra el enlace.',
+                                'Edits apply immediately — hire sees changes on next portal open. Removing a doc just hides it; their prior submission stays in Storage and re-appears if you add the doc back.',
+                                'Los cambios se aplican al instante. Quitar un documento lo oculta; los archivos previos se conservan y reaparecen si lo vuelves a agregar.',
                             )
                             : tx(
                                 'A one-time invite link + QR will be generated. The hire only sees the selected docs.',
