@@ -19,7 +19,7 @@ import {
     serverTimestamp, query, orderBy, getDoc, deleteField,
 } from 'firebase/firestore';
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
-import { ref as sref, listAll, getDownloadURL, getMetadata, deleteObject } from 'firebase/storage';
+import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
 import {
     ONBOARDING_DOCS, DOC_STATUS, DOC_STATUS_META,
     HIRE_STATUS, HIRE_STATUS_META,
@@ -554,10 +554,12 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend }
             const allItems = subFolderFiles.flat();
             for (const { docId, item } of allItems) {
                 try {
-                    const url = await getDownloadURL(item);
-                    const res = await fetch(url);
-                    const blob = await res.blob();
-                    zip.file(`${docId}/${item.name}`, blob);
+                    // getBytes() (SDK XHR path) instead of getDownloadURL+fetch
+                    // so the zip export works cross-origin without depending
+                    // on freshly-cached bucket CORS. Same migration applied
+                    // to OnboardingFillablePdf / TemplateEditor / EmployerFill.
+                    const buf = await getBytes(item);
+                    zip.file(`${docId}/${item.name}`, new Blob([buf]));
                 } catch (e) { console.warn('skip file', item.fullPath, e); }
             }
             const blob = await zip.generateAsync({ type: 'blob' });

@@ -22,7 +22,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
 import { collection, query, where, getDocs, updateDoc, doc } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL, listAll, getMetadata } from 'firebase/storage';
+import { ref as sref, uploadBytes, getDownloadURL, getBytes, listAll, getMetadata } from 'firebase/storage';
 import { DOC_STATUS } from '../data/onboarding';
 
 async function loadPdfJs() {
@@ -106,9 +106,9 @@ export default function OnboardingEmployerFill({
                     return (b.updated || '').localeCompare(a.updated || '');
                 });
                 const chosenFile = submittedItems[0];
-                const url = await getDownloadURL(chosenFile.it);
-                const res = await fetch(url);
-                const buf = await res.arrayBuffer();
+                // Same CORS-resistant SDK path used by OnboardingFillablePdf
+                // and the template editor — see those for rationale.
+                const buf = await getBytes(chosenFile.it);
                 if (!alive) return;
                 setPdfBytes(buf);
 

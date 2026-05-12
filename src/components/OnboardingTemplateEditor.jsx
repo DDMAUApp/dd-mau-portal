@@ -21,7 +21,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { db, storage } from '../firebase';
 import { doc, setDoc, addDoc, collection, deleteDoc } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+import { ref as sref, uploadBytes, getDownloadURL, getBytes, deleteObject } from 'firebase/storage';
 import { TEMPLATE_FIELD_TYPES, TEMPLATE_AUTOFILLS, ONBOARDING_DOCS } from '../data/onboarding';
 
 // Lazy-load pdfjs. The worker has to be set up too; we use the modern URL form.
@@ -85,11 +85,14 @@ export default function OnboardingTemplateEditor({
             setError('');
             try {
                 console.log('[TemplateEditor] loading existing template:', initialTemplate.storagePath);
-                const url = await getDownloadURL(sref(storage, initialTemplate.storagePath));
-                console.log('[TemplateEditor] got download URL');
-                const res = await fetch(url);
-                if (!res.ok) throw new Error(`Storage fetch failed: ${res.status} ${res.statusText}`);
-                const buf = await res.arrayBuffer();
+                // Use SDK getBytes() (XHR) instead of getDownloadURL()+fetch():
+                // the SDK has built-in retry, returns ArrayBuffer directly,
+                // and routes through the same auth-aware channel that the
+                // hire portal uses. Was hitting "Failed to fetch" on the
+                // template editor whenever the bucket's CORS config wasn't
+                // freshly cached, leaving "10 fields placed, 0 pages" — an
+                // empty editor with no PDF to anchor field positions to.
+                const buf = await getBytes(sref(storage, initialTemplate.storagePath));
                 console.log('[TemplateEditor] downloaded', buf.byteLength, 'bytes');
                 if (!alive) return;
                 if (buf.byteLength === 0) throw new Error('Downloaded PDF is empty (file missing or zero bytes in Storage)');
