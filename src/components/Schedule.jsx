@@ -4201,48 +4201,65 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     isSelected={selectedShiftIds && selectedShiftIds.has(sh.id)}
                                                     onToggleSelection={onToggleShiftSelection} />
                                             ))}
-                                            {canEdit && cellShifts.length === 0 && !onPTO && (() => {
-                                                // Inline quick-add chip strip — only renders when
-                                                // this cell is the active quickAddCell. Otherwise
-                                                // a faint "+" so the cell still feels tappable.
+                                            {canEdit && !onPTO && (() => {
+                                                // Inline quick-add affordance — renders regardless
+                                                // of how many shifts the cell already has so a
+                                                // second/third shift can be tacked on without
+                                                // re-opening the modal. Three states:
+                                                //   - isActive → full chip strip (the preset picker)
+                                                //   - empty cell → big "+" pill, cell-wide click opens it
+                                                //   - cell w/ shifts → small "+ add" pill below them
                                                 const isActive = quickAddCell
                                                     && quickAddCell.staff?.name === s.name
                                                     && quickAddCell.dateStr === dStr;
-                                                if (!isActive) {
-                                                    // Explicit "+" pill — clearer affordance than the
-                                                    // plain "+". Hover/focus reveals the dd-green tint.
+                                                if (isActive) {
+                                                    const presets = getShiftPresets(resolveStaffSide(s));
+                                                    return (
+                                                        <div onClick={(e) => e.stopPropagation()}
+                                                            className="space-y-1 bg-dd-green-50 rounded-lg p-1.5 ring-2 ring-dd-green/40 shadow-card">
+                                                            {presets.map(p => (
+                                                                <button key={p.label} type="button"
+                                                                    onClick={() => onQuickAddSelect && onQuickAddSelect(p)}
+                                                                    className="w-full px-1.5 py-1 rounded-md bg-white border border-dd-green/30 text-dd-green-700 text-[10px] font-bold hover:bg-dd-sage-50 hover:border-dd-green active:scale-95 transition">
+                                                                    {p.label}
+                                                                </button>
+                                                            ))}
+                                                            <div className="flex gap-1">
+                                                                <button type="button"
+                                                                    onClick={() => onQuickAddCustom && onQuickAddCustom()}
+                                                                    className="flex-1 px-1 py-1 rounded-md bg-white border border-blue-200 text-blue-700 text-[10px] font-bold hover:bg-blue-50 active:scale-95 transition"
+                                                                    title={isEn ? 'Open full editor' : 'Abrir editor completo'}>
+                                                                    ✏️
+                                                                </button>
+                                                                <button type="button"
+                                                                    onClick={() => onQuickAddClose && onQuickAddClose()}
+                                                                    className="flex-1 px-1 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
+                                                                    title={isEn ? 'Cancel' : 'Cancelar'}>
+                                                                    ✕
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+                                                if (cellShifts.length === 0) {
                                                     return (
                                                         <div className="flex items-center justify-center py-1">
                                                             <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-dd-bg/60 text-dd-text-2/40 text-xs font-bold border border-dashed border-dd-line group-hover:bg-dd-green-50 group-hover:text-dd-green-700 group-hover:border-dd-green/40 transition">+</span>
                                                         </div>
                                                     );
                                                 }
-                                                const presets = getShiftPresets(resolveStaffSide(s));
+                                                // Cell already has a shift — render a compact
+                                                // "+ add" pill so a 2nd/3rd shift can be added.
+                                                // Has its own click handler since the cell-wide
+                                                // onClick at the <td> level is gated to empty.
                                                 return (
-                                                    <div onClick={(e) => e.stopPropagation()}
-                                                        className="space-y-1 bg-dd-green-50 rounded-lg p-1.5 ring-2 ring-dd-green/40 shadow-card">
-                                                        {presets.map(p => (
-                                                            <button key={p.label} type="button"
-                                                                onClick={() => onQuickAddSelect && onQuickAddSelect(p)}
-                                                                className="w-full px-1.5 py-1 rounded-md bg-white border border-dd-green/30 text-dd-green-700 text-[10px] font-bold hover:bg-dd-sage-50 hover:border-dd-green active:scale-95 transition">
-                                                                {p.label}
-                                                            </button>
-                                                        ))}
-                                                        <div className="flex gap-1">
-                                                            <button type="button"
-                                                                onClick={() => onQuickAddCustom && onQuickAddCustom()}
-                                                                className="flex-1 px-1 py-1 rounded-md bg-white border border-blue-200 text-blue-700 text-[10px] font-bold hover:bg-blue-50 active:scale-95 transition"
-                                                                title={isEn ? 'Open full editor' : 'Abrir editor completo'}>
-                                                                ✏️
-                                                            </button>
-                                                            <button type="button"
-                                                                onClick={() => onQuickAddClose && onQuickAddClose()}
-                                                                className="flex-1 px-1 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
-                                                                title={isEn ? 'Cancel' : 'Cancelar'}>
-                                                                ✕
-                                                            </button>
-                                                        </div>
-                                                    </div>
+                                                    <button type="button"
+                                                        onClick={(e) => { e.stopPropagation(); onCellClick(s, dStr); }}
+                                                        title={isEn ? 'Add another shift' : 'Agregar otro turno'}
+                                                        className="w-full flex items-center justify-center gap-0.5 px-1 py-0.5 rounded-md bg-dd-bg/60 hover:bg-dd-green-50 text-dd-text-2/60 hover:text-dd-green-700 border border-dashed border-dd-line hover:border-dd-green/40 text-[10px] font-bold transition">
+                                                        <span>+</span>
+                                                        <span className="text-[9px]">{isEn ? 'add' : 'agregar'}</span>
+                                                    </button>
                                                 );
                                             })()}
                                         </div>
