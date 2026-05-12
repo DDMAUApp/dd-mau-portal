@@ -23,7 +23,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
     DOC_STATUS, DOC_STATUS_META,
     docsForHire, isHireMinor, hireProgressCounts,
@@ -474,6 +474,82 @@ function FormInputs({ docId, initial, isEs, onSave }) {
     );
 }
 
+// ── UploadedFilesList ─────────────────────────────────────────────────────
+// Shared helper used by FileUpload and IdDocUpload (and could power any
+// other Storage-backed doc kind). Lists what's currently in
+// `onboarding/{hireId}/{docId}/` so the hire can SEE what they already
+// uploaded — fixes the "upload doesn't show as uploaded" complaint where
+// the button just reverted to its idle label with no confirmation.
+//
+// Re-runs whenever `refreshKey` changes (parent bumps after each upload)
+// so a fresh photo appears in the list immediately.
+function UploadedFilesList({ hireId, docId, refreshKey, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [files, setFiles] = useState([]);
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            setLoading(true);
+            try {
+                const folderRef = sref(storage, `onboarding/${hireId}/${docId}`);
+                const list = await listAll(folderRef);
+                // Resolve download URLs in parallel. <img src=URL> bypasses
+                // CORS (image element loads aren't preflighted), so this
+                // works from the public token-gated portal.
+                const resolved = await Promise.all(list.items.map(async (item) => {
+                    try {
+                        const url = await getDownloadURL(item);
+                        return { name: item.name, fullPath: item.fullPath, url };
+                    } catch { return null; }
+                }));
+                if (!alive) return;
+                // Sort newest first — filenames start with timestamp so
+                // lexicographic descending == reverse-chronological.
+                setFiles(resolved.filter(Boolean).sort((a, b) => b.name.localeCompare(a.name)));
+            } catch (e) {
+                console.warn('list uploaded files failed', e);
+                if (alive) setFiles([]);
+            } finally {
+                if (alive) setLoading(false);
+            }
+        })();
+        return () => { alive = false; };
+    }, [hireId, docId, refreshKey]);
+
+    if (loading) return <p className="text-[11px] text-gray-500 italic py-1">{tx('Checking uploads…', 'Revisando subidas…')}</p>;
+    if (files.length === 0) return null;
+    return (
+        <div className="p-2 rounded-lg bg-green-50 border-2 border-green-300">
+            <p className="text-[11px] font-bold text-green-800 mb-1">
+                ✓ {files.length} {tx(`file${files.length === 1 ? '' : 's'} uploaded`, `archivo${files.length === 1 ? '' : 's'} subido${files.length === 1 ? '' : 's'}`)}
+            </p>
+            <div className="grid grid-cols-3 gap-1.5">
+                {files.map(f => {
+                    const isPdf = /\.pdf$/i.test(f.name);
+                    return (
+                        <a key={f.fullPath} href={f.url} target="_blank" rel="noopener noreferrer"
+                            className="block bg-white rounded border border-green-200 overflow-hidden aspect-square relative hover:border-green-500 active:scale-95">
+                            {isPdf ? (
+                                <div className="w-full h-full flex flex-col items-center justify-center bg-red-50 text-red-700">
+                                    <span className="text-2xl">📄</span>
+                                    <span className="text-[9px] font-bold">PDF</span>
+                                </div>
+                            ) : (
+                                <img src={f.url} alt={f.name} className="w-full h-full object-cover" />
+                            )}
+                        </a>
+                    );
+                })}
+            </div>
+            <p className="text-[10px] text-green-700 italic mt-1">
+                {tx('Tap a thumbnail to view. Add more below if needed.',
+                    'Toca una miniatura para ver. Agrega más abajo si necesitas.')}
+            </p>
+        </div>
+    );
+}
+
 // ── FileUpload ────────────────────────────────────────────────────────────
 function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
     const tx = (en, es) => (isEs ? es : en);
@@ -481,6 +557,10 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
     const [uploading, setUploading] = useState(false);
     const [progress, setProgress] = useState(0);
     const [err, setErr] = useState('');
+    // Bump every time a new upload finishes — drives UploadedFilesList to
+    // re-list the Storage folder so the just-added file shows immediately
+    // instead of waiting for a page reload.
+    const [refreshKey, setRefreshKey] = useState(0);
 
     const handleFiles = async (filesList) => {
         const files = Array.from(filesList || []);
@@ -504,6 +584,7 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
                 setProgress(Math.round(((i + 1) / files.length) * 100));
             }
             onUploaded?.();
+            setRefreshKey(k => k + 1);
         } catch (e) {
             console.error('upload failed', e);
             setErr(e.message || String(e));
@@ -514,6 +595,7 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
 
     return (
         <div className="space-y-2">
+            <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />
             <input ref={inputRef} type="file"
                 accept="image/*,application/pdf"
                 multiple
@@ -552,6 +634,7 @@ function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
     const inputRef = useRef(null);
     const [uploading, setUploading] = useState(false);
     const [err, setErr] = useState('');
+    const [refreshKey, setRefreshKey] = useState(0);
 
     const handleFiles = async (filesList) => {
         const files = Array.from(filesList || []);
@@ -578,6 +661,7 @@ function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
                 await uploadBytes(sref(storage, path), f, { contentType: f.type });
             }
             onUploaded?.(finalLabel);
+            setRefreshKey(k => k + 1);
         } catch (e) {
             console.error(e);
             setErr(e.message || String(e));
@@ -588,6 +672,7 @@ function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
 
     return (
         <div className="space-y-2">
+            <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />
             <label className="block">
                 <span className="text-[11px] font-bold uppercase text-gray-500">
                     {tx('Which type of ID is this?', '¿Qué tipo de identificación es?')}

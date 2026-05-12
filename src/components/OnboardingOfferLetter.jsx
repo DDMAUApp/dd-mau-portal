@@ -122,6 +122,15 @@ export default function OnboardingOfferLetter({
     const lastPoint = useRef(null);
     const [empty, setEmpty] = useState(true);
 
+    // Canvas init — also re-runs when the hire toggles back into the form
+    // from the Complete view. On a fresh page load of an already-submitted
+    // doc, showSubmitted starts true so the canvas isn't rendered yet; this
+    // effect's first pass sees a null ref and bails. Once the user taps
+    // Edit, the canvas mounts and we re-fire with showSubmitted in the
+    // deps. Without this dependency the canvas kept its default 300x150
+    // internal size while the CSS box was much larger — strokes drawn at
+    // bounding-rect coords landed outside the visible area, so signatures
+    // looked invisible and submit appeared to do nothing.
     useEffect(() => {
         const c = canvasRef.current;
         if (!c) return;
@@ -135,7 +144,7 @@ export default function OnboardingOfferLetter({
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.strokeStyle = '#1f2937';
-    }, []);
+    }, [showSubmitted]);
 
     const pos = (e) => {
         const r = canvasRef.current.getBoundingClientRect();
@@ -288,6 +297,23 @@ export default function OnboardingOfferLetter({
 
     return (
         <div className="space-y-3">
+            {/* Returning-hire banner — when wasSubmitted is true but they've
+                clicked Edit, the canvas is blank again so they MUST re-sign
+                before Submit will activate. Without this hint hires saw a
+                disabled button and thought the form was broken. */}
+            {wasSubmitted && (
+                <div className="p-2 rounded-lg bg-amber-50 border-2 border-amber-300 text-[12px] text-amber-900">
+                    <p className="font-bold">
+                        ✏️ {tx('Editing your submitted offer letter', 'Editando tu carta de oferta enviada')}
+                    </p>
+                    <p className="text-[11px] mt-0.5">
+                        {tx(
+                            'Re-sign below — the signature pad is blank after re-opening. Submit again to save the new copy.',
+                            'Vuelve a firmar abajo — la firma se borra al reabrir. Envía de nuevo para guardar.',
+                        )}
+                    </p>
+                </div>
+            )}
             {/* Letterhead preview — matches the generated PDF style. */}
             <div className="bg-white border border-gray-200 rounded-lg p-3 text-[12px] leading-relaxed">
                 <div className="bg-gray-100 -mx-3 -mt-3 mb-3 p-3 rounded-t-lg">

@@ -361,6 +361,24 @@ export default function OnboardingFillablePdf({
 
     return (
         <div className="space-y-2">
+            {/* Returning-hire banner — values reset to autofill defaults on
+                hard reload, and signature canvases come back blank. Without
+                this hint hires saw the form, hit Submit, got "fill N more
+                fields" errors on their own signature, and thought the form
+                was broken. */}
+            {wasSubmitted && (
+                <div className="p-2 rounded-lg bg-amber-50 border-2 border-amber-300 text-[12px] text-amber-900">
+                    <p className="font-bold">
+                        ✏️ {tx('Editing your submitted form', 'Editando tu formulario enviado')}
+                    </p>
+                    <p className="text-[11px] mt-0.5">
+                        {tx(
+                            'Re-fill any signatures and check your values — text fields keep what you typed this session, but signatures and unsaved edits don\'t persist across reloads. Tap Submit again when ready.',
+                            'Vuelve a firmar y revisa tus valores — los campos de texto guardan lo de esta sesión, las firmas no persisten al recargar. Envía de nuevo cuando estés listo.',
+                        )}
+                    </p>
+                </div>
+            )}
             <p className="text-[11px] text-gray-600">
                 {tx(
                     'Fill the highlighted fields below. Tap a signature box to sign with your finger.',
