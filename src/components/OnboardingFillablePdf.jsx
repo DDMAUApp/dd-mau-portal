@@ -190,18 +190,22 @@ export default function OnboardingFillablePdf({
     // Validate required fields are filled before submit. Skip:
     //  • static  — pre-filled by admin at template time
     //  • employer — filled by admin AFTER hire submits (I-9 Section 2 pattern)
-    //  • field.required === false — admin explicitly marked it optional in
-    //    the template editor (50+ field forms like I-9 have plenty of
-    //    "if applicable" blanks; we used to force-block submit on those)
+    //  • field.required !== true — by default fields are OPTIONAL. Admin
+    //    explicitly marks the few must-have boxes as required in the
+    //    template editor. On 50-field forms like the I-9 the required
+    //    list is short (name, SSN, signature, date); having admin tick
+    //    the small handful is faster than ticking 40+ "if applicable"
+    //    boxes as optional.
     // Checkboxes can be left unchecked (we don't force).
     //
-    // Back-compat: fields predating the required toggle don't have the
-    // property — those default to required (treat undefined as true).
+    // Note: fields predating the required toggle have no `required`
+    // property at all — those are now treated as optional under the new
+    // default. Admin can re-mark anything that should still block submit.
     const validate = () => {
         const missing = (template?.fields || []).filter(f => {
             if (f.filledBy === 'static') return false;
             if (f.filledBy === 'employer') return false;
-            if (f.required === false) return false;
+            if (f.required !== true) return false;
             const v = values[f.id];
             if (f.type === 'checkbox') return false;
             return !v || (typeof v === 'string' && !v.trim());

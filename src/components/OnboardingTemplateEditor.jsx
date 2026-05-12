@@ -257,7 +257,8 @@ export default function OnboardingTemplateEditor({
                             ? guessAutofill(ann.fieldName, ann.alternativeText)
                             : '',
                         fontSize: Math.max(8, Math.min(14, Math.round(h * 0.65))),
-                        required: true,    // admin flips to optional per-field in the side panel
+                        // Default optional — see new-field handler for why.
+                        required: false,
                     });
                 }
             }
@@ -301,7 +302,10 @@ export default function OnboardingTemplateEditor({
             label: '',
             autofill: '',         // empty = hire fills manually
             fontSize: 11,
-            required: true,       // admin can flip per-field in the side panel
+            // Default optional. On long forms (I-9 has 40-50 fields, most
+            // "if applicable") it's faster for admin to tick the few
+            // genuinely-required boxes than to opt-out everything else.
+            required: false,
         };
         setFields([...fields, newField]);
         setSelectedFieldId(newField.id);
@@ -836,8 +840,8 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                         ? 'border-amber-500 bg-amber-100/50 hover:border-amber-600'
                         : field.filledBy === 'employer'
                             ? 'border-purple-500 bg-purple-100/50 hover:border-purple-600'
-                            : field.required === false
-                                ? 'border-gray-400 border-dashed bg-gray-100/40 hover:border-gray-500'
+                            : field.required === true
+                                ? 'border-red-500 bg-red-100/40 hover:border-red-600'
                                 : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
             }`}
             style={{
@@ -849,10 +853,10 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
             <div className={`absolute top-0 left-0 -translate-y-full text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none ${
                 field.filledBy === 'static' ? 'bg-amber-600'
                     : field.filledBy === 'employer' ? 'bg-purple-600'
-                    : field.required === false ? 'bg-gray-500'
+                    : field.required === true ? 'bg-red-600'
                     : 'bg-dd-green'
             }`}>
-                {field.filledBy === 'static' ? '🔒 ' : field.filledBy === 'employer' ? '👔 ' : field.required === false ? '○ ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
+                {field.filledBy === 'static' ? '🔒 ' : field.filledBy === 'employer' ? '👔 ' : field.required === true ? '✱ ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
             </div>
             {selected && (
                 <>
