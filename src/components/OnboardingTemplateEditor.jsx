@@ -850,7 +850,19 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                 width: `${field.w * 100}%`,
                 height: `${field.h * 100}%`,
             }}>
-            <div className={`absolute top-0 left-0 -translate-y-full text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none ${
+            {/* Field label pill. Was always-visible at text-[9px] which on
+                dense forms (W-4, I-9) covered the underlying PDF labels and
+                made it hard to verify alignment. Now: a tiny 7px pill
+                visible only when the field is SELECTED or being HOVERED.
+                Resting state shows nothing above the field — so admin can
+                see the PDF labels they're aligning to. The full info (type
+                / autofill / label / required state) is also in the side
+                panel when the field is selected, so nothing is lost. */}
+            <div className={`absolute top-0 left-0 -translate-y-full text-white text-[8px] font-bold px-1 py-px rounded-t whitespace-nowrap pointer-events-none transition-opacity ${
+                selected
+                    ? 'opacity-100'
+                    : 'opacity-0 group-hover:opacity-100'
+            } ${
                 field.filledBy === 'static' ? 'bg-amber-600'
                     : field.filledBy === 'employer' ? 'bg-purple-600'
                     : field.required === true ? 'bg-red-600'
