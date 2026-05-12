@@ -40,6 +40,21 @@ const DAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const DAYS_ES = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const DAYS_FULL_EN = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const DAYS_FULL_ES = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+// Day-of-week IDs — index-aligned with DAYS_EN (so DAY_IDS[d.getDay()] gives
+// the id). Used by RecurringShiftsModal and (as of 2026-05-11) by
+// TemplateEditorModal's daysOfWeek picker. Single source of truth so the
+// two day pickers stay visually consistent and the apply-template
+// day-of-week guard can read the field without any conversion.
+const DAY_IDS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+const dayIdFromDateStr = (dateStr) => {
+    // parseLocalDate avoids the UTC drift that `new Date('YYYY-MM-DD')`
+    // hits in time zones west of UTC (the date string is interpreted as
+    // UTC midnight, which becomes the previous evening locally).
+    if (!dateStr) return null;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    if (!y || !m || !d) return null;
+    return DAY_IDS[new Date(y, m - 1, d).getDay()];
+};
 
 // FLSA workweek per Andrew's spec: Sunday through Saturday.
 const WEEK_START_DOW = 0; // 0 = Sunday
@@ -6341,11 +6356,35 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
         name: "",
         side: side,
         location: storeLocation && storeLocation !== "both" ? storeLocation : "webster",
+        // daysOfWeek: empty = "any day" (back-compat with templates created
+        // before this field shipped). When non-empty, ApplyTemplateModal
+        // sorts matching-day templates to the top + warns before applying
+        // to a non-matching date.
+        daysOfWeek: [],
         blocks: [
             { label: tx("Morning", "Mañana"), startTime: "09:00", endTime: "15:00", slots: [{ roleGroup: "foh-staff", count: 3 }] },
         ],
     });
+    // Existing templates predating daysOfWeek lack the field — guard so
+    // toggleDay doesn't blow up with `undefined.includes`.
+    const tplDays = Array.isArray(tpl.daysOfWeek) ? tpl.daysOfWeek : [];
     const update = (k, v) => setTpl(t => ({ ...t, [k]: v }));
+    const toggleDay = (d) => setTpl(t => {
+        const days = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
+        return {
+            ...t,
+            daysOfWeek: days.includes(d) ? days.filter(x => x !== d) : [...days, d],
+        };
+    });
+    const setDayGroup = (groupId) => setTpl(t => {
+        const groups = {
+            all: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+            weekdays: ['mon', 'tue', 'wed', 'thu', 'fri'],
+            weekends: ['sat', 'sun'],
+            none: [],
+        };
+        return { ...t, daysOfWeek: groups[groupId] || [] };
+    });
     const updateBlock = (bi, k, v) => setTpl(t => ({
         ...t,
         blocks: t.blocks.map((b, i) => i === bi ? { ...b, [k]: v } : b),
@@ -6423,6 +6462,56 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                                 <option value="maryland">{LOCATION_LABELS.maryland}</option>
                                 <option value="both">{LOCATION_LABELS.both}</option>
                             </select>
+                        </div>
+                    </div>
+
+                    {/* Days of week — tag which days this template applies to.
+                        Optional. If left empty, ApplyTemplateModal lets you
+                        apply on any date with no warning (full back-compat
+                        with templates created before this picker shipped).
+                        If populated, applying to a non-matching weekday
+                        shows a confirm dialog. Matches the visual language
+                        of the RecurringShiftsModal day picker so the two
+                        feel like the same control. */}
+                    <div>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">
+                            {tx("Use on which days?", "¿Para qué días?")}
+                            <span className="ml-1 font-normal text-dd-text-2/70 normal-case tracking-normal">
+                                {tx("(optional — leave empty for any day)", "(opcional — vacío = cualquier día)")}
+                            </span>
+                        </label>
+                        <div className="flex flex-wrap gap-1 mb-1.5">
+                            <button type="button" onClick={() => setDayGroup('all')}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold border border-gray-300 bg-white text-gray-600 hover:border-indigo-400">
+                                {tx("All", "Todos")}
+                            </button>
+                            <button type="button" onClick={() => setDayGroup('weekdays')}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold border border-gray-300 bg-white text-gray-600 hover:border-indigo-400">
+                                {tx("Weekdays", "Lun–Vie")}
+                            </button>
+                            <button type="button" onClick={() => setDayGroup('weekends')}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold border border-gray-300 bg-white text-gray-600 hover:border-indigo-400">
+                                {tx("Weekends", "Fin de semana")}
+                            </button>
+                            <button type="button" onClick={() => setDayGroup('none')}
+                                className="px-2 py-0.5 rounded text-[10px] font-bold border border-gray-300 bg-white text-gray-500 hover:border-red-300 hover:text-red-600">
+                                {tx("Clear", "Limpiar")}
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1">
+                            {DAY_IDS.map((dId, i) => {
+                                const picked = tplDays.includes(dId);
+                                return (
+                                    <button key={dId} type="button" onClick={() => toggleDay(dId)}
+                                        className={`py-1 rounded text-[11px] font-bold border transition ${
+                                            picked
+                                                ? 'bg-indigo-600 text-white border-indigo-600'
+                                                : 'bg-white text-gray-600 border-gray-300 hover:border-indigo-400'
+                                        }`}>
+                                        {isEn ? DAYS_EN[i] : DAYS_ES[i]}
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -6513,7 +6602,45 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
     const tx = (en, es) => (isEn ? en : es);
     const [pickedTemplate, setPickedTemplate] = useState(null);
     const [dateStr, setDateStr] = useState(toDateStr(weekStart));
-    const filtered = templates.filter(t => t.side === side);
+    // Matching-day templates first when a date is picked. Templates with
+    // an empty/missing daysOfWeek still rank as "matches anything" so they
+    // stay visible — they're back-compat templates that didn't opt in to
+    // the day filter, not "always apply" templates.
+    const pickedDayId = dayIdFromDateStr(dateStr);
+    const templateMatchesDay = (t) => {
+        if (!pickedDayId) return true;
+        if (!Array.isArray(t.daysOfWeek) || t.daysOfWeek.length === 0) return true;
+        return t.daysOfWeek.includes(pickedDayId);
+    };
+    const filtered = templates
+        .filter(t => t.side === side)
+        .slice()
+        .sort((a, b) => {
+            const am = templateMatchesDay(a) ? 0 : 1;
+            const bm = templateMatchesDay(b) ? 0 : 1;
+            if (am !== bm) return am - bm;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+    // Guarded apply — if the picked template has explicit days set and the
+    // chosen date doesn't fall on one, confirm before creating staffing
+    // needs that may be wrong. Lets the manager say "yes, apply anyway"
+    // without removing the safety net.
+    const handleApplyClick = () => {
+        if (!pickedTemplate) return;
+        const days = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
+        if (days.length > 0 && pickedDayId && !days.includes(pickedDayId)) {
+            const dayName = (isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[DAY_IDS.indexOf(pickedDayId)] || pickedDayId;
+            const tplDayNames = days
+                .map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)] || d)
+                .join(', ');
+            const msg = tx(
+                `"${pickedTemplate.name}" is set up for: ${tplDayNames}.\n\nApply to ${dayName} anyway?`,
+                `"${pickedTemplate.name}" está configurada para: ${tplDayNames}.\n\n¿Aplicar al ${dayName} de todos modos?`,
+            );
+            if (!confirm(msg)) return;
+        }
+        onApply(pickedTemplate, dateStr);
+    };
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
@@ -6534,11 +6661,38 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                             {filtered.map(t => {
                                 const totalSlots = (t.blocks || []).reduce((sum, b) => sum + (b.slots || []).reduce((s, sl) => s + (sl.count || 0), 0), 0);
                                 const isPicked = pickedTemplate && pickedTemplate.id === t.id;
+                                const tDays = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
+                                const matchesDay = templateMatchesDay(t);
                                 return (
-                                    <div key={t.id} className={`p-2 rounded-lg border-2 ${isPicked ? "border-indigo-500 bg-indigo-50" : "border-gray-200 bg-white"}`}>
+                                    <div key={t.id} className={`p-2 rounded-lg border-2 transition ${
+                                        isPicked
+                                            ? "border-indigo-500 bg-indigo-50"
+                                            : matchesDay
+                                                ? "border-gray-200 bg-white"
+                                                : "border-gray-200 bg-white opacity-50"
+                                    }`}>
                                         <div className="flex items-center justify-between gap-2">
                                             <button onClick={() => setPickedTemplate(t)} className="flex-1 text-left">
-                                                <div className="font-bold text-sm text-gray-800">{t.name}</div>
+                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                    <span className="font-bold text-sm text-gray-800">{t.name}</span>
+                                                    {/* Per-template day chips — only render when the
+                                                        template opted in to day tagging. Empty array
+                                                        means "any day" so we don't clutter the row. */}
+                                                    {tDays.length > 0 && tDays.length < 7 && (
+                                                        <span className="inline-flex gap-0.5">
+                                                            {tDays.map(dId => (
+                                                                <span key={dId}
+                                                                    className={`px-1 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                                                                        pickedDayId === dId
+                                                                            ? 'bg-dd-green text-white'
+                                                                            : 'bg-indigo-100 text-indigo-700'
+                                                                    }`}>
+                                                                    {(isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(dId)]}
+                                                                </span>
+                                                            ))}
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <div className="text-[10px] text-gray-500">
                                                     {(t.blocks || []).length} {tx("block(s)", "bloque(s)")} · {totalSlots} {tx("total slots", "slots totales")} · {LOCATION_LABELS[t.location] || t.location}
                                                 </div>
@@ -6568,18 +6722,30 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                             })}
                         </div>
                     )}
-                    {pickedTemplate && (
-                        <div className="border-t border-gray-200 pt-3 space-y-2">
-                            <div className="text-xs font-bold text-gray-700">{tx("Apply", "Aplicar")} "{pickedTemplate.name}" {tx("to date:", "a fecha:")}</div>
-                            <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)}
-                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
-                            <button onClick={() => onApply(pickedTemplate, dateStr)}
-                                className="w-full py-2 rounded-lg bg-green-600 text-white font-bold text-sm hover:bg-green-700">
-                                ✓ {tx("Apply Template", "Aplicar Plantilla")}
-                            </button>
-                            <p className="text-[10px] text-gray-500 text-center">{tx("Creates one staffing need per role slot. You fill them next.", "Crea una necesidad por slot. Las llenas luego.")}</p>
-                        </div>
-                    )}
+                    {pickedTemplate && (() => {
+                        const days = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
+                        const wrongDay = days.length > 0 && pickedDayId && !days.includes(pickedDayId);
+                        return (
+                            <div className="border-t border-gray-200 pt-3 space-y-2">
+                                <div className="text-xs font-bold text-gray-700">{tx("Apply", "Aplicar")} "{pickedTemplate.name}" {tx("to date:", "a fecha:")}</div>
+                                <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)}
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                                {wrongDay && (
+                                    <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 text-[11px] text-amber-900 leading-snug">
+                                        ⚠ {tx(
+                                            `This template is set up for ${days.map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)]).join(', ')}. The selected date is a ${(isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[DAY_IDS.indexOf(pickedDayId)]}.`,
+                                            `Esta plantilla es para ${days.map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)]).join(', ')}. La fecha elegida es ${(isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[DAY_IDS.indexOf(pickedDayId)]}.`,
+                                        )}
+                                    </div>
+                                )}
+                                <button onClick={handleApplyClick}
+                                    className={`w-full py-2 rounded-lg font-bold text-sm text-white transition ${wrongDay ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}>
+                                    ✓ {tx("Apply Template", "Aplicar Plantilla")}
+                                </button>
+                                <p className="text-[10px] text-gray-500 text-center">{tx("Creates one staffing need per role slot. You fill them next.", "Crea una necesidad por slot. Las llenas luego.")}</p>
+                            </div>
+                        );
+                    })()}
                 </div>
             </div>
         </div>
