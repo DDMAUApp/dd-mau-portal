@@ -295,6 +295,14 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                                 writeAudit('invite_resent', { hireId: selected.id, token });
                                 setInviteSheet({ hire: selected, token, url: buildInviteUrl(token) });
                             }}
+                            onEdit={() => {
+                                // Re-use the AddHireModal in edit mode by
+                                // shoving the existing hire into the prefill
+                                // slot. The modal detects edit mode via the
+                                // presence of prefill.id.
+                                setConvertPrefill(selected);
+                                setAddOpen(true);
+                            }}
                         />
                     ) : (
                         <div className="bg-white border border-dd-line rounded-xl p-8 text-center">
@@ -315,14 +323,22 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     onClose={() => { setAddOpen(false); setConvertPrefill(null); }}
                     onCreated={async (hire, token) => {
                         setAddOpen(false);
-                        setInviteSheet({ hire, token, url: buildInviteUrl(token) });
+                        // token === null means the modal was in edit mode
+                        // (existing hire patched, no new invite). Skip the
+                        // invite-link sheet — there's nothing new to send.
+                        if (token) {
+                            setInviteSheet({ hire, token, url: buildInviteUrl(token) });
+                            writeAudit('hire_created', { hireId: hire.id, hireName: hire.name });
+                        } else {
+                            writeAudit('hire_edited', { hireId: hire.id, hireName: hire.name });
+                        }
                         // If converted from an application, clean it up.
-                        if (convertPrefill && convertPrefill.sourceApplicationId) {
+                        // Only on CREATE — edits won't have a sourceApplicationId.
+                        if (token && convertPrefill && convertPrefill.sourceApplicationId) {
                             try { await deleteDoc(doc(db, 'onboarding_applications', convertPrefill.sourceApplicationId)); }
                             catch (e) { console.warn('Could not delete source application:', e); }
                         }
                         setConvertPrefill(null);
-                        writeAudit('hire_created', { hireId: hire.id, hireName: hire.name });
                     }}
                 />
             )}
@@ -494,7 +510,7 @@ function ProgressDonut({ counts, size = 64 }) {
 }
 
 // ── HireDetail ────────────────────────────────────────────────────────────
-function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend }) {
+function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, onEdit }) {
     const tx = (en, es) => (isEs ? es : en);
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
@@ -607,6 +623,14 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend }
                 <div className="flex items-center gap-1.5 flex-wrap">
                     <ReminderEmailButton hire={hire} docs={docs} isEs={isEs}
                         onWriteAudit={onWriteAudit} staffName={staffName} />
+                    {onEdit && (
+                        <button onClick={onEdit}
+                            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-bg text-dd-text font-bold hover:bg-dd-sage-50 border border-dd-line"
+                            title={tx('Edit name, position, wage, start date — before the hire opens their invite, or after.',
+                                'Editar nombre, puesto, salario, fecha — antes o después de que el contratado abra el enlace.')}>
+                            ✏️ {tx('Edit info', 'Editar info')}
+                        </button>
+                    )}
                     {offerLetterInFlow && (
                         <button onClick={() => setShowOfferEditor(true)}
                             className={`text-[11px] px-2.5 py-1.5 rounded-lg font-bold ${
@@ -1035,12 +1059,23 @@ const SUBSET_PRESETS = [
 
 function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCreated }) {
     const tx = (en, es) => (isEs ? es : en);
+    // EDIT MODE: when a real existing hire (with id) is passed in, the
+    // modal switches from "create new" to "patch existing." Same form,
+    // different submit path. Created so Andrew can fix typos in name /
+    // position / wage AFTER the invite was generated but before the hire
+    // opens it (and even after — the hire portal pulls fresh data on
+    // every load, so edits propagate immediately).
+    //
+    // PREFILL FROM APPLICATION: still works — applications coming from
+    // the lock-screen Apply form have NO id and the modal treats them
+    // as create-with-prefilled-name flow. Discriminator is prefill.id.
+    const isEditing = !!prefill?.id;
     const [name, setName] = useState(prefill?.name || '');
     const [email, setEmail] = useState(prefill?.email || '');
     const [phone, setPhone] = useState(prefill?.phone || '');
     const [position, setPosition] = useState(prefill?.position || '');
     const [location, setLocation] = useState(prefill?.location || storeLocation || 'webster');
-    const [hireDate, setHireDate] = useState('');
+    const [hireDate, setHireDate] = useState(prefill?.hireDate || '');
     // Offer amount — free-form so the admin can type "$15.00/hr" or
     // "$45,000/year" or whatever fits. Stored verbatim on the hire record
     // and auto-filled into any template field bound to `offerAmount`
@@ -1050,6 +1085,13 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
     // Doc selection. Default 'full' = entire required-doc list. Picking
     // a preset auto-sets the customDocs list; 'custom' lets admin
     // hand-pick from a checkbox grid.
+    //
+    // Hidden in EDIT mode: the hire's checklist is already keyed to the
+    // doc set chosen at create time. Changing subsetDocs after the fact
+    // could orphan submitted docs (e.g., hire already uploaded W-4,
+    // admin removes W-4 from the subset → it disappears from the portal
+    // but the file is still in Storage). Out of scope for the edit-info
+    // flow; create a new hire / new invite if the doc set needs changing.
     const [presetId, setPresetId] = useState('full');
     const [customDocs, setCustomDocs] = useState(() => ONBOARDING_DOCS.map(d => d.id));
     const activePreset = SUBSET_PRESETS.find(p => p.id === presetId) || SUBSET_PRESETS[0];
@@ -1059,13 +1101,43 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
             ? customDocs
             : activePreset.docs;
     const canSubmit = name.trim().length > 1 && !saving
-        && (presetId !== 'custom' || customDocs.length > 0);
+        && (isEditing || presetId !== 'custom' || customDocs.length > 0);
 
     const submit = async (e) => {
         e?.preventDefault();
         if (!canSubmit) return;
         setSaving(true);
         try {
+            if (isEditing) {
+                // Patch the existing hire — only fields that this modal
+                // owns. Don't touch checklist, subsetDocs, status, or any
+                // hire-submitted payload (personal info, etc.).
+                await updateDoc(doc(db, 'onboarding_hires', prefill.id), {
+                    name: name.trim(),
+                    email: email.trim(),
+                    phone: phone.trim(),
+                    position: position.trim(),
+                    location,
+                    hireDate,
+                    offerAmount: offerAmount.trim(),
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: staffName || 'admin',
+                });
+                // Pass null token so the parent knows this was an edit
+                // (don't pop the invite-link sheet) — same callback name,
+                // different behavior based on token presence.
+                onCreated({
+                    ...prefill,
+                    name: name.trim(),
+                    email: email.trim(),
+                    phone: phone.trim(),
+                    position: position.trim(),
+                    location,
+                    hireDate,
+                    offerAmount: offerAmount.trim(),
+                }, null);
+                return;
+            }
             const hireRef = doc(collection(db, 'onboarding_hires'));
             const hire = {
                 id: hireRef.id,
@@ -1096,8 +1168,8 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
             });
             onCreated({ ...hire }, token);
         } catch (e) {
-            console.error('Create hire failed:', e);
-            alert(tx('Could not create hire: ', 'No se pudo crear: ') + (e.message || e));
+            console.error(isEditing ? 'Edit hire failed:' : 'Create hire failed:', e);
+            alert((isEditing ? tx('Could not save: ', 'No se pudo guardar: ') : tx('Could not create hire: ', 'No se pudo crear: ')) + (e.message || e));
         } finally {
             setSaving(false);
         }
@@ -1114,7 +1186,9 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
             <form onSubmit={submit} className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
                 <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0">
                     <h3 className="text-lg font-black text-dd-text">
-                        🪪 {tx('New hire', 'Nueva contratación')}
+                        {isEditing
+                            ? <>✏️ {tx('Edit hire', 'Editar contratación')}</>
+                            : <>🪪 {tx('New hire', 'Nueva contratación')}</>}
                     </h3>
                     <button type="button" onClick={onClose} className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg">×</button>
                 </div>
@@ -1170,52 +1244,61 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                         (new-hire onboarding). The other presets target
                         common follow-up cases: "I just need a new W-4
                         from Maria" → tax preset → only the W-4s appear
-                        in her portal. */}
-                    <Field label={tx('Which docs to send?', '¿Qué documentos enviar?')}>
-                        <select value={presetId} onChange={e => setPresetId(e.target.value)}
-                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
-                            {SUBSET_PRESETS.map(p => (
-                                <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
-                            ))}
-                        </select>
-                        {presetId === 'custom' && (
-                            <div className="mt-2 bg-dd-bg rounded-lg p-2 max-h-48 overflow-y-auto">
-                                <div className="grid grid-cols-1 gap-1">
-                                    {ONBOARDING_DOCS.map(d => {
-                                        const checked = customDocs.includes(d.id);
-                                        return (
-                                            <label key={d.id} className="flex items-center gap-2 p-1 cursor-pointer hover:bg-white rounded text-[12px]">
-                                                <input type="checkbox" checked={checked}
-                                                    onChange={() => setCustomDocs(prev => checked
-                                                        ? prev.filter(x => x !== d.id)
-                                                        : [...prev, d.id])}
-                                                    className="w-4 h-4 accent-dd-green" />
-                                                <span className="text-base">{d.emoji}</span>
-                                                <span className="flex-1 text-dd-text font-semibold truncate">{isEs ? d.es : d.en}</span>
-                                            </label>
-                                        );
-                                    })}
+                        in her portal.
+                        Hidden in EDIT mode — see the comment on the
+                        useState for `presetId` for rationale. */}
+                    {!isEditing && (
+                        <Field label={tx('Which docs to send?', '¿Qué documentos enviar?')}>
+                            <select value={presetId} onChange={e => setPresetId(e.target.value)}
+                                className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
+                                {SUBSET_PRESETS.map(p => (
+                                    <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
+                                ))}
+                            </select>
+                            {presetId === 'custom' && (
+                                <div className="mt-2 bg-dd-bg rounded-lg p-2 max-h-48 overflow-y-auto">
+                                    <div className="grid grid-cols-1 gap-1">
+                                        {ONBOARDING_DOCS.map(d => {
+                                            const checked = customDocs.includes(d.id);
+                                            return (
+                                                <label key={d.id} className="flex items-center gap-2 p-1 cursor-pointer hover:bg-white rounded text-[12px]">
+                                                    <input type="checkbox" checked={checked}
+                                                        onChange={() => setCustomDocs(prev => checked
+                                                            ? prev.filter(x => x !== d.id)
+                                                            : [...prev, d.id])}
+                                                        className="w-4 h-4 accent-dd-green" />
+                                                    <span className="text-base">{d.emoji}</span>
+                                                    <span className="flex-1 text-dd-text font-semibold truncate">{isEs ? d.es : d.en}</span>
+                                                </label>
+                                            );
+                                        })}
+                                    </div>
+                                    <p className="text-[10px] text-dd-text-2 italic mt-1 px-1">
+                                        {customDocs.length} {tx('docs selected', 'docs seleccionados')}
+                                    </p>
                                 </div>
-                                <p className="text-[10px] text-dd-text-2 italic mt-1 px-1">
-                                    {customDocs.length} {tx('docs selected', 'docs seleccionados')}
+                            )}
+                            {presetId !== 'full' && presetId !== 'custom' && activePreset.docs && (
+                                <p className="text-[10px] text-dd-text-2 mt-1 italic">
+                                    {activePreset.docs.length} {tx('docs:', 'docs:')} {activePreset.docs.map(id => {
+                                        const d = ONBOARDING_DOCS.find(x => x.id === id);
+                                        return d ? (isEs ? d.es : d.en) : id;
+                                    }).join(', ')}
                                 </p>
-                            </div>
-                        )}
-                        {presetId !== 'full' && presetId !== 'custom' && activePreset.docs && (
-                            <p className="text-[10px] text-dd-text-2 mt-1 italic">
-                                {activePreset.docs.length} {tx('docs:', 'docs:')} {activePreset.docs.map(id => {
-                                    const d = ONBOARDING_DOCS.find(x => x.id === id);
-                                    return d ? (isEs ? d.es : d.en) : id;
-                                }).join(', ')}
-                            </p>
-                        )}
-                    </Field>
+                            )}
+                        </Field>
+                    )}
 
                     <p className="text-[11px] text-dd-text-2 mt-2 bg-dd-bg p-2 rounded">
-                        {tx(
-                            'A one-time invite link + QR will be generated. The hire only sees the selected docs.',
-                            'Se generará un enlace + QR. El contratado solo verá los documentos seleccionados.',
-                        )}
+                        {isEditing
+                            ? tx(
+                                'Edits apply immediately. The hire sees the new info next time they open their invite link.',
+                                'Los cambios se aplican al instante. El contratado verá la nueva info la próxima vez que abra el enlace.',
+                            )
+                            : tx(
+                                'A one-time invite link + QR will be generated. The hire only sees the selected docs.',
+                                'Se generará un enlace + QR. El contratado solo verá los documentos seleccionados.',
+                            )}
                     </p>
                 </div>
                 <div className="border-t border-dd-line p-4 flex gap-2 flex-shrink-0">
@@ -1225,7 +1308,9 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                     </button>
                     <button type="submit" disabled={!canSubmit}
                         className="flex-1 py-2 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">
-                        {saving ? tx('Creating…', 'Creando…') : tx('Create + invite', 'Crear + invitar')}
+                        {saving
+                            ? (isEditing ? tx('Saving…', 'Guardando…') : tx('Creating…', 'Creando…'))
+                            : (isEditing ? tx('Save changes', 'Guardar cambios') : tx('Create + invite', 'Crear + invitar'))}
                     </button>
                 </div>
             </form>
