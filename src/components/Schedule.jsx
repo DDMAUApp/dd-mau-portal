@@ -330,6 +330,35 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [availableForDate, setAvailableForDate] = useState(null);
     // Mobile-only: collapse the secondary action buttons behind a ⋯ menu.
     const [showMoreActions, setShowMoreActions] = useState(false);
+    // The More dropdown anchors immediately below the More button — but
+    // the button can sit anywhere from y=80 (header just below sticky
+    // nav) to y=500+ (when there's no vertical scroll). A static
+    // max-height like 75vh either wastes space at the top of the page or
+    // overflows at the bottom. Measure the live button bottom + clamp
+    // the popover max-height to (viewport - button bottom - 24px gutter)
+    // so the menu always fits and falls back to internal scroll when
+    // the admin section is taller than the remaining viewport.
+    const moreBtnRef = useRef(null);
+    const [moreMenuMaxH, setMoreMenuMaxH] = useState(420);
+    useEffect(() => {
+        if (!showMoreActions) return;
+        const recompute = () => {
+            const rect = moreBtnRef.current?.getBoundingClientRect();
+            if (!rect) return;
+            const available = window.innerHeight - rect.bottom - 24;
+            // Floor at 240 so the popover is always at least usable
+            // (3-4 items visible) even if the button is near the
+            // viewport bottom — internal scroll picks up the rest.
+            setMoreMenuMaxH(Math.max(240, available));
+        };
+        recompute();
+        window.addEventListener('resize', recompute);
+        window.addEventListener('scroll', recompute, true);
+        return () => {
+            window.removeEventListener('resize', recompute);
+            window.removeEventListener('scroll', recompute, true);
+        };
+    }, [showMoreActions]);
     // Staffing-needs (a.k.a. shift slots) — manager-defined "we need N people in this time block"
     // Each filled slot becomes a real shift.
     const [staffingNeeds, setStaffingNeeds] = useState([]);
@@ -2616,7 +2645,7 @@ ${dayBlocks}
                     opens a popover with grouped sections (Tools / My
                     actions / Admin). */}
                 <div className="relative">
-                    <button onClick={() => setShowMoreActions(s => !s)}
+                    <button ref={moreBtnRef} onClick={() => setShowMoreActions(s => !s)}
                         className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-semibold flex items-center gap-1.5 transition">
                         ⋯ {tx('More', 'Más')}
                         <span className="text-dd-text-2 text-[10px]">{showMoreActions ? '▲' : '▼'}</span>
@@ -2625,7 +2654,19 @@ ${dayBlocks}
                         <>
                             {/* Click-outside backdrop */}
                             <div className="fixed inset-0 z-30" onClick={() => setShowMoreActions(false)} />
-                            <div className="absolute top-full left-0 mt-1 w-64 bg-white border border-dd-line rounded-xl shadow-card-hov z-40 overflow-hidden">
+                            {/* Anchor the popover to the RIGHT of the More
+                                button (right-0) so the 256px panel doesn't
+                                shoot off the right edge of the page (the
+                                button sits at the far end of the toolbar).
+                                Max-height is JS-driven from the button's
+                                live position so the menu always fits the
+                                visible viewport — see the moreBtnRef +
+                                moreMenuMaxH effect above. Internal scroll
+                                kicks in if the admin section is taller
+                                than the remaining space. */}
+                            <div
+                                style={{ maxHeight: `${moreMenuMaxH}px` }}
+                                className="absolute top-full right-0 mt-1 w-64 bg-white border border-dd-line rounded-xl shadow-card-hov z-40 overflow-y-auto">
                                 {/* TOOLS */}
                                 <div className="px-3 py-2 border-b border-dd-line">
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Tools', 'Herramientas')}</div>
