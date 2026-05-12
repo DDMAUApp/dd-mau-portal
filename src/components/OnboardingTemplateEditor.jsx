@@ -257,6 +257,7 @@ export default function OnboardingTemplateEditor({
                             ? guessAutofill(ann.fieldName, ann.alternativeText)
                             : '',
                         fontSize: Math.max(8, Math.min(14, Math.round(h * 0.65))),
+                        required: true,    // admin flips to optional per-field in the side panel
                     });
                 }
             }
@@ -300,6 +301,7 @@ export default function OnboardingTemplateEditor({
             label: '',
             autofill: '',         // empty = hire fills manually
             fontSize: 11,
+            required: true,       // admin can flip per-field in the side panel
         };
         setFields([...fields, newField]);
         setSelectedFieldId(newField.id);
@@ -673,6 +675,45 @@ export default function OnboardingTemplateEditor({
                                 </div>
                             )}
 
+                            {/* REQUIRED / OPTIONAL toggle — only meaningful for
+                                hire-filled fields. Static is admin-prefilled
+                                and employer is filled-after-submit, so neither
+                                blocks the hire's submit either way. Default
+                                = required (back-compat — fields predating
+                                this toggle have no `required` property and
+                                the hire-side validate() treats undefined as
+                                required). Long forms like I-9 have dozens of
+                                "if applicable" blanks; without this toggle
+                                the hire couldn't submit until every box was
+                                filled in. */}
+                            {(selected.filledBy || 'hire') === 'hire' && (
+                                <div>
+                                    <label className="text-[10px] font-bold text-gray-500 block mb-1">
+                                        {tx('Required to submit?', '¿Obligatorio?')}
+                                    </label>
+                                    <div className="grid grid-cols-2 gap-1">
+                                        <button type="button"
+                                            onClick={() => updateField(selected.id, { required: true })}
+                                            className={`py-1.5 rounded text-[11px] font-bold border ${
+                                                selected.required !== false
+                                                    ? 'bg-red-100 text-red-700 border-red-300'
+                                                    : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50'
+                                            }`}>
+                                            ✱ {tx('Required', 'Obligatorio')}
+                                        </button>
+                                        <button type="button"
+                                            onClick={() => updateField(selected.id, { required: false })}
+                                            className={`py-1.5 rounded text-[11px] font-bold border ${
+                                                selected.required === false
+                                                    ? 'bg-gray-200 text-gray-700 border-gray-400'
+                                                    : 'bg-white text-gray-500 border-gray-300 hover:bg-gray-50'
+                                            }`}>
+                                            {tx('Optional', 'Opcional')}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
                             {(selected.type === 'text' || selected.type === 'date' || selected.type === 'initials') && (
                                 <div>
                                     <label className="text-[10px] font-bold text-gray-500">
@@ -795,7 +836,9 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
                         ? 'border-amber-500 bg-amber-100/50 hover:border-amber-600'
                         : field.filledBy === 'employer'
                             ? 'border-purple-500 bg-purple-100/50 hover:border-purple-600'
-                            : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
+                            : field.required === false
+                                ? 'border-gray-400 border-dashed bg-gray-100/40 hover:border-gray-500'
+                                : 'border-blue-400 bg-blue-100/40 hover:border-dd-green'
             }`}
             style={{
                 left: `${field.x * 100}%`,
@@ -806,9 +849,10 @@ function FieldMarker({ field, selected, onSelect, onMove, onResize, onDelete, is
             <div className={`absolute top-0 left-0 -translate-y-full text-white text-[9px] font-bold px-1 py-0.5 rounded-t whitespace-nowrap pointer-events-none ${
                 field.filledBy === 'static' ? 'bg-amber-600'
                     : field.filledBy === 'employer' ? 'bg-purple-600'
+                    : field.required === false ? 'bg-gray-500'
                     : 'bg-dd-green'
             }`}>
-                {field.filledBy === 'static' ? '🔒 ' : field.filledBy === 'employer' ? '👔 ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
+                {field.filledBy === 'static' ? '🔒 ' : field.filledBy === 'employer' ? '👔 ' : field.required === false ? '○ ' : ''}{field.type}{field.autofill ? ` · ${field.autofill}` : ''}{field.label ? ` · ${field.label}` : ''}
             </div>
             {selected && (
                 <>
