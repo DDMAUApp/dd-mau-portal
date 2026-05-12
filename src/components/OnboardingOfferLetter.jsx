@@ -112,6 +112,12 @@ export default function OnboardingOfferLetter({
     const [submitting, setSubmitting] = useState(false);
     const [err, setErr] = useState('');
     const canvasRef = useRef(null);
+    // Same "✓ Complete" + Edit pattern as OnboardingFillablePdf — see
+    // that file for the rationale. Seeded from saved status so re-opening
+    // a signed offer letter shows the success view by default.
+    const docStatus = (hire?.checklist && hire.checklist.offer_letter && hire.checklist.offer_letter.status) || 'needed';
+    const wasSubmitted = docStatus === 'submitted' || docStatus === 'approved';
+    const [showSubmitted, setShowSubmitted] = useState(wasSubmitted);
     const drawing = useRef(false);
     const lastPoint = useRef(null);
     const [empty, setEmpty] = useState(true);
@@ -248,6 +254,7 @@ export default function OnboardingOfferLetter({
             const path = `onboarding/${hireId}/offer_letter/signed_${ts}.pdf`;
             await uploadBytes(sref(storage, path), new Blob([outBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
             onSubmitted?.();
+            setShowSubmitted(true);
         } catch (e) {
             console.error('offer letter submit failed', e);
             setErr(tx('Submit failed: ', 'Falló: ') + (e.message || e));
@@ -255,6 +262,29 @@ export default function OnboardingOfferLetter({
             setSubmitting(false);
         }
     };
+
+    if (showSubmitted) {
+        return (
+            <div className="space-y-2">
+                <div className="p-4 rounded-xl bg-green-50 border-2 border-green-300 text-center">
+                    <p className="text-3xl mb-1">✓</p>
+                    <p className="font-black text-green-800 text-sm">
+                        {tx('Complete', 'Completado')}
+                    </p>
+                    <p className="text-[11px] text-green-700 mt-1">
+                        {tx(
+                            'Offer accepted + signed. A copy is saved to your file.',
+                            'Oferta aceptada y firmada. Se guardó una copia.',
+                        )}
+                    </p>
+                </div>
+                <button onClick={() => { setShowSubmitted(false); setErr(''); }}
+                    className="w-full py-2.5 rounded-xl bg-white border-2 border-dd-green text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95">
+                    ✏️ {tx('Edit / re-sign', 'Editar / re-firmar')}
+                </button>
+            </div>
+        );
+    }
 
     return (
         <div className="space-y-3">

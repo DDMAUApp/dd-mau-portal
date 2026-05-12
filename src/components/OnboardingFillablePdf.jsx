@@ -85,6 +85,15 @@ export default function OnboardingFillablePdf({
     const [progressMsg, setProgressMsg] = useState('');
     const [err, setErr] = useState('');
     const [sigField, setSigField] = useState(null);         // field currently in the signature pad modal
+    // Submitted view — replaces the form with a "✓ Complete" success
+    // state + an Edit button after the hire submits, instead of leaving
+    // the same "Submit signed form" button hanging around (which made
+    // it look like the submit didn't take). Seeded from the doc's saved
+    // status so re-opening a SUBMITTED/APPROVED doc starts in this view
+    // too; Edit flips back to the form to re-fill and re-submit.
+    const docStatus = (hire?.checklist && hire.checklist[docDef.id] && hire.checklist[docDef.id].status) || 'needed';
+    const wasSubmitted = docStatus === 'submitted' || docStatus === 'approved';
+    const [showSubmitted, setShowSubmitted] = useState(wasSubmitted);
 
     // Look up template for this docId.
     useEffect(() => {
@@ -287,6 +296,10 @@ export default function OnboardingFillablePdf({
             const path = `onboarding/${hireId}/${docDef.id}/filled_${ts}.pdf`;
             await uploadBytes(sref(storage, path), new Blob([outBytes], { type: 'application/pdf' }), { contentType: 'application/pdf' });
             onSubmitted?.();
+            // Swap to the "✓ Complete" view so the hire sees a clear
+            // success state + an Edit button, instead of the same Submit
+            // button which makes it look like nothing happened.
+            setShowSubmitted(true);
         } catch (e) {
             console.error('submit failed', e);
             setErr(tx('Submit failed: ', 'Falló: ') + (e.message || e));
@@ -315,6 +328,35 @@ export default function OnboardingFillablePdf({
     }
     if (!pageImages.length) {
         return <p className="text-xs text-red-600 py-3">{tx('Failed to render template.', 'Falló la plantilla.')}</p>;
+    }
+
+    // "✓ Complete" view — shown right after a successful submit AND on
+    // re-opening any doc that's already in submitted/approved state.
+    // Hire taps Edit to go back to the editable form (their typed values
+    // are still in `values` state from the same session; a hard reload
+    // re-fetches from the template + autofill only — submitted PDF text
+    // isn't reparsed, that's a Phase-2 nicety).
+    if (showSubmitted) {
+        return (
+            <div className="space-y-2">
+                <div className="p-4 rounded-xl bg-green-50 border-2 border-green-300 text-center">
+                    <p className="text-3xl mb-1">✓</p>
+                    <p className="font-black text-green-800 text-sm">
+                        {tx('Complete', 'Completado')}
+                    </p>
+                    <p className="text-[11px] text-green-700 mt-1">
+                        {tx(
+                            'Submitted to your manager. They\'ll review and follow up.',
+                            'Enviado al gerente. Revisará y te avisará.',
+                        )}
+                    </p>
+                </div>
+                <button onClick={() => { setShowSubmitted(false); setErr(''); }}
+                    className="w-full py-2.5 rounded-xl bg-white border-2 border-mint-700 text-mint-700 font-bold text-sm hover:bg-mint-50 active:scale-95">
+                    ✏️ {tx('Edit / re-submit', 'Editar / re-enviar')}
+                </button>
+            </div>
+        );
     }
 
     return (
