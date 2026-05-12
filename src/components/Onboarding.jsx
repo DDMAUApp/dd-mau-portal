@@ -523,6 +523,10 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
     // hire.offerLetterBody; the hire portal honors that override when
     // rendering OnboardingOfferLetter. See OfferLetterEditor below.
     const [showOfferEditor, setShowOfferEditor] = useState(false);
+    // "View all submitted" toggle — flips every DocReviewRow's expanded
+    // state via the forceExpand prop. Lets admin scroll through every
+    // file in one motion instead of clicking each doc to expand.
+    const [expandAllDocs, setExpandAllDocs] = useState(false);
     // Some hire flows don't include the offer letter (e.g. "Tax forms only"
     // re-send subset). Hide the edit button in those cases so it doesn't
     // dead-end.
@@ -699,7 +703,32 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
                     )}
                 </div>
             </div>
-            {/* Doc checklist */}
+            {/* Doc checklist. The "Expand all submitted" toggle opens every
+                doc row that has files in Storage so admin can scroll through
+                the whole submission without clicking each one individually
+                — the natural "let me review everything they sent" workflow. */}
+            <div className="px-3 py-2 border-b border-dd-line flex items-center justify-between gap-2 bg-dd-bg">
+                <div className="text-[11px] text-dd-text-2">
+                    {(() => {
+                        const reviewable = docs.filter(d =>
+                            d.kind !== 'form' &&
+                            (hire.checklist?.[d.id]?.status === DOC_STATUS.SUBMITTED ||
+                             hire.checklist?.[d.id]?.status === DOC_STATUS.APPROVED ||
+                             hire.checklist?.[d.id]?.status === DOC_STATUS.REJECTED)
+                        ).length;
+                        return reviewable === 0
+                            ? tx('Nothing submitted yet.', 'Nada enviado aún.')
+                            : tx(`${reviewable} doc${reviewable === 1 ? '' : 's'} ready to review`,
+                                  `${reviewable} doc${reviewable === 1 ? '' : 's'} para revisar`);
+                    })()}
+                </div>
+                <button onClick={() => setExpandAllDocs(v => !v)}
+                    className="text-[11px] px-2.5 py-1 rounded-md bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-sage-50">
+                    {expandAllDocs
+                        ? <>▴ {tx('Collapse all', 'Contraer todo')}</>
+                        : <>📂 {tx('Expand all to review', 'Expandir todo')}</>}
+                </button>
+            </div>
             <div className="divide-y divide-dd-line">
                 {docs.map(d => (
                     <DocReviewRow key={d.id}
@@ -708,6 +737,7 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
                         isEs={isEs}
                         staffName={staffName}
                         onWriteAudit={onWriteAudit}
+                        forceExpand={expandAllDocs}
                     />
                 ))}
             </div>
@@ -858,14 +888,19 @@ function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
 }
 
 // ── DocReviewRow ──────────────────────────────────────────────────────────
-function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
+function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit, forceExpand }) {
     const tx = (en, es) => (isEs ? es : en);
     const state = (hire.checklist && hire.checklist[docDef.id]) || {};
     const status = state.status || DOC_STATUS.NEEDED;
     const meta = DOC_STATUS_META[status];
     const [files, setFiles] = useState(null);   // [{name, url, size, contentType}]
     const [loadingFiles, setLoadingFiles] = useState(false);
-    const [expanded, setExpanded] = useState(false);
+    const [internalExpanded, setInternalExpanded] = useState(false);
+    // forceExpand wins when truthy — used by the "Expand all to review"
+    // toggle in HireDetail to open every row at once. Individual toggle
+    // still works on top of an inactive forceExpand.
+    const expanded = forceExpand || internalExpanded;
+    const setExpanded = setInternalExpanded;
     // Check if this doc's template has any employer-fill fields. If so,
     // and the hire has submitted, surface a "Complete employer section"
     // button so admin can fill the I-9 Section 2 style fields.
