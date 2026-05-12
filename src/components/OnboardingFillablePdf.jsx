@@ -409,7 +409,10 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
                 className={`absolute border-2 rounded text-[10px] font-bold flex items-center justify-center transition ${
                     signed ? 'border-green-500 bg-green-100/60' : 'border-amber-500 bg-amber-100/60 animate-pulse'
                 }`}
-                style={style}>
+                // Same UA-min-height defeat as the text input below — without
+                // it, mobile browsers grow the signature button past the
+                // height we asked for, shoving it down over PDF text.
+                style={{ ...style, minHeight: 0, minWidth: 0, padding: 0 }}>
                 {signed ? (
                     <img src={value} alt="sig" className="max-w-full max-h-full" />
                 ) : (
@@ -420,9 +423,11 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
     }
     if (field.type === 'checkbox') {
         return (
-            <label className="absolute flex items-center justify-center cursor-pointer" style={style}>
+            <label className="absolute flex items-center justify-center cursor-pointer"
+                style={{ ...style, minHeight: 0, minWidth: 0 }}>
                 <input type="checkbox" checked={!!value} onChange={e => onChange(e.target.checked)}
-                    className="w-full h-full accent-mint-700" />
+                    className="w-full h-full accent-mint-700"
+                    style={{ minHeight: 0, minWidth: 0, margin: 0 }} />
             </label>
         );
     }
@@ -434,7 +439,26 @@ function FieldInput({ field, value, onChange, onOpenSig, isEs }) {
             className={`absolute border-2 rounded px-1 text-[11px] bg-yellow-50/90 ${
                 value ? 'border-green-500' : 'border-amber-500'
             }`}
-            style={{ ...style, fontSize: (field.fontSize || 11) + 'px' }}
+            // iOS Safari (and some Android browsers) enforce a UA min-height
+            // (~32–36px) on text/date inputs to keep them tappable. That
+            // min-height OVERRIDES the explicit `height: X%` we set here, so
+            // a field stored at h≈0.022 (~25px on a phone-wide PDF preview)
+            // renders as a 32-36px box that pushes past its slot.
+            //
+            // That's why the editor — which uses <div> markers, no UA
+            // min-height — shows perfectly-aligned boxes, but the hire
+            // portal on mobile shows them slightly oversized and shifted.
+            // Forcing min-height/min-width to 0 + line-height: 1 makes the
+            // input honor our exact pixel dimensions. box-sizing is already
+            // border-box from Tailwind preflight so border+padding count
+            // INSIDE the explicit height — no extra shift.
+            style={{
+                ...style,
+                minHeight: 0,
+                minWidth: 0,
+                lineHeight: 1,
+                fontSize: (field.fontSize || 11) + 'px',
+            }}
             placeholder={field.label || ''} />
     );
 }
