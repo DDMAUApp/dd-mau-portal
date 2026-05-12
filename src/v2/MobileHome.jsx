@@ -318,29 +318,26 @@ export default function MobileHome({
             )}
 
             {/* TILE GRID — every destination as a tap target.
-                Section label is bare uppercase tracking-widest with no
-                decorative lines (was: ─── Open ─── 90s pattern).
-                Tiles are uniform white cards with a subtle hover/press
-                shadow ramp. Primary tiles (Schedule/Ops/Recipes) get a
-                left accent stripe to nudge the eye. */}
+                Section header was a tiny 10px micro-cap that felt like a
+                label, not a heading. Bumped to 11px sentence-case "Quick
+                actions" + a thin divider underline so the grid feels like
+                a deliberate section, not floating tiles below the KPIs.
+                Primary tiles (Schedule/Ops/Recipes) get a left accent stripe
+                to nudge the eye toward the most-used destinations. */}
             <div>
-                <h2 className="text-[10px] font-bold uppercase tracking-widest text-dd-text-2 px-1 mb-2.5">
-                    {tx('Open', 'Abrir')}
-                </h2>
+                <div className="flex items-baseline justify-between mb-2.5 px-1">
+                    <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2">
+                        {tx('Quick actions', 'Accesos rápidos')}
+                    </h2>
+                    <span className="text-[10px] text-dd-text-2/60 font-semibold">
+                        {allTiles.filter(t => !hiddenPages.includes(t.tab)).length} {tx('tools', 'herramientas')}
+                    </span>
+                </div>
                 <div className="grid grid-cols-2 gap-2.5">
                     {allTiles.filter(t => !hiddenPages.includes(t.tab)).map(t => (
                         <Tile key={t.tab} {...t} onTap={() => onNavigate?.(t.tab)} isEs={isEs} />
                     ))}
                 </div>
-            </div>
-
-            {/* SUBTLE FOOTER — version + signed-in name.
-                Adds a finished feel to the page (Sling/Toast both have
-                version footers). Doesn't compete for attention. */}
-            <div className="text-center pt-4 pb-2">
-                <p className="text-[10px] text-dd-text-2/60 font-semibold tracking-wide">
-                    DD MAU · {staffName || 'Guest'}
-                </p>
             </div>
         </div>
     );

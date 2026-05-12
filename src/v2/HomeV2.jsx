@@ -216,14 +216,25 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
         : laborPct <= 28 ? 'text-amber-700'
         : 'text-red-700';
 
+    const locName = queryLoc === 'maryland' ? 'Maryland Heights' : 'Webster Groves';
+    const todayLong = new Date().toLocaleDateString(isEn ? 'en-US' : 'es-ES', {
+        weekday: 'long', month: 'short', day: 'numeric',
+    });
+
     return (
         <div className="space-y-6">
-            {/* Welcome */}
+            {/* Welcome — tighter, more confident. The previous subtitle was a
+                full sentence that restated the obvious ("Here's what's
+                happening at DD Mau Webster Groves today.") and pushed the
+                stat row down the page. Replaced with a compact metadata line
+                that reads at a glance: weekday · date · location. */}
             <div>
-                <h1 className="text-2xl font-bold text-dd-text">{greeting}, {staffName?.split(' ')[0] || tx('there', '')}</h1>
-                <p className="text-sm text-dd-text-2 mt-1">
-                    {tx(`Here's what's happening at DD Mau ${queryLoc === 'maryland' ? 'Maryland Heights' : 'Webster Groves'} today.`,
-                        `Esto es lo que está pasando hoy en DD Mau ${queryLoc === 'maryland' ? 'Maryland Heights' : 'Webster Groves'}.`)}
+                <h1 className="text-2xl font-black text-dd-text tracking-tight">
+                    {greeting}, {staffName?.split(' ')[0] || tx('there', '')}
+                </h1>
+                <p className="text-sm text-dd-text-2 mt-1 capitalize">
+                    {todayLong} <span className="text-dd-text-2/50 mx-1">·</span>
+                    <span className="text-dd-text font-semibold normal-case">DD Mau {locName}</span>
                 </p>
             </div>
 

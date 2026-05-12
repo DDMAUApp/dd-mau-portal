@@ -100,12 +100,18 @@ export default function MobileBottomNav({
         ? { tab: 'menu', icon: '🍜', en: 'Menu', es: 'Menú' }
         : { tab: 'training', icon: '📚', en: 'Train', es: 'Capac.' };
 
+    // More icon: ⋯ is rendered as a Unicode "midline horizontal ellipsis"
+    // glyph (U+22EF) — always a real character on every platform, no emoji
+    // variant selector, no fallback to a tofu box. The previous ☰ rendered
+    // as a thin trigram glyph on iOS (text-style) but as an emoji on some
+    // Android builds — visually inconsistent across the kitchen's mixed
+    // device fleet.
     const tabs = [
         { tab: 'home',     icon: '🏠', en: 'Home',     es: 'Inicio',  badge: unreadNotifs, badgeTone: 'bg-dd-green' },
         { tab: 'schedule', icon: '📅', en: 'Schedule', es: 'Horario', badge: draftCount,    badgeTone: 'bg-amber-500' },
         slot3,
         { tab: 'eighty6',  icon: '🚫', en: '86',       es: '86',      badge: eighty6Count,  badgeTone: 'bg-red-500' },
-        { tab: '__more',   icon: '☰',  en: 'More',     es: 'Más' },
+        { tab: '__more',   icon: '⋯',  en: 'More',     es: 'Más' },
     ];
 
     return (
@@ -140,9 +146,12 @@ export default function MobileBottomNav({
                                     ? 'bg-dd-sage-50'
                                     : 'scale-95 group-active:bg-dd-bg'
                             }`}>
-                                <span className={`text-[20px] leading-none transition-transform ${active ? 'scale-110' : ''}`}>{t.icon}</span>
+                                {/* More tab uses a thin Unicode ellipsis — bump
+                                    its weight & size so it matches the visual
+                                    mass of the emoji icons in the other slots. */}
+                                <span className={`leading-none transition-transform ${active ? 'scale-110' : ''} ${isMore ? 'text-[26px] font-black text-dd-text-2 tracking-tighter -mt-1' : 'text-[20px]'}`}>{t.icon}</span>
                                 {showBadge && (
-                                    <span className={`absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center text-[9px] font-black text-white ${t.badgeTone} ring-2 ring-white`}>
+                                    <span className={`absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center text-[9px] font-black text-white ${t.badgeTone} ring-2 ring-white tabular-nums`}>
                                         {t.badge > 9 ? '9+' : t.badge}
                                     </span>
                                 )}

@@ -36,7 +36,13 @@ const NAV_GROUPS = [
     {
         labelEn: 'KITCHEN', labelEs: 'COCINA',
         items: [
-            { tab: 'recipes', icon: '🧑‍🍳', en: 'Recipes',    es: 'Recetas',     requires: 'recipesAccess' },
+            // Recipes icon mirrors MobileBottomNav (📖) so the icon doesn't
+            // flip when the user switches between sidebar and bottom nav.
+            // The previous 🧑‍🍳 was a ZWJ composite emoji (man + cooking) —
+            // multi-codepoint, prone to rendering as two separate glyphs on
+            // older Android + some Linux/Windows browsers, and visually
+            // heavier than the other single-codepoint icons in this nav.
+            { tab: 'recipes', icon: '📖', en: 'Recipes',    es: 'Recetas',     requires: 'recipesAccess' },
             { tab: 'menu',    icon: '🍜',   en: 'Menu',       es: 'Menú' },
             { tab: 'eighty6', icon: '🚫',   en: '86 Board',   es: 'Tablero 86' },
         ],
@@ -310,13 +316,26 @@ export default function Sidebar({
                         </div>
                     </div>
                 )}
-                {/* Language toggle (mirrors the legacy footer action) */}
+                {/* Language toggle. Was "EN / ES (EN)" — redundant + ugly:
+                    the parens looked like extra characters and read as noise.
+                    Now: clean label + a sliding pill that shows the inactive
+                    target language. EN active → button reads "Español" so the
+                    user knows what tapping does. */}
                 {onLanguageToggle && (
                     <button onClick={onLanguageToggle}
-                        title={isEs ? 'Cambiar idioma' : 'Switch language'}
+                        title={isEs ? 'Switch to English' : 'Cambiar a Español'}
                         className={`w-full flex items-center ${collapsed ? 'justify-center' : 'gap-2 px-3'} py-2 min-h-[44px] md:min-h-0 rounded-lg text-sm font-medium text-white/70 hover:bg-dd-charcoal-2 hover:text-white active:bg-dd-charcoal-2 transition`}>
                         <span className="text-base">🌐</span>
-                        {!collapsed && <span>{language === 'es' ? 'EN / ES' : 'EN / ES'} <span className="text-white/40 ml-1">({language.toUpperCase()})</span></span>}
+                        {!collapsed && (
+                            <span className="flex-1 flex items-center justify-between">
+                                <span>{isEs ? 'Idioma' : 'Language'}</span>
+                                <span className="inline-flex items-center gap-1 text-[10px] font-black tracking-wider">
+                                    <span className={isEs ? 'text-white/30' : 'text-white'}>EN</span>
+                                    <span className="text-white/30">·</span>
+                                    <span className={isEs ? 'text-white' : 'text-white/30'}>ES</span>
+                                </span>
+                            </span>
+                        )}
                     </button>
                 )}
                 {/* Force-refresh — clears caches + reloads. Same flow as
