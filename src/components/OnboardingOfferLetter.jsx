@@ -95,6 +95,7 @@ export default function OnboardingOfferLetter({
     hire,
     hireId,
     isEs,
+    isLocked,        // hire is in admin's Complete folder — read-only
     onSubmitted,
     onStart,
 }) {
@@ -272,25 +273,30 @@ export default function OnboardingOfferLetter({
         }
     };
 
-    if (showSubmitted) {
+    if (showSubmitted || isLocked) {
         return (
             <div className="space-y-2">
                 <div className="p-4 rounded-xl bg-green-50 border-2 border-green-300 text-center">
-                    <p className="text-3xl mb-1">✓</p>
+                    <p className="text-3xl mb-1">{isLocked ? '🔒' : '✓'}</p>
                     <p className="font-black text-green-800 text-sm">
-                        {tx('Complete', 'Completado')}
+                        {isLocked
+                            ? tx('Locked', 'Bloqueado')
+                            : tx('Complete', 'Completado')}
                     </p>
                     <p className="text-[11px] text-green-700 mt-1">
-                        {tx(
-                            'Offer accepted + signed. A copy is saved to your file.',
-                            'Oferta aceptada y firmada. Se guardó una copia.',
-                        )}
+                        {isLocked
+                            ? tx('Your onboarding is locked. Ask your manager to unlock if you need to update this.',
+                                'Bloqueado. Pídele al gerente que desbloquee si necesitas actualizar.')
+                            : tx('Offer accepted + signed. A copy is saved to your file.',
+                                'Oferta aceptada y firmada. Se guardó una copia.')}
                     </p>
                 </div>
-                <button onClick={() => { setShowSubmitted(false); setErr(''); }}
-                    className="w-full py-2.5 rounded-xl bg-white border-2 border-dd-green text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95">
-                    ✏️ {tx('Edit / re-sign', 'Editar / re-firmar')}
-                </button>
+                {!isLocked && (
+                    <button onClick={() => { setShowSubmitted(false); setErr(''); }}
+                        className="w-full py-2.5 rounded-xl bg-white border-2 border-dd-green text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95">
+                        ✏️ {tx('Edit / re-sign', 'Editar / re-firmar')}
+                    </button>
+                )}
             </div>
         );
     }

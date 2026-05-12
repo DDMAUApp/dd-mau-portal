@@ -107,10 +107,24 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
         } catch (e) { console.warn('onboarding audit write failed:', e); }
     };
 
-    // Split active vs archived. The list is short — DD Mau hires a few people
-    // a month — so we keep client-side filtering instead of separate queries.
+    // Split active / complete / archived. Three buckets:
+    //   Active   = anything NOT explicitly marked complete or archived
+    //              (includes derived-complete hires whose admin hasn't
+    //              clicked "Move to Complete" yet — they show the COMPLETE
+    //              badge in the active list as the cue to lock them in).
+    //   Complete = admin clicked "Move to Complete" → hire.status='complete'.
+    //              Portal renders read-only for these hires; the hire can
+    //              VIEW their submitted docs but can't edit them. Admin
+    //              uses "Move back to active" to unlock when a re-submit
+    //              is needed (e.g. updated direct deposit).
+    //   Archive  = admin moved long-finished hires here. Stored separately
+    //              just to keep the active list short. No PII change.
     const activeHires = useMemo(
-        () => hires.filter(h => h.status !== HIRE_STATUS.ARCHIVED),
+        () => hires.filter(h => h.status !== HIRE_STATUS.ARCHIVED && h.status !== HIRE_STATUS.COMPLETE),
+        [hires],
+    );
+    const completeHires = useMemo(
+        () => hires.filter(h => h.status === HIRE_STATUS.COMPLETE),
         [hires],
     );
     const archivedHires = useMemo(
@@ -130,7 +144,9 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
         [activeHires],
     );
 
-    const visibleList = view === 'archive' ? archivedHires : filteredActive;
+    const visibleList = view === 'archive' ? archivedHires
+        : view === 'complete' ? completeHires
+        : filteredActive;
     const selected = useMemo(
         () => hires.find(h => h.id === selectedId) || null,
         [hires, selectedId],
@@ -186,6 +202,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
             <div className="flex gap-1 bg-dd-bg p-1 rounded-xl w-fit flex-wrap">
                 {[
                     { id: 'hires', en: `Active (${activeHires.length})`, es: `Activos (${activeHires.length})` },
+                    { id: 'complete', en: `Complete (${completeHires.length})`, es: `Completos (${completeHires.length})` },
                     { id: 'applications', en: `Applications (${applications.length})`, es: `Aplicaciones (${applications.length})` },
                     { id: 'templates', en: `Templates (${templates.length})`, es: `Plantillas (${templates.length})` },
                     { id: 'archive', en: `Archive (${archivedHires.length})`, es: `Archivo (${archivedHires.length})` },
@@ -253,8 +270,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     <p className="text-sm font-semibold text-dd-text-2">
                         {view === 'archive'
                             ? tx('No archived hires yet.', 'Sin contrataciones archivadas todavía.')
-                            : tx('No active onboarding. Tap "New hire" to invite one.',
-                                'Sin onboardings activos. Toca "Nueva contratación".')}
+                            : view === 'complete'
+                                ? tx('Nobody is in the Complete folder yet. Approve all of a hire\'s docs, then tap "Move to Complete" on their detail page.',
+                                    'Nadie está en la carpeta Completos aún. Aprueba todos los documentos de un contratado y toca "Mover a Completos".')
+                                : tx('No active onboarding. Tap "New hire" to invite one.',
+                                    'Sin onboardings activos. Toca "Nueva contratación".')}
                     </p>
                 </div>
             ) : (
@@ -271,6 +291,35 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                             isEs={isEs}
                             staffName={staffName}
                             onWriteAudit={writeAudit}
+                            onMoveToComplete={async () => {
+                                if (!confirm(tx(
+                                    'Move this hire to Complete? Their portal will become read-only — they can view what they submitted but can\'t edit. Use "Move back to active" if you need them to redo a doc.',
+                                    '¿Mover a Completos? Su portal será de solo lectura. Usa "Volver a activos" si necesitas que rehagan algo.',
+                                ))) return;
+                                await updateDoc(doc(db, 'onboarding_hires', selected.id), {
+                                    status: HIRE_STATUS.COMPLETE,
+                                    completedAt: new Date().toISOString(),
+                                    completedBy: staffName || 'admin',
+                                });
+                                writeAudit('hire_moved_to_complete', { hireId: selected.id, hireName: selected.name });
+                            }}
+                            onMoveBackToActive={async () => {
+                                if (!confirm(tx(
+                                    'Move this hire back to Active? Their portal will unlock so they can edit / re-submit any doc.',
+                                    '¿Volver a Activos? El portal se desbloqueará para que puedan editar.',
+                                ))) return;
+                                // Clear the status field — deriveHireStatus
+                                // will recompute (likely awaiting_review or
+                                // in_progress). Don't reset checklist or
+                                // approvals; admin may just want them to
+                                // tweak one doc.
+                                await updateDoc(doc(db, 'onboarding_hires', selected.id), {
+                                    status: HIRE_STATUS.IN_PROGRESS,
+                                    unlockedAt: new Date().toISOString(),
+                                    unlockedBy: staffName || 'admin',
+                                });
+                                writeAudit('hire_unlocked_from_complete', { hireId: selected.id, hireName: selected.name });
+                            }}
                             onArchive={async () => {
                                 if (!confirm(tx(
                                     'Archive this hire? They\'re still kept for compliance retention.',
@@ -510,7 +559,7 @@ function ProgressDonut({ counts, size = 64 }) {
 }
 
 // ── HireDetail ────────────────────────────────────────────────────────────
-function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, onEdit }) {
+function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, onEdit, onMoveToComplete, onMoveBackToActive }) {
     const tx = (en, es) => (isEs ? es : en);
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
@@ -658,6 +707,34 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
                         className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90 disabled:opacity-60">
                         {exporting ? tx('Building zip…', 'Creando zip…') : tx('📦 Export zip', '📦 Exportar zip')}
                     </button>
+                    {/* Move to Complete — locks the hire's portal. Only
+                        offered when the explicit hire.status isn't already
+                        complete/archived. We DON'T gate this on "all docs
+                        approved" because the admin might want to lock a
+                        hire who has a few in-progress / rejected docs to
+                        stop them touching anything while we work out the
+                        plan with them offline. The button label gives the
+                        admin a hint when the underlying derived state is
+                        still in-progress. */}
+                    {hire.status !== HIRE_STATUS.COMPLETE && hire.status !== HIRE_STATUS.ARCHIVED && onMoveToComplete && (
+                        <button onClick={onMoveToComplete}
+                            className={`text-[11px] px-2.5 py-1.5 rounded-lg font-bold ${
+                                status === HIRE_STATUS.COMPLETE
+                                    ? 'bg-green-600 text-white hover:bg-green-700'
+                                    : 'bg-green-100 text-green-800 hover:bg-green-200'
+                            }`}
+                            title={status === HIRE_STATUS.COMPLETE
+                                ? tx('All required docs approved — ready to lock', 'Listo para bloquear')
+                                : tx('Some required docs aren\'t approved yet — locking now stops the hire from finishing them', 'Aún faltan aprobar docs')}>
+                            🔒 {tx('Move to Complete', 'Mover a Completos')}
+                        </button>
+                    )}
+                    {hire.status === HIRE_STATUS.COMPLETE && onMoveBackToActive && (
+                        <button onClick={onMoveBackToActive}
+                            className="text-[11px] px-2.5 py-1.5 rounded-lg bg-amber-500 text-white font-bold hover:bg-amber-600">
+                            🔓 {tx('Move back to active', 'Volver a activos')}
+                        </button>
+                    )}
                     {status !== HIRE_STATUS.ARCHIVED && (
                         <button onClick={onArchive}
                             className="text-[11px] px-2.5 py-1.5 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">

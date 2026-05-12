@@ -72,6 +72,7 @@ export default function OnboardingFillablePdf({
     hire,
     hireId,
     isEs,
+    isLocked,      // hire is in admin's "Complete" folder — read-only mode
     onSubmitted,
     onStart,
 }) {
@@ -336,25 +337,34 @@ export default function OnboardingFillablePdf({
     // are still in `values` state from the same session; a hard reload
     // re-fetches from the template + autofill only — submitted PDF text
     // isn't reparsed, that's a Phase-2 nicety).
-    if (showSubmitted) {
+    //
+    // When isLocked (admin moved hire to Complete folder) the Edit
+    // button is hidden — hire can still see the success state but can't
+    // re-open the form. Unlocking happens admin-side, not here.
+    if (showSubmitted || isLocked) {
         return (
             <div className="space-y-2">
                 <div className="p-4 rounded-xl bg-green-50 border-2 border-green-300 text-center">
-                    <p className="text-3xl mb-1">✓</p>
+                    <p className="text-3xl mb-1">{isLocked ? '🔒' : '✓'}</p>
                     <p className="font-black text-green-800 text-sm">
-                        {tx('Complete', 'Completado')}
+                        {isLocked
+                            ? tx('Locked', 'Bloqueado')
+                            : tx('Complete', 'Completado')}
                     </p>
                     <p className="text-[11px] text-green-700 mt-1">
-                        {tx(
-                            'Submitted to your manager. They\'ll review and follow up.',
-                            'Enviado al gerente. Revisará y te avisará.',
-                        )}
+                        {isLocked
+                            ? tx('Your onboarding is locked. Ask your manager to unlock if you need to update this.',
+                                'Bloqueado. Pídele al gerente que desbloquee si necesitas actualizar.')
+                            : tx('Submitted to your manager. They\'ll review and follow up.',
+                                'Enviado al gerente. Revisará y te avisará.')}
                     </p>
                 </div>
-                <button onClick={() => { setShowSubmitted(false); setErr(''); }}
-                    className="w-full py-2.5 rounded-xl bg-white border-2 border-mint-700 text-mint-700 font-bold text-sm hover:bg-mint-50 active:scale-95">
-                    ✏️ {tx('Edit / re-submit', 'Editar / re-enviar')}
-                </button>
+                {!isLocked && (
+                    <button onClick={() => { setShowSubmitted(false); setErr(''); }}
+                        className="w-full py-2.5 rounded-xl bg-white border-2 border-mint-700 text-mint-700 font-bold text-sm hover:bg-mint-50 active:scale-95">
+                        ✏️ {tx('Edit / re-submit', 'Editar / re-enviar')}
+                    </button>
+                )}
             </div>
         );
     }

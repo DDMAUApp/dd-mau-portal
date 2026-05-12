@@ -173,6 +173,13 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
     const allDone = counts.total > 0 && counts.needed === 0 && counts.started === 0;
+    // Locked = admin clicked "Move to Complete" in the dashboard. The
+    // portal becomes read-only: every doc card hides its edit / upload /
+    // submit affordances, file uploads still SHOW (so the hire can see
+    // what they sent), and a banner up top explains the next step. Admin
+    // toggles via "Move back to active" when the hire needs to redo
+    // something (e.g. direct deposit bank change).
+    const isLocked = hire.status === 'complete';
 
     return (
         <div className="min-h-screen bg-dd-sage">
@@ -200,6 +207,25 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                     </p>
                 </header>
 
+                {/* Locked banner — replaces the editable-flow message when
+                    admin has marked this hire Complete. Hire can still
+                    open each doc card to view their submissions but every
+                    edit / upload / submit affordance is hidden. */}
+                {isLocked && (
+                    <div className="bg-green-50 border-2 border-green-300 rounded-2xl p-4 text-center">
+                        <p className="text-3xl mb-1">🔒</p>
+                        <p className="font-black text-green-800 text-sm">
+                            {tx('Onboarding complete', 'Onboarding completo')}
+                        </p>
+                        <p className="text-[11px] text-green-700 mt-1">
+                            {tx(
+                                'Your paperwork is locked. You can still review what you submitted below. Need to update something (like direct deposit)? Ask your manager to unlock your portal.',
+                                'Tu papeleo está bloqueado. Puedes revisar lo que enviaste abajo. ¿Necesitas actualizar algo (como depósito directo)? Pídele a tu gerente que desbloquee tu portal.',
+                            )}
+                        </p>
+                    </div>
+                )}
+
                 {/* Progress strip */}
                 <div className="bg-white rounded-2xl p-3 border border-gray-200 shadow-sm">
                     <div className="flex items-center justify-between mb-1">
@@ -222,6 +248,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                             hire={hire}
                             hireId={hireId}
                             isEs={isEs}
+                            isLocked={isLocked}
                             onSaveForm={saveForm}
                             onSetStatus={setDocStatus}
                         />
@@ -262,7 +289,7 @@ function CenterCard({ children }) {
 }
 
 // ── DocCard ───────────────────────────────────────────────────────────────
-function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
+function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus }) {
     const tx = (en, es) => (isEs ? es : en);
     const state = (hire.checklist && hire.checklist[doc.id]) || {};
     const status = state.status || DOC_STATUS.NEEDED;
@@ -367,6 +394,7 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                                 doc.id === 'emergency_contact' ? (hire.emergencyContact || {}) : {}
                             }
                             isEs={isEs}
+                            isLocked={isLocked}
                             onSave={(payload) => onSaveForm(doc.id, payload)}
                         />
                     ) : doc.kind === 'offer_letter' ? (
@@ -375,6 +403,7 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                                 hire={hire}
                                 hireId={hireId}
                                 isEs={isEs}
+                                isLocked={isLocked}
                                 onSubmitted={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
                                 onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)} />
                         </ReactSuspense>
@@ -385,6 +414,7 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                                 hire={hire}
                                 hireId={hireId}
                                 isEs={isEs}
+                                isLocked={isLocked}
                                 onSubmitted={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
                                 onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)} />
                         </ReactSuspense>
@@ -393,6 +423,7 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                             doc={doc}
                             hireId={hireId}
                             isEs={isEs}
+                            isLocked={isLocked}
                             currentLabel={(hire.checklist?.[doc.id]?.idType) || ''}
                             onUploaded={(idType) => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString(), idType })}
                             onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)}
@@ -402,6 +433,7 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
                             doc={doc}
                             hireId={hireId}
                             isEs={isEs}
+                            isLocked={isLocked}
                             onUploaded={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
                             onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)}
                         />
@@ -414,7 +446,7 @@ function DocCard({ doc, hire, hireId, isEs, onSaveForm, onSetStatus }) {
 
 // ── FormInputs ────────────────────────────────────────────────────────────
 // Personal info + Emergency contact use this. Schema is hardcoded per docId.
-function FormInputs({ docId, initial, isEs, onSave }) {
+function FormInputs({ docId, initial, isEs, isLocked, onSave }) {
     const tx = (en, es) => (isEs ? es : en);
     // NOTE — SSN is intentionally NOT collected here. It would otherwise
     // sit in Firestore as plaintext (the doc is server-readable since we
@@ -463,13 +495,21 @@ function FormInputs({ docId, initial, isEs, onSave }) {
                         value={values[f.id]}
                         onChange={(e) => setValues({ ...values, [f.id]: e.target.value })}
                         required={f.required}
-                        className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        disabled={isLocked}
+                        readOnly={isLocked}
+                        className={`mt-0.5 w-full border rounded-lg px-3 py-2 text-sm ${
+                            isLocked ? 'border-gray-200 bg-gray-50 text-gray-600' : 'border-gray-300'
+                        }`} />
                 </label>
             ))}
-            <button type="submit" disabled={!ok || saving}
-                className="w-full mt-2 py-2.5 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">
-                {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
-            </button>
+            {/* Locked = hire was moved to the Complete folder by admin.
+                Hide Save entirely; values are read-only just above. */}
+            {!isLocked && (
+                <button type="submit" disabled={!ok || saving}
+                    className="w-full mt-2 py-2.5 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50">
+                    {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                </button>
+            )}
         </form>
     );
 }
@@ -551,7 +591,7 @@ function UploadedFilesList({ hireId, docId, refreshKey, isEs }) {
 }
 
 // ── FileUpload ────────────────────────────────────────────────────────────
-function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
+function FileUpload({ doc, hireId, isEs, isLocked, onUploaded, onStart }) {
     const tx = (en, es) => (isEs ? es : en);
     const inputRef = useRef(null);
     const [uploading, setUploading] = useState(false);
@@ -596,28 +636,32 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
     return (
         <div className="space-y-2">
             <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />
-            <input ref={inputRef} type="file"
-                accept="image/*,application/pdf"
-                multiple
-                onChange={(e) => handleFiles(e.target.files)}
-                disabled={uploading}
-                className="hidden" />
-            <button
-                type="button"
-                onClick={() => inputRef.current?.click()}
-                disabled={uploading}
-                className="w-full py-4 rounded-xl border-2 border-dashed border-dd-green/40 bg-white text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
-                {uploading ? (
-                    <span>{tx(`Uploading ${progress}%…`, `Subiendo ${progress}%…`)}</span>
-                ) : (
-                    <span>📸 {tx('Take photo / upload', 'Tomar foto / subir')}</span>
-                )}
-            </button>
-            <p className="text-[10px] text-gray-500 text-center">
-                {tx('Photos (JPG/PNG/HEIC) or PDF. Max 10 MB each. You can pick multiple.',
-                    'Fotos (JPG/PNG/HEIC) o PDF. Máx 10 MB cada uno. Puedes elegir varios.')}
-            </p>
-            {err && <p className="text-[11px] text-red-600">{err}</p>}
+            {!isLocked && (
+                <>
+                    <input ref={inputRef} type="file"
+                        accept="image/*,application/pdf"
+                        multiple
+                        onChange={(e) => handleFiles(e.target.files)}
+                        disabled={uploading}
+                        className="hidden" />
+                    <button
+                        type="button"
+                        onClick={() => inputRef.current?.click()}
+                        disabled={uploading}
+                        className="w-full py-4 rounded-xl border-2 border-dashed border-dd-green/40 bg-white text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+                        {uploading ? (
+                            <span>{tx(`Uploading ${progress}%…`, `Subiendo ${progress}%…`)}</span>
+                        ) : (
+                            <span>📸 {tx('Take photo / upload', 'Tomar foto / subir')}</span>
+                        )}
+                    </button>
+                    <p className="text-[10px] text-gray-500 text-center">
+                        {tx('Photos (JPG/PNG/HEIC) or PDF. Max 10 MB each. You can pick multiple.',
+                            'Fotos (JPG/PNG/HEIC) o PDF. Máx 10 MB cada uno. Puedes elegir varios.')}
+                    </p>
+                    {err && <p className="text-[11px] text-red-600">{err}</p>}
+                </>
+            )}
         </div>
     );
 }
@@ -627,7 +671,7 @@ function FileUpload({ doc, hireId, isEs, onUploaded, onStart }) {
 // passport, etc.) and uploads a photo. Two of these slots cover the
 // I-9 "List A" or "List B + C" requirement without forcing a hardcoded
 // type per slot.
-function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
+function IdDocUpload({ doc, hireId, isEs, isLocked, currentLabel, onUploaded, onStart }) {
     const tx = (en, es) => (isEs ? es : en);
     const [idType, setIdType] = useState(currentLabel || '');
     const [otherText, setOtherText] = useState('');
@@ -673,34 +717,38 @@ function IdDocUpload({ doc, hireId, isEs, currentLabel, onUploaded, onStart }) {
     return (
         <div className="space-y-2">
             <UploadedFilesList hireId={hireId} docId={doc.id} refreshKey={refreshKey} isEs={isEs} />
-            <label className="block">
-                <span className="text-[11px] font-bold uppercase text-gray-500">
-                    {tx('Which type of ID is this?', '¿Qué tipo de identificación es?')}
-                </span>
-                <select value={idType} onChange={e => setIdType(e.target.value)}
-                    className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
-                    <option value="">{tx('Pick one…', 'Elige uno…')}</option>
-                    {ID_DOC_TYPES.map(t => (
-                        <option key={t.id} value={t.id}>{isEs ? t.es : t.en}</option>
-                    ))}
-                </select>
-            </label>
-            {idType === 'other' && (
-                <input value={otherText} onChange={e => setOtherText(e.target.value)}
-                    placeholder={tx('Describe the document', 'Describe el documento')}
-                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+            {!isLocked && (
+                <>
+                    <label className="block">
+                        <span className="text-[11px] font-bold uppercase text-gray-500">
+                            {tx('Which type of ID is this?', '¿Qué tipo de identificación es?')}
+                        </span>
+                        <select value={idType} onChange={e => setIdType(e.target.value)}
+                            className="mt-0.5 w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white">
+                            <option value="">{tx('Pick one…', 'Elige uno…')}</option>
+                            {ID_DOC_TYPES.map(t => (
+                                <option key={t.id} value={t.id}>{isEs ? t.es : t.en}</option>
+                            ))}
+                        </select>
+                    </label>
+                    {idType === 'other' && (
+                        <input value={otherText} onChange={e => setOtherText(e.target.value)}
+                            placeholder={tx('Describe the document', 'Describe el documento')}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                    )}
+                    <input ref={inputRef} type="file" accept="image/*,application/pdf" multiple
+                        onChange={e => handleFiles(e.target.files)} disabled={uploading} className="hidden" />
+                    <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading || !idType}
+                        className="w-full py-4 rounded-xl border-2 border-dashed border-dd-green/40 bg-white text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+                        {uploading ? tx('Uploading…', 'Subiendo…') : tx('📸 Take photo / upload', '📸 Tomar foto / subir')}
+                    </button>
+                    <p className="text-[10px] text-gray-500 text-center">
+                        {tx('Front and back if it\'s a card. Multiple files OK.',
+                            'Frente y reverso si es tarjeta. Varios archivos OK.')}
+                    </p>
+                    {err && <p className="text-[11px] text-red-600">{err}</p>}
+                </>
             )}
-            <input ref={inputRef} type="file" accept="image/*,application/pdf" multiple
-                onChange={e => handleFiles(e.target.files)} disabled={uploading} className="hidden" />
-            <button type="button" onClick={() => inputRef.current?.click()} disabled={uploading || !idType}
-                className="w-full py-4 rounded-xl border-2 border-dashed border-dd-green/40 bg-white text-dd-green-700 font-bold text-sm hover:bg-dd-sage-50 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
-                {uploading ? tx('Uploading…', 'Subiendo…') : tx('📸 Take photo / upload', '📸 Tomar foto / subir')}
-            </button>
-            <p className="text-[10px] text-gray-500 text-center">
-                {tx('Front and back if it\'s a card. Multiple files OK.',
-                    'Frente y reverso si es tarjeta. Varios archivos OK.')}
-            </p>
-            {err && <p className="text-[11px] text-red-600">{err}</p>}
         </div>
     );
 }
