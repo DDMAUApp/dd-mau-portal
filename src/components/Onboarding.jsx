@@ -915,8 +915,11 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
         finally { setLoadingFiles(false); }
     };
 
+    // Lazy-load files the first time the expander opens. Applies to every
+    // kind that writes to Storage (file / template / offer_letter / id),
+    // not just file-kind — see the expander-gate comment above.
     useEffect(() => {
-        if (expanded && docDef.kind === 'file') loadFiles();
+        if (expanded && docDef.kind !== 'form') loadFiles();
     }, [expanded]);
 
     const setStatus = async (next, note = '') => {
@@ -966,7 +969,19 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
                     )}
                 </div>
                 <div className="flex flex-col gap-1 flex-shrink-0">
-                    {docDef.kind === 'file' && status !== DOC_STATUS.NEEDED && (
+                    {/* "Files" expander — list every uploaded file under
+                        onboarding/{hireId}/{docId}/. Was previously gated to
+                        `kind === 'file'` only, which meant once a hire signed
+                        their W-4 / I-9 / direct-deposit (template kind),
+                        offer letter, or uploaded an ID, admin had NO way to
+                        view the resulting PDF/photo. They could only
+                        Approve / Reject blindly. Andrew couldn't review a
+                        finished onboarding for that reason. Now: show the
+                        expander for every kind that produces a file in
+                        Storage — file, template, offer_letter, id. Form
+                        kind (personal_info / emergency_contact) is the only
+                        skip since those write to the hire doc, not Storage. */}
+                    {docDef.kind !== 'form' && status !== DOC_STATUS.NEEDED && (
                         <button onClick={() => setExpanded(!expanded)}
                             className="text-[10px] px-2 py-1 rounded bg-dd-bg text-dd-text-2 font-bold">
                             {expanded ? '▴' : '▾'} {tx('Files', 'Archivos')}
@@ -1010,7 +1025,7 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit }) {
                     />
                 </ReactSuspense>
             )}
-            {expanded && docDef.kind === 'file' && (
+            {expanded && docDef.kind !== 'form' && (
                 <div className="mt-2 pl-9 space-y-1">
                     {loadingFiles ? (
                         <p className="text-[11px] text-dd-text-2 italic">{tx('Loading…', 'Cargando…')}</p>
