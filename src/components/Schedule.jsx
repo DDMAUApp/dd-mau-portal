@@ -1923,6 +1923,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
         const days = [0,1,2,3,4,5,6].map(i => addDays(weekStart, i));
         const today = toDateStr(new Date());
+        // Compact time format JUST for print — "10:00 AM" becomes "10a",
+        // "3:30 PM" becomes "3:30p". On a 7-day landscape grid each cell is
+        // only ~100px wide; the full formatTime12h output ("10:00 AM–3:00 PM")
+        // wrapped to two lines per shift and bloated every cell with a
+        // shift in it. Andrew flagged this — "the hours is long that make
+        // the box too big". The screen UI keeps the full format.
+        const compactTime = (t) => {
+            if (!t) return '';
+            const [hh, mm] = String(t).split(':').map(Number);
+            if (Number.isNaN(hh)) return t;
+            const h12 = hh % 12 === 0 ? 12 : hh % 12;
+            const ampm = hh < 12 ? 'a' : 'p';
+            return mm === 0 ? `${h12}${ampm}` : `${h12}:${String(mm).padStart(2, '0')}${ampm}`;
+        };
         const sideLabel = side === 'foh' ? 'Front of House' : 'Back of House';
         const locLabel = LOCATION_LABELS[storeLocation] || storeLocation;
         const weekRange = `${days[0].toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${days[6].toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
@@ -2062,8 +2076,11 @@ ${dayBlocks}
                         const hrs = cellIsDoubleDay
                             ? hoursBetween(sh.startTime, sh.endTime, false)
                             : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                        // Compact time (10a–3p) keeps the cell to ONE line in
+                        // the narrow weekday columns. Hours pill appended on
+                        // the same line. Was: 10:00 AM–3:00 PM 5h (wrapped).
                         return `<div class="shift">
-                            <b>${escape(formatTime12h(sh.startTime))}–${escape(formatTime12h(sh.endTime))}</b>
+                            <b>${escape(compactTime(sh.startTime))}–${escape(compactTime(sh.endTime))}</b>
                             <span class="hrs">${escape(formatHours(hrs))}</span>
                             ${sh.isShiftLead ? '<span class="lead">🛡️</span>' : ''}
                             ${sh.isDouble ? '<span class="dbl">⏱</span>' : ''}
