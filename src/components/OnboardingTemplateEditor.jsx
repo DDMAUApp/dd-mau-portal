@@ -144,6 +144,33 @@ export default function OnboardingTemplateEditor({
         }
     };
 
+    // Guess which onboarding doc a freshly-uploaded PDF is FOR based on its
+    // filename. Stops the "uploaded fed W-4 but the dropdown was still on
+    // w4_fed when I meant MO" / "left it on default and tagged MO with the
+    // federal PDF" class of bug — once Andrew has two templates with the
+    // wrong forDocId, the hire portal silently shows the wrong PDF in each
+    // slot (and one slot goes blank). Filename hints are dumb but stable:
+    // IRS calls theirs fw4.pdf, MO Department of Revenue calls theirs
+    // MO%20W-4.pdf, USCIS i-9.pdf, etc.
+    //
+    // Order matters — match the MOST SPECIFIC patterns first ("mo w4"
+    // before plain "w4"). Returns null if no confident guess.
+    const guessForDocId = (rawName) => {
+        const n = (rawName || '').toLowerCase().replace(/[\s_\-\.%20]+/g, ' ');
+        if (/\bi[\s-]?9\b/.test(n)) return 'i9';
+        if (/(missouri|\bmo\b|\bmow4)/.test(n) && /w[\s-]?4/.test(n)) return 'w4_mo';
+        if (/(mow4|mo[\s-]?w[\s-]?4)/.test(n)) return 'w4_mo';
+        if (/(federal|fw4|^w4|\sw4|w[\s-]?4)/.test(n)) return 'w4_fed';
+        if (/(direct[\s-]?deposit|^dd|ach[\s-]?form)/.test(n)) return 'direct_deposit';
+        if (/(offer[\s-]?letter|offerletter)/.test(n)) return 'offer_letter';
+        if (/(hep[\s-]?a|hepatitis)/.test(n)) return 'hep_a_record';
+        if (/(voided[\s-]?check|void[\s-]?ck)/.test(n)) return 'voided_check';
+        if (/(emerg|emergency)/.test(n)) return 'emergency_contact';
+        if (/(personal[\s-]?info|personalinfo)/.test(n)) return 'personal_info';
+        if (/(minor|work[\s-]?permit)/.test(n)) return 'minor_permit';
+        return null;
+    };
+
     const onFileChosen = async (file) => {
         if (!file) return;
         if (file.type !== 'application/pdf') {
@@ -157,6 +184,14 @@ export default function OnboardingTemplateEditor({
             setPdfBytes(buf);
             setPdfDirty(true);  // mark so Save knows to push to Storage
             if (!name) setName(file.name.replace(/\.pdf$/i, ''));
+            // Auto-pick the "For doc" dropdown from the filename ONLY when
+            // creating a new template (so we don't surprise admin who's
+            // editing an existing one and re-uploading a PDF). On edits
+            // the existing forDocId stays put unless admin changes it.
+            if (!initialTemplate) {
+                const guess = guessForDocId(file.name);
+                if (guess) setForDocId(guess);
+            }
             await renderPdf(buf);
         } finally {
             setLoadingPdf(false);
@@ -399,9 +434,14 @@ export default function OnboardingTemplateEditor({
                         placeholder={tx('Template name (e.g. "Missouri W-4 2026")', 'Nombre de plantilla')}
                         className="w-full text-sm font-bold border-b border-transparent focus:border-mint-700 focus:outline-none px-1 py-1" />
                     <div className="flex items-center gap-2 mt-1 flex-wrap">
-                        <label className="text-[10px] font-bold text-gray-500 uppercase">{tx('For doc:', 'Para doc:')}</label>
+                        <label className="text-[11px] font-black text-dd-text uppercase">{tx('For doc:', 'Para doc:')}</label>
+                        {/* Bumped from tiny gray text to a prominent green
+                            pill — the silent failure where a federal W-4
+                            template gets saved with forDocId='w4_mo' (or
+                            vice versa) lands a wrong PDF in the hire's
+                            slot. Make the selection unmissable. */}
                         <select value={forDocId} onChange={e => setForDocId(e.target.value)}
-                            className="text-[11px] border border-gray-300 rounded px-2 py-0.5 bg-white">
+                            className="text-[12px] font-bold border-2 border-dd-green rounded px-2 py-1 bg-dd-sage-50 text-dd-green-700">
                             {/* All docs are eligible — fillable mode targets
                                 kind:'template' (W-4 etc.), reference mode can
                                 attach to ANY doc (Hep A form, employee
@@ -410,6 +450,30 @@ export default function OnboardingTemplateEditor({
                                 <option key={d.id} value={d.id}>{isEs ? d.es : d.en}</option>
                             ))}
                         </select>
+                        {/* Mismatch warning — when the template's NAME
+                            strongly suggests one doc but the dropdown is
+                            set to a different one. Catches the exact bug
+                            from 2026-05-12 where the fed W-4 template was
+                            tagged for MO. The hint matches the same
+                            filename-guess logic that auto-fires on upload,
+                            but here we run it against the current Name
+                            field so admin sees it even when editing later. */}
+                        {(() => {
+                            const guess = guessForDocId(name);
+                            if (!guess || guess === forDocId) return null;
+                            const guessDoc = ONBOARDING_DOCS.find(d => d.id === guess);
+                            const currentDoc = ONBOARDING_DOCS.find(d => d.id === forDocId);
+                            return (
+                                <button type="button"
+                                    onClick={() => setForDocId(guess)}
+                                    className="text-[10px] font-bold px-2 py-1 rounded bg-amber-100 text-amber-900 border border-amber-400 hover:bg-amber-200">
+                                    ⚠ {tx(
+                                        `Name says "${guessDoc?.en}" — tap to switch from "${currentDoc?.en}"`,
+                                        `Nombre dice "${guessDoc?.es}" — toca para cambiar de "${currentDoc?.es}"`,
+                                    )}
+                                </button>
+                            );
+                        })()}
                         <label className="text-[10px] font-bold text-gray-500 uppercase ml-2">{tx('Mode:', 'Modo:')}</label>
                         <div className="flex gap-1">
                             <button type="button" onClick={() => setMode('fillable')}

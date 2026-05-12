@@ -1167,10 +1167,36 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
         return match ? match.id : 'custom';
     })();
     const [presetId, setPresetId] = useState(initialPresetId);
+    // Custom doc list — what's checked when admin picks the "Custom" preset.
+    //
+    // Seed strategy:
+    //   - Edit mode w/ existing subset → use the hire's current subset (so the
+    //     picker reflects what they currently see).
+    //   - Otherwise → START EMPTY. The UI used to pre-check every doc, which
+    //     was a trap: admin who wanted "just the W-4s" would click the W-4
+    //     rows, *unchecking* them, and the hire would receive every doc
+    //     EXCEPT the W-4s. Empty default means click = select, which matches
+    //     what people expect. Switching from a named preset to 'custom'
+    //     seeds with that preset's docs (see handlePresetChange below) so
+    //     the admin can refine a preset rather than start over.
     const [customDocs, setCustomDocs] = useState(() => {
         if (isEditing && Array.isArray(prefill?.subsetDocs)) return prefill.subsetDocs;
-        return ONBOARDING_DOCS.map(d => d.id);
+        return [];
     });
+    // When admin changes the preset dropdown, seed customDocs from the
+    // preset they're leaving so "switch to custom and tweak" works. If
+    // they're leaving 'full' (all docs) → seed with all so they can subtract.
+    const handlePresetChange = (nextId) => {
+        if (nextId === 'custom' && presetId !== 'custom') {
+            if (presetId === 'full') {
+                setCustomDocs(ONBOARDING_DOCS.map(d => d.id));
+            } else {
+                const prev = SUBSET_PRESETS.find(p => p.id === presetId);
+                if (prev && Array.isArray(prev.docs)) setCustomDocs(prev.docs);
+            }
+        }
+        setPresetId(nextId);
+    };
     const activePreset = SUBSET_PRESETS.find(p => p.id === presetId) || SUBSET_PRESETS[0];
     const selectedDocs = activePreset.docs === null
         ? null   // null = all required docs (default new-hire flow)
@@ -1337,7 +1363,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                             ? tx('Which docs do they fill out?', '¿Qué documentos llenan?')
                             : tx('Which docs to send?', '¿Qué documentos enviar?')
                     }>
-                        <select value={presetId} onChange={e => setPresetId(e.target.value)}
+                        <select value={presetId} onChange={e => handlePresetChange(e.target.value)}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
                             {SUBSET_PRESETS.map(p => (
                                 <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
@@ -1345,6 +1371,18 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                         </select>
                         {presetId === 'custom' && (
                             <div className="mt-2 bg-dd-bg rounded-lg p-2 max-h-48 overflow-y-auto">
+                                <div className="flex gap-1 mb-1 px-1">
+                                    <button type="button"
+                                        onClick={() => setCustomDocs(ONBOARDING_DOCS.map(d => d.id))}
+                                        className="text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 hover:border-dd-green hover:text-dd-green">
+                                        {tx('Pick all', 'Todos')}
+                                    </button>
+                                    <button type="button"
+                                        onClick={() => setCustomDocs([])}
+                                        className="text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 hover:border-dd-green hover:text-dd-green">
+                                        {tx('Clear', 'Limpiar')}
+                                    </button>
+                                </div>
                                 <div className="grid grid-cols-1 gap-1">
                                     {ONBOARDING_DOCS.map(d => {
                                         const checked = customDocs.includes(d.id);
@@ -1361,19 +1399,34 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                                         );
                                     })}
                                 </div>
-                                <p className="text-[10px] text-dd-text-2 italic mt-1 px-1">
-                                    {customDocs.length} {tx('docs selected', 'docs seleccionados')}
-                                </p>
                             </div>
                         )}
-                        {presetId !== 'full' && presetId !== 'custom' && activePreset.docs && (
-                            <p className="text-[10px] text-dd-text-2 mt-1 italic">
-                                {activePreset.docs.length} {tx('docs:', 'docs:')} {activePreset.docs.map(id => {
-                                    const d = ONBOARDING_DOCS.find(x => x.id === id);
-                                    return d ? (isEs ? d.es : d.en) : id;
-                                }).join(', ')}
-                            </p>
-                        )}
+                        {/* "Will send" preview — single source of truth so admin
+                            can see exactly which docs the hire will receive
+                            regardless of preset / custom. Catches the "I picked
+                            tax but it sent everything else" class of bugs. */}
+                        {(() => {
+                            const list = activePreset.docs === null
+                                ? ONBOARDING_DOCS.map(d => d.id)
+                                : activePreset.docs === 'custom'
+                                    ? customDocs
+                                    : activePreset.docs;
+                            const names = list.map(id => {
+                                const d = ONBOARDING_DOCS.find(x => x.id === id);
+                                return d ? (isEs ? d.es : d.en) : id;
+                            });
+                            return (
+                                <p className="text-[11px] text-dd-text-2 mt-1 px-1 leading-snug">
+                                    <span className="font-bold text-dd-text">
+                                        {tx(`Will send ${list.length} doc${list.length === 1 ? '' : 's'}:`,
+                                            `Enviará ${list.length} doc${list.length === 1 ? '' : 's'}:`)}
+                                    </span>{' '}
+                                    {list.length === 0
+                                        ? <span className="text-red-600 italic">{tx('nothing selected — pick at least one', 'nada seleccionado — elige al menos uno')}</span>
+                                        : names.join(', ')}
+                                </p>
+                            );
+                        })()}
                     </Field>
 
                     <p className="text-[11px] text-dd-text-2 mt-2 bg-dd-bg p-2 rounded">
