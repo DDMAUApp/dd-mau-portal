@@ -969,7 +969,7 @@ CHANGES TO THIS POLICY
 DD Mau may update this tip pool policy in the future. Any change will be communicated in writing and you will receive an updated notice to acknowledge.
 
 YOUR RIGHTS
-If you believe tips are being mishandled, talk to a manager or owner. You also have the right to contact the U.S. Department of Labor (Wage and Hour Division: 1-866-487-9243, dol.gov/whd) or the Missouri Department of Labor.
+If you believe tips are being mishandled, talk to a manager or owner.
 
 ACKNOWLEDGMENT
 I have read this notice. I understand DD Mau pays me full Missouri minimum wage or above and does not take a tip credit. I understand the mandatory 50/50 FOH/BOH tip pool and how my share is calculated. I understand owners, managers, and supervisors are excluded from the pool.`,
@@ -1013,7 +1013,7 @@ CAMBIOS A ESTA POLITICA
 DD Mau puede actualizar esta política de fondo común de propinas en el futuro. Cualquier cambio será comunicado por escrito y recibirás un aviso actualizado para reconocer.
 
 TUS DERECHOS
-Si crees que las propinas se están manejando mal, habla con un gerente o dueño. También tienes derecho a contactar al Departamento de Trabajo de EE.UU. (Wage and Hour: 1-866-487-9243, dol.gov/whd) o al Departamento de Trabajo de Missouri.
+Si crees que las propinas se están manejando mal, habla con un gerente o dueño.
 
 RECONOCIMIENTO
 He leído este aviso. Entiendo que DD Mau me paga el salario mínimo completo de Missouri o más y no toma un crédito por propinas. Entiendo el fondo común de propinas obligatorio 50/50 FOH/BOH y cómo se calcula mi porción. Entiendo que los dueños, gerentes y supervisores están excluidos del fondo.`,
