@@ -202,10 +202,15 @@ try {
 // localStorage opt-out key happens at module load below.
 try { if (typeof localStorage !== 'undefined') localStorage.removeItem('ddmau:v2_optout'); } catch {}
 
-// Detect onboarding URL params at mount time. Two modes bypass the PIN:
-//   ?onboard=TOKEN — a new hire opening their invite link
-//   ?apply=1       — anyone tapping the in-store "Apply" QR
-// Both bypass auth entirely; the routing happens before the lock screen.
+// Detect onboarding URL params at mount time. Three apply-mode triggers
+// (all equivalent — the canonical short URL is apply.ddmaustl.com which
+// Squarespace 302-forwards to ?apply=1; we rewrite the URL bar to /apply
+// after the React app boots so the path looks clean):
+//   /apply          — clean path after history rewrite
+//   ?apply=1        — legacy + post-redirect form from Squarespace
+//   ?onboard=TOKEN  — a new hire opening their invite link
+// All three bypass the PIN. Path detection trims any trailing slash and
+// ignores the deploy base (currently '/').
 function readOnboardingMode() {
     if (typeof window === 'undefined') return { mode: null };
     try {
@@ -213,6 +218,11 @@ function readOnboardingMode() {
         const token = params.get('onboard');
         if (token) return { mode: 'portal', token };
         if (params.get('apply') === '1' || params.get('apply') === 'true') {
+            return { mode: 'apply' };
+        }
+        // Path-based detection: /apply (or /apply/ with trailing slash).
+        const path = window.location.pathname.replace(/\/+$/, '');
+        if (path === '/apply' || path.endsWith('/apply')) {
             return { mode: 'apply' };
         }
     } catch {}
@@ -226,6 +236,23 @@ export default function App() {
     // mount; if the user dismisses Apply, we clear the flag and fall through
     // to the normal PIN flow.
     const [onboardingMode, setOnboardingMode] = useState(() => readOnboardingMode());
+    // Clean up the URL on apply-mode entry — applicants landed via the
+    // Squarespace 302 forward from apply.ddmaustl.com which leaves them
+    // at app.ddmaustl.com/?apply=1. We can't change the hostname (browser
+    // security) but we CAN replace the ugly query string with a clean
+    // path. After this runs, the URL bar reads "app.ddmaustl.com/apply"
+    // instead of "app.ddmaustl.com/?apply=1". history.replaceState
+    // doesn't trigger a reload so React state stays put.
+    useEffect(() => {
+        if (onboardingMode.mode !== 'apply') return;
+        try {
+            const path = window.location.pathname.replace(/\/+$/, '');
+            const hasQuery = window.location.search.includes('apply=');
+            if (hasQuery || !(path === '/apply' || path.endsWith('/apply'))) {
+                window.history.replaceState({}, '', '/apply');
+            }
+        } catch {}
+    }, [onboardingMode.mode]);
     // Lazy-init from localStorage so the user stays on the same screen across reloads.
     const [staffName, setStaffName] = useState(() => SS.get("staffName"));
     const [staffLocation, setStaffLocation] = useState(() => SS.get("staffLocation", "webster"));
