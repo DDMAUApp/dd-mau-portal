@@ -119,8 +119,8 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                     </h2>
                     <p className="text-sm text-gray-700">
                         {tx(
-                            "Your application is in front of Julie and Andrew. We'll reach out soon.",
-                            'Tu aplicación está con Julie y Andrew. Te contactaremos pronto.',
+                            "Your application is in front of the DD Mau team. We'll reach out soon.",
+                            'Tu solicitud está con el equipo de DD Mau. Te contactaremos pronto.',
                         )}
                     </p>
                     <button onClick={onClose}
@@ -143,8 +143,8 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                         </h1>
                         <p className="text-xs text-gray-600 mt-1">
                             {tx(
-                                'Fill this out — Julie or Andrew will text/email you back.',
-                                'Llena esto — Julie o Andrew te contactarán.',
+                                'Fill this out — the DD Mau team will text or email you back.',
+                                'Llena esto — el equipo de DD Mau te contactará por mensaje o correo.',
                             )}
                         </p>
                     </div>
@@ -246,8 +246,8 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 </form>
 
                 <p className="text-[10px] text-center text-gray-400 pb-6">
-                    {tx('🔒 Your info goes directly to Julie and Andrew. No third parties.',
-                        '🔒 Tu información va directo a Julie y Andrew. Sin terceros.')}
+                    {tx('🔒 Your info goes directly to DD Mau ownership. No third parties.',
+                        '🔒 Tu información va directo a los dueños de DD Mau. Sin terceros.')}
                 </p>
             </div>
         </div>
