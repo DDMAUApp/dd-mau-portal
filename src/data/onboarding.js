@@ -122,13 +122,13 @@ export const ONBOARDING_DOCS = [
     },
     {
         id: 'direct_deposit',
-        en: 'Direct deposit form',
+        en: 'Direct deposit setup',
         es: 'Depósito directo',
         emoji: '🏦',
-        kind: 'template',
+        kind: 'direct_deposit',
         required: true,
         daysFromHire: 7,
-        description: 'Routing + account info, signed in the app.',
+        description: 'Bank, routing, account, deposit type — signed in the app. Pairs with the voided check.',
     },
     {
         id: 'voided_check',

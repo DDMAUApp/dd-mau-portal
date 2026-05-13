@@ -34,6 +34,7 @@ import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingFillablePdf = reactLazy(() => import('./OnboardingFillablePdf'));
 const OnboardingOfferLetter = reactLazy(() => import('./OnboardingOfferLetter'));
 const OnboardingAcknowledgment = reactLazy(() => import('./OnboardingAcknowledgment'));
+const OnboardingDirectDeposit = reactLazy(() => import('./OnboardingDirectDeposit'));
 
 const INSTALL_NOTE_KEY = 'ddmau:onboardInstallSeen';
 
@@ -422,6 +423,17 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
                     ) : doc.kind === 'acknowledgment' ? (
                         <ReactSuspense fallback={<p className="text-xs text-gray-500 italic">Loading policy…</p>}>
                             <OnboardingAcknowledgment
+                                docDef={doc}
+                                hire={hire}
+                                hireId={hireId}
+                                isEs={isEs}
+                                isLocked={isLocked}
+                                onSubmitted={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
+                                onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)} />
+                        </ReactSuspense>
+                    ) : doc.kind === 'direct_deposit' ? (
+                        <ReactSuspense fallback={<p className="text-xs text-gray-500 italic">Loading…</p>}>
+                            <OnboardingDirectDeposit
                                 docDef={doc}
                                 hire={hire}
                                 hireId={hireId}
