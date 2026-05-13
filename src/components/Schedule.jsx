@@ -1079,15 +1079,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         //   - default (other call sites like drag-to-delete, bulk delete):
         //     keep the 5-second undoToast so a fat-finger has a recovery
         //     window.
-        // Admin-fanout body shared by both paths. Even draft deletes go to
-        // admins so co-managers always know what changed — "no matter how
-        // small". Staff push only fires for published shifts (they hadn't
-        // seen a draft, so silent-delete to staff is still correct).
-        const fanoutAdmins = (state) => {
+        // Admin-fanout only when a PUBLISHED shift is deleted. Drafts
+        // haven't been released to anyone, so silent-delete is correct
+        // for both staff and admin — no point pinging co-managers about
+        // schedule scratch work.
+        const fanoutAdmins = () => {
+            if (!wasPublished) return;
             notifyAdmins({
                 type: 'shift_deleted_admin',
-                title: { en: `🗑 Shift deleted${state === 'draft' ? ' (draft)' : ''}`,
-                         es: `🗑 Turno eliminado${state === 'draft' ? ' (borrador)' : ''}` },
+                title: { en: '🗑 Shift deleted', es: '🗑 Turno eliminado' },
                 body: { en: `${sh.staffName || 'Unassigned'} • ${detail} • by ${staffName}`,
                         es: `${sh.staffName || 'Sin asignar'} • ${detail} • por ${staffName}` },
                 link: '/schedule',
@@ -1107,7 +1107,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         { tagSuffix: `shift:${shiftId}` }
                     ).catch(() => {});
                 }
-                fanoutAdmins(wasPublished ? 'published' : 'draft');
+                fanoutAdmins();
                 toast(tx(`🗑 Deleted (${detail})`, `🗑 Eliminado (${detail})`));
             } catch (e) {
                 console.error('Delete shift failed:', e);
@@ -1128,7 +1128,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                               es: `Tu turno del ${detail} ha sido eliminado.` },
                             null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
                     }
-                    fanoutAdmins(wasPublished ? 'published' : 'draft');
+                    fanoutAdmins();
                 } catch (e) {
                     console.error('Delete shift failed:', e);
                     toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message, { kind: 'error' });
@@ -1307,20 +1307,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     ).catch(() => {});
                 }
                 // Admin summary — single roll-up so other managers know a
-                // bulk delete just happened.
-                const draftCount = snapshot.filter(s => s.published === false).length;
-                const pubCount = snapshot.length - draftCount;
-                notifyAdmins({
-                    type: 'shift_deleted_admin',
-                    title: { en: `🗑 Bulk delete: ${snapshot.length} shift${snapshot.length === 1 ? '' : 's'}`,
-                             es: `🗑 Eliminación masiva: ${snapshot.length} turno${snapshot.length === 1 ? '' : 's'}` },
-                    body: { en: `${pubCount} published, ${draftCount} draft • by ${staffName}`,
-                            es: `${pubCount} publicado(s), ${draftCount} borrador(es) • por ${staffName}` },
-                    link: '/schedule',
-                    tag: `bulk_delete:${Date.now()}`,
-                    createdBy: staffName,
-                    excludeStaff: staffName,
-                }).catch(() => {});
+                // bulk delete just happened. Only counts PUBLISHED shifts;
+                // pure draft cleanups are silent (no admin push, no staff
+                // push) — drafts haven't been released so co-managers don't
+                // need a ping.
+                const pubCount = snapshot.filter(s => s.published !== false).length;
+                if (pubCount > 0) {
+                    notifyAdmins({
+                        type: 'shift_deleted_admin',
+                        title: { en: `🗑 Bulk delete: ${pubCount} shift${pubCount === 1 ? '' : 's'}`,
+                                 es: `🗑 Eliminación masiva: ${pubCount} turno${pubCount === 1 ? '' : 's'}` },
+                        body: { en: `Published shifts removed • by ${staffName}`,
+                                es: `Turnos publicados eliminados • por ${staffName}` },
+                        link: '/schedule',
+                        tag: `bulk_delete:${Date.now()}`,
+                        createdBy: staffName,
+                        excludeStaff: staffName,
+                    }).catch(() => {});
+                }
             },
             { delayMs: 5000, undoLabel: tx('Undo', 'Deshacer'), kind: 'warn' }
         );
