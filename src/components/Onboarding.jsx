@@ -56,7 +56,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    const [view, setView] = useState('hires');          // 'hires' | 'applications' | 'archive' | 'templates'
+    const [view, setView] = useState('hires');          // 'hires' | 'complete' | 'applications' | 'templates' | 'policies' | 'archive'
     const [hires, setHires] = useState([]);
     const [applications, setApplications] = useState([]);
     const [templates, setTemplates] = useState([]);
@@ -269,6 +269,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     { id: 'complete', en: `Complete (${completeHires.length})`, es: `Completos (${completeHires.length})` },
                     { id: 'applications', en: `Applications (${applications.length})`, es: `Aplicaciones (${applications.length})` },
                     { id: 'templates', en: `Templates (${templates.length})`, es: `Plantillas (${templates.length})` },
+                    { id: 'policies', en: 'Policies', es: 'Políticas' },
                     { id: 'archive', en: `Archive (${archivedHires.length})`, es: `Archivo (${archivedHires.length})` },
                 ].map(t => (
                     <button key={t.id}
@@ -340,6 +341,8 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     isEs={isEs}
                     onNew={() => setEditingTemplate('new')}
                     onEdit={(t) => setEditingTemplate(t)} />
+            ) : view === 'policies' ? (
+                <PoliciesEditor isEs={isEs} staffName={staffName} onWriteAudit={writeAudit} />
             ) : loading ? (
                 <p className="text-center text-dd-text-2 py-8 text-sm">
                     {tx('Loading…', 'Cargando…')}
@@ -2492,6 +2495,291 @@ function HiringQrPanel({ isEs }) {
                     </div>
                 </div>
             )}
+        </div>
+    );
+}
+
+// ── PoliciesEditor ────────────────────────────────────────────────────────
+// Lets admin read + edit the three acknowledgment-kind policy documents
+// (handbook, tip_credit, workers_comp) that hires sign during onboarding.
+//
+// Storage model:
+//   - Default text ships in src/data/onboardingPolicies.js (DEFAULT_POLICIES).
+//   - Admin overrides are persisted to /config/policies as a single doc
+//     with shape { handbook: { en, es }, tip_credit: { en, es }, … }.
+//   - The hire-side OnboardingAcknowledgment loads the override first,
+//     falls back to DEFAULT_POLICIES when the override key is missing.
+//
+// Editor flow:
+//   - On mount: read /config/policies, merge with DEFAULT_POLICIES so each
+//     row knows whether it's CUSTOM (override present) or DEFAULT (bundled).
+//   - Per row: title + EN body + ES body textareas, save / reset buttons,
+//     a preview pane that renders body in a scrollable card like the
+//     hire portal shows it.
+//   - Save: setDoc(...,{merge:true}) so we only touch the edited key.
+//   - Reset: writes { en: deleteField(), es: deleteField() } for that
+//     policyKey — falls back to DEFAULT_POLICIES on next hire view.
+function PoliciesEditor({ isEs, staffName, onWriteAudit }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [overrides, setOverrides] = useState(null); // null = loading
+    const [savingKey, setSavingKey] = useState('');
+    const [err, setErr] = useState('');
+
+    // Pull the policies catalog from src/data so we know which keys exist
+    // and what defaults to show. Importing lazily to keep the bundle slim.
+    const [defaults, setDefaults] = useState(null);
+    useEffect(() => {
+        (async () => {
+            try {
+                const mod = await import('../data/onboardingPolicies');
+                setDefaults(mod.DEFAULT_POLICIES);
+            } catch (e) { console.warn('policies catalog load failed', e); }
+        })();
+    }, []);
+
+    // Load existing overrides from /config/policies.
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const snap = await getDoc(doc(db, 'config', 'policies'));
+                if (!alive) return;
+                setOverrides(snap.exists() ? (snap.data() || {}) : {});
+            } catch (e) {
+                console.warn('policies load failed', e);
+                if (alive) { setOverrides({}); setErr(String(e.message || e)); }
+            }
+        })();
+        return () => { alive = false; };
+    }, []);
+
+    const policyKeys = defaults ? Object.keys(defaults) : [];
+
+    const saveOne = async (key, en, es) => {
+        setSavingKey(key);
+        setErr('');
+        try {
+            // Use setDoc with merge:true so we don't clobber other policy
+            // keys when saving just this one. Title + body live nested
+            // under the policy key.
+            const patch = {
+                [key]: {
+                    en: { title: en.title, body: en.body },
+                    es: { title: es.title, body: es.body },
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: staffName || 'admin',
+                },
+            };
+            await setDoc(doc(db, 'config', 'policies'), patch, { merge: true });
+            setOverrides(prev => ({ ...(prev || {}), ...patch }));
+            try { onWriteAudit('policy_edited', { policyKey: key }); } catch {}
+        } catch (e) {
+            console.error('policy save failed', e);
+            setErr(String(e.message || e));
+        } finally { setSavingKey(''); }
+    };
+
+    const resetOne = async (key) => {
+        if (!confirm(tx(
+            'Reset this policy back to the default text? Your custom edits will be lost.',
+            '¿Restablecer al texto predeterminado? Se perderán tus ediciones.',
+        ))) return;
+        setSavingKey(key);
+        setErr('');
+        try {
+            // Wipe just this key's override. deleteField inside a nested
+            // path works via dot notation in updateDoc.
+            await updateDoc(doc(db, 'config', 'policies'), {
+                [key]: deleteField(),
+            });
+            setOverrides(prev => {
+                const next = { ...(prev || {}) };
+                delete next[key];
+                return next;
+            });
+            try { onWriteAudit('policy_reset_to_default', { policyKey: key }); } catch {}
+        } catch (e) {
+            console.error('policy reset failed', e);
+            setErr(String(e.message || e));
+        } finally { setSavingKey(''); }
+    };
+
+    if (overrides === null || !defaults) {
+        return <p className="text-center text-dd-text-2 py-8 text-sm">{tx('Loading policies…', 'Cargando políticas…')}</p>;
+    }
+
+    return (
+        <div className="space-y-3">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[12px] text-blue-900">
+                <p className="font-bold">📖 {tx('Policy editor', 'Editor de políticas')}</p>
+                <p className="mt-1">
+                    {tx(
+                        'These are the three policies every new hire signs during onboarding (handbook, tip pool, workers\' comp). Edit the text here — your changes show up on the hire portal immediately. Reset reverts to the default text shipped with the app. Have legal review any meaningful change before publishing.',
+                        'Estas son las tres políticas que cada nuevo contratado firma durante el onboarding (manual, fondo de propinas, compensación laboral). Edita el texto aquí — tus cambios aparecen en el portal del contratado de inmediato. Restablecer revierte al texto predeterminado.',
+                    )}
+                </p>
+            </div>
+            {err && <div className="bg-red-50 border-2 border-red-200 rounded-lg p-2 text-[12px] text-red-800">{err}</div>}
+            {policyKeys.map(k => (
+                <PolicyRow key={k}
+                    policyKey={k}
+                    defaultEn={defaults[k].en}
+                    defaultEs={defaults[k].es}
+                    override={overrides[k]}
+                    saving={savingKey === k}
+                    onSave={(en, es) => saveOne(k, en, es)}
+                    onReset={() => resetOne(k)}
+                    isEs={isEs} />
+            ))}
+        </div>
+    );
+}
+
+function PolicyRow({ policyKey, defaultEn, defaultEs, override, saving, onSave, onReset, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const isCustom = !!(override && (override.en || override.es));
+    // Local edit state seeded from override → default. Recomputed when
+    // override changes (e.g. after Reset).
+    const [enTitle, setEnTitle] = useState(override?.en?.title || defaultEn.title);
+    const [enBody, setEnBody] = useState(override?.en?.body || defaultEn.body);
+    const [esTitle, setEsTitle] = useState(override?.es?.title || defaultEs.title);
+    const [esBody, setEsBody] = useState(override?.es?.body || defaultEs.body);
+    const [open, setOpen] = useState(false);
+    const [showPreview, setShowPreview] = useState(false);
+    const [lang, setLang] = useState('en');
+
+    useEffect(() => {
+        setEnTitle(override?.en?.title || defaultEn.title);
+        setEnBody(override?.en?.body || defaultEn.body);
+        setEsTitle(override?.es?.title || defaultEs.title);
+        setEsBody(override?.es?.body || defaultEs.body);
+    }, [override?.en?.title, override?.en?.body, override?.es?.title, override?.es?.body, defaultEn.title, defaultEn.body, defaultEs.title, defaultEs.body]);
+
+    const dirty = enTitle !== (override?.en?.title || defaultEn.title)
+        || enBody !== (override?.en?.body || defaultEn.body)
+        || esTitle !== (override?.es?.title || defaultEs.title)
+        || esBody !== (override?.es?.body || defaultEs.body);
+
+    const titleLabel = {
+        handbook: tx('Employee handbook', 'Manual del empleado'),
+        tip_credit: tx('Wage and tip pool notice', 'Aviso de salario y fondo de propinas'),
+        workers_comp: tx('Workers\' compensation notice', 'Aviso de compensación laboral'),
+    }[policyKey] || policyKey;
+
+    return (
+        <div className="bg-white border border-dd-line rounded-xl overflow-hidden">
+            <button onClick={() => setOpen(o => !o)}
+                className="w-full text-left p-3 flex items-center gap-2 hover:bg-dd-bg/40">
+                <span className="text-2xl">📄</span>
+                <div className="flex-1 min-w-0">
+                    <div className="font-bold text-sm text-dd-text">{titleLabel}</div>
+                    <div className="text-[11px] text-dd-text-2">
+                        {isCustom
+                            ? <>✏️ {tx('Custom', 'Personalizado')}{override?.updatedAt ? ` · ${new Date(override.updatedAt).toLocaleDateString()}` : ''}</>
+                            : <>📦 {tx('Default (shipped with app)', 'Predeterminado')}</>}
+                    </div>
+                </div>
+                <span className="text-dd-text-2">{open ? '▴' : '▾'}</span>
+            </button>
+            {open && (
+                <div className="border-t border-dd-line p-3 space-y-3 bg-dd-bg/20">
+                    <div className="flex gap-1">
+                        <button onClick={() => setLang('en')}
+                            className={`text-[11px] font-bold px-2.5 py-1 rounded ${
+                                lang === 'en' ? 'bg-dd-text text-white' : 'bg-white border border-dd-line text-dd-text-2'
+                            }`}>
+                            🇺🇸 English
+                        </button>
+                        <button onClick={() => setLang('es')}
+                            className={`text-[11px] font-bold px-2.5 py-1 rounded ${
+                                lang === 'es' ? 'bg-dd-text text-white' : 'bg-white border border-dd-line text-dd-text-2'
+                            }`}>
+                            🇲🇽 Español
+                        </button>
+                        <button onClick={() => setShowPreview(true)}
+                            className="ml-auto text-[11px] font-bold px-2.5 py-1 rounded bg-blue-100 text-blue-700 hover:bg-blue-200">
+                            👁 {tx('Preview', 'Vista previa')}
+                        </button>
+                    </div>
+                    <div>
+                        <label className="block text-[11px] font-bold uppercase text-dd-text-2 mb-1">
+                            {tx('Title', 'Título')}
+                        </label>
+                        <input
+                            value={lang === 'en' ? enTitle : esTitle}
+                            onChange={e => lang === 'en' ? setEnTitle(e.target.value) : setEsTitle(e.target.value)}
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm" />
+                    </div>
+                    <div>
+                        <label className="block text-[11px] font-bold uppercase text-dd-text-2 mb-1">
+                            {tx('Body', 'Cuerpo')}
+                            <span className="ml-2 text-[10px] font-normal text-dd-text-2 normal-case">
+                                {tx('Plain text. Section headers in CAPS. Use "- " for bullets (square/circle glyphs won\'t render in the signed PDF).',
+                                    'Texto plano. Encabezados en MAYÚSCULAS. Usa "- " para viñetas.')}
+                            </span>
+                        </label>
+                        <textarea
+                            value={lang === 'en' ? enBody : esBody}
+                            onChange={e => lang === 'en' ? setEnBody(e.target.value) : setEsBody(e.target.value)}
+                            rows={24}
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-[12px] font-mono leading-relaxed resize-y"
+                            spellCheck={lang === 'en'} />
+                        <p className="text-[10px] text-dd-text-2 mt-0.5 text-right">
+                            {(lang === 'en' ? enBody : esBody).length.toLocaleString()} {tx('characters', 'caracteres')}
+                        </p>
+                    </div>
+                    <div className="flex gap-2 flex-wrap">
+                        <button
+                            onClick={() => onSave(
+                                { title: enTitle, body: enBody },
+                                { title: esTitle, body: esBody },
+                            )}
+                            disabled={!dirty || saving}
+                            className="flex-1 py-2 rounded-lg bg-dd-green text-white text-sm font-bold disabled:opacity-50">
+                            {saving ? tx('Saving…', 'Guardando…') : (dirty ? tx('💾 Save changes', '💾 Guardar cambios') : tx('No changes', 'Sin cambios'))}
+                        </button>
+                        {isCustom && (
+                            <button onClick={onReset} disabled={saving}
+                                className="px-3 py-2 rounded-lg bg-amber-100 border border-amber-300 text-amber-900 text-sm font-bold hover:bg-amber-200 disabled:opacity-50">
+                                ↺ {tx('Reset to default', 'Restablecer')}
+                            </button>
+                        )}
+                    </div>
+                </div>
+            )}
+            {showPreview && (
+                <PolicyPreview
+                    title={lang === 'en' ? enTitle : esTitle}
+                    body={lang === 'en' ? enBody : esBody}
+                    isEs={isEs}
+                    onClose={() => setShowPreview(false)} />
+            )}
+        </div>
+    );
+}
+
+function PolicyPreview({ title, body, isEs, onClose }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3">
+            <div className="bg-white w-full sm:max-w-3xl max-h-[90vh] rounded-2xl flex flex-col overflow-hidden">
+                <div className="p-3 border-b border-dd-line flex items-center justify-between">
+                    <div>
+                        <p className="text-[10px] font-bold uppercase text-dd-text-2">{tx('Preview', 'Vista previa')}</p>
+                        <h3 className="text-base font-black text-dd-text">{title}</h3>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg">×</button>
+                </div>
+                <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
+                    <pre className="whitespace-pre-wrap font-sans text-[12px] text-gray-800 leading-relaxed">{body}</pre>
+                </div>
+                <div className="p-3 border-t border-dd-line">
+                    <p className="text-[10px] text-dd-text-2 italic">
+                        {tx('This is how the policy renders to a hire on their portal. The signed PDF uses the same text in Helvetica — make sure any special characters (curly quotes, em-dashes) render here before saving.',
+                            'Así se ve la política para un contratado. El PDF firmado usa el mismo texto.')}
+                    </p>
+                </div>
+            </div>
         </div>
     );
 }
