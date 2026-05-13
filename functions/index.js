@@ -66,26 +66,36 @@ exports.dispatchNotification = onDocumentCreated(
             logger.info(`deduped ${me.fcmTokens.length - tokens.length} duplicate token(s) for ${forStaff}`);
         }
 
+        // DATA-ONLY payload. Critical: with a top-level `notification`
+        // field, Chrome / Edge auto-display the message at the OS level
+        // via the SW push event BEFORE firebase-messaging's wrapper
+        // gets a chance to suppress it. Then our SW's onBackgroundMessage
+        // ALSO fires showNotification, so the user sees TWO toasts for
+        // one event. Data-only payloads bypass auto-display entirely;
+        // our SW (firebase-messaging-sw.js) reads title/body out of the
+        // data field and calls showNotification exactly once.
+        //
+        // The `tag` field lets the OS coalesce duplicate notifications
+        // — if the same tag arrives twice (e.g. retry), the OS replaces
+        // the first with the second instead of stacking.
+        const tag = notif.tag || notif.id || event.params.id;
         const message = {
             tokens,
-            notification: {
+            data: {
                 title: notif.title || "DD Mau",
                 body: notif.body || "",
-            },
-            data: {
                 type: notif.type || "",
-                tag: notif.id || event.params.id,
+                tag,
                 link: notif.link || "/",
             },
             webpush: {
-                fcmOptions: {
-                    link: notif.link || "/",
-                },
+                headers: { Urgency: "high" },
+                fcmOptions: { link: notif.link || "/" },
             },
         };
 
         const result = await getMessaging().sendEachForMulticast(message);
-        logger.info(`Sent push for ${forStaff}: ${result.successCount} ok, ${result.failureCount} failed`);
+        logger.info(`Sent push for ${forStaff}: ${result.successCount} ok, ${result.failureCount} failed (${tokens.length} token${tokens.length === 1 ? "" : "s"})`);
 
         // Clean up dead tokens (registration-token-not-registered, invalid-argument).
         // Keep only tokens whose result was a success OR a transient failure.

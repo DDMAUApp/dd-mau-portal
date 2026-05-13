@@ -25,11 +25,12 @@ import { db, storage } from '../firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
-    DOC_STATUS, DOC_STATUS_META,
+    DOC_STATUS, DOC_STATUS_META, ONBOARDING_DOCS,
     docsForHire, isHireMinor, hireProgressCounts,
     ID_DOC_TYPES,
     deadlineForDoc, deadlineStatus,
 } from '../data/onboarding';
+import { notifyAdmins } from '../data/notify';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingFillablePdf = reactLazy(() => import('./OnboardingFillablePdf'));
 const OnboardingOfferLetter = reactLazy(() => import('./OnboardingOfferLetter'));
@@ -132,8 +133,15 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     }, [token]);
 
     // Bump a single doc's status. Called by child form/upload components.
+    //
+    // Fires an admin notification ONLY on the transition INTO SUBMITTED
+    // status (and only the first time — repeated SUBMITTED writes for
+    // the same doc are no-ops on the notification side because the tag
+    // is `hire_doc_submitted:{hireId}:{docId}` and the OS dedupes by
+    // tag).
     const setDocStatus = async (docId, next, extra = {}) => {
         if (!hireId) return;
+        const prevStatus = (hire.checklist && hire.checklist[docId] && hire.checklist[docId].status) || DOC_STATUS.NEEDED;
         const newChecklist = {
             ...(hire.checklist || {}),
             [docId]: { ...(hire.checklist?.[docId] || {}), status: next, ...extra },
@@ -145,12 +153,32 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 lastUpdate: new Date().toISOString(),
             });
         } catch (e) { console.warn('setDocStatus failed', e); }
+        // Notify admins on fresh-submit transitions. Tag is stable so
+        // re-submits (the same hire re-signing the same doc) replace
+        // the previous notification instead of stacking.
+        if (next === DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.APPROVED) {
+            try {
+                const docDef = ONBOARDING_DOCS.find(d => d.id === docId);
+                const docLabel = docDef ? docDef.en : docId;
+                const firstName = (hire?.name || '').split(' ')[0] || hire?.name || tx('A hire', 'Un contratado');
+                await notifyAdmins({
+                    type: 'onboarding_doc_submitted',
+                    title: `📄 ${firstName}: ${docLabel}`,
+                    body: tx(`${firstName} submitted ${docLabel}. Tap to review.`,
+                              `${firstName} envió ${docLabel}. Toca para revisar.`),
+                    link: '/onboarding',
+                    tag: `hire_doc_submitted:${hireId}:${docId}`,
+                    createdBy: 'onboarding_portal',
+                });
+            } catch (e) { console.warn('admin notify failed:', e); }
+        }
     };
 
     // Save a form-kind doc (personal info / emergency contact). Stores
     // the structured payload on the hire record itself + flips status.
     const saveForm = async (docId, payload) => {
         if (!hireId) return;
+        const prevStatus = (hire.checklist && hire.checklist[docId] && hire.checklist[docId].status) || DOC_STATUS.NEEDED;
         const patch = {
             [`checklist.${docId}`]: {
                 ...(hire.checklist?.[docId] || {}),
@@ -169,6 +197,23 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         });
         try { await updateDoc(doc(db, 'onboarding_hires', hireId), patch); }
         catch (e) { console.warn('saveForm failed', e); }
+        // Ping admins on first submit (don't re-ping on edit-and-save).
+        if (prevStatus !== DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.APPROVED) {
+            try {
+                const docDef = ONBOARDING_DOCS.find(d => d.id === docId);
+                const docLabel = docDef ? docDef.en : docId;
+                const firstName = (hire?.name || '').split(' ')[0] || hire?.name || tx('A hire', 'Un contratado');
+                await notifyAdmins({
+                    type: 'onboarding_doc_submitted',
+                    title: `📄 ${firstName}: ${docLabel}`,
+                    body: tx(`${firstName} submitted ${docLabel}. Tap to review.`,
+                              `${firstName} envió ${docLabel}. Toca para revisar.`),
+                    link: '/onboarding',
+                    tag: `hire_doc_submitted:${hireId}:${docId}`,
+                    createdBy: 'onboarding_portal',
+                });
+            } catch (e) { console.warn('admin notify failed:', e); }
+        }
     };
 
     if (status === 'loading') {
@@ -845,6 +890,21 @@ function FinalCertification({ hire, hireId, isEs }) {
                     ipHash,
                 },
             });
+            // Tell admins the hire is ready for final review + lock.
+            // Stable tag = exactly one notification per hire even on
+            // re-certification (which the hire probably can't trigger
+            // anyway, but defense-in-depth).
+            try {
+                const firstName = (hire?.name || '').split(' ')[0] || hire?.name || 'A hire';
+                await notifyAdmins({
+                    type: 'onboarding_certified',
+                    title: `✅ ${firstName} completed onboarding`,
+                    body: `${firstName} signed the final certification. Review + Move to Complete when ready.`,
+                    link: '/onboarding',
+                    tag: `hire_certified:${hireId}`,
+                    createdBy: 'onboarding_portal',
+                });
+            } catch (e) { console.warn('admin notify failed:', e); }
         } catch (e) {
             console.error('final cert failed', e);
             setErr(tx('Submit failed: ', 'Falló: ') + (e.message || e));

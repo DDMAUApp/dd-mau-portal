@@ -31,6 +31,7 @@ import {
     setDoc, serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
+import { notifyAdmins } from '../data/notify';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
 
@@ -1815,7 +1816,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             return;
         }
         try {
-            await addDoc(collection(db, 'time_off'), {
+            const ref = await addDoc(collection(db, 'time_off'), {
                 ...entry,
                 staffName, // always the submitter for self-serve
                 status: 'pending',
@@ -1825,6 +1826,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             setShowPtoRequestModal(false);
             toast(tx('✅ Request submitted. A manager will review it.', '✅ Solicitud enviada. Un gerente la revisará.'));
+            // Ping admins so they actually know to go review it. Tag
+            // includes the request doc id so a resubmit (which would
+            // be a new doc) gets its own slot; same-request retries
+            // collapse via tag.
+            try {
+                const dates = entry.startDate === entry.endDate
+                    ? entry.startDate
+                    : `${entry.startDate} → ${entry.endDate}`;
+                await notifyAdmins({
+                    type: 'pto_request',
+                    title: `🌴 PTO request: ${staffName}`,
+                    body: `${dates}${entry.reason ? ` · ${entry.reason}` : ''}`,
+                    link: '/schedule',
+                    tag: `pto_request:${ref.id}`,
+                    createdBy: staffName || 'staff',
+                    excludeStaff: staffName,
+                });
+            } catch (e) { console.warn('PTO admin notify failed:', e); }
         } catch (e) {
             console.error('Submit PTO failed:', e);
             toast(tx('Could not submit: ', 'No se pudo enviar: ') + e.message);

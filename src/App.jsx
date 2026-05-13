@@ -361,13 +361,25 @@ export default function App() {
                 if (result.ok) {
                     console.log("[FCM] push enabled for", staffName);
                     unsubForeground = await onForegroundMessage((payload) => {
-                        // Minimal foreground handler — log + browser-native banner.
-                        // Schedule.jsx already owns its own in-app notifications drawer.
-                        const title = payload?.notification?.title || payload?.data?.title || "DD Mau";
-                        const body = payload?.notification?.body || payload?.data?.body || "";
+                        // Data-only payload now (see Cloud Function). Title/body
+                        // come out of payload.data; we also dedupe via the
+                        // tag field so the same event firing twice on the
+                        // same device (rare network retry) replaces the
+                        // existing notification instead of stacking.
+                        const data = payload?.data || {};
+                        const title = data.title || "DD Mau";
+                        const body = data.body || "";
+                        const tag = data.tag || `ddmau-${Date.now()}`;
                         console.log("[FCM foreground]", title, body, payload);
                         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-                            try { new Notification(title, { body, icon: "/icon-192.png" }); } catch {}
+                            try {
+                                new Notification(title, {
+                                    body,
+                                    icon: "/icon-192.png",
+                                    tag,
+                                    renotify: false,
+                                });
+                            } catch {}
                         }
                     });
                 } else {
