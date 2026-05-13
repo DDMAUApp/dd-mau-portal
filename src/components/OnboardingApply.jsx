@@ -184,12 +184,31 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
             const raw = localStorage.getItem(DRAFT_KEY);
             if (raw) {
                 const parsed = JSON.parse(raw);
-                return { ...emptyState(), ...parsed };
+                return { ...emptyState(), ...(parsed.values || parsed) };
             }
         } catch {}
         return emptyState();
     });
-    const [step, setStep] = useState(1);
+    // Restore step from draft too so a pull-to-refresh / accidental tab
+    // close doesn't dump the applicant back to step 1 after they've
+    // already filled out 8 of 10 sections. Schema-tolerant: legacy
+    // drafts (no `step` key) default to 1.
+    const [step, setStep] = useState(() => {
+        try {
+            const raw = localStorage.getItem(DRAFT_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (typeof parsed.step === 'number' && parsed.step >= 1 && parsed.step <= 10) {
+                    return parsed.step;
+                }
+            }
+        } catch {}
+        return 1;
+    });
+    // Scroll container ref — we scroll it back to the top on every step
+    // change so Continue → next page lands at the top of the new
+    // section (instead of preserving wherever the previous page ended).
+    const containerRef = useRef(null);
     const [saving, setSaving] = useState(false);
     const [done, setDone] = useState(false);
     const [err, setErr] = useState('');
@@ -199,10 +218,29 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     // submit to applications/{appId}/resume_{ts}.{ext}.
     const [resumeFile, setResumeFile] = useState(null);
 
-    // Auto-save on every change. Localstorage write is synchronous + cheap.
+    // Auto-save on every change. Localstorage write is synchronous +
+    // cheap. New shape stores `{ values, step }` so a refresh restores
+    // both fields and current section position. We accept the legacy
+    // shape too on read (just the values object).
     useEffect(() => {
-        try { localStorage.setItem(DRAFT_KEY, JSON.stringify(values)); } catch {}
-    }, [values]);
+        try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ values, step })); } catch {}
+    }, [values, step]);
+
+    // Scroll back to top on every step change. The outer container has
+    // its own overflow-y scroll (it's position:fixed) so window scroll
+    // isn't enough — we need to scroll the actual element. Use the
+    // direct scrollTop assignment instead of scrollTo({behavior}) — it's
+    // universally supported on every browser version and instant by
+    // default, which is what we want (no animated jump between steps).
+    useEffect(() => {
+        if (containerRef.current) {
+            containerRef.current.scrollTop = 0;
+        }
+        // Also reset window in case the page is scrolled (some mobile
+        // browsers scroll the WINDOW even with a fixed overflow child
+        // due to address-bar handling).
+        try { window.scrollTo(0, 0); } catch {}
+    }, [step]);
 
     const setField = (key, val) => setValues(v => ({ ...v, [key]: val }));
     const setNested = (key, sub, val) => setValues(v => ({
@@ -388,7 +426,17 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     }
 
     return (
-        <div className="fixed inset-0 z-50 bg-dd-sage overflow-y-auto">
+        <div ref={containerRef}
+             // overscrollBehavior: 'contain' kills iOS Safari + Chrome's
+             // pull-to-refresh on the apply form. Without it, scrolling
+             // up past the top of any step triggers a page reload — and
+             // since the URL is /?apply=1 with no step query param the
+             // reload (previously) bounced back to step 1. We now ALSO
+             // persist the step in localStorage so even if the user
+             // manages to reload anyway, they land back on the section
+             // they were filling out.
+             className="fixed inset-0 z-50 bg-dd-sage overflow-y-auto"
+             style={{ overscrollBehavior: 'contain' }}>
             <div className="max-w-lg lg:max-w-3xl mx-auto p-3 sm:p-6 space-y-3">
                 <Header onClose={onClose} isEs={isEs} onStartOver={startOver} />
                 <ProgressDots step={step} total={TOTAL_STEPS} />
