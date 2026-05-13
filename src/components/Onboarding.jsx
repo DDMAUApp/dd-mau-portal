@@ -860,6 +860,28 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
                     )}
                 </div>
             </div>
+            {/* Final certification — the hire signed a "this is all true"
+                attestation after every required doc was submitted. Surface
+                it so admin has positive confirmation before clicking
+                Move to Complete. Absence means hire hasn't certified yet
+                (or they're still in the middle of the flow). */}
+            {hire.finalCertification && hire.finalCertification.signedAt && (
+                <div className="px-3 py-2 border-b border-dd-line bg-green-50/40">
+                    <div className="flex items-center gap-2 text-[11px]">
+                        <span className="text-base">✅</span>
+                        <div className="flex-1 min-w-0">
+                            <div className="font-bold text-green-800">
+                                {tx('Hire certified all submissions', 'Contratado certificó todo')}
+                            </div>
+                            <div className="text-[10px] text-green-700">
+                                {tx('Signed', 'Firmado')}: {hire.finalCertification.typedSignature}
+                                {' · '}
+                                {new Date(hire.finalCertification.signedAt).toLocaleString()}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* I-9 reverification expiry — admin sets when filling I-9
                 Section 2 for a hire with time-limited work authorization
                 (F-1 OPT, EAD, TPS, etc.). The i9ReverificationReminder

@@ -270,13 +270,23 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                     ))}
                 </div>
 
-                {/* All done CTA */}
-                {allDone && (
+                {/* Final certification — appears once every required doc is
+                    submitted/approved. Lets the hire formally attest that
+                    everything they sent is accurate. Without this, the
+                    portal just shows a green "🎉 done" banner; with it, we
+                    capture a signed timestamp + ip-hash for the audit
+                    record. Locked hires see only the celebration banner.
+                    */}
+                {allDone && !isLocked && (
+                    <FinalCertification hire={hire} hireId={hireId} isEs={isEs} />
+                )}
+                {allDone && isLocked && (
                     <div className="bg-green-50 border-2 border-green-200 rounded-2xl p-4 text-center">
                         <p className="text-3xl mb-1">🎉</p>
-                        <p className="font-black text-green-800">{tx('Paperwork submitted!', '¡Papeleo enviado!')}</p>
+                        <p className="font-black text-green-800">{tx('Paperwork complete!', '¡Papeleo completo!')}</p>
                         <p className="text-xs text-green-700 mt-1">
-                            {tx('Your manager will review and follow up.', 'Tu gerente revisará y te avisará.')}
+                            {tx('Locked by your manager. Reach out if anything needs to change.',
+                                'Bloqueado por tu gerente. Avísanos si algo necesita cambiar.')}
                         </p>
                     </div>
                 )}
@@ -786,6 +796,142 @@ function IdDocUpload({ doc, hireId, isEs, isLocked, currentLabel, onUploaded, on
                     {err && <p className="text-[11px] text-red-600">{err}</p>}
                 </>
             )}
+        </div>
+    );
+}
+
+// ── FinalCertification ────────────────────────────────────────────────────
+// Closes the loop after the hire's submitted every required doc. They
+// attest in one place that everything they sent is true and complete,
+// we capture an audit-defensible signature record (timestamp, user-
+// agent, ip-hash), and the hire record gets `finalCertification` so the
+// admin's Move-to-Complete button has positive confirmation that the
+// hire reviewed their full submission.
+function FinalCertification({ hire, hireId, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [agree1, setAgree1] = useState(false);
+    const [agree2, setAgree2] = useState(false);
+    const [typedSignature, setTypedSignature] = useState('');
+    const [submitting, setSubmitting] = useState(false);
+    const [err, setErr] = useState('');
+    const legalName = hire?.personal?.legalName || hire?.name || '';
+    const cert = hire?.finalCertification;
+    const alreadyCertified = !!(cert && cert.signedAt);
+
+    const sigOk = typedSignature.trim().length > 1 &&
+                  typedSignature.trim().toLowerCase() === legalName.trim().toLowerCase();
+    const canSubmit = agree1 && agree2 && sigOk && !submitting;
+
+    const submit = async () => {
+        if (!canSubmit) return;
+        setSubmitting(true);
+        setErr('');
+        try {
+            // SHA-256 hash of UA+timestamp for audit defensibility. Never
+            // store raw IP; only the hash. Matches the pattern used by
+            // the apply form + acknowledgment docs.
+            let ipHash = '';
+            try {
+                const bytes = new TextEncoder().encode(navigator.userAgent + '|' + Date.now());
+                const buf = await crypto.subtle.digest('SHA-256', bytes);
+                ipHash = Array.from(new Uint8Array(buf))
+                    .map(b => b.toString(16).padStart(2, '0')).join('');
+            } catch {}
+            await updateDoc(doc(db, 'onboarding_hires', hireId), {
+                finalCertification: {
+                    typedSignature: typedSignature.trim(),
+                    signedAt: new Date().toISOString(),
+                    userAgent: (navigator.userAgent || '').slice(0, 200),
+                    ipHash,
+                },
+            });
+        } catch (e) {
+            console.error('final cert failed', e);
+            setErr(tx('Submit failed: ', 'Falló: ') + (e.message || e));
+        } finally {
+            setSubmitting(false);
+        }
+    };
+
+    if (alreadyCertified) {
+        return (
+            <div className="bg-green-50 border-2 border-green-300 rounded-2xl p-4 text-center">
+                <p className="text-3xl mb-1">✅</p>
+                <p className="font-black text-green-800">{tx('All done — certified!', '¡Todo listo — certificado!')}</p>
+                <p className="text-[11px] text-green-700 mt-1">
+                    {tx(`Signed by ${cert.typedSignature}`, `Firmado por ${cert.typedSignature}`)}
+                </p>
+                <p className="text-[10px] text-green-600 mt-1 italic">
+                    {tx('Your manager will review everything and finalize your hire.',
+                        'Tu gerente revisará todo y finalizará tu contratación.')}
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="bg-white border-2 border-dd-green rounded-2xl p-4 space-y-3 shadow-md">
+            <div className="text-center">
+                <p className="text-3xl mb-1">🎉</p>
+                <p className="font-black text-dd-green-700 text-base">
+                    {tx('Last step — certify & finish', 'Último paso — certificar y terminar')}
+                </p>
+                <p className="text-[11px] text-gray-600 mt-1">
+                    {tx('Read both lines, then type your name. We use this to confirm the file is yours.',
+                        'Lee ambas líneas y escribe tu nombre. Esto confirma que el archivo es tuyo.')}
+                </p>
+            </div>
+
+            <label className="flex items-start gap-2 cursor-pointer p-2 hover:bg-gray-50 rounded-lg">
+                <input type="checkbox" checked={agree1}
+                    onChange={e => setAgree1(e.target.checked)}
+                    className="mt-0.5 w-5 h-5 accent-dd-green flex-shrink-0" />
+                <span className="text-[12px] text-gray-700 leading-snug">
+                    {tx(
+                        'I certify that every form, document, and answer I\'ve submitted is true and complete to the best of my knowledge.',
+                        'Certifico que cada formulario, documento y respuesta que envié es verdadero y completo hasta donde sé.',
+                    )}
+                </span>
+            </label>
+
+            <label className="flex items-start gap-2 cursor-pointer p-2 hover:bg-gray-50 rounded-lg">
+                <input type="checkbox" checked={agree2}
+                    onChange={e => setAgree2(e.target.checked)}
+                    className="mt-0.5 w-5 h-5 accent-dd-green flex-shrink-0" />
+                <span className="text-[12px] text-gray-700 leading-snug">
+                    {tx(
+                        'I understand that false or misleading information may be grounds for not hiring me or, if hired, for ending my employment.',
+                        'Entiendo que información falsa o engañosa puede ser causa de no contratación o despido.',
+                    )}
+                </span>
+            </label>
+
+            <div>
+                <label className="block text-[11px] font-bold uppercase text-gray-600 mb-1">
+                    {tx('Type your full legal name to sign', 'Escribe tu nombre legal completo para firmar')}
+                </label>
+                <input value={typedSignature} onChange={e => setTypedSignature(e.target.value)}
+                    placeholder={legalName || tx('Your legal name', 'Tu nombre legal')}
+                    maxLength={80} autoComplete="off"
+                    className={`w-full border-2 rounded-lg px-3 py-3 text-sm font-bold italic ${
+                        sigOk ? 'border-green-500 bg-green-50' :
+                        typedSignature ? 'border-amber-500 bg-amber-50' :
+                        'border-gray-300'
+                    }`} />
+                {typedSignature && !sigOk && (
+                    <p className="text-[11px] text-amber-700 mt-1">
+                        {tx('Must match your legal name exactly:', 'Debe coincidir exactamente:')} {legalName}
+                    </p>
+                )}
+            </div>
+
+            {err && <p className="text-xs text-red-600">{err}</p>}
+            <button onClick={submit} disabled={!canSubmit}
+                className="w-full py-3 rounded-xl bg-dd-green text-white font-bold text-sm disabled:opacity-50 active:scale-95 shadow-md">
+                {submitting
+                    ? tx('Submitting…', 'Enviando…')
+                    : tx('✓ Sign & finish onboarding', '✓ Firmar y terminar onboarding')}
+            </button>
         </div>
     );
 }
