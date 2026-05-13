@@ -50,6 +50,21 @@ service firebase.storage {
       allow delete: if true;
     }
 
+    // Optional resume uploads from public job applications. Same posture
+    // as /onboarding except the path is /applications/{appId}/* — files
+    // are uploaded BEFORE the applicant is a hire. Mitigations:
+    //   - 10 MB cap (applicants aren't uploading photos of every doc)
+    //   - PDF + image content-type allowlist
+    //   - applicationId is the random Firestore doc id; orphans are
+    //     visible in Storage and pruned by the lifecycle Cloud Function
+    //     when the application is deleted at 180 days.
+    match /applications/{appId}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|application/pdf');
+      allow delete: if true;
+    }
+
     // Everything else — match existing app behavior (open). Tighten
     // per-path as new features land.
     match /{allPaths=**} {

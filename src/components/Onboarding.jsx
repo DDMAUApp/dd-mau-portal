@@ -2025,6 +2025,9 @@ function ApplicationCard({ app, isEs, staffName, onConvert, onStatusChange, onTo
                             <p className="text-dd-text italic mt-0.5">"{app.anythingElse}"</p>
                         </div>
                     )}
+                    {app.resumePath && (
+                        <ResumeLink appId={app.id} resumePath={app.resumePath} fileName={app.resumeFileName} isEs={isEs} />
+                    )}
                     {Array.isArray(app.skillsList) && app.skillsList.length > 0 && (
                         <div>
                             <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('Skills', 'Habilidades')}</div>
@@ -2083,6 +2086,43 @@ function ApplicationCard({ app, isEs, staffName, onConvert, onStatusChange, onTo
                 </div>
             )}
         </div>
+    );
+}
+
+// Resume link — fetches the download URL lazily so the admin can open
+// or download the file the applicant attached during their submission.
+// Storage rule allows public read on /applications/{appId}/* so this
+// works without auth.
+function ResumeLink({ appId, resumePath, fileName, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [url, setUrl] = useState(null);
+    const [err, setErr] = useState('');
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const u = await getDownloadURL(sref(storage, resumePath));
+                if (alive) setUrl(u);
+            } catch (e) {
+                if (alive) setErr(String(e.message || e));
+            }
+        })();
+        return () => { alive = false; };
+    }, [resumePath]);
+    if (err) return null;
+    if (!url) return <p className="text-[11px] text-dd-text-2 italic">{tx('Loading resume…', 'Cargando CV…')}</p>;
+    return (
+        <a href={url} target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-2 bg-blue-50 border-2 border-blue-200 rounded-lg p-2 hover:bg-blue-100 transition">
+            <span className="text-xl">📄</span>
+            <div className="flex-1 min-w-0">
+                <div className="text-[11px] font-bold text-blue-900 truncate">
+                    {tx('Resume attached', 'CV adjunto')}
+                </div>
+                <div className="text-[10px] text-blue-700 truncate">{fileName || resumePath.split('/').pop()}</div>
+            </div>
+            <span className="text-[11px] text-blue-700 font-bold flex-shrink-0">↗ {tx('Open', 'Abrir')}</span>
+        </a>
     );
 }
 

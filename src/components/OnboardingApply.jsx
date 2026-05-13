@@ -28,9 +28,10 @@
 //   - Typed signature must match the legal name they entered.
 //   - userAgent + SHA-256 ip-hash captured for audit defensibility.
 
-import { useState, useEffect, useMemo } from 'react';
-import { db } from '../firebase';
-import { collection, addDoc, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { db, storage } from '../firebase';
+import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { ref as sref, uploadBytes } from 'firebase/storage';
 import {
     POSITIONS, LOCATIONS, DISTANCE_OPTIONS, TRANSPORT_OPTIONS, DESIRED_HOURS,
     DAYS, SHIFT_BLOCKS,
@@ -193,6 +194,10 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     const [done, setDone] = useState(false);
     const [err, setErr] = useState('');
     const [appId, setAppId] = useState(null);
+    // Resume file — not in `values` (a File can't be JSON-stringified
+    // for the localStorage draft). Held separately + uploaded during
+    // submit to applications/{appId}/resume_{ts}.{ext}.
+    const [resumeFile, setResumeFile] = useState(null);
 
     // Auto-save on every change. Localstorage write is synchronous + cheap.
     useEffect(() => {
@@ -242,6 +247,24 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
         try {
             const phoneE164 = normalizeUsPhone(values.phone);
             const ipHash = await sha256Hex(navigator.userAgent + '|' + Date.now());
+            // Pre-allocate the app doc ID so we can upload the resume to
+            // applications/{appId}/* BEFORE writing the Firestore doc. If
+            // resume upload fails we still write the doc (the resume is
+            // optional) but without a resumePath.
+            const appRef = doc(collection(db, 'onboarding_applications'));
+            let resumePath = null;
+            if (resumeFile) {
+                try {
+                    const ts = Date.now();
+                    const ext = (resumeFile.name.split('.').pop() || 'pdf').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const safeName = `resume_${ts}.${ext || 'pdf'}`;
+                    resumePath = `applications/${appRef.id}/${safeName}`;
+                    await uploadBytes(sref(storage, resumePath), resumeFile, { contentType: resumeFile.type });
+                } catch (upErr) {
+                    console.warn('resume upload failed (non-fatal):', upErr);
+                    resumePath = null;
+                }
+            }
             // Compose the submit payload. Keep field names matched to the
             // Firestore rule schema (legalName + name mirror, contactConsent
             // gate). `name` mirrors legalName for back-compat with the old
@@ -313,9 +336,12 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 // Captured so admin can default the hire's portal to ES
                 // when converting a Spanish-filled application.
                 preferredLanguage: isEs ? 'es' : 'en',
+                // Optional resume path if upload succeeded above.
+                resumePath: resumePath,
+                resumeFileName: resumeFile ? resumeFile.name : null,
                 createdAt: serverTimestamp(),
             };
-            const appRef = await addDoc(collection(db, 'onboarding_applications'), payload);
+            await setDoc(appRef, payload);
             // Push notify admins.
             try {
                 const staffSnap = await getDoc(doc(db, 'config', 'staff'));
@@ -370,7 +396,8 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                     {step === 1 && <Step1 values={values} setField={setField} toggleInArray={toggleInArray} isEs={isEs} />}
                     {step === 2 && <Step2 values={values} setField={setField} isEs={isEs} />}
                     {step === 3 && <Step3 values={values} setNested={setNested} setField={setField} isEs={isEs} />}
-                    {step === 4 && <Step4 values={values} setField={setField} toggleInArray={toggleInArray} setValues={setValues} isEs={isEs} />}
+                    {step === 4 && <Step4 values={values} setField={setField} toggleInArray={toggleInArray} setValues={setValues}
+                        resumeFile={resumeFile} setResumeFile={setResumeFile} isEs={isEs} />}
                     {step === 5 && <Step5 values={values} setField={setField} isEs={isEs} />}
                     {step === 6 && <Step6 values={values} setField={setField} isEs={isEs} />}
                     {step === 7 && <Step7 values={values} setField={setField} setValues={setValues} isEs={isEs} />}
@@ -760,8 +787,22 @@ function Step3({ values, setNested, setField, isEs }) {
 }
 
 // ── Step 4: Experience + skills ──────────────────────────────────────────
-function Step4({ values, setField, toggleInArray, setValues, isEs }) {
+function Step4({ values, setField, toggleInArray, setValues, resumeFile, setResumeFile, isEs }) {
     const tx = (en, es) => (isEs ? es : en);
+    const resumeInputRef = useRef(null);
+    const handleResumePick = (filesList) => {
+        const f = (filesList || [])[0];
+        if (!f) return;
+        if (f.size > 10 * 1024 * 1024) {
+            alert(tx('Resume too large — max 10 MB.', 'CV demasiado grande — máx 10 MB.'));
+            return;
+        }
+        if (!/^image\/|^application\/pdf$/.test(f.type)) {
+            alert(tx('Resume must be a PDF or photo (JPG/PNG/HEIC).', 'CV debe ser PDF o foto.'));
+            return;
+        }
+        setResumeFile(f);
+    };
     const addEmployer = () => {
         if (values.pastEmployers.length >= 3) return;
         setValues(v => ({ ...v, pastEmployers: [...v.pastEmployers, { employer: '', role: '', startMonth: '', endMonth: '', reasonLeft: '', stillHere: false }] }));
@@ -776,6 +817,35 @@ function Step4({ values, setField, toggleInArray, setValues, isEs }) {
             <SectionHead title={tx('Tell us about your experience', 'Cuéntanos tu experiencia')}
                 subtitle={tx('Skip anything you don\'t have — we don\'t reject for blanks.',
                     'Salta lo que no tengas — no rechazamos por espacios en blanco.')} />
+
+            {/* Resume — optional. Many restaurant applicants don't have
+                one and we don't want this to feel like a gate. Tiny
+                muted upload chip at the top of experience. */}
+            <div>
+                <FieldLabel helper={tx('PDF or photo, max 10 MB. We don\'t need this to consider you.',
+                    'PDF o foto, máx 10 MB. No lo necesitamos.')}>
+                    {tx('Resume (optional)', 'Currículum (opcional)')}
+                </FieldLabel>
+                <input ref={resumeInputRef} type="file" accept="image/*,application/pdf"
+                    onChange={e => handleResumePick(e.target.files)} className="hidden" />
+                {resumeFile ? (
+                    <div className="flex items-center justify-between bg-green-50 border-2 border-green-300 rounded-lg p-2">
+                        <div className="text-[12px] text-green-800 truncate">
+                            📄 {resumeFile.name} <span className="text-green-600">({Math.round(resumeFile.size / 1024)} KB)</span>
+                        </div>
+                        <button type="button" onClick={() => setResumeFile(null)}
+                            className="text-[11px] text-red-600 font-bold ml-2 flex-shrink-0">
+                            {tx('Remove', 'Quitar')}
+                        </button>
+                    </div>
+                ) : (
+                    <button type="button" onClick={() => resumeInputRef.current?.click()}
+                        className="w-full py-3 rounded-xl border-2 border-dashed border-gray-300 text-gray-500 text-sm font-bold hover:border-dd-green hover:text-dd-green active:scale-95">
+                        📎 {tx('Attach resume', 'Adjuntar currículum')}
+                    </button>
+                )}
+            </div>
+
             <div>
                 <FieldLabel required>{tx('Restaurant experience', 'Experiencia en restaurantes')}</FieldLabel>
                 <div className="space-y-1.5">
