@@ -2668,19 +2668,27 @@ function PolicyRow({ policyKey, defaultEn, defaultEs, override, saving, onSave, 
 
     return (
         <div className="bg-white border border-dd-line rounded-xl overflow-hidden">
-            <button onClick={() => setOpen(o => !o)}
-                className="w-full text-left p-3 flex items-center gap-2 hover:bg-dd-bg/40">
-                <span className="text-2xl">📄</span>
-                <div className="flex-1 min-w-0">
-                    <div className="font-bold text-sm text-dd-text">{titleLabel}</div>
-                    <div className="text-[11px] text-dd-text-2">
-                        {isCustom
-                            ? <>✏️ {tx('Custom', 'Personalizado')}{override?.updatedAt ? ` · ${new Date(override.updatedAt).toLocaleDateString()}` : ''}</>
-                            : <>📦 {tx('Default (shipped with app)', 'Predeterminado')}</>}
+            <div className="p-3 flex items-center gap-2 hover:bg-dd-bg/40">
+                <button onClick={() => setOpen(o => !o)} className="flex-1 flex items-center gap-2 text-left min-w-0">
+                    <span className="text-2xl flex-shrink-0">📄</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="font-bold text-sm text-dd-text truncate">{titleLabel}</div>
+                        <div className="text-[11px] text-dd-text-2">
+                            {isCustom
+                                ? <>✏️ {tx('Custom', 'Personalizado')}{override?.updatedAt ? ` · ${new Date(override.updatedAt).toLocaleDateString()}` : ''}</>
+                                : <>📦 {tx('Default (shipped with app)', 'Predeterminado')}</>}
+                        </div>
                     </div>
-                </div>
-                <span className="text-dd-text-2">{open ? '▴' : '▾'}</span>
-            </button>
+                </button>
+                <button onClick={() => setShowPreview(true)}
+                    className="text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 hover:bg-blue-200 flex-shrink-0">
+                    👁 {tx('View', 'Ver')}
+                </button>
+                <button onClick={() => setOpen(o => !o)}
+                    className="text-dd-text-2 text-sm px-2 py-1 flex-shrink-0">
+                    {open ? '▴' : tx('✏ Edit', '✏ Editar')}
+                </button>
+            </div>
             {open && (
                 <div className="border-t border-dd-line p-3 space-y-3 bg-dd-bg/20">
                     <div className="flex gap-1">
@@ -2749,8 +2757,8 @@ function PolicyRow({ policyKey, defaultEn, defaultEs, override, saving, onSave, 
             )}
             {showPreview && (
                 <PolicyPreview
-                    title={lang === 'en' ? enTitle : esTitle}
-                    body={lang === 'en' ? enBody : esBody}
+                    enTitle={enTitle} enBody={enBody}
+                    esTitle={esTitle} esBody={esBody}
                     isEs={isEs}
                     onClose={() => setShowPreview(false)} />
             )}
@@ -2758,25 +2766,42 @@ function PolicyRow({ policyKey, defaultEn, defaultEs, override, saving, onSave, 
     );
 }
 
-function PolicyPreview({ title, body, isEs, onClose }) {
+function PolicyPreview({ enTitle, enBody, esTitle, esBody, isEs, onClose }) {
     const tx = (en, es) => (isEs ? es : en);
+    const [lang, setLang] = useState('en');
+    const title = lang === 'en' ? enTitle : esTitle;
+    const body = lang === 'en' ? enBody : esBody;
     return (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3">
             <div className="bg-white w-full sm:max-w-3xl max-h-[90vh] rounded-2xl flex flex-col overflow-hidden">
-                <div className="p-3 border-b border-dd-line flex items-center justify-between">
-                    <div>
+                <div className="p-3 border-b border-dd-line flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
                         <p className="text-[10px] font-bold uppercase text-dd-text-2">{tx('Preview', 'Vista previa')}</p>
-                        <h3 className="text-base font-black text-dd-text">{title}</h3>
+                        <h3 className="text-base font-black text-dd-text truncate">{title}</h3>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg">×</button>
+                    <div className="flex gap-1 flex-shrink-0">
+                        <button onClick={() => setLang('en')}
+                            className={`text-[10px] font-bold px-2 py-1 rounded ${
+                                lang === 'en' ? 'bg-dd-text text-white' : 'bg-dd-bg text-dd-text-2'
+                            }`}>
+                            EN
+                        </button>
+                        <button onClick={() => setLang('es')}
+                            className={`text-[10px] font-bold px-2 py-1 rounded ${
+                                lang === 'es' ? 'bg-dd-text text-white' : 'bg-dd-bg text-dd-text-2'
+                            }`}>
+                            ES
+                        </button>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg flex-shrink-0">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
                     <pre className="whitespace-pre-wrap font-sans text-[12px] text-gray-800 leading-relaxed">{body}</pre>
                 </div>
                 <div className="p-3 border-t border-dd-line">
                     <p className="text-[10px] text-dd-text-2 italic">
-                        {tx('This is how the policy renders to a hire on their portal. The signed PDF uses the same text in Helvetica — make sure any special characters (curly quotes, em-dashes) render here before saving.',
-                            'Así se ve la política para un contratado. El PDF firmado usa el mismo texto.')}
+                        {tx('This is how the policy renders to a hire on their portal. The signed PDF uses the same text in Helvetica — verify any special characters render here before saving.',
+                            'Así se ve la política para un contratado. El PDF firmado usa el mismo texto en Helvetica.')}
                     </p>
                 </div>
             </div>
