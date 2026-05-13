@@ -206,17 +206,12 @@ export const ONBOARDING_DOCS = [
         // but the storage key is preserved.
         policyKey: 'tip_credit',
     },
-    {
-        id: 'workers_comp_notice',
-        en: 'Workers\' compensation notice',
-        es: 'Aviso de compensación laboral',
-        emoji: '🛡️',
-        kind: 'acknowledgment',
-        required: true,
-        daysFromHire: 7,
-        description: 'Missouri requires we give you written notice about how to file a workers\' comp claim if you get hurt on the job.',
-        policyKey: 'workers_comp',
-    },
+    // workers_comp_notice — removed 2026-05-13. Coverage is now handled
+    // by the WORKER'S COMPENSATION subsection inside the handbook
+    // (signed via handbook_ack) plus the official posted notice
+    // required at each restaurant location. If you ever want it back
+    // as a standalone signed acknowledgment, the DEFAULT_POLICIES
+    // entry was deleted in the same commit — recreate from git history.
     {
         id: 'minor_permit',
         en: 'Minor work permit',

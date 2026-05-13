@@ -2663,7 +2663,8 @@ function PolicyRow({ policyKey, defaultEn, defaultEs, override, saving, onSave, 
     const titleLabel = {
         handbook: tx('Employee handbook', 'Manual del empleado'),
         tip_credit: tx('Wage and tip pool notice', 'Aviso de salario y fondo de propinas'),
-        workers_comp: tx('Workers\' compensation notice', 'Aviso de compensación laboral'),
+        // workers_comp policy removed 2026-05-13. Coverage now lives
+        // inside the handbook + the posted notice at each location.
     }[policyKey] || policyKey;
 
     return (

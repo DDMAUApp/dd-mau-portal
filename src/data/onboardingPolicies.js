@@ -1019,96 +1019,13 @@ RECONOCIMIENTO
 He leído este aviso. Entiendo que DD Mau me paga el salario mínimo completo de Missouri o más y no toma un crédito por propinas. Entiendo el fondo común de propinas obligatorio 50/50 FOH/BOH y cómo se calcula mi porción. Entiendo que los dueños, gerentes y supervisores están excluidos del fondo.`,
         },
     },
-    workers_comp: {
-        en: {
-            title: 'Missouri Workers\' Compensation Notice',
-            body: `WORKERS' COMPENSATION RIGHTS — MISSOURI
-
-Missouri law requires DD Mau to give you written notice about your workers' compensation rights. Read this and keep it for your records.
-
-WHAT IS WORKERS' COMP?
-Workers' compensation is a no-fault insurance system that covers most employees who are injured on the job or develop a work-related illness. It pays for medical treatment and a portion of lost wages while you recover.
-
-WHO IS COVERED
-All DD Mau employees are covered from your first day of work. You don't need to do anything to enroll — coverage is automatic.
-
-WHAT IS COVERED
-- Injuries that happen at work or during work-related activities
-- Occupational diseases caused by work (e.g. repetitive strain, work-related burns)
-- Medical bills, including doctor visits, hospital stays, prescriptions, physical therapy
-- Temporary total disability (lost wages while you can't work)
-- Permanent disability if applicable
-- Death benefits for dependents in the event of a fatal injury
-
-WHAT YOU MUST DO IF INJURED
-1. Report the injury to your manager or a DD Mau owner IMMEDIATELY. By law, you must report within 30 days; reporting same-day helps your claim and your recovery.
-2. Get medical attention. For emergencies, call 911 or go to the nearest ER. For non-emergencies, your manager will direct you to an approved provider.
-3. Tell the medical provider the injury is work-related so workers' comp is billed, not your personal insurance.
-4. Cooperate with the investigation. Provide statements, records, and follow medical advice.
-
-YOUR RIGHTS
-- You have the right to receive workers' comp benefits as required by law without fear of retaliation.
-- You have the right to be represented by an attorney in workers' comp matters at your own expense.
-- You have the right to contact the Missouri Division of Workers' Compensation if you believe your claim is being mishandled.
-
-CONTACT FOR THE INSURANCE CARRIER
-Ask any manager or owner for the current workers' comp carrier and policy number. We'll post the official poster in the back of house as required by law.
-
-MISSOURI DIVISION OF WORKERS' COMPENSATION
-P.O. Box 58
-Jefferson City, MO 65102
-800-775-2667 · labor.mo.gov/dwc
-
-REPORTING FRAUD
-Workers' comp fraud — by an employee, employer, or provider — is a crime. Report suspected fraud to the Missouri Department of Insurance.
-
-ACKNOWLEDGMENT
-I have received and read this notice. I understand my rights and what I need to do if I get injured at work. I will report any work-related injury to a manager immediately.`,
-        },
-        es: {
-            title: 'Aviso de Compensación Laboral de Missouri',
-            body: `DERECHOS DE COMPENSACIÓN LABORAL — MISSOURI
-
-La ley de Missouri requiere que DD Mau te dé aviso por escrito sobre tus derechos de compensación laboral. Lee esto y guárdalo.
-
-¿QUÉ ES LA COMPENSACIÓN LABORAL?
-La compensación laboral es un sistema de seguro sin culpa que cubre a la mayoría de empleados que se lesionan en el trabajo o desarrollan una enfermedad relacionada con el trabajo. Paga tratamiento médico y una parte del salario perdido mientras te recuperas.
-
-QUIÉN ESTÁ CUBIERTO
-Todos los empleados de DD Mau están cubiertos desde su primer día de trabajo. No necesitas hacer nada para inscribirte — la cobertura es automática.
-
-QUÉ SE CUBRE
-- Lesiones que ocurren en el trabajo o durante actividades laborales
-- Enfermedades ocupacionales causadas por el trabajo
-- Cuentas médicas, incluyendo doctor, hospital, recetas, fisioterapia
-- Discapacidad temporal total (salario perdido mientras no puedes trabajar)
-- Discapacidad permanente si aplica
-- Beneficios por muerte para dependientes en caso de lesión fatal
-
-QUÉ DEBES HACER SI TE LESIONAS
-1. Reporta la lesión a tu gerente o a un dueño de DD Mau INMEDIATAMENTE. Por ley, debes reportar dentro de 30 días; reportar el mismo día ayuda tu reclamo y tu recuperación.
-2. Busca atención médica. Para emergencias, llama al 911 o ve a la sala de emergencias más cercana. Para no-emergencias, tu gerente te dirigirá a un proveedor aprobado.
-3. Dile al proveedor médico que la lesión es relacionada al trabajo para que cobren al seguro de compensación laboral, no a tu seguro personal.
-4. Coopera con la investigación. Provee declaraciones, registros y sigue el consejo médico.
-
-TUS DERECHOS
-- Tienes derecho a recibir beneficios sin miedo a represalias.
-- Tienes derecho a ser representado por un abogado en asuntos de compensación laboral a tu propio costo.
-- Tienes derecho a contactar a la División de Compensación Laboral de Missouri si crees que tu reclamo se está manejando mal.
-
-CONTACTO DE LA ASEGURADORA
-Pídele a cualquier gerente o dueño el seguro actual y número de póliza. Publicaremos el cartel oficial en la cocina según la ley.
-
-DIVISIÓN DE COMPENSACIÓN LABORAL DE MISSOURI
-P.O. Box 58
-Jefferson City, MO 65102
-800-775-2667 · labor.mo.gov/dwc
-
-REPORTAR FRAUDE
-El fraude de compensación laboral — por un empleado, empleador o proveedor — es un crimen. Reporta sospechas de fraude al Departamento de Seguros de Missouri.
-
-RECONOCIMIENTO
-He recibido y leído este aviso. Entiendo mis derechos y qué hacer si me lesiono en el trabajo. Reportaré cualquier lesión laboral a un gerente inmediatamente.`,
-        },
-    },
 };
+
+// Workers' comp policy was removed 2026-05-13 per Andrew. Coverage of
+// the Missouri workers' comp disclosure requirement now lives in:
+//   1. The WORKER'S COMPENSATION subsection inside the handbook (which
+//      hires sign via the handbook_ack onboarding doc), and
+//   2. The official MO workers' comp poster required at each restaurant
+//      location.
+// Restore from git history (commit before 2026-05-13) if you ever want
+// the standalone signed acknowledgment back.
