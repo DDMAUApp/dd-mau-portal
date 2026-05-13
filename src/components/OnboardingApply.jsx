@@ -439,11 +439,21 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 createdAt: serverTimestamp(),
             };
             await setDoc(appRef, payload);
-            // Push notify admins.
+            // Push notify admins. Dedupe by name in case the staff list
+            // somehow has duplicate entries — without this, the dispatch
+            // would write multiple notification docs for the same admin
+            // and they'd get multiple pushes per event.
             try {
                 const staffSnap = await getDoc(doc(db, 'config', 'staff'));
                 const list = (staffSnap.exists() ? staffSnap.data().list : []) || [];
-                const recipients = list.filter(s => s.canViewOnboarding === true || s.id === 40 || s.id === 41);
+                const seenNames = new Set();
+                const recipients = list.filter(s => {
+                    if (!s || !s.name) return false;
+                    if (!(s.canViewOnboarding === true || s.id === 40 || s.id === 41)) return false;
+                    if (seenNames.has(s.name)) return false;
+                    seenNames.add(s.name);
+                    return true;
+                });
                 await Promise.all(recipients.map(s =>
                     addDoc(collection(db, 'notifications'), {
                         forStaff: s.name,

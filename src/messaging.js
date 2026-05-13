@@ -121,8 +121,22 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
                 }
                 const me = liveList[meIdx];
                 const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
-                // De-dup + cap.
-                const dedup = existing.filter((t) => t && t.token && t.token !== token);
+                // Strict dedup: collapse to one entry per unique token
+                // string, regardless of how many copies of the same
+                // token currently exist on the record. The previous
+                // implementation only filtered the CURRENT token out
+                // before prepending — it left any duplicates of OTHER
+                // tokens alone, which is how Andrew's record drifted
+                // into 4-duplicate state.
+                const seenTokens = new Set();
+                const dedup = [];
+                for (const t of existing) {
+                    if (!t || !t.token) continue;
+                    if (t.token === token) continue;      // current token re-added below
+                    if (seenTokens.has(t.token)) continue; // duplicate of another existing token
+                    seenTokens.add(t.token);
+                    dedup.push(t);
+                }
                 const nextTokens = [{ token, lastSeen: Date.now() }, ...dedup].slice(0, MAX_TOKENS_PER_STAFF);
                 // No-op if nothing meaningful changed.
                 if (existing.length === nextTokens.length &&

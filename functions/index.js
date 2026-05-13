@@ -49,8 +49,22 @@ exports.dispatchNotification = onDocumentCreated(
             logger.info(`no FCM tokens for ${forStaff}, skipping push`);
             return;
         }
-        const tokens = me.fcmTokens.map((t) => t && t.token).filter(Boolean);
+        // DEDUP by exact token string. Without this, multiple stale
+        // entries that all happen to share the same active token (which
+        // happens after the message rotation logic in messaging.js
+        // re-saves the same token N times across sessions) cause Nx
+        // duplicate notifications on a single device. The Set-based
+        // dedup is the actual fix for the "4 of each notification"
+        // bug reported on 2026-05-13. The persist-side dedup in
+        // messaging.js prevents new accumulation; this dispatch-side
+        // dedup neutralizes legacy data already in Firestore.
+        const tokens = [...new Set(
+            me.fcmTokens.map((t) => t && t.token).filter(Boolean)
+        )];
         if (tokens.length === 0) return;
+        if (tokens.length !== me.fcmTokens.length) {
+            logger.info(`deduped ${me.fcmTokens.length - tokens.length} duplicate token(s) for ${forStaff}`);
+        }
 
         const message = {
             tokens,
@@ -503,9 +517,19 @@ exports.i9ReverificationReminder = onSchedule(
             // Pull all hires (small set) and filter in-memory.
             const snap = await db.collection("onboarding_hires").get();
             // Owners + canViewOnboarding admins receive the ping.
+            // Dedupe by name — duplicate staff entries would otherwise
+            // produce duplicate notification docs and the same admin
+            // gets multiple pushes per event.
             const staffDoc = await db.doc("config/staff").get();
             const list = (staffDoc.data() || {}).list || [];
-            const admins = list.filter((s) => s.canViewOnboarding === true || s.id === 40 || s.id === 41);
+            const seenAdminNames = new Set();
+            const admins = list.filter((s) => {
+                if (!s || !s.name) return false;
+                if (!(s.canViewOnboarding === true || s.id === 40 || s.id === 41)) return false;
+                if (seenAdminNames.has(s.name)) return false;
+                seenAdminNames.add(s.name);
+                return true;
+            });
 
             let pingedCount = 0;
             const ops = [];
