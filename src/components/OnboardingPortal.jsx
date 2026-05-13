@@ -77,7 +77,13 @@ function renderDeadlinePill(dlInfo, isEs) {
 }
 
 export default function OnboardingPortal({ token, language = 'en' }) {
-    const isEs = language === 'es';
+    // Hire-record preferredLanguage can override the URL/parent language
+    // — set during application→hire conversion when the applicant filled
+    // their app in Spanish. We resolve it AFTER the hire record loads
+    // (default is English on first paint; flips to ES once we see
+    // preferredLanguage === 'es' on the hire doc).
+    const [resolvedLang, setResolvedLang] = useState(language);
+    const isEs = resolvedLang === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
     const [status, setStatus] = useState('loading');  // loading | ready | error | submitted
@@ -99,8 +105,15 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 const hSnap = await getDoc(doc(db, 'onboarding_hires', inv.hireId));
                 if (!hSnap.exists()) throw new Error('Hire record missing. Ask your manager.');
                 if (!alive) return;
-                setHire({ id: hSnap.id, ...hSnap.data() });
+                const hireData = { id: hSnap.id, ...hSnap.data() };
+                setHire(hireData);
                 setHireId(inv.hireId);
+                // Flip the portal to ES if the hire was converted from a
+                // Spanish-filled application. URL/parent ?lang= still
+                // overrides this if explicitly set.
+                if (hireData.preferredLanguage && language === 'en') {
+                    setResolvedLang(hireData.preferredLanguage);
+                }
                 setStatus('ready');
                 // Mark invite as opened (non-blocking).
                 if (!inv.used) {

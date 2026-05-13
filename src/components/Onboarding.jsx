@@ -160,15 +160,72 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     );
 
     // Convert an application into a hire — pre-fills the AddHire modal.
+    //
+    // V2 applications carry richer signal than v1 used to. Pre-fill EVERY
+    // piece we can lift cleanly:
+    //   - hireDate ← soonestStartDate (if it's still in the future)
+    //   - subsetDocs ← isMinor heuristic (auto-include minor_permit if
+    //     applicant said they're under 18)
+    //   - location ← first of locations[] (skip 'either' since that
+    //     isn't a real location id), fall back to v1 single location
+    //   - position ← first of positionsAppliedFor[] (label), fall back
+    //     to v1 single position string
+    //   - languagePref ← if app was filled in Spanish (heuristic: long
+    //     fields contain Spanish-specific punctuation), default the
+    //     hire's portal to ES
+    //
+    // sourceApplicationId is stored on the hire so the convert linkage
+    // is visible in the audit log + we can update the app's status to
+    // 'hired' after the hire is created (still TODO — handled in the
+    // AddHireModal onCreated path).
     const [convertPrefill, setConvertPrefill] = useState(null);
     const convertApplication = (app) => {
+        const today = new Date(); today.setHours(0,0,0,0);
+        const todayStr = today.toISOString().slice(0, 10);
+        // Pick the first concrete location id. v2 stores array of ids
+        // ('webster' / 'maryland' / 'either'); 'either' isn't a real
+        // location so skip past it.
+        const v2Locations = Array.isArray(app.locations) ? app.locations : [];
+        const pickedLocation = v2Locations.find(l => l === 'webster' || l === 'maryland')
+            || app.location
+            || storeLocation
+            || 'webster';
+        // Hire date: prefer soonestStartDate (the date the applicant
+        // committed to on their app) over today, but only if it's
+        // still in the future.
+        const soonest = app.soonestStartDate || '';
+        const hireDateGuess = (soonest && soonest >= todayStr) ? soonest : '';
+        // Position: prefer first v2 selection. AddHireModal stores
+        // position as a free-text label so use the EN label here.
+        const firstPositionId = (app.positionsAppliedFor || [])[0];
+        const positionLabel = firstPositionId
+            ? (POSITIONS.find(p => p.id === firstPositionId) || {}).en || app.position || ''
+            : (app.position || '');
+        // Minor heuristic: applicant said they're under 18 + age permit
+        // is required by federal law. Pre-seed subsetDocs with the FULL
+        // ONBOARDING_DOCS minus minor_permit if NOT a minor, OR include
+        // it if they ARE. AddHireModal already auto-detects this from
+        // hire.isMinor — but pre-filling subsetDocs lets the picker
+        // reflect it from the modal-opens moment.
+        const subsetDocs = app.isUnder18 === true
+            ? ONBOARDING_DOCS.map(d => d.id)   // include everything including minor_permit
+            : null;                              // null = use defaults (excludes minorOnly)
         setConvertPrefill({
-            name: app.name || '',
+            name: app.legalName || app.name || '',
             email: app.email || '',
             phone: app.phone || '',
-            position: app.position || '',
-            location: app.location || storeLocation || 'webster',
+            position: positionLabel,
+            location: pickedLocation,
+            hireDate: hireDateGuess,
+            offerAmount: app.desiredHourlyWage ? `$${app.desiredHourlyWage} / hr` : '',
+            isMinor: app.isUnder18 === true ? true : undefined,
+            subsetDocs,
             sourceApplicationId: app.id,
+            // language hint — used by InviteSheet so we generate the QR
+            // URL with the right ?lang param later. For now stash on the
+            // hire record so the portal can default to ES if the app
+            // was filled in Spanish.
+            preferredLanguage: app.preferredLanguage || null,
         });
         setView('hires');
         setAddOpen(true);
@@ -1391,6 +1448,14 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 // of doc IDs = ONLY those docs visible to this hire (used
                 // for "send just one form" follow-ups).
                 subsetDocs: selectedDocs,
+                // Application linkage — when conversion came from an
+                // applicant we carry the source app id + minor flag +
+                // language hint so the hire portal can default ES if
+                // the application was filled in Spanish. Optional, only
+                // present when prefill came from convertApplication().
+                ...(prefill?.sourceApplicationId ? { sourceApplicationId: prefill.sourceApplicationId } : {}),
+                ...(prefill?.isMinor === true ? { isMinor: true } : {}),
+                ...(prefill?.preferredLanguage ? { preferredLanguage: prefill.preferredLanguage } : {}),
                 createdAt: new Date().toISOString(),
                 createdBy: staffName || 'admin',
             };
@@ -1403,6 +1468,20 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 expiresAt,
                 used: false,
             });
+            // If this hire was converted from an application, flip the
+            // application's status to 'hired' so it stops showing up in
+            // the Open filter + so the lifecycle Cloud Function leaves
+            // it alone (hired apps are excluded from the 180-day purge).
+            if (prefill?.sourceApplicationId) {
+                try {
+                    await updateDoc(doc(db, 'onboarding_applications', prefill.sourceApplicationId), {
+                        status: 'hired',
+                        hireId: hireRef.id,
+                        statusUpdatedAt: new Date().toISOString(),
+                        statusUpdatedBy: staffName || 'admin',
+                    });
+                } catch (e) { console.warn('failed to mark application hired:', e); }
+            }
             onCreated({ ...hire }, token);
         } catch (e) {
             console.error(isEditing ? 'Edit hire failed:' : 'Create hire failed:', e);

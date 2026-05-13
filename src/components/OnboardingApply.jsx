@@ -310,6 +310,9 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 // Lifecycle
                 status: 'applied',
                 source: typeof window !== 'undefined' && window.location.search.includes('apply=1') ? 'qr_code' : 'lock_screen',
+                // Captured so admin can default the hire's portal to ES
+                // when converting a Spanish-filled application.
+                preferredLanguage: isEs ? 'es' : 'en',
                 createdAt: serverTimestamp(),
             };
             const appRef = await addDoc(collection(db, 'onboarding_applications'), payload);
