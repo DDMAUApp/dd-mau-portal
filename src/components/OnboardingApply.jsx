@@ -85,7 +85,6 @@ function emptyState() {
         workAuthorized: null,
         isUnder18: null,
         isUnder16: null,
-        canPassFoodSafetyTraining: null,
         // Section 7: references
         references: [],
         // Section 8: attribution
@@ -154,7 +153,8 @@ function validateStep(step, v, tx) {
             if (v.isUnder18 === null) return tx('Answer the age question.', 'Contesta sobre la edad.');
             if (v.isUnder18 === true && v.isUnder16 === null) return tx('Are you under 16?', '¿Tienes menos de 16?');
             if (v.isUnder16 === true) return tx('We hire 16+. Try us again when you turn 16 — we\'d love to have you.', 'Contratamos 16+. Intenta cuando cumplas 16.');
-            if (v.canPassFoodSafetyTraining === null) return tx('Answer the food safety training question.', 'Contesta sobre el entrenamiento de seguridad alimentaria.');
+            // (ServSafe / food-safety question removed — it's a hire-stage
+            // commitment, not an applicant filter. Pushed to onboarding.)
             return null;
         }
         case 7: return null; // References optional
@@ -388,7 +388,6 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 isUnder18: values.isUnder18,
                 isUnder16: values.isUnder16,
                 under18: values.isUnder18, // legacy mirror, used by AddHireModal prefill
-                canPassFoodSafetyTraining: values.canPassFoodSafetyTraining,
                 // Section 7
                 references: values.references,
                 // Section 8
@@ -464,7 +463,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     };
 
     if (done) {
-        return <SuccessCard onClose={onClose} isEs={isEs} values={values} />;
+        return <SuccessCard isEs={isEs} values={values} />;
     }
 
     return (
@@ -589,14 +588,19 @@ function NavButtons({ step, total, onBack, onNext, onSubmit, saving, canProceed,
     );
 }
 
-function SuccessCard({ onClose, isEs, values }) {
+// Terminal thank-you screen. No Done button — that one used to dump
+// the applicant onto the staff PIN lock screen which is the wrong
+// audience entirely. Applicants land here, see confirmation, see what
+// they submitted, and close the tab themselves. If they want to apply
+// again, they'd reopen the apply link.
+function SuccessCard({ isEs, values }) {
     const tx = (en, es) => (isEs ? es : en);
     return (
         <div className="fixed inset-0 z-50 bg-dd-sage overflow-y-auto p-4 flex items-center justify-center">
             <div className="max-w-md w-full bg-white rounded-2xl border-2 border-green-200 shadow-lg p-6">
                 <p className="text-5xl text-center mb-3">🎉</p>
-                <h2 className="text-2xl font-black text-green-800 mb-2 text-center">
-                    {tx('Got it!', '¡Recibido!')}
+                <h2 className="text-2xl font-black text-green-800 mb-1 text-center">
+                    {tx('Thanks for applying!', '¡Gracias por aplicar!')}
                 </h2>
                 <p className="text-sm text-gray-700 text-center mb-4">
                     {tx(
@@ -605,17 +609,28 @@ function SuccessCard({ onClose, isEs, values }) {
                     )}
                 </p>
                 <div className="bg-gray-50 rounded-lg p-3 text-[11px] space-y-1 border border-gray-200">
-                    <p className="font-bold text-gray-700">{tx('Summary', 'Resumen')}</p>
+                    <p className="font-bold text-gray-700 mb-1">{tx('What you submitted', 'Lo que enviaste')}</p>
                     <p>👤 {values.legalName}</p>
-                    <p>📞 {values.phone} · ✉ {values.email}</p>
-                    <p>💼 {values.positionsAppliedFor.map(p => labelFor(POSITIONS, p, isEs)).join(', ')}</p>
-                    <p>📍 {values.locations.map(l => labelFor(LOCATIONS, l, isEs)).join(', ')}</p>
-                    <p>📅 {tx('Start by', 'Inicio')}: {values.soonestStartDate}</p>
+                    <p>📞 {values.phone}  ✉ {values.email}</p>
+                    {values.positionsAppliedFor.length > 0 && (
+                        <p>💼 {values.positionsAppliedFor.map(p => labelFor(POSITIONS, p, isEs)).join(', ')}</p>
+                    )}
+                    {values.locations.length > 0 && (
+                        <p>📍 {values.locations.map(l => labelFor(LOCATIONS, l, isEs)).join(', ')}</p>
+                    )}
+                    {values.soonestStartDate && (
+                        <p>📅 {tx('Available to start', 'Disponible para empezar')}: {values.soonestStartDate}</p>
+                    )}
                 </div>
-                <button onClick={onClose}
-                    className="mt-5 w-full py-3 rounded-xl bg-dd-green text-white font-bold">
-                    {tx('Done', 'Listo')}
-                </button>
+                <p className="mt-4 text-[11px] text-gray-500 text-center leading-snug">
+                    {tx(
+                        "You're all set — you can close this page. We'll be in touch soon.",
+                        'Listo — puedes cerrar esta página. Te contactaremos pronto.',
+                    )}
+                </p>
+                <p className="mt-3 text-[10px] text-gray-400 text-center">
+                    🍜 DD Mau · ddmaustl.com
+                </p>
             </div>
         </div>
     );
@@ -1117,16 +1132,6 @@ function Step6({ values, setField, isEs }) {
                         yesLabel={tx('Yes', 'Sí')} noLabel={tx('No (16-17)', 'No (16-17)')} />
                 </div>
             )}
-            <div>
-                <FieldLabel required helper={tx('Missouri requires it. Course is ~90 min online and we cover the cost.',
-                    'Missouri lo requiere. ~90 min online y cubrimos el costo.')}>
-                    {tx('Willing to complete a free ServSafe Food Handler course in your first week?',
-                        '¿Dispuesto a completar el curso ServSafe en tu primera semana?')}
-                </FieldLabel>
-                <YesNoPick value={values.canPassFoodSafetyTraining}
-                    onChange={(v) => setField('canPassFoodSafetyTraining', v)}
-                    yesLabel={tx('Yes', 'Sí')} noLabel={tx('No', 'No')} />
-            </div>
         </div>
     );
 }
