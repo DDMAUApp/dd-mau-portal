@@ -6165,9 +6165,22 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
         if (type === 'week_published') return '📢';
         return '📬';
     };
+    // Backdrop-close uses target-vs-currentTarget instead of bubble stopping.
+    // On iOS, scrolling inside the inner panel can produce a synthetic
+    // click whose target is the inner panel but whose path still reaches
+    // the backdrop after stopPropagation if the gesture crosses elements.
+    // Comparing target to currentTarget on the backdrop is the standard
+    // fix: dismiss ONLY when the click landed on the backdrop itself.
+    const handleBackdrop = (e) => {
+        if (e.target === e.currentTarget) onClose();
+    };
     return (
-        <div className="fixed inset-0 bg-black/40 z-50 flex justify-end" onClick={onClose}>
-            <div className="bg-white w-full max-w-sm h-full overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/40 z-50 flex justify-end"
+            onMouseDown={handleBackdrop}
+            onTouchStart={handleBackdrop}>
+            <div className="bg-white w-full max-w-sm h-full overflow-y-auto shadow-2xl"
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}>
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-dd-text">🔔 {tx('Notifications', 'Notificaciones')}</h3>
                     <div className="flex items-center gap-2">
