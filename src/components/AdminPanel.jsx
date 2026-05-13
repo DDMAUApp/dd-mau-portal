@@ -1516,6 +1516,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     { field: "canEditScheduleFOH",   labelEn: "FOH editor",   labelEs: "Editor FOH",   emoji: "📅", onColor: "bg-teal-600",   offColor: "bg-gray-300" },
                                                     { field: "canEditScheduleBOH",   labelEn: "BOH editor",   labelEs: "Editor BOH",   emoji: "📅", onColor: "bg-orange-600", offColor: "bg-gray-300" },
                                                     { field: "canViewOnboarding",    labelEn: "Onboarding (PII)", labelEs: "Onboarding (PII)", emoji: "🪪", onColor: "bg-rose-700",   offColor: "bg-gray-300" },
+                                                    { field: "canReceive86Alerts",   labelEn: "86 alerts (push)", labelEs: "Alertas 86 (push)", emoji: "🚫", onColor: "bg-red-700", offColor: "bg-gray-300" },
                                                 ].map(t => (
                                                     <div key={t.field} className="flex items-center gap-1 mb-1">
                                                         <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
@@ -1642,6 +1643,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <AccessToggle
                                                                 on={!!s.isMinor} label={language === "es" ? "Menor" : "Minor"} icon="🔑"
                                                                 onClick={() => handleBulkUpdate(s.id, { isMinor: !s.isMinor })} />
+                                                            <AccessToggle
+                                                                on={!!s.canReceive86Alerts} label={language === "es" ? "Alertas 86" : "86 alerts"} icon="🚫"
+                                                                onClick={() => handleBulkUpdate(s.id, { canReceive86Alerts: !s.canReceive86Alerts })} />
                                                         </div>
                                                     </div>
 

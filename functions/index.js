@@ -665,3 +665,120 @@ exports.purgeVoidedChecks = onSchedule(
         }
     }
 );
+
+// ── 8. 86 / out-of-stock daily push reminders ─────────────────────────────
+//
+// Runs three times a day (10am, 2pm, 8pm Central) to remind opted-in
+// staff what's STILL out of stock on either restaurant location's 86
+// board. The "still" matters — once an item is 86'd, it tends to stay
+// off the menu longer than necessary because nobody remembers to flip
+// it back when the new shipment lands. These pings keep the list
+// top-of-mind without spamming the whole staff.
+//
+// Recipients: any staff with canReceive86Alerts === true on their
+// /config/staff record. Admin opts staff in via the per-staff toggle
+// on the Admin Panel ("🚫 86 alerts").
+//
+// Data shape: /ops/86_{location} = { items: [{name, status}], count,
+// updatedAt }. Only items with status === 'OUT_OF_STOCK' are
+// considered for the notification — low-stock items are surfaced on
+// the dashboard but don't trigger the daily ping (they're an early
+// warning, not a "still off the menu" reminder).
+//
+// Idempotency / dedup: each ping carries a stable tag of the form
+// `eighty_six_alert:{slot}:{YYYY-MM-DD}` where slot ∈ {morning,
+// afternoon, evening}. The OS replaces same-tag notifications so a
+// retry from Cloud Scheduler can't double-ping. The dispatch path
+// (dispatchNotification → FCM with data-only payload + tag) handles
+// the rest.
+//
+// Skip rule: if BOTH locations have zero OUT_OF_STOCK items at the
+// scheduled time, NO notification is sent. Pure positive-noise
+// reduction — staff don't want "everything's fine" pings 3x a day.
+const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
+    try {
+        const [websterSnap, marylandSnap] = await Promise.all([
+            db.doc("ops/86_webster").get(),
+            db.doc("ops/86_maryland").get(),
+        ]);
+        const outOf = (snap) => {
+            if (!snap.exists()) return [];
+            const items = (snap.data() || {}).items || [];
+            return items
+                .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name)
+                .map((i) => i.name);
+        };
+        const websterOut = outOf(websterSnap);
+        const marylandOut = outOf(marylandSnap);
+        const totalOut = websterOut.length + marylandOut.length;
+        if (totalOut === 0) {
+            logger.info(`86 alert (${slot}): nothing out at either location, skipping`);
+            return;
+        }
+        // Pull recipients.
+        const staffDoc = await db.doc("config/staff").get();
+        const list = (staffDoc.data() || {}).list || [];
+        const seenNames = new Set();
+        const recipients = list.filter((s) => {
+            if (!s || !s.name) return false;
+            if (s.canReceive86Alerts !== true) return false;
+            if (seenNames.has(s.name)) return false;
+            seenNames.add(s.name);
+            return true;
+        });
+        if (recipients.length === 0) {
+            logger.info(`86 alert (${slot}): ${totalOut} item(s) out but no opted-in recipients`);
+            return;
+        }
+        // Compose body. Format per-location with item lists so the push
+        // is actionable on its own — recipient doesn't have to open the
+        // app to see what's still off.
+        const lines = [];
+        if (websterOut.length > 0) {
+            lines.push(`Webster: ${websterOut.join(", ")}`);
+        }
+        if (marylandOut.length > 0) {
+            lines.push(`Maryland: ${marylandOut.join(", ")}`);
+        }
+        const title = `🚫 ${totalOut} item${totalOut === 1 ? "" : "s"} still 86'd (${slotLabelEn})`;
+        const body = lines.join(" · ");
+        const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" }); // YYYY-MM-DD in Central
+        const tag = `eighty_six_alert:${slot}:${todayStr}`;
+        const ops = recipients.map((s) =>
+            db.collection("notifications").add({
+                forStaff: s.name,
+                type: "eighty_six_alert",
+                title,
+                body,
+                link: "/eighty6",
+                tag,
+                createdAt: FieldValue.serverTimestamp(),
+                read: false,
+                createdBy: "eightySixAlerts",
+            })
+        );
+        await Promise.all(ops);
+        logger.info(`86 alert (${slot}): pinged ${recipients.length} recipient(s), ${totalOut} item(s) out`);
+    } catch (err) {
+        logger.error(`eightySixAlerts(${slot}) failed`, err);
+        throw err;
+    }
+};
+
+// Cron strings below are interpreted in America/Chicago — Cloud
+// Scheduler honors the timeZone option so daylight savings flips are
+// handled for us. Write the schedule as the wall-clock time we want.
+exports.eightySixAlertsMorning = onSchedule(
+    { schedule: "0 10 * * *", timeZone: "America/Chicago", region: "us-central1" },
+    () => eightySixSchedule("morning", "10am", "10am"),
+);
+
+exports.eightySixAlertsAfternoon = onSchedule(
+    { schedule: "0 14 * * *", timeZone: "America/Chicago", region: "us-central1" },
+    () => eightySixSchedule("afternoon", "2pm", "2pm"),
+);
+
+exports.eightySixAlertsEvening = onSchedule(
+    { schedule: "0 20 * * *", timeZone: "America/Chicago", region: "us-central1" },
+    () => eightySixSchedule("evening", "8pm", "8pm"),
+);

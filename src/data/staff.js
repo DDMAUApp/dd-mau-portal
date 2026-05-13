@@ -102,6 +102,20 @@ export function canViewOnboarding(staff) {
   return ADMIN_IDS.includes(staff.id);
 }
 
+// 86 alert push opt-in. Driven by the scheduledEightySixAlerts Cloud
+// Function that fires 3x daily (10am / 2pm / 8pm Central) listing
+// every item still flagged OUT_OF_STOCK on either location's 86 board.
+//
+// Default OFF — these pushes are operationally noisy for someone who
+// doesn't manage the kitchen. Admin opts staff in per-record via the
+// "86 alerts" toggle on the Admin Panel staff page.
+//
+// Returns true/false; never undefined.
+export function canReceive86Alerts(staff) {
+  if (!staff) return false;
+  return staff.canReceive86Alerts === true;
+}
+
 // Per-staff page visibility / sensitive-data access.
 //
 // Determines whether a given staff member can SEE manager-only data
