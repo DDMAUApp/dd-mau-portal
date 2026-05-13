@@ -28,7 +28,7 @@
 //   - Typed signature must match the legal name they entered.
 //   - userAgent + SHA-256 ip-hash captured for audit defensibility.
 
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes } from 'firebase/storage';
@@ -226,20 +226,62 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
         try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ values, step })); } catch {}
     }, [values, step]);
 
-    // Scroll back to top on every step change. The outer container has
-    // its own overflow-y scroll (it's position:fixed) so window scroll
-    // isn't enough — we need to scroll the actual element. Use the
-    // direct scrollTop assignment instead of scrollTo({behavior}) — it's
-    // universally supported on every browser version and instant by
-    // default, which is what we want (no animated jump between steps).
+    // Lock the body scroll completely while the apply form is mounted.
+    // This is the only fix that consistently kills iOS Safari's
+    // pull-to-refresh — overscroll-behavior on the child container
+    // doesn't always reach up to the page-level chrome on iOS. By
+    // setting position:fixed on the html + body we remove ALL page
+    // scroll; only the apply form's own overflow-y handles vertical
+    // movement, so any over-scroll just bounces inside our container
+    // instead of triggering refresh.
+    //
+    // Restore the previous scroll position on unmount so closing the
+    // apply form doesn't leave the user at the top of whatever was
+    // behind it.
     useEffect(() => {
+        const html = document.documentElement;
+        const body = document.body;
+        const prev = {
+            htmlOverflow: html.style.overflow,
+            htmlPosition: html.style.position,
+            htmlOverscroll: html.style.overscrollBehavior,
+            bodyOverflow: body.style.overflow,
+            bodyPosition: body.style.position,
+            bodyOverscroll: body.style.overscrollBehavior,
+            bodyTop: body.style.top,
+            bodyWidth: body.style.width,
+            scrollY: window.scrollY,
+        };
+        html.style.overflow = 'hidden';
+        html.style.position = 'fixed';
+        html.style.overscrollBehavior = 'none';
+        body.style.overflow = 'hidden';
+        body.style.position = 'fixed';
+        body.style.overscrollBehavior = 'none';
+        body.style.top = `-${prev.scrollY}px`;
+        body.style.width = '100%';
+        return () => {
+            html.style.overflow = prev.htmlOverflow;
+            html.style.position = prev.htmlPosition;
+            html.style.overscrollBehavior = prev.htmlOverscroll;
+            body.style.overflow = prev.bodyOverflow;
+            body.style.position = prev.bodyPosition;
+            body.style.overscrollBehavior = prev.bodyOverscroll;
+            body.style.top = prev.bodyTop;
+            body.style.width = prev.bodyWidth;
+            try { window.scrollTo(0, prev.scrollY); } catch {}
+        };
+    }, []);
+
+    // Scroll back to top on every step change. useLayoutEffect (not
+    // useEffect) so the scroll-reset happens AFTER React commits the
+    // new step's DOM but BEFORE the browser paints — the applicant
+    // never sees a flash of the new step scrolled to wherever step N
+    // ended. Direct scrollTop assignment works on every browser version.
+    useLayoutEffect(() => {
         if (containerRef.current) {
             containerRef.current.scrollTop = 0;
         }
-        // Also reset window in case the page is scrolled (some mobile
-        // browsers scroll the WINDOW even with a fixed overflow child
-        // due to address-bar handling).
-        try { window.scrollTo(0, 0); } catch {}
     }, [step]);
 
     const setField = (key, val) => setValues(v => ({ ...v, [key]: val }));
