@@ -27,6 +27,13 @@ import {
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
     deadlineForDoc, deadlineStatus, hireHasOverdueDocs,
 } from '../data/onboarding';
+import {
+    POSITIONS, LOCATIONS, DESIRED_HOURS,
+    EXPERIENCE_YEARS, DISTANCE_OPTIONS, TRANSPORT_OPTIONS,
+    LIFTING_CAPACITY, STANDING_HOURS,
+    CERTIFICATIONS, SKILLS, PREVIOUS_ROLES, LANGUAGES,
+    APPLICATION_STATUS_META, computeMatchScore, labelFor,
+} from '../data/applyForm';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const OnboardingTemplateEditor = reactLazy(() => import('./OnboardingTemplateEditor'));
 const OnboardingEmployerFill = reactLazy(() => import('./OnboardingEmployerFill'));
@@ -247,7 +254,23 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                 <ApplicationsList
                     applications={applications}
                     isEs={isEs}
+                    staffName={staffName}
                     onConvert={convertApplication}
+                    onStatusChange={async (appId, nextStatus) => {
+                        await updateDoc(doc(db, 'onboarding_applications', appId), {
+                            status: nextStatus,
+                            statusUpdatedAt: new Date().toISOString(),
+                            statusUpdatedBy: staffName || 'admin',
+                        });
+                        writeAudit('application_status_changed', { appId, to: nextStatus });
+                    }}
+                    onToggleStar={async (appId, currentStars) => {
+                        const has = (currentStars || []).includes(staffName);
+                        const next = has
+                            ? (currentStars || []).filter(s => s !== staffName)
+                            : [...(currentStars || []), staffName];
+                        await updateDoc(doc(db, 'onboarding_applications', appId), { starredBy: next });
+                    }}
                     onDismiss={async (appId) => {
                         if (!confirm(tx('Delete this application?', '¿Eliminar esta aplicación?'))) return;
                         await deleteDoc(doc(db, 'onboarding_applications', appId));
@@ -1647,68 +1670,410 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
 }
 
 // ── ApplicationsList ──────────────────────────────────────────────────────
-function ApplicationsList({ applications, isEs, onConvert, onDismiss }) {
+// ── ApplicationsList (v2) ─────────────────────────────────────────────────
+// Filter + sort header, match-score badges per app, expandable rich cards.
+// Match score is computed client-side from the application doc shape; see
+// computeMatchScore() in src/data/applyForm.js for the formula.
+function ApplicationsList({ applications, isEs, staffName, onConvert, onStatusChange, onToggleStar, onDismiss }) {
     const tx = (en, es) => (isEs ? es : en);
+    const [filterLocation, setFilterLocation] = useState('all');
+    const [filterPosition, setFilterPosition] = useState('all');
+    const [filterStatus, setFilterStatus] = useState('open');  // 'open' = anything not hired/not_selected/withdrew/expired
+    const [filterHasExp, setFilterHasExp] = useState(false);
+    const [sortBy, setSortBy] = useState('newest'); // 'newest' | 'match'
+
+    const enriched = useMemo(() => applications.map(a => ({ ...a, _score: computeMatchScore(a) })), [applications]);
+
+    const filtered = useMemo(() => {
+        let list = [...enriched];
+        // Location filter — apps may have either v2 (locations array) or v1
+        // (single location string), so check both.
+        if (filterLocation !== 'all') {
+            list = list.filter(a => {
+                const v2 = Array.isArray(a.locations) ? a.locations : null;
+                if (v2) return v2.includes(filterLocation) || v2.includes('either');
+                return a.location === filterLocation || a.location === 'either';
+            });
+        }
+        if (filterPosition !== 'all') {
+            list = list.filter(a => {
+                const v2 = Array.isArray(a.positionsAppliedFor) ? a.positionsAppliedFor : null;
+                if (v2) return v2.includes(filterPosition);
+                // v1 stored position as the English label; match leniently.
+                const pos = POSITIONS.find(p => p.id === filterPosition);
+                return pos && (a.position === pos.en || a.position === pos.es);
+            });
+        }
+        if (filterStatus !== 'all') {
+            const closedStatuses = ['hired', 'not_selected', 'withdrew', 'expired'];
+            list = list.filter(a => {
+                const s = a.status || 'applied';
+                if (filterStatus === 'open') return !closedStatuses.includes(s);
+                return s === filterStatus;
+            });
+        }
+        if (filterHasExp) {
+            list = list.filter(a => {
+                const exp = a.restaurantExperienceYears;
+                if (exp === 'none' || exp === 'lt_6mo') return false;
+                return !!exp;
+            });
+        }
+        if (sortBy === 'match') {
+            list.sort((a, b) => (b._score || 0) - (a._score || 0));
+        } else {
+            list.sort((a, b) => {
+                const ta = a.createdAt && a.createdAt.toMillis ? a.createdAt.toMillis() : 0;
+                const tb = b.createdAt && b.createdAt.toMillis ? b.createdAt.toMillis() : 0;
+                return tb - ta;
+            });
+        }
+        return list;
+    }, [enriched, filterLocation, filterPosition, filterStatus, filterHasExp, sortBy]);
+
     return (
         <div className="space-y-3">
             <HiringQrPanel isEs={isEs} />
-            {applications.length === 0 ? (
+            <ApplicationsFilters
+                isEs={isEs}
+                filterLocation={filterLocation} setFilterLocation={setFilterLocation}
+                filterPosition={filterPosition} setFilterPosition={setFilterPosition}
+                filterStatus={filterStatus} setFilterStatus={setFilterStatus}
+                filterHasExp={filterHasExp} setFilterHasExp={setFilterHasExp}
+                sortBy={sortBy} setSortBy={setSortBy}
+                total={applications.length} shown={filtered.length} />
+            {filtered.length === 0 ? (
                 <div className="bg-white border border-dd-line rounded-xl p-8 text-center">
                     <p className="text-4xl mb-2">📭</p>
                     <p className="text-sm font-semibold text-dd-text-2">
-                        {tx('No pending applications.', 'Sin aplicaciones pendientes.')}
+                        {applications.length === 0
+                            ? tx('No pending applications.', 'Sin aplicaciones pendientes.')
+                            : tx('No applications match the current filters.', 'Ninguna aplicación coincide con los filtros.')}
                     </p>
-                    <p className="text-[11px] text-dd-text-2 mt-1">
-                        {tx('Share the Hiring QR above on flyers, Indeed posts, etc. Submissions land here.',
-                            'Comparte el QR de arriba en folletos, anuncios, etc. Las solicitudes llegan aquí.')}
-                    </p>
+                    {applications.length === 0 && (
+                        <p className="text-[11px] text-dd-text-2 mt-1">
+                            {tx('Share the Hiring QR above on flyers, Indeed posts, etc.',
+                                'Comparte el QR de arriba en folletos, anuncios, etc.')}
+                        </p>
+                    )}
                 </div>
             ) : (
-                <ApplicationsListInner applications={applications} isEs={isEs}
-                    onConvert={onConvert} onDismiss={onDismiss} />
+                <div className="space-y-2">
+                    {filtered.map(a => (
+                        <ApplicationCard key={a.id} app={a} isEs={isEs} staffName={staffName}
+                            onConvert={onConvert} onStatusChange={onStatusChange}
+                            onToggleStar={onToggleStar} onDismiss={onDismiss} />
+                    ))}
+                </div>
             )}
         </div>
     );
 }
 
-// Inner list — extracted so ApplicationsList can render the HiringQrPanel
-// at the top regardless of whether there are applications yet.
-function ApplicationsListInner({ applications, isEs, onConvert, onDismiss }) {
+function ApplicationsFilters({
+    isEs, filterLocation, setFilterLocation, filterPosition, setFilterPosition,
+    filterStatus, setFilterStatus, filterHasExp, setFilterHasExp,
+    sortBy, setSortBy, total, shown,
+}) {
     const tx = (en, es) => (isEs ? es : en);
     return (
-        <div className="space-y-2">
-            {applications.map(a => {
-                const created = a.createdAt && typeof a.createdAt === 'object' && a.createdAt.toDate
-                    ? a.createdAt.toDate()
-                    : (typeof a.createdAt === 'string' ? new Date(a.createdAt) : null);
-                return (
-                    <div key={a.id} className="bg-white border border-dd-line rounded-xl p-3">
-                        <div className="flex items-start justify-between gap-3 flex-wrap">
-                            <div className="flex-1 min-w-[200px]">
-                                <div className="font-bold text-sm text-dd-text">{a.name}</div>
-                                <div className="text-[11px] text-dd-text-2 mt-0.5 space-y-0.5">
-                                    {a.position && <div>📋 {a.position}</div>}
-                                    {a.location && <div>📍 {a.location}</div>}
-                                    {a.email && <div>📧 {a.email}</div>}
-                                    {a.phone && <div>📱 {a.phone}</div>}
-                                    {a.note && <div className="italic text-dd-text-2 mt-1">"{a.note}"</div>}
-                                    {created && <div className="text-[10px] text-dd-text-2 mt-1">{created.toLocaleString()}</div>}
-                                </div>
+        <div className="bg-white border border-dd-line rounded-xl p-2.5 space-y-2">
+            <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-dd-text-2">
+                    {tx(`Showing ${shown} of ${total}`, `Mostrando ${shown} de ${total}`)}
+                </span>
+                <div className="flex gap-1">
+                    <button onClick={() => setSortBy('newest')}
+                        className={`text-[10px] font-bold px-2 py-1 rounded ${
+                            sortBy === 'newest' ? 'bg-dd-text text-white' : 'bg-dd-bg text-dd-text-2'
+                        }`}>
+                        🕒 {tx('Newest', 'Más reciente')}
+                    </button>
+                    <button onClick={() => setSortBy('match')}
+                        className={`text-[10px] font-bold px-2 py-1 rounded ${
+                            sortBy === 'match' ? 'bg-dd-text text-white' : 'bg-dd-bg text-dd-text-2'
+                        }`}>
+                        ⭐ {tx('Best match', 'Mejor coincidencia')}
+                    </button>
+                </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
+                <select value={filterLocation} onChange={e => setFilterLocation(e.target.value)}
+                    className="text-[11px] border border-dd-line rounded px-1.5 py-1 bg-white">
+                    <option value="all">{tx('All locations', 'Todas')}</option>
+                    {LOCATIONS.filter(l => l.id !== 'either').map(l => (
+                        <option key={l.id} value={l.id}>{isEs ? l.es : l.en}</option>
+                    ))}
+                </select>
+                <select value={filterPosition} onChange={e => setFilterPosition(e.target.value)}
+                    className="text-[11px] border border-dd-line rounded px-1.5 py-1 bg-white">
+                    <option value="all">{tx('All positions', 'Todos los puestos')}</option>
+                    {POSITIONS.map(p => (
+                        <option key={p.id} value={p.id}>{isEs ? p.es : p.en}</option>
+                    ))}
+                </select>
+                <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+                    className="text-[11px] border border-dd-line rounded px-1.5 py-1 bg-white">
+                    <option value="open">{tx('Open only', 'Solo abiertas')}</option>
+                    <option value="all">{tx('All statuses', 'Todas')}</option>
+                    {Object.entries(APPLICATION_STATUS_META).map(([id, meta]) => (
+                        <option key={id} value={id}>{isEs ? meta.es : meta.en}</option>
+                    ))}
+                </select>
+            </div>
+            <label className="flex items-center gap-1.5 text-[11px] text-dd-text-2 cursor-pointer">
+                <input type="checkbox" checked={filterHasExp} onChange={e => setFilterHasExp(e.target.checked)}
+                    className="w-4 h-4 accent-dd-green" />
+                {tx('Has restaurant experience (6mo+)', 'Tiene experiencia (6mo+)')}
+            </label>
+        </div>
+    );
+}
+
+function ApplicationCard({ app, isEs, staffName, onConvert, onStatusChange, onToggleStar, onDismiss }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [expanded, setExpanded] = useState(false);
+    const created = app.createdAt && typeof app.createdAt === 'object' && app.createdAt.toDate
+        ? app.createdAt.toDate()
+        : (typeof app.createdAt === 'string' ? new Date(app.createdAt) : null);
+    const status = app.status || 'applied';
+    const meta = APPLICATION_STATUS_META[status] || APPLICATION_STATUS_META.applied;
+    const score = app._score || 0;
+    const starred = (app.starredBy || []).includes(staffName);
+
+    // v2 fields with v1 fallbacks
+    const positions = Array.isArray(app.positionsAppliedFor) && app.positionsAppliedFor.length
+        ? app.positionsAppliedFor.map(p => labelFor(POSITIONS, p, isEs)).join(', ')
+        : (app.position || '—');
+    const locations = Array.isArray(app.locations) && app.locations.length
+        ? app.locations.map(l => labelFor(LOCATIONS, l, isEs)).join(', ')
+        : (app.location || '—');
+    const expYears = app.restaurantExperienceYears
+        ? labelFor(EXPERIENCE_YEARS, app.restaurantExperienceYears, isEs)
+        : null;
+    const langs = Array.isArray(app.spokenLanguages) ? app.spokenLanguages : [];
+    const isBilingual = langs.includes('english') && langs.includes('spanish');
+    const dinners = ['mon','tue','wed','thu','fri','sat','sun']
+        .reduce((sum, d) => sum + ((app.availability && app.availability[d] && app.availability[d].dinner) ? 1 : 0), 0);
+
+    return (
+        <div className={`bg-white border-2 rounded-xl overflow-hidden transition ${
+            starred ? 'border-amber-300 shadow-sm' :
+            score >= 70 ? 'border-green-200' :
+            'border-dd-line'
+        }`}>
+            <button onClick={() => setExpanded(s => !s)}
+                className="w-full text-left p-3 hover:bg-dd-bg/40 transition">
+                <div className="flex items-start justify-between gap-2 flex-wrap">
+                    <div className="flex-1 min-w-[200px]">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`text-[10px] font-black px-1.5 py-0.5 rounded ${
+                                score >= 70 ? 'bg-green-100 text-green-800' :
+                                score >= 40 ? 'bg-amber-100 text-amber-800' :
+                                'bg-gray-100 text-gray-600'
+                            }`}>⭐ {score}</span>
+                            <span className="font-black text-sm text-dd-text">{app.legalName || app.name}</span>
+                            {app.preferredName && app.preferredName !== app.legalName && (
+                                <span className="text-[11px] text-dd-text-2">({app.preferredName})</span>
+                            )}
+                            {isBilingual && (
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                                    EN/ES
+                                </span>
+                            )}
+                            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.tone}`}>
+                                {meta.emoji} {isEs ? meta.es : meta.en}
+                            </span>
+                        </div>
+                        <div className="text-[11px] text-dd-text-2 mt-1">
+                            💼 {positions} · 📍 {locations}
+                        </div>
+                        <div className="text-[11px] text-dd-text-2">
+                            {expYears && <>🍳 {expYears}</>}
+                            {dinners > 0 && <> · 📅 {tx(`${dinners} dinners/wk`, `${dinners} cenas/sem`)}</>}
+                            {app.transportationMethod && <> · 🚗 {labelFor(TRANSPORT_OPTIONS, app.transportationMethod, isEs)}</>}
+                        </div>
+                        {created && (
+                            <div className="text-[10px] text-dd-text-2 mt-0.5">
+                                {created.toLocaleString()}
                             </div>
-                            <div className="flex flex-col gap-1">
-                                <button onClick={() => onConvert(a)}
-                                    className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90">
-                                    ✓ {tx('Convert to hire', 'Crear contratación')}
-                                </button>
-                                <button onClick={() => onDismiss(a.id)}
-                                    className="text-[11px] px-2.5 py-1.5 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">
-                                    🗑 {tx('Dismiss', 'Descartar')}
-                                </button>
+                        )}
+                    </div>
+                    <button onClick={(e) => { e.stopPropagation(); onToggleStar(app.id, app.starredBy); }}
+                        className="text-xl"
+                        title={starred ? tx('Unstar', 'Quitar estrella') : tx('Star', 'Marcar')}>
+                        {starred ? '⭐' : '☆'}
+                    </button>
+                </div>
+            </button>
+            {expanded && (
+                <div className="border-t border-dd-line p-3 bg-dd-bg/30 space-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[12px]">
+                        <ContactBlock app={app} isEs={isEs} />
+                        <DetailsBlock app={app} isEs={isEs} dinners={dinners} />
+                    </div>
+                    {app.anythingElse && (
+                        <div className="bg-white border border-dd-line rounded-lg p-2 text-[12px]">
+                            <div className="font-bold text-dd-text-2 text-[10px] uppercase">{tx('Note', 'Nota')}</div>
+                            <p className="text-dd-text italic mt-0.5">"{app.anythingElse}"</p>
+                        </div>
+                    )}
+                    {Array.isArray(app.skillsList) && app.skillsList.length > 0 && (
+                        <div>
+                            <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('Skills', 'Habilidades')}</div>
+                            <div className="flex flex-wrap gap-1">
+                                {app.skillsList.map(s => (
+                                    <span key={s} className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-dd-line text-dd-text">
+                                        {labelFor(SKILLS, s, isEs)}
+                                    </span>
+                                ))}
                             </div>
                         </div>
-                    </div>
-                );
-            })}
+                    )}
+                    {Array.isArray(app.certifications) && app.certifications.length > 0 && (
+                        <div>
+                            <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('Certifications', 'Certificaciones')}</div>
+                            <div className="flex flex-wrap gap-1">
+                                {app.certifications.map(c => (
+                                    <span key={c} className="text-[10px] px-1.5 py-0.5 rounded bg-green-50 border border-green-200 text-green-800 font-bold">
+                                        ✓ {labelFor(CERTIFICATIONS, c, isEs)}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {Array.isArray(app.pastEmployers) && app.pastEmployers.length > 0 && (
+                        <div>
+                            <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('Past employers', 'Empleadores anteriores')}</div>
+                            <div className="space-y-1">
+                                {app.pastEmployers.map((e, i) => (
+                                    <div key={i} className="text-[11px] bg-white border border-dd-line rounded p-1.5">
+                                        <span className="font-bold">{e.role}</span> @ <span>{e.employer}</span>
+                                        <span className="text-dd-text-2"> · {e.startMonth || '?'} – {e.stillHere ? tx('present', 'presente') : (e.endMonth || '?')}</span>
+                                        {e.reasonLeft && <div className="italic text-dd-text-2 text-[10px]">↳ {e.reasonLeft}</div>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {Array.isArray(app.references) && app.references.length > 0 && (
+                        <div>
+                            <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('References', 'Referencias')}</div>
+                            <div className="space-y-1">
+                                {app.references.map((r, i) => (
+                                    <div key={i} className="text-[11px] bg-white border border-dd-line rounded p-1.5">
+                                        <span className="font-bold">{r.name}</span>
+                                        {r.relation && <> · {r.relation.replace(/_/g, ' ')}</>}
+                                        {r.phone && <> · <a href={`tel:${r.phone}`} className="text-blue-600 underline">{r.phone}</a></>}
+                                        {!r.mayContact && <span className="text-[9px] text-amber-600 ml-1">⚠ {tx('Asks not to contact', 'No contactar')}</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    <ActionButtonsRow app={app} isEs={isEs} onConvert={onConvert}
+                        onStatusChange={onStatusChange} onDismiss={onDismiss} />
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ContactBlock({ app, isEs }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div className="bg-white border border-dd-line rounded-lg p-2 space-y-0.5">
+            <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('Contact', 'Contacto')}</div>
+            {app.phone && (
+                <div>
+                    📞 <a href={`tel:${app.phone}`} className="text-blue-600 underline">{app.phone}</a>
+                </div>
+            )}
+            {app.email && (
+                <div>
+                    ✉ <a href={`mailto:${app.email}`} className="text-blue-600 underline truncate inline-block max-w-[200px] align-bottom">{app.email}</a>
+                </div>
+            )}
+            {app.city && <div>🏠 {app.city}{app.state ? `, ${app.state}` : ''}</div>}
+            {app.howFarFromRestaurant && (
+                <div>📏 {labelFor(DISTANCE_OPTIONS, app.howFarFromRestaurant, isEs)}</div>
+            )}
+            {app.workAuthorized === true && <div className="text-green-700 font-bold">✓ {tx('Authorized to work', 'Autorizado para trabajar')}</div>}
+            {app.workAuthorized === false && <div className="text-red-700 font-bold">⚠ {tx('Not authorized to work', 'No autorizado')}</div>}
+            {app.isUnder18 === true && <div className="text-amber-700">⚠ {tx('Under 18 — needs work permit', 'Menor de 18 — requiere permiso')}</div>}
+        </div>
+    );
+}
+
+function DetailsBlock({ app, isEs, dinners }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div className="bg-white border border-dd-line rounded-lg p-2 space-y-0.5">
+            <div className="font-bold text-dd-text-2 text-[10px] uppercase mb-1">{tx('Job details', 'Detalles')}</div>
+            {app.soonestStartDate && <div>📅 {tx('Start', 'Inicio')}: {app.soonestStartDate}</div>}
+            {app.desiredHours && <div>⏰ {labelFor(DESIRED_HOURS, app.desiredHours, isEs)}</div>}
+            {app.desiredHourlyWage && <div>💰 ${app.desiredHourlyWage}/hr {tx('hoped', 'esperado')}</div>}
+            {app.canLiftHowMuch && <div>💪 {labelFor(LIFTING_CAPACITY, app.canLiftHowMuch, isEs)}</div>}
+            {app.canStandHowLong && <div>🦵 {labelFor(STANDING_HOURS, app.canStandHowLong, isEs)}</div>}
+            {dinners > 0 && <div>🌙 {tx(`${dinners} dinner shifts/wk`, `${dinners} turnos de cena/sem`)}</div>}
+            {app.isStudent === true && <div>🎓 {tx('Currently a student', 'Estudiante actualmente')}</div>}
+            {Array.isArray(app.spokenLanguages) && app.spokenLanguages.length > 0 && (
+                <div>🗣 {app.spokenLanguages.map(l => labelFor(LANGUAGES, l, isEs)).join(', ')}</div>
+            )}
+            {app.referralSource && <div className="text-[10px] text-dd-text-2 mt-1 italic">{tx('Heard via', 'Vía')}: {app.referralSource}{app.referredByName ? ` (${app.referredByName})` : ''}</div>}
+        </div>
+    );
+}
+
+function ActionButtonsRow({ app, isEs, onConvert, onStatusChange, onDismiss }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const status = app.status || 'applied';
+    return (
+        <div className="space-y-2">
+            <div className="flex flex-wrap gap-1">
+                {['screening', 'phone_screen', 'interview', 'offer', 'not_selected', 'withdrew'].map(s => {
+                    const meta = APPLICATION_STATUS_META[s];
+                    const active = status === s;
+                    return (
+                        <button key={s} onClick={() => onStatusChange(app.id, s)}
+                            className={`text-[10px] font-bold px-2 py-1 rounded border-2 transition ${
+                                active
+                                    ? `${meta.tone} border-current`
+                                    : 'bg-white border-dd-line text-dd-text-2 hover:border-dd-text-2'
+                            }`}>
+                            {meta.emoji} {isEs ? meta.es : meta.en}
+                        </button>
+                    );
+                })}
+            </div>
+            <div className="flex flex-wrap gap-1">
+                {app.phone && (
+                    <a href={`tel:${app.phone}`}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
+                        📞 {tx('Call', 'Llamar')}
+                    </a>
+                )}
+                {app.phone && (
+                    <a href={`sms:${app.phone}`}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
+                        💬 {tx('Text', 'Mensaje')}
+                    </a>
+                )}
+                {app.email && (
+                    <a href={`mailto:${app.email}`}
+                        className="text-[11px] px-2.5 py-1.5 rounded-lg bg-blue-100 text-blue-700 font-bold hover:bg-blue-200">
+                        ✉ {tx('Email', 'Correo')}
+                    </a>
+                )}
+                <button onClick={() => onConvert(app)}
+                    className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90">
+                    ✓ {tx('Convert to hire', 'Crear contratación')}
+                </button>
+                <button onClick={() => onDismiss(app.id)}
+                    className="text-[11px] px-2.5 py-1.5 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">
+                    🗑 {tx('Delete', 'Eliminar')}
+                </button>
+            </div>
         </div>
     );
 }
