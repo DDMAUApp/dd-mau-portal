@@ -5,8 +5,9 @@ import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
 import ChecklistHistory from './ChecklistHistory';
-import InventoryHistory from './InventoryHistory'; 
+import InventoryHistory from './InventoryHistory';
 import { toast, undoToast } from '../toast';
+import { enableFcmPush } from '../messaging';
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -1999,6 +2000,42 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 <button onClick={sendTestPush}
                                     className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">
                                     🧪 {language === 'es' ? 'Enviar push de prueba a mí' : 'Send test push to myself'}
+                                </button>
+                                {/* Register-now — runs enableFcmPush on demand and
+                                    surfaces the exact failure reason inline. Use
+                                    when token count = 0: the auto-register on app
+                                    load may have failed silently (permission
+                                    denied, SW register error, getToken throw)
+                                    and a full reload doesn't fix it. This button
+                                    is the deterministic path to "make my token
+                                    appear right now or tell me why it won't." */}
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            const result = await enableFcmPush(staffName, staffList, setStaffList);
+                                            if (result.ok) {
+                                                alert(language === 'es'
+                                                    ? '✅ Registrado. Tu token está guardado. Prueba enviarte un push.'
+                                                    : '✅ Registered. Your token is saved. Try sending a test push.');
+                                            } else {
+                                                const reasonLabel = {
+                                                    'no-notification-api': language === 'es' ? 'Este navegador no soporta notificaciones' : "This browser doesn't support notifications",
+                                                    'permission-denied': language === 'es' ? 'Permisos bloqueados — actívalos en ajustes del navegador' : 'Permission denied — turn notifications back on in browser settings',
+                                                    'no-vapid-key': language === 'es' ? 'Clave VAPID falta (error de despliegue)' : 'VAPID key missing (deploy bug)',
+                                                    'messaging-unsupported': language === 'es' ? 'FCM no soportado aquí (Safari sin iOS 16.4+?)' : 'FCM unsupported here (Safari without iOS 16.4+?)',
+                                                    'sw-register-failed': language === 'es' ? 'No se pudo registrar el Service Worker' : 'Service Worker failed to register',
+                                                    'get-token-failed': language === 'es' ? 'FCM rechazó dar un token (mira la consola)' : 'FCM refused to issue a token (check console)',
+                                                    'no-token': language === 'es' ? 'FCM devolvió token vacío' : 'FCM returned empty token',
+                                                }[result.reason] || result.reason;
+                                                alert((language === 'es' ? '❌ Falló: ' : '❌ Failed: ') + reasonLabel);
+                                            }
+                                        } catch (e) {
+                                            console.error('register now failed:', e);
+                                            alert((language === 'es' ? '❌ Error: ' : '❌ Error: ') + (e.message || e));
+                                        }
+                                    }}
+                                    className="w-full mt-2 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700">
+                                    📲 {language === 'es' ? 'Registrar este dispositivo ahora' : 'Register this device now'}
                                 </button>
                                 {/* Reset push tokens — nukes ALL fcmTokens on this
                                     staff's record. Use when you're getting
