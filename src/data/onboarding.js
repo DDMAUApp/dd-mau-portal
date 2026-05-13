@@ -193,13 +193,17 @@ export const ONBOARDING_DOCS = [
     },
     {
         id: 'tip_credit_notice',
-        en: 'Tip credit / pay notice',
-        es: 'Aviso de crédito por propinas',
+        en: 'Wage and tip pool notice',
+        es: 'Aviso de salario y fondo común de propinas',
         emoji: '💵',
         kind: 'acknowledgment',
         required: true,
-        daysFromHire: 1,           // required by FLSA before tip credit can be taken
-        description: 'Written notice about your wage rate, tip handling, and how the tip credit works (FLSA requirement).',
+        daysFromHire: 1,           // wage + tip-pool disclosure should be signed on day 1
+        description: 'Written notice describing your wage rate and how the 50/50 FOH/BOH tip pool works.',
+        // Keep policyKey 'tip_credit' for back-compat with existing
+        // /config/policies overrides — the doc id and policy key are
+        // separately versioned; the policy content has been rewritten
+        // but the storage key is preserved.
         policyKey: 'tip_credit',
     },
     {

@@ -225,7 +225,18 @@ You should arrive at the restaurant 5 to 10 minutes before you are scheduled to 
 Tampering, altering, or falsifying time records or recording time on another employee's ID number is not allowed and may result in disciplinary action, up to and including termination.
 
 Tips
-Your portion of tips will be included in your paycheck at the end of the pay period. Tips are calculated based upon the following formula: (total tip amount / total hours worked on the schedule for all employees) x your number of hours worked.
+DD Mau pays every employee at or above the Missouri minimum wage; we do NOT take a tip credit. Because we pay full minimum wage, federal law lets us run a mandatory tip pool that includes both front-of-house (FOH) and back-of-house (BOH) staff. Owners, managers, and supervisors are excluded from the pool, as required by law.
+
+How the pool works:
+ - All tips received during the pay period (cash + credit card) are pooled together.
+ - 50% of the pool is allocated to the FOH share, 50% is allocated to the BOH share.
+ - The FOH share is divided by the total FOH hours worked during the pay period to produce an FOH dollars-per-hour rate.
+ - The BOH share is divided by the total BOH hours worked during the pay period to produce a BOH dollars-per-hour rate.
+ - Your portion of the pool = your hours worked on your side x that side's dollars-per-hour rate.
+
+Tip pool earnings are added to your paycheck at the end of each pay period. Credit card tips may be reduced by the proportional processing fee for that transaction, as allowed by law.
+
+You're responsible for accurately reporting tip income to DD Mau and to the IRS. We withhold applicable taxes on reported tips.
 
 Payroll Checks
 Paychecks are available at the Restaurant on the Friday the week of payroll of each month during business hours. After payday, you may pick up your paycheck during the same hours. Please understand that it may be difficult for anyone to be available to obtain your paycheck during peak business hours so plan accordingly.
@@ -670,7 +681,18 @@ Debes llegar al restaurante 5 a 10 minutos antes de tu hora programada de comenz
 Manipular, alterar o falsificar registros de tiempo o registrar tiempo con el ID de otro empleado no está permitido y puede resultar en acción disciplinaria, hasta e incluyendo la terminación.
 
 Propinas
-Tu porción de propinas será incluida en tu cheque al final del período de pago. Las propinas se calculan basadas en la siguiente fórmula: (cantidad total de propinas / total de horas trabajadas en el horario para todos los empleados) x tu número de horas trabajadas.
+DD Mau paga a cada empleado al menos el salario mínimo de Missouri; NO tomamos un crédito por propinas. Como pagamos el salario mínimo completo, la ley federal nos permite operar un fondo común de propinas obligatorio que incluye tanto al personal del frente de la casa (FOH) como al de la cocina (BOH). Los dueños, gerentes y supervisores están excluidos del fondo, como lo requiere la ley.
+
+Cómo funciona el fondo común:
+ - Todas las propinas recibidas durante el período de pago (efectivo + tarjeta) se juntan.
+ - 50% del fondo se asigna a la porción FOH, 50% se asigna a la porción BOH.
+ - La porción FOH se divide entre el total de horas FOH trabajadas durante el período de pago para producir una tasa FOH de dólares por hora.
+ - La porción BOH se divide entre el total de horas BOH trabajadas durante el período de pago para producir una tasa BOH de dólares por hora.
+ - Tu porción del fondo = tus horas trabajadas en tu lado x la tasa de dólares por hora de ese lado.
+
+Las propinas del fondo se agregan a tu cheque al final de cada período de pago. Las propinas de tarjeta de crédito pueden reducirse por la tarifa de procesamiento proporcional de esa transacción, según lo permite la ley.
+
+Eres responsable de reportar con exactitud el ingreso por propinas a DD Mau y al IRS. Retendremos los impuestos aplicables sobre las propinas reportadas.
 
 Cheques de Pago
 Los cheques están disponibles en el Restaurante el viernes de la semana de pago de cada mes durante horario de negocio. Después del día de pago, puedes recoger tu cheque durante las mismas horas. Por favor entiende que puede ser difícil que alguien esté disponible para entregar tu cheque durante horas pico de negocio, así que planea acordemente.
@@ -909,74 +931,92 @@ Este manual es una guía general y las provisiones de este manual no constituyen
     },
     tip_credit: {
         en: {
-            title: 'Tip Credit / Pay Notice (FLSA Section 3(m))',
-            body: `WAGE NOTICE FOR TIPPED EMPLOYEES
+            title: 'DD Mau Wage and Tip Pool Notice',
+            body: `WAGE AND TIP POOL NOTICE
 
-Federal law (Fair Labor Standards Act Section 3(m)) requires us to give you written notice about how your pay works before we can take a tip credit. Read this carefully.
+This notice explains how your pay works at DD Mau. Read it carefully and sign below to acknowledge you understand.
 
-YOUR DIRECT CASH WAGE
-DD Mau will pay you a direct cash wage as stated in your offer letter, plus tips. The cash wage may be less than the standard minimum wage if you regularly receive tips; the difference is called the "tip credit."
+YOUR WAGE
+DD Mau pays you a direct cash wage at or above the full Missouri minimum wage. We do NOT take a "tip credit." Your hourly wage is stated in your offer letter and on your paycheck stub.
 
-THE TIP CREDIT
-We are taking advantage of the tip credit allowed under federal and Missouri law. The amount of the tip credit we claim per hour, when combined with your direct cash wage, must equal at least the applicable minimum wage. As of this writing, the Missouri minimum wage is $13.75/hour (verify current rate — adjusts annually).
+THE TIP POOL
+DD Mau operates a mandatory tip pool that includes both front-of-house (FOH) and back-of-house (BOH) staff. Federal law (FLSA, as amended by the 2018 Consolidated Appropriations Act and the 2020 DOL final rule) allows an employer that pays full minimum wage to require a tip pool that includes traditionally non-tipped employees such as cooks and dishwashers. Owners, managers, and supervisors are excluded from the pool, as required by federal law.
 
-If your tips plus your direct cash wage do not equal at least the minimum wage for any pay period, DD Mau will make up the difference.
+HOW POOL SHARES ARE CALCULATED
+ - All tips received during a pay period (cash and credit/debit card) are pooled together.
+ - 50% of the total pool is allocated to the FOH share.
+ - 50% of the total pool is allocated to the BOH share.
+ - The FOH share is divided by the total FOH hours worked during that pay period to produce an FOH dollars-per-hour rate.
+ - The BOH share is divided by the total BOH hours worked during that pay period to produce a BOH dollars-per-hour rate.
+ - Your tip payment for the period = your hours worked on your side x that side's dollars-per-hour rate.
 
-TIPS BELONG TO YOU
-All tips you receive belong to you. We do not require tip pooling in a way that would include managers, owners, or non-tipped back-of-house employees (kitchen staff who don't customarily and regularly receive tips). Any tip pooling among tipped employees is voluntary and follows federal rules.
+EXAMPLE
+If during one pay period the total tip pool is $2,000, then FOH gets $1,000 and BOH gets $1,000. If total FOH hours that period were 100, the FOH rate is $10/hr; an FOH employee who worked 30 hours would earn $300 in tip payment. The same math runs separately for BOH.
 
 CREDIT/DEBIT CARD TIPS
-Tips left on credit or debit cards are paid to you in your next paycheck (or earlier if practical). If a processing fee applies to the card transaction, we may deduct the proportional share of that fee from the tip, as allowed by law.
+Tips left on cards are paid out in the next paycheck. The processing fee charged by the card network on the tip portion may be deducted, as allowed by law.
 
-TIPS REPORTED FOR TAXES
-You're responsible for accurately reporting tip income to DD Mau and to the IRS. We'll provide a system for reporting tips and will withhold applicable taxes.
+TAXES
+All tip income is taxable. DD Mau withholds applicable federal, state, FICA, and Medicare taxes from reported tips. You are responsible for reporting your tip income accurately.
 
 OVERTIME
-If you work more than 40 hours in a workweek, overtime is calculated based on the FULL minimum wage (not just your direct cash wage), per FLSA rules.
+If you work more than 40 hours in a workweek, overtime is paid at 1.5 times your regular rate (which is at least the full minimum wage, since we do not take a tip credit).
 
-NO CONFISCATION
-DD Mau will not require you to give us any portion of your tips, except in compliance with a valid tip pool among tipped employees.
+NO CONFISCATION OR DIVERSION
+DD Mau will not keep any portion of your tips for purposes other than the tip pool described here. Owners, managers, and supervisors do not receive tip pool distributions.
+
+CHANGES TO THIS POLICY
+DD Mau may update this tip pool policy in the future. Any change will be communicated in writing and you will receive an updated notice to acknowledge.
 
 YOUR RIGHTS
-If you believe the tip credit is being misapplied, contact a manager or owner. You also have the right to contact the U.S. Department of Labor (Wage and Hour Division) or the Missouri Department of Labor.
+If you believe tips are being mishandled, talk to a manager or owner. You also have the right to contact the U.S. Department of Labor (Wage and Hour Division: 1-866-487-9243, dol.gov/whd) or the Missouri Department of Labor.
 
 ACKNOWLEDGMENT
-I have read this notice. I understand my cash wage rate, how tips are handled, and that DD Mau will make up the difference if tips don't bring me to the applicable minimum wage. I understand that all tips I receive belong to me, subject to lawful tip pooling.`,
+I have read this notice. I understand DD Mau pays me full Missouri minimum wage or above and does not take a tip credit. I understand the mandatory 50/50 FOH/BOH tip pool and how my share is calculated. I understand owners, managers, and supervisors are excluded from the pool.`,
         },
         es: {
-            title: 'Aviso de Crédito por Propinas / Salario (FLSA Sección 3(m))',
-            body: `AVISO DE SALARIO PARA EMPLEADOS QUE RECIBEN PROPINAS
+            title: 'Aviso de Salario y Fondo Común de Propinas de DD Mau',
+            body: `AVISO DE SALARIO Y FONDO COMUN DE PROPINAS
 
-La ley federal (FLSA Sección 3(m)) requiere que te demos aviso por escrito sobre cómo funciona tu pago antes de tomar un "crédito por propinas". Lee con cuidado.
+Este aviso explica cómo funciona tu pago en DD Mau. Léelo con cuidado y firma abajo para confirmar que entiendes.
 
-TU SALARIO EN EFECTIVO
-DD Mau te pagará un salario directo en efectivo según tu carta de oferta, más propinas. El salario en efectivo puede ser menor que el salario mínimo estándar si recibes propinas regularmente; la diferencia se llama "crédito por propinas".
+TU SALARIO
+DD Mau te paga un salario en efectivo igual o superior al salario mínimo completo de Missouri. NO tomamos un "crédito por propinas". Tu salario por hora aparece en tu carta de oferta y en el talón de tu cheque.
 
-EL CRÉDITO POR PROPINAS
-Estamos usando el crédito por propinas permitido por ley federal y de Missouri. El monto del crédito por propinas más tu salario en efectivo debe igualar al menos el salario mínimo aplicable. Al momento de escribir esto, el salario mínimo de Missouri es $13.75/hora (verifica la tasa actual — se ajusta anualmente).
+EL FONDO COMUN DE PROPINAS
+DD Mau opera un fondo común de propinas obligatorio que incluye tanto al personal del frente de la casa (FOH) como al de la cocina (BOH). La ley federal (FLSA, modificada por la Ley de Asignaciones Consolidadas de 2018 y la regla final del DOL de 2020) permite que un empleador que paga el salario mínimo completo exija un fondo común de propinas que incluya a empleados que tradicionalmente no reciben propinas, como cocineros y lavaplatos. Los dueños, gerentes y supervisores están excluidos del fondo, como lo exige la ley federal.
 
-Si tus propinas más tu salario en efectivo no igualan al menos el salario mínimo en algún período de pago, DD Mau cubrirá la diferencia.
+COMO SE CALCULAN LAS PORCIONES DEL FONDO
+ - Todas las propinas recibidas durante un período de pago (efectivo y tarjeta de crédito/débito) se juntan.
+ - 50% del fondo total se asigna a la porción FOH.
+ - 50% del fondo total se asigna a la porción BOH.
+ - La porción FOH se divide entre el total de horas FOH trabajadas durante ese período para producir una tasa FOH de dólares por hora.
+ - La porción BOH se divide entre el total de horas BOH trabajadas durante ese período para producir una tasa BOH de dólares por hora.
+ - Tu pago de propinas del período = tus horas trabajadas en tu lado x la tasa de dólares por hora de ese lado.
 
-LAS PROPINAS SON TUYAS
-Todas las propinas que recibes son tuyas. No requerimos un fondo común de propinas que incluya gerentes, dueños o empleados de cocina que normalmente no reciben propinas. Cualquier fondo común entre empleados que reciben propinas es voluntario y sigue las reglas federales.
+EJEMPLO
+Si durante un período el fondo total de propinas es $2,000, entonces FOH recibe $1,000 y BOH recibe $1,000. Si el total de horas FOH ese período fue 100, la tasa FOH es $10/hr; un empleado FOH que trabajó 30 horas ganaría $300 en propinas. La misma matemática se aplica por separado a BOH.
 
-PROPINAS DE TARJETA
-Las propinas dejadas en tarjetas de crédito o débito se te pagan en tu próximo cheque. Si aplica una tarifa de procesamiento, podemos deducir la parte proporcional de la propina, según lo permitido por ley.
+PROPINAS DE TARJETA DE CREDITO/DEBITO
+Las propinas dejadas en tarjetas se pagan en el siguiente cheque. La tarifa de procesamiento cobrada por la red de tarjetas sobre la porción de propina puede deducirse, según lo permite la ley.
 
-REPORTE DE PROPINAS PARA IMPUESTOS
-Eres responsable de reportar con exactitud el ingreso por propinas a DD Mau y al IRS. Te daremos un sistema para reportar propinas y retendremos los impuestos aplicables.
+IMPUESTOS
+Todo ingreso por propinas es gravable. DD Mau retiene los impuestos federales, estatales, FICA y Medicare aplicables sobre las propinas reportadas. Tú eres responsable de reportar tu ingreso por propinas con exactitud.
 
 HORAS EXTRA
-Si trabajas más de 40 horas en una semana laboral, las horas extra se calculan con el salario mínimo COMPLETO (no solo tu salario en efectivo), según las reglas de FLSA.
+Si trabajas más de 40 horas en una semana laboral, las horas extra se pagan a 1.5 veces tu tasa regular (que es al menos el salario mínimo completo, ya que no tomamos un crédito por propinas).
 
-NO CONFISCACIÓN
-DD Mau no te exigirá que nos des ninguna parte de tus propinas, excepto en cumplimiento con un fondo válido entre empleados que reciben propinas.
+NO CONFISCACION NI DESVIO
+DD Mau no se quedará con ninguna porción de tus propinas para propósitos distintos al fondo común descrito aquí. Los dueños, gerentes y supervisores no reciben distribuciones del fondo común.
+
+CAMBIOS A ESTA POLITICA
+DD Mau puede actualizar esta política de fondo común de propinas en el futuro. Cualquier cambio será comunicado por escrito y recibirás un aviso actualizado para reconocer.
 
 TUS DERECHOS
-Si crees que el crédito por propinas se está aplicando mal, contacta a un gerente o dueño. También tienes derecho a contactar al Departamento de Trabajo de EE.UU. (Wage and Hour) o al Departamento de Trabajo de Missouri.
+Si crees que las propinas se están manejando mal, habla con un gerente o dueño. También tienes derecho a contactar al Departamento de Trabajo de EE.UU. (Wage and Hour: 1-866-487-9243, dol.gov/whd) o al Departamento de Trabajo de Missouri.
 
 RECONOCIMIENTO
-He leído este aviso. Entiendo mi salario en efectivo, cómo se manejan las propinas y que DD Mau cubrirá la diferencia si las propinas no me llevan al salario mínimo aplicable. Entiendo que todas las propinas que recibo son mías, sujetas a fondos comunes legales.`,
+He leído este aviso. Entiendo que DD Mau me paga el salario mínimo completo de Missouri o más y no toma un crédito por propinas. Entiendo el fondo común de propinas obligatorio 50/50 FOH/BOH y cómo se calcula mi porción. Entiendo que los dueños, gerentes y supervisores están excluidos del fondo.`,
         },
     },
     workers_comp: {
