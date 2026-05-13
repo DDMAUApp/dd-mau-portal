@@ -2358,9 +2358,20 @@ function ReminderEmailButton({ hire, docs, isEs, onWriteAudit, staffName }) {
 // invite sheet. Admin can copy the link, download the PNG, or print.
 function HiringQrPanel({ isEs }) {
     const tx = (en, es) => (isEs ? es : en);
-    const url = (typeof window !== 'undefined')
-        ? `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}/?apply=1`
-        : '';
+    // Canonical apply URL is apply.ddmaustl.com — a Squarespace 302
+    // forward to app.ddmaustl.com/?apply=1. Hardcoding it (instead of
+    // building from window.location) means:
+    //   - QR codes encode the short, memorable URL
+    //   - Copy link gives admins the public-facing URL not whatever
+    //     they happen to be browsing from
+    //   - Print page shows "scan apply.ddmaustl.com" instead of the
+    //     long query-string version
+    // Local dev / preview build fallback uses window.location so QR
+    // testing still works without leaving localhost.
+    const isProdLike = typeof window !== 'undefined' && /ddmaustl\.com|github\.io/.test(window.location.hostname);
+    const url = isProdLike
+        ? 'https://apply.ddmaustl.com'
+        : `${window.location.origin}${window.location.pathname.replace(/\/$/, '')}/?apply=1`;
     const [qrDataUrl, setQrDataUrl] = useState(null);
     const [copied, setCopied] = useState(false);
     const [expanded, setExpanded] = useState(false);

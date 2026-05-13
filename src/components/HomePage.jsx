@@ -44,8 +44,9 @@ function writeLockUntil(ts) {
 // are now completely separated:
 //
 //   • Staff URL  → app.ddmaustl.com (PIN screen only — what you see here)
-//   • Apply URL  → app.ddmaustl.com/?apply=1 (job application form, no
-//     staff-portal branding shown)
+//   • Apply URL  → apply.ddmaustl.com (Squarespace 302 forward to
+//     app.ddmaustl.com/?apply=1 — job application form, no staff-portal
+//     branding shown)
 //
 // Admins generate a dedicated "Hiring QR" in the Onboarding tab to share
 // the apply URL on flyers, Indeed listings, window decals, etc. The
