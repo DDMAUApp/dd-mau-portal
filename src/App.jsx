@@ -5,6 +5,7 @@ import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding } from './data/staff';
 import { enableFcmPush, onForegroundMessage } from './messaging';
+import { playKitchenBell } from './data/bell';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
@@ -372,6 +373,10 @@ export default function App() {
                         const body  = data.body  || notif.body  || "";
                         const tag   = data.tag   || `ddmau-${Date.now()}`;
                         console.log("[FCM foreground]", title, body, payload);
+                        // Kitchen-bell ding — fires whenever a push lands
+                        // while the app is open. Closed-app pushes use the
+                        // OS default sound (SW can't play audio).
+                        playKitchenBell();
                         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
                             try {
                                 new Notification(title, {
@@ -379,6 +384,7 @@ export default function App() {
                                     icon: "/icon-192.png",
                                     tag,
                                     renotify: false,
+                                    silent: true,
                                 });
                             } catch {}
                         }
