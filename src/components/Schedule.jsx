@@ -685,16 +685,30 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         return String(val);
     };
+    // Schedule notifications. Builds the doc shape dispatchNotification
+    // consumes (forStaff / type / title / body / link / tag) and writes
+    // to /notifications.
+    //
+    // `tag` is computed deterministically from type + recipient + the
+    // unique resource id passed via opts (shift id, swap doc id, week
+    // identifier, etc). The OS dedupes by tag, so retries / rapid
+    // duplicate calls collapse to one visible toast on the device.
+    //
+    // Pass opts.tagSuffix = a unique-per-event string. If you don't,
+    // we fall back to Date.now() which means each call gets a unique
+    // tag (no OS dedup, but at least matches old behavior).
     const notify = async (forStaff, type, title, body, link = null, opts = {}) => {
         if (!forStaff) return;
         if (forStaff === staffName && !opts.allowSelf) return;
         const recipient = (staffList || []).find(s => s.name === forStaff);
+        const tag = `${type}:${forStaff}:${opts.tagSuffix || Date.now()}`;
         try {
             await addDoc(collection(db, 'notifications'), {
                 forStaff, type,
                 title: resolveText(title, recipient),
                 body: resolveText(body, recipient),
                 link,
+                tag,
                 createdAt: serverTimestamp(),
                 read: false,
                 createdBy: staffName,
@@ -2344,7 +2358,12 @@ ${dayBlocks}
                         es: `📢 Horario publicado: ${list.length} turno${list.length === 1 ? '' : 's'}`,
                     },
                     { en: fmtLines('en'), es: fmtLines('es') },
-                    null, { allowSelf: true });
+                    null,
+                    // Tag = week_published:{recipient}:{weekStart} — if the
+                    // same week gets republished after a small edit, the
+                    // notification replaces instead of stacking on the
+                    // recipient's device.
+                    { allowSelf: true, tagSuffix: `week:${toDateStr(weekStart)}` });
             }
         } catch (e) {
             console.error('Publish failed:', e);
