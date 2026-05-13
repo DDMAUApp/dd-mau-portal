@@ -1902,6 +1902,46 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">
                                     🧪 {language === 'es' ? 'Enviar push de prueba a mí' : 'Send test push to myself'}
                                 </button>
+                                {/* Reset push tokens — nukes ALL fcmTokens on this
+                                    staff's record. Use when you're getting
+                                    duplicate notifications: legacy entries without
+                                    a deviceId can't be auto-deduped, so the only
+                                    cleanup is to wipe + re-register fresh. After
+                                    reset, this device re-registers automatically
+                                    on the next page load (via App.jsx's
+                                    enableFcmPush useEffect) — that new entry has
+                                    a deviceId so future rotations dedupe cleanly. */}
+                                <button
+                                    onClick={async () => {
+                                        if (!confirm(language === 'es'
+                                            ? '¿Borrar tus tokens de notificación y volver a registrar? Soluciona notificaciones duplicadas.'
+                                            : 'Clear your push tokens and re-register? Fixes duplicate-notification issues.'
+                                        )) return;
+                                        try {
+                                            const { runTransaction, doc } = await import('firebase/firestore');
+                                            await runTransaction(db, async (tx) => {
+                                                const ref = doc(db, 'config', 'staff');
+                                                const snap = await tx.get(ref);
+                                                if (!snap.exists()) return;
+                                                const liveList = (snap.data() || {}).list || [];
+                                                const next = liveList.map(s =>
+                                                    s.name === staffName
+                                                        ? { ...s, fcmTokens: [] }
+                                                        : s
+                                                );
+                                                tx.set(ref, { list: next });
+                                            });
+                                            alert(language === 'es'
+                                                ? 'Tokens borrados. Recarga la página para re-registrar.'
+                                                : 'Tokens cleared. Reload the page to re-register a fresh single token.');
+                                        } catch (e) {
+                                            console.error('reset push tokens failed:', e);
+                                            alert('Reset failed: ' + (e.message || e));
+                                        }
+                                    }}
+                                    className="w-full mt-2 py-2 rounded-lg bg-white border-2 border-blue-300 text-blue-700 text-sm font-bold hover:bg-blue-100">
+                                    🔄 {language === 'es' ? 'Borrar mis tokens (resolver duplicados)' : 'Reset my push tokens (fix duplicates)'}
+                                </button>
                                 <p className="text-[10px] text-blue-800 mt-2 leading-relaxed">
                                     {language === 'es'
                                         ? 'Cierra la app, luego pulsa el botón. Si recibes la notificación con la app cerrada, todo el camino funciona. Si sólo la ves al abrir la app, la Cloud Function no está desplegada o el SW falló.'

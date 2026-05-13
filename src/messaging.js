@@ -22,6 +22,28 @@ import app, { db } from "./firebase";
 export const VAPID_KEY = "BH2Mtj6Dgfw2X_Mu7e9OzOTVOqx_l6KjgDgc6v98Cq_4ngWZnz3NPYP81mw88_zEY_4tOnKBW2XTScLOrFfNpoQ";
 
 const MAX_TOKENS_PER_STAFF = 5;
+const DEVICE_ID_KEY = "ddmau:fcmDeviceId";
+
+// Stable per-browser identifier. Generated once on first FCM registration
+// and persisted to localStorage; used to deduplicate fcmTokens entries by
+// PHYSICAL DEVICE (not just by token string). Without this, FCM token
+// rotation + the same device appearing in multiple browser contexts (PWA
+// install + tab + private window) would each get their own token and
+// every push would fire N times on the device. With deviceId dedup, the
+// staff record holds at most one token per browser.
+function getOrCreateDeviceId() {
+    try {
+        let id = localStorage.getItem(DEVICE_ID_KEY);
+        if (id && id.length > 8) return id;
+        // crypto.randomUUID() is available everywhere we deploy to;
+        // Math.random fallback only kicks in on truly ancient browsers.
+        id = (typeof crypto !== "undefined" && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : "dev_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+        localStorage.setItem(DEVICE_ID_KEY, id);
+        return id;
+    } catch { return "dev_" + Date.now().toString(36); }
+}
 
 let messagingInstance = null;
 async function getMessagingSafely() {
@@ -105,6 +127,7 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     // snapshot arrives, and writing that back wiped real PINs to seed
     // values. This was the 2026-05-09 PIN-corruption root cause.
     if (staffName) {
+        const deviceId = getOrCreateDeviceId();
         try {
             await runTransaction(db, async (tx) => {
                 const ref = doc(db, "config", "staff");
@@ -121,23 +144,36 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
                 }
                 const me = liveList[meIdx];
                 const existing = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
-                // Strict dedup: collapse to one entry per unique token
-                // string, regardless of how many copies of the same
-                // token currently exist on the record. The previous
-                // implementation only filtered the CURRENT token out
-                // before prepending — it left any duplicates of OTHER
-                // tokens alone, which is how Andrew's record drifted
-                // into 4-duplicate state.
+                // Dedup with TWO axes:
+                //   1. By deviceId — only one entry per physical browser.
+                //      If an entry has the same deviceId as ours, we
+                //      replace it (this is the new token after FCM
+                //      rotation on the same device). This collapses
+                //      the "PWA + tab + private window all on the same
+                //      Mac" case to one entry.
+                //   2. By token string — legacy entries (no deviceId)
+                //      stay dedupable so we don't accumulate stale
+                //      duplicates of the same token.
+                // Legacy entries WITHOUT a deviceId AND without matching
+                // our current token are left alone (might belong to a
+                // different device whose deviceId we don't know yet).
+                // They'll get pruned by dispatchNotification when their
+                // tokens go stale, or replaced when that device next
+                // registers (it'll gain a deviceId then).
                 const seenTokens = new Set();
                 const dedup = [];
                 for (const t of existing) {
                     if (!t || !t.token) continue;
-                    if (t.token === token) continue;      // current token re-added below
-                    if (seenTokens.has(t.token)) continue; // duplicate of another existing token
+                    if (t.token === token) continue;        // current token re-added below
+                    if (t.deviceId && t.deviceId === deviceId) continue; // same device, replace
+                    if (seenTokens.has(t.token)) continue;  // duplicate token string
                     seenTokens.add(t.token);
                     dedup.push(t);
                 }
-                const nextTokens = [{ token, lastSeen: Date.now() }, ...dedup].slice(0, MAX_TOKENS_PER_STAFF);
+                const nextTokens = [
+                    { token, lastSeen: Date.now(), deviceId },
+                    ...dedup,
+                ].slice(0, MAX_TOKENS_PER_STAFF);
                 // No-op if nothing meaningful changed.
                 if (existing.length === nextTokens.length &&
                     existing.every((t, i) => t.token === nextTokens[i].token)) {
