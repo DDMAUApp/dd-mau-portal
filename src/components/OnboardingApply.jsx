@@ -213,18 +213,36 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     const [done, setDone] = useState(false);
     const [err, setErr] = useState('');
     const [appId, setAppId] = useState(null);
+    // Intro landing — shows the DD Mau welcome card with an Apply Now
+    // button on first visit. Once they tap Apply, the wizard renders.
+    // Persisted as `started: true` in the draft so a phone tap-away or
+    // accidental reload doesn't bounce them back to the intro after
+    // they've already started filling things out.
+    const [showIntro, setShowIntro] = useState(() => {
+        try {
+            const raw = localStorage.getItem(DRAFT_KEY);
+            if (raw) {
+                const parsed = JSON.parse(raw);
+                if (parsed.started === true) return false;
+            }
+        } catch {}
+        return true;
+    });
     // Resume file — not in `values` (a File can't be JSON-stringified
     // for the localStorage draft). Held separately + uploaded during
     // submit to applications/{appId}/resume_{ts}.{ext}.
     const [resumeFile, setResumeFile] = useState(null);
 
     // Auto-save on every change. Localstorage write is synchronous +
-    // cheap. New shape stores `{ values, step }` so a refresh restores
-    // both fields and current section position. We accept the legacy
-    // shape too on read (just the values object).
+    // cheap. New shape stores `{ values, step, started }` so a refresh
+    // restores both fields, current section position, and whether the
+    // intro card has been dismissed. Legacy drafts (just-values shape)
+    // still load via fallback in the restore code.
     useEffect(() => {
-        try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ values, step })); } catch {}
-    }, [values, step]);
+        try {
+            localStorage.setItem(DRAFT_KEY, JSON.stringify({ values, step, started: !showIntro }));
+        } catch {}
+    }, [values, step, showIntro]);
 
     // Lock the body scroll completely while the apply form is mounted.
     // This is the only fix that consistently kills iOS Safari's
@@ -459,11 +477,16 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
         try { localStorage.removeItem(DRAFT_KEY); } catch {}
         setValues(emptyState());
         setStep(1);
+        setShowIntro(true);
         setErr('');
     };
 
     if (done) {
         return <SuccessCard isEs={isEs} values={values} />;
+    }
+
+    if (showIntro) {
+        return <IntroLanding isEs={isEs} onStart={() => { setShowIntro(false); setErr(''); }} />;
     }
 
     return (
@@ -584,6 +607,71 @@ function NavButtons({ step, total, onBack, onNext, onSubmit, saving, canProceed,
                     {saving ? tx('Sending…', 'Enviando…') : tx('🚀 Send application', '🚀 Enviar solicitud')}
                 </button>
             )}
+        </div>
+    );
+}
+
+// ── IntroLanding ─────────────────────────────────────────────────────────
+// First-impression page applicants see when they hit apply.ddmaustl.com.
+// Welcomes them, gives a sense of what the form covers + how long it
+// takes, then a big Apply Now button drops them into Step 1 of the
+// wizard. Once they tap Apply we set started:true in the draft so a
+// reload or accidental tap-away doesn't bounce them back here.
+function IntroLanding({ isEs, onStart }) {
+    const tx = (en, es) => (isEs ? es : en);
+    return (
+        <div className="fixed inset-0 z-50 bg-dd-sage overflow-y-auto p-4 flex items-center justify-center">
+            <div className="max-w-md w-full bg-white rounded-2xl border-2 border-dd-green/30 shadow-lg p-6 sm:p-8 text-center">
+                <p className="text-5xl sm:text-6xl mb-3">🍜</p>
+                <h1 className="text-2xl sm:text-3xl font-black text-dd-green-700 tracking-tight">
+                    {tx("We're hiring at DD Mau", 'Estamos contratando en DD Mau')}
+                </h1>
+                <p className="text-sm text-gray-700 mt-2 leading-snug">
+                    {tx(
+                        'Join the team behind St. Louis\'s favorite Vietnamese cooking. We\'re hiring for front-of-house, kitchen, and management roles at both Webster Groves and Maryland Heights.',
+                        'Únete al equipo detrás de la cocina vietnamita favorita de St. Louis. Buscamos personal de mostrador, cocina y gerencia en Webster Groves y Maryland Heights.',
+                    )}
+                </p>
+
+                {/* Three quick "what to expect" chips */}
+                <div className="grid grid-cols-3 gap-2 mt-5">
+                    <div className="bg-dd-bg rounded-xl p-2 text-center">
+                        <p className="text-xl">⏱️</p>
+                        <p className="text-[10px] font-bold text-gray-700 mt-1 leading-tight">
+                            {tx('~5 min', '~5 min')}
+                        </p>
+                    </div>
+                    <div className="bg-dd-bg rounded-xl p-2 text-center">
+                        <p className="text-xl">📱</p>
+                        <p className="text-[10px] font-bold text-gray-700 mt-1 leading-tight">
+                            {tx('Phone friendly', 'Para celular')}
+                        </p>
+                    </div>
+                    <div className="bg-dd-bg rounded-xl p-2 text-center">
+                        <p className="text-xl">📄</p>
+                        <p className="text-[10px] font-bold text-gray-700 mt-1 leading-tight">
+                            {tx('Resume optional', 'CV opcional')}
+                        </p>
+                    </div>
+                </div>
+
+                <button onClick={onStart}
+                    className="w-full mt-6 py-4 rounded-xl bg-dd-green text-white font-black text-base shadow-md active:scale-95 transition">
+                    {tx('Apply now →', 'Aplicar ahora →')}
+                </button>
+
+                <p className="text-[10px] text-gray-400 mt-3 leading-snug">
+                    {tx(
+                        'You can save and come back any time. We don\'t ask for your SSN, ID, or banking info on the application — those only come after we hire you.',
+                        'Puedes guardar y volver luego. No pedimos tu Seguro Social, identificación ni datos bancarios en la solicitud — eso es solo después de contratarte.',
+                    )}
+                </p>
+
+                <p className="text-[10px] text-gray-400 mt-4">
+                    🔒 {tx('Goes directly to DD Mau ownership. No third parties.',
+                            'Directo a los dueños de DD Mau. Sin terceros.')}
+                </p>
+            </div>
         </div>
     );
 }
