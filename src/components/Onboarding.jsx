@@ -803,6 +803,34 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
                     )}
                 </div>
             </div>
+            {/* I-9 reverification expiry — admin sets when filling I-9
+                Section 2 for a hire with time-limited work authorization
+                (F-1 OPT, EAD, TPS, etc.). The i9ReverificationReminder
+                Cloud Function pings 30/14/7/0/-7 days before expiry. US
+                citizens + LPRs have no expiry — leave blank. */}
+            <div className="px-3 py-2 border-b border-dd-line bg-blue-50/40">
+                <label className="block text-[11px] font-bold uppercase text-dd-text-2 mb-1">
+                    {tx('I-9 work-auth expiry (optional)', 'I-9 vencimiento autorización (opcional)')}
+                </label>
+                <div className="flex items-center gap-2">
+                    <input type="date" value={hire.workAuthExpiry || ''}
+                        onChange={async (e) => {
+                            const v = e.target.value || null;
+                            try {
+                                await updateDoc(doc(db, 'onboarding_hires', hire.id), {
+                                    workAuthExpiry: v,
+                                    i9ReverifyPingedFor: [], // reset ping log when admin changes the date
+                                });
+                                onWriteAudit('i9_expiry_set', { hireId: hire.id, expiry: v });
+                            } catch (err) { console.warn('save workAuthExpiry failed', err); }
+                        }}
+                        className="border border-dd-line rounded-lg px-2 py-1 text-xs bg-white" />
+                    <p className="text-[10px] text-dd-text-2 leading-tight flex-1">
+                        {tx('Set this only for hires with time-limited work auth (F-1 OPT, EAD, TPS). We\'ll ping you 30/14/7/0 days before expiry.',
+                            'Solo para autorizaciones con vencimiento. Te avisamos 30/14/7/0 días antes.')}
+                    </p>
+                </div>
+            </div>
             {/* Doc checklist. The "Expand all submitted" toggle opens every
                 doc row that has files in Storage so admin can scroll through
                 the whole submission without clicking each one individually

@@ -388,3 +388,246 @@ exports.scheduledFirestoreBackup = onSchedule(
         }
     }
 );
+
+// ── 5. Application lifecycle — expire stale + purge ───────────────────────
+//
+// Two-stage cleanup on the public applications collection.
+//
+//   STAGE 1 (90 days untouched) → flip status to 'expired'. App still
+//   readable in admin's archive but stops showing in Open filter.
+//
+//   STAGE 2 (180 days from creation) → delete the doc entirely. PII
+//   minimization: we don't keep job-application data around forever for
+//   people who never got hired. Hired applicants flip into
+//   /onboarding_hires before STAGE 1 fires, so their data is preserved
+//   under employment-record retention rules instead.
+//
+// Federal note (EEOC): non-hired applicant records must be retained at
+// least 1 YEAR. We're more aggressive at 180 days because:
+//   (a) DD Mau has <15 employees so it's exempt from many federal
+//       record-keeping rules (the bigger ones kick in at 15+)
+//   (b) Admin can archive any application they want to keep BEFORE
+//       180 days by converting it to a hire or marking it 'hired'
+//   IF DD Mau grows past 15 employees, bump STAGE 2 to 365 days.
+//
+// Runs daily at 3:30am Central (after the backup at 3am).
+exports.expireAndPurgeApplications = onSchedule(
+    {
+        schedule: "30 9 * * *", // 9:30 UTC = 3:30 Central daylight
+        timeZone: "America/Chicago",
+        region: "us-central1",
+    },
+    async () => {
+        const now = Date.now();
+        const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
+        const ONE_EIGHTY_DAYS = 180 * 24 * 60 * 60 * 1000;
+        let expiredCount = 0;
+        let deletedCount = 0;
+        try {
+            const snap = await db.collection("onboarding_applications").get();
+            const writes = [];
+            snap.forEach((d) => {
+                const data = d.data() || {};
+                const status = data.status || "applied";
+                const created = data.createdAt && data.createdAt.toMillis
+                    ? data.createdAt.toMillis()
+                    : (typeof data.createdAt === "string" ? Date.parse(data.createdAt) : 0);
+                if (!created) return;
+                const age = now - created;
+                // Skip hired apps — they've graduated into /onboarding_hires.
+                if (status === "hired") return;
+                // STAGE 2: nuke at 180 days regardless of status.
+                if (age >= ONE_EIGHTY_DAYS) {
+                    writes.push(d.ref.delete());
+                    deletedCount++;
+                    return;
+                }
+                // STAGE 1: flip applied/screening/etc → expired at 90 days.
+                const lastTouch = (data.statusUpdatedAt && Date.parse(data.statusUpdatedAt)) || created;
+                const sinceTouch = now - lastTouch;
+                const stuck = ["applied", "screening", "phone_screen"].includes(status);
+                if (stuck && sinceTouch >= NINETY_DAYS) {
+                    writes.push(d.ref.update({
+                        status: "expired",
+                        expiredAt: new Date().toISOString(),
+                        expiredReason: "untouched_90_days",
+                    }));
+                    expiredCount++;
+                }
+            });
+            await Promise.all(writes);
+            logger.info(`application lifecycle: expired ${expiredCount}, deleted ${deletedCount}`);
+            try {
+                await db.collection("application_audits").add({
+                    action: "lifecycle_run",
+                    byAdmin: "cloud_function",
+                    expiredCount,
+                    deletedCount,
+                    at: FieldValue.serverTimestamp(),
+                });
+            } catch {}
+        } catch (err) {
+            logger.error("expireAndPurgeApplications failed", err);
+            throw err;
+        }
+    }
+);
+
+// ── 6. I-9 reverification reminder ────────────────────────────────────────
+//
+// Federal I-9 requires the employer to RE-VERIFY work authorization
+// before it expires (F-1 OPT, TPS, EAD-based statuses, etc.). The hire
+// doc supports an optional `workAuthExpiry: 'YYYY-MM-DD'` field that
+// admin sets when filling I-9 Section 2 for a hire with a time-limited
+// authorization. This function pings admin 30 days before expiry so
+// there's time to collect updated docs.
+//
+// Skips:
+//   - hires with no workAuthExpiry set (US citizens, LPRs — no expiry)
+//   - hires marked archived
+//   - already-pinged-this-window hires (idempotent via i9ReverifyPingedFor)
+//
+// Runs daily at 9am Central.
+exports.i9ReverificationReminder = onSchedule(
+    {
+        schedule: "0 14 * * *", // 14:00 UTC = 9:00 Central daylight
+        timeZone: "America/Chicago",
+        region: "us-central1",
+    },
+    async () => {
+        try {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const todayStr = today.toISOString().slice(0, 10);
+
+            // Pull all hires (small set) and filter in-memory.
+            const snap = await db.collection("onboarding_hires").get();
+            // Owners + canViewOnboarding admins receive the ping.
+            const staffDoc = await db.doc("config/staff").get();
+            const list = (staffDoc.data() || {}).list || [];
+            const admins = list.filter((s) => s.canViewOnboarding === true || s.id === 40 || s.id === 41);
+
+            let pingedCount = 0;
+            const ops = [];
+            snap.forEach((d) => {
+                const h = { id: d.id, ...d.data() };
+                if (h.status === "archived") return;
+                const exp = h.workAuthExpiry;
+                if (!exp) return;
+                const expDate = new Date(exp + "T00:00:00");
+                const days = Math.round((expDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+                // Ping window: 30 days out, 14 days out, 7 days out, day 0,
+                // day -7 (already overdue).
+                const pingDays = [30, 14, 7, 0, -7];
+                if (!pingDays.includes(days)) return;
+                const pingKey = `${todayStr}_d${days}`;
+                if ((h.i9ReverifyPingedFor || []).includes(pingKey)) return;
+
+                const overdue = days < 0;
+                const title = overdue
+                    ? `⚠ I-9 reverification ${Math.abs(days)}d OVERDUE`
+                    : days === 0
+                        ? `⚠ I-9 reverification due TODAY`
+                        : `I-9 reverification in ${days} days`;
+                const body = `${h.name || "(hire)"} — work auth ${overdue ? "expired" : "expires"} ${exp}`;
+
+                for (const a of admins) {
+                    ops.push(db.collection("notifications").add({
+                        forStaff: a.name,
+                        type: "i9_reverify_due",
+                        title,
+                        body,
+                        link: "/onboarding",
+                        createdAt: FieldValue.serverTimestamp(),
+                        read: false,
+                        createdBy: "i9ReverificationReminder",
+                        hireId: h.id,
+                        daysToExpiry: days,
+                    }));
+                }
+                // Mark this ping so we don't re-fire if the function runs
+                // again the same day (Cloud Scheduler typically delivers
+                // once but we belt-and-suspender).
+                ops.push(d.ref.update({
+                    i9ReverifyPingedFor: FieldValue.arrayUnion(pingKey),
+                }));
+                pingedCount++;
+            });
+            await Promise.all(ops);
+            logger.info(`i9 reverify: pinged ${pingedCount} hire(s)`);
+        } catch (err) {
+            logger.error("i9ReverificationReminder failed", err);
+            throw err;
+        }
+    }
+);
+
+// ── 7. Voided check purge (90 days after hire goes Complete) ──────────────
+//
+// The voided check is a one-time verification artifact for direct
+// deposit setup. We don't need it forever — keeping bank info around
+// past payroll setup is unnecessary PII surface. Once admin marks the
+// hire 'complete' (locked) and 90 days pass, drop all files under
+// onboarding/{hireId}/voided_check/ from Storage. Firestore checklist
+// entry stays so the audit trail is intact ("voided check submitted +
+// approved on YYYY-MM-DD, files purged on YYYY-MM-DD").
+//
+// Conservative: only purges hires explicitly marked status='complete'.
+// If admin moves them back to active or archives, we leave the files
+// alone.
+//
+// Runs weekly Sunday 4am Central.
+exports.purgeVoidedChecks = onSchedule(
+    {
+        schedule: "0 9 * * 0", // 9 UTC Sunday = 4 Central daylight
+        timeZone: "America/Chicago",
+        region: "us-central1",
+    },
+    async () => {
+        const { getStorage } = require("firebase-admin/storage");
+        const bucket = getStorage().bucket();
+        const now = Date.now();
+        const NINETY = 90 * 24 * 60 * 60 * 1000;
+        let purgedHires = 0;
+        let purgedFiles = 0;
+        try {
+            const snap = await db.collection("onboarding_hires")
+                .where("status", "==", "complete").get();
+            for (const d of snap.docs) {
+                const h = d.data();
+                const completedAt = h.completedAt && Date.parse(h.completedAt);
+                if (!completedAt) continue;
+                if (now - completedAt < NINETY) continue;
+                if (h.voidedCheckPurgedAt) continue;
+                const prefix = `onboarding/${d.id}/voided_check/`;
+                const [files] = await bucket.getFiles({ prefix });
+                if (files.length === 0) {
+                    // Mark anyway so we don't re-check next week.
+                    await d.ref.update({ voidedCheckPurgedAt: new Date().toISOString() });
+                    continue;
+                }
+                await Promise.all(files.map((f) => f.delete().catch(() => null)));
+                purgedFiles += files.length;
+                await d.ref.update({
+                    voidedCheckPurgedAt: new Date().toISOString(),
+                    voidedCheckPurgedCount: files.length,
+                });
+                try {
+                    await db.collection("onboarding_audits").add({
+                        action: "voided_check_purged",
+                        byAdmin: "cloud_function",
+                        hireId: d.id,
+                        hireName: h.name,
+                        fileCount: files.length,
+                        at: FieldValue.serverTimestamp(),
+                    });
+                } catch {}
+                purgedHires++;
+            }
+            logger.info(`voided check purge: ${purgedFiles} file(s) across ${purgedHires} hire(s)`);
+        } catch (err) {
+            logger.error("purgeVoidedChecks failed", err);
+            throw err;
+        }
+    }
+);
