@@ -32,6 +32,90 @@ function AccessToggle({ on, label, icon, onClick }) {
     );
 }
 
+// Lists the last 10 notification docs targeted at this staff member.
+// Lets admin diagnose where a missing-push problem actually is:
+//   - Row present, recent → doc was created. If you didn't see a toast,
+//     the issue is FCM delivery (Cloud Function not deployed, dead
+//     token, browser permission, etc.).
+//   - Row missing → upstream (notify() never fired). Check the event
+//     handler that should have written it.
+//
+// Reads /notifications WHERE forStaff == currentStaff ORDER BY createdAt
+// DESC LIMIT 10. No realtime subscription; refresh button re-reads.
+function RecentNotificationsFeed({ staffName, language }) {
+    const [items, setItems] = useState(null);
+    const [refresh, setRefresh] = useState(0);
+    const tx = (en, es) => (language === 'es' ? es : en);
+
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const { collection, query: q, where, orderBy, limit, getDocs } = await import('firebase/firestore');
+                const ref = collection(db, 'notifications');
+                const qq = q(ref, where('forStaff', '==', staffName), orderBy('createdAt', 'desc'), limit(10));
+                const snap = await getDocs(qq);
+                if (!alive) return;
+                setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+            } catch (e) {
+                console.warn('recent notifications query failed:', e);
+                if (alive) setItems([]);
+            }
+        })();
+        return () => { alive = false; };
+    }, [staffName, refresh]);
+
+    const fmtTime = (ts) => {
+        if (!ts) return '—';
+        try {
+            const d = ts.toDate ? ts.toDate() : new Date(ts);
+            const now = Date.now();
+            const diff = (now - d.getTime()) / 1000;
+            if (diff < 60) return `${Math.round(diff)}s ago`;
+            if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+            return d.toLocaleString();
+        } catch { return '—'; }
+    };
+
+    return (
+        <div className="mt-3 mb-2 bg-white border border-blue-200 rounded-lg p-2">
+            <div className="flex items-center justify-between mb-1.5">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-blue-800">
+                    {tx('Recent notification docs sent to you', 'Notificaciones recientes para ti')}
+                </div>
+                <button onClick={() => setRefresh(r => r + 1)}
+                    className="text-[10px] font-bold text-blue-700 hover:underline">
+                    ↻ {tx('Refresh', 'Actualizar')}
+                </button>
+            </div>
+            {items === null ? (
+                <p className="text-[11px] text-blue-700 italic">{tx('Loading…', 'Cargando…')}</p>
+            ) : items.length === 0 ? (
+                <p className="text-[11px] text-blue-700 italic">
+                    {tx('No notification docs found for you. If you triggered an event that should notify you, check whether notify() actually fired (or whether forStaff was you and got skipped by the self-notify guard).',
+                        'Sin notificaciones para ti. Si activaste un evento que debería notificarte, revisa si notify() corrió.')}
+                </p>
+            ) : (
+                <div className="divide-y divide-gray-100">
+                    {items.map(n => (
+                        <div key={n.id} className="py-1.5 first:pt-0 last:pb-0">
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="text-[11px] font-bold text-dd-text truncate">{n.title || n.type || '(no title)'}</span>
+                                <span className="text-[10px] text-gray-500 flex-shrink-0">{fmtTime(n.createdAt)}</span>
+                            </div>
+                            {n.body && <div className="text-[10px] text-gray-600 truncate">{n.body}</div>}
+                            <div className="text-[9px] text-gray-400 mt-0.5">
+                                {n.type || '?'} · tag: {n.tag || '(none)'} · by: {n.createdBy || '?'}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
 export default function AdminPanel(props) {
     if (!isAdmin(props.staffName, props.staffList)) {
         return (
@@ -1902,6 +1986,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     <li><strong>{language === 'es' ? 'Permiso del navegador:' : 'Browser permission:'}</strong> {perm === 'granted' ? '✅' : perm === 'denied' ? '🚫' : '⚠️'} {perm}</li>
                                     <li><strong>{language === 'es' ? 'Tokens FCM registrados:' : 'FCM tokens registered:'}</strong> {tokens > 0 ? '✅' : '❌'} {tokens}</li>
                                 </ul>
+                                {/* Recent notifications for THIS staff — proves
+                                    whether the issue is "notification docs aren't
+                                    being written" vs "they are written but FCM
+                                    delivery is failing." If you see your event
+                                    here but no toast on your device, the problem
+                                    is delivery (Cloud Function not deployed,
+                                    token stale, etc.). If you don't see your
+                                    event here at all, the problem is upstream
+                                    (notify() didn't fire for some reason). */}
+                                <RecentNotificationsFeed staffName={staffName} language={language} />
                                 <button onClick={sendTestPush}
                                     className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700">
                                     🧪 {language === 'es' ? 'Enviar push de prueba a mí' : 'Send test push to myself'}

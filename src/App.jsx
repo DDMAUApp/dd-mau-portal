@@ -361,15 +361,16 @@ export default function App() {
                 if (result.ok) {
                     console.log("[FCM] push enabled for", staffName);
                     unsubForeground = await onForegroundMessage((payload) => {
-                        // Data-only payload now (see Cloud Function). Title/body
-                        // come out of payload.data; we also dedupe via the
-                        // tag field so the same event firing twice on the
-                        // same device (rare network retry) replaces the
-                        // existing notification instead of stacking.
+                        // Read from EITHER `data` or `notification` field
+                        // — same defense-in-depth as the SW. Lets the
+                        // foreground display path work regardless of which
+                        // payload format the Cloud Function is sending
+                        // (during a deploy or with legacy senders).
                         const data = payload?.data || {};
-                        const title = data.title || "DD Mau";
-                        const body = data.body || "";
-                        const tag = data.tag || `ddmau-${Date.now()}`;
+                        const notif = payload?.notification || {};
+                        const title = data.title || notif.title || "DD Mau";
+                        const body  = data.body  || notif.body  || "";
+                        const tag   = data.tag   || `ddmau-${Date.now()}`;
                         console.log("[FCM foreground]", title, body, payload);
                         if (typeof Notification !== "undefined" && Notification.permission === "granted") {
                             try {

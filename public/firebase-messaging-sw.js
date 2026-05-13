@@ -24,24 +24,30 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
-// Background push handler — fires when the page is closed/backgrounded and a
-// push arrives. The Cloud Function sends DATA-ONLY payloads (no top-level
-// `notification` field) so we have full control over display + no
-// duplicate browser auto-toast. We read title/body from data.
+// Background push handler — fires when the page is closed/backgrounded
+// and a push arrives.
 //
-// `tag` is critical for de-duplication: the OS replaces an existing
+// READ FROM EITHER `data` OR `notification` field. The Cloud Function
+// today sends data-only payloads (after f046973), but during a phased
+// deploy the SW could be running ahead of or behind the function. We
+// also coexist with the older legacy format that put title/body under
+// `notification`. Reading both keeps display working regardless of
+// which version is live — defense in depth.
+//
+// `tag` enables OS-level dedup: the OS replaces an existing
 // notification with the same tag instead of stacking, so a retry from
-// Cloud Functions can never produce two visible toasts for one event.
+// Cloud Functions can never produce two visible toasts.
 messaging.onBackgroundMessage((payload) => {
     const data = payload.data || {};
-    const title = data.title || "DD Mau";
-    const body = data.body || "";
-    const tag = data.tag || `ddmau-${Date.now()}`;
+    const notif = payload.notification || {};
+    const title = data.title || notif.title || "DD Mau";
+    const body  = data.body  || notif.body  || "";
+    const tag   = data.tag   || `ddmau-${Date.now()}`;
     self.registration.showNotification(title, {
         body,
         icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
         tag,
-        renotify: false,   // don't re-buzz device on same-tag replacement
+        renotify: false,
         data: data,
     });
 });
