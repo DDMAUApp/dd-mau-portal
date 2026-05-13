@@ -502,7 +502,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
              className="fixed inset-0 z-50 bg-dd-sage overflow-y-auto"
              style={{ overscrollBehavior: 'contain' }}>
             <div className="max-w-lg lg:max-w-3xl mx-auto p-3 sm:p-6 space-y-3">
-                <Header onClose={onClose} isEs={isEs} onStartOver={startOver} />
+                <Header isEs={isEs} onStartOver={startOver} />
                 <ProgressDots step={step} total={TOTAL_STEPS} />
                 <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 sm:p-5 space-y-4">
                     {step === 1 && <Step1 values={values} setField={setField} toggleInArray={toggleInArray} isEs={isEs} />}
@@ -534,8 +534,13 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
 }
 
 // ── Chrome ───────────────────────────────────────────────────────────────
-function Header({ onClose, isEs, onStartOver }) {
+function Header({ isEs, onStartOver }) {
     const tx = (en, es) => (isEs ? es : en);
+    // No × close button — that used to dump applicants onto the staff
+    // PIN page, which is the wrong audience entirely. We want zero
+    // navigation paths from the public apply surface to the staff
+    // portal. The only escape is "Start over", which clears the draft
+    // and bounces back to the intro landing (still public).
     return (
         <header className="flex items-start justify-between gap-2 pt-2">
             <div className="flex-1 min-w-0">
@@ -550,16 +555,10 @@ function Header({ onClose, isEs, onStartOver }) {
                     )}
                 </p>
             </div>
-            <div className="flex flex-col gap-1.5 flex-shrink-0">
-                <button onClick={onClose}
-                    className="w-9 h-9 rounded-full bg-white border border-gray-300 text-gray-600 text-lg shadow-sm">
-                    ×
-                </button>
-                <button onClick={onStartOver}
-                    className="text-[10px] text-gray-500 hover:text-red-600 underline">
-                    {tx('Start over', 'Empezar')}
-                </button>
-            </div>
+            <button onClick={onStartOver}
+                className="text-[10px] text-gray-500 hover:text-red-600 underline flex-shrink-0 pt-1">
+                {tx('Start over', 'Empezar')}
+            </button>
         </header>
     );
 }
