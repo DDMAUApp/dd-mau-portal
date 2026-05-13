@@ -1058,7 +1058,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
-    const handleDeleteShift = async (shiftId) => {
+    const handleDeleteShift = async (shiftId, opts = {}) => {
         // Capture the shift's pre-delete details so we can notify the
         // affected staffer AFTER the delete commits — only if it was
         // published (drafts haven't been released to staff so silent
@@ -1071,11 +1071,33 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEditSide(sh.side)) return;
         const wasPublished = sh.published !== false;
         const detail = `${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`;
-        // Replace the blocking confirm() with a 5-second undo toast.
-        // Optimistically removes the shift from view, commits to Firestore
-        // after 5s. Tap Undo and nothing happens. Restaurant managers
-        // will fat-finger; this turns "fat finger = work to fix" into
-        // "fat finger = 5 second window to recover."
+        // Two delete paths:
+        //   - opts.immediate (per-cube inline confirm flow): the user has
+        //     already tapped "yes" on a 1-click inline confirm right next
+        //     to the shift. Skip the 5-second undoToast and just commit —
+        //     the inline confirm IS the safety net. Feels instant.
+        //   - default (other call sites like drag-to-delete, bulk delete):
+        //     keep the 5-second undoToast so a fat-finger has a recovery
+        //     window.
+        if (opts.immediate) {
+            try {
+                await deleteDoc(doc(db, 'shifts', shiftId));
+                if (wasPublished && sh.staffName) {
+                    notify(sh.staffName, 'shift_deleted',
+                        { en: `🗑 Shift removed: ${detail}`, es: `🗑 Turno eliminado: ${detail}` },
+                        { en: 'Your manager removed this shift.', es: 'Tu gerente eliminó este turno.' },
+                        '/schedule',
+                        { tagSuffix: `shift:${shiftId}` }
+                    ).catch(() => {});
+                }
+                toast(tx(`🗑 Deleted (${detail})`, `🗑 Eliminado (${detail})`));
+            } catch (e) {
+                console.error('Delete shift failed:', e);
+                toast(tx('Delete failed: ', 'Error al eliminar: ') + (e.message || e));
+            }
+            return;
+        }
+        // Default path — undo toast for other call sites.
         undoToast(
             tx(`🗑 Shift deleted (${detail})`, `🗑 Turno eliminado (${detail})`),
             async () => {
@@ -4322,6 +4344,12 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
     // pointer-drag on a scrolling table cell is finicky; this gives the
     // same outcome (quick shift extend/shorten) without the math.
     const [resizePickerOpen, setResizePickerOpen] = useState(false);
+    // Inline delete-confirm. Click the X → flips to a tiny "Sure?
+    // ✓ ✗" pill in the same corner. ✓ deletes immediately (no undo
+    // toast — the confirm IS the safety net). ✗ or outside-tap reverts.
+    // Faster than the old "X → 5-second bottom toast" flow which felt
+    // laggy because the confirmation lived far from the cube.
+    const [confirmingDelete, setConfirmingDelete] = useState(false);
     const nudgeEnd = async (deltaMin) => {
         if (!onUpdateShiftTimes) return;
         const [eh, em] = (shift.endTime || '00:00').split(':').map(Number);
@@ -4503,12 +4531,40 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                     {isOffered ? (isEn ? 'Cancel offer' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
                 </button>
             )}
-            {canEdit && (
-                <button onClick={(e) => { e.stopPropagation(); onDelete(shift.id); }}
+            {canEdit && !confirmingDelete && (
+                <button onClick={(e) => { e.stopPropagation(); setConfirmingDelete(true); }}
                     className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[11px] leading-none hover:bg-red-600 print:hidden shadow-md opacity-0 group-hover/cube:opacity-100 transition"
                     title={isEn ? 'Delete shift' : 'Eliminar turno'}>
                     ×
                 </button>
+            )}
+            {canEdit && confirmingDelete && (
+                <>
+                    {/* Outside-tap dismiss layer — clicking anywhere else
+                        cancels the confirm. z-30 sits below the confirm pill. */}
+                    <div className="fixed inset-0 z-30"
+                        onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false); }} />
+                    <div onClick={(e) => e.stopPropagation()}
+                        className="absolute -top-3 -right-2 z-40 flex items-center gap-1 px-1.5 py-1 rounded-full bg-white border-2 border-red-400 shadow-card-hov print:hidden">
+                        <span className="text-[9px] font-bold text-red-700 mr-1">
+                            {isEn ? 'Sure?' : '¿Seguro?'}
+                        </span>
+                        <button onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmingDelete(false);
+                            onDelete(shift.id, { immediate: true });
+                        }}
+                            className="w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black leading-none hover:bg-red-700 active:scale-90"
+                            title={isEn ? 'Yes, delete' : 'Sí, eliminar'}>
+                            ✓
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false); }}
+                            className="w-5 h-5 rounded-full bg-gray-200 text-gray-700 text-[10px] font-black leading-none hover:bg-gray-300 active:scale-90"
+                            title={isEn ? 'Cancel' : 'Cancelar'}>
+                            ✗
+                        </button>
+                    </div>
+                </>
             )}
 
             {/* RIGHT-EDGE RESIZE HANDLE — desktop only. Opens an inline
@@ -4577,7 +4633,7 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
                                 <span>↔</span>{isEn ? 'Extend / shorten' : 'Extender / acortar'}
                             </button>
                         )}
-                        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(shift.id); }}
+                        <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); setConfirmingDelete(true); }}
                             className="w-full px-3 py-2 text-left text-xs font-semibold text-red-700 hover:bg-red-50 flex items-center gap-2 border-t border-dd-line">
                             <span>🗑</span>{isEn ? 'Delete shift' : 'Eliminar turno'}
                         </button>
