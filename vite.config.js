@@ -21,7 +21,12 @@ export default defineConfig({
     __APP_OPERATOR__: JSON.stringify('Shih Technology'),
   },
   plugins: [react()],
-  base: '/dd-mau-portal/',
+  // Custom domain (app.ddmaustl.com) serves from the apex, so assets
+  // resolve at '/' not '/dd-mau-portal/'. A CNAME file in public/ tells
+  // GitHub Pages which domain to serve from. The legacy
+  // ddmauapp.github.io/dd-mau-portal/ URL auto-redirects to the custom
+  // domain once GitHub Pages has the custom domain set in repo settings.
+  base: '/',
   build: {
     outDir: 'dist',
     sourcemap: false,

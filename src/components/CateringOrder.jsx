@@ -668,7 +668,7 @@ export default function CateringOrder({ language, staffName }) {
                     @media print{.no-print{display:none !important} body{padding:0;margin:0} .invoice{border:none}}
                 </style></head><body>
                 <div class="no-print">
-                    <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button>
+                    <button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://app.ddmaustl.com/'}},300)">✕ Close</button>
                     <button class="btn-print" onclick="window.print()">🖨️ Print</button>
                 </div>
                 <div class="invoice">
