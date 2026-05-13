@@ -1079,6 +1079,23 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         //   - default (other call sites like drag-to-delete, bulk delete):
         //     keep the 5-second undoToast so a fat-finger has a recovery
         //     window.
+        // Admin-fanout body shared by both paths. Even draft deletes go to
+        // admins so co-managers always know what changed — "no matter how
+        // small". Staff push only fires for published shifts (they hadn't
+        // seen a draft, so silent-delete to staff is still correct).
+        const fanoutAdmins = (state) => {
+            notifyAdmins({
+                type: 'shift_deleted_admin',
+                title: { en: `🗑 Shift deleted${state === 'draft' ? ' (draft)' : ''}`,
+                         es: `🗑 Turno eliminado${state === 'draft' ? ' (borrador)' : ''}` },
+                body: { en: `${sh.staffName || 'Unassigned'} • ${detail} • by ${staffName}`,
+                        es: `${sh.staffName || 'Sin asignar'} • ${detail} • por ${staffName}` },
+                link: '/schedule',
+                tag: `shift_deleted:${shiftId}`,
+                createdBy: staffName,
+                excludeStaff: staffName,
+            }).catch(() => {});
+        };
         if (opts.immediate) {
             try {
                 await deleteDoc(doc(db, 'shifts', shiftId));
@@ -1090,6 +1107,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         { tagSuffix: `shift:${shiftId}` }
                     ).catch(() => {});
                 }
+                fanoutAdmins(wasPublished ? 'published' : 'draft');
                 toast(tx(`🗑 Deleted (${detail})`, `🗑 Eliminado (${detail})`));
             } catch (e) {
                 console.error('Delete shift failed:', e);
@@ -1108,8 +1126,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                             { en: 'Shift removed', es: 'Turno eliminado' },
                             { en: `Your ${detail} shift has been removed.`,
                               es: `Tu turno del ${detail} ha sido eliminado.` },
-                            null, { allowSelf: true });
+                            null, { allowSelf: true, tagSuffix: `shift:${shiftId}` });
                     }
+                    fanoutAdmins(wasPublished ? 'published' : 'draft');
                 } catch (e) {
                     console.error('Delete shift failed:', e);
                     toast(tx('Could not delete: ', 'No se pudo eliminar: ') + e.message, { kind: 'error' });
@@ -1262,6 +1281,46 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     try { await deleteDoc(doc(db, 'shifts', sh.id)); }
                     catch (e) { console.warn('bulk-delete failed for', sh.id, e); }
                 }
+                // Per-staff push: one rolled-up notification per affected
+                // staffer listing how many of THEIR shifts got cut. Only
+                // counts published shifts (drafts hadn't been released).
+                const byStaff = new Map();
+                for (const sh of snapshot) {
+                    if (sh.published === false) continue;
+                    if (!sh.staffName) continue;
+                    const list = byStaff.get(sh.staffName) || [];
+                    list.push(sh);
+                    byStaff.set(sh.staffName, list);
+                }
+                for (const [name, list] of byStaff) {
+                    const sorted = [...list].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                    const lines = sorted.slice(0, 3).map(s => `${s.date} ${formatTime12h(s.startTime)}–${formatTime12h(s.endTime)}`);
+                    const moreEn = sorted.length > 3 ? `\n+${sorted.length - 3} more` : '';
+                    const moreEs = sorted.length > 3 ? `\n+${sorted.length - 3} más` : '';
+                    notify(name, 'shift_deleted',
+                        { en: `🗑 ${list.length} shift${list.length === 1 ? '' : 's'} removed`,
+                          es: `🗑 ${list.length} turno${list.length === 1 ? '' : 's'} eliminado${list.length === 1 ? '' : 's'}` },
+                        { en: lines.join('\n') + moreEn,
+                          es: lines.join('\n') + moreEs },
+                        '/schedule',
+                        { allowSelf: true, tagSuffix: `bulk:${Date.now()}` }
+                    ).catch(() => {});
+                }
+                // Admin summary — single roll-up so other managers know a
+                // bulk delete just happened.
+                const draftCount = snapshot.filter(s => s.published === false).length;
+                const pubCount = snapshot.length - draftCount;
+                notifyAdmins({
+                    type: 'shift_deleted_admin',
+                    title: { en: `🗑 Bulk delete: ${snapshot.length} shift${snapshot.length === 1 ? '' : 's'}`,
+                             es: `🗑 Eliminación masiva: ${snapshot.length} turno${snapshot.length === 1 ? '' : 's'}` },
+                    body: { en: `${pubCount} published, ${draftCount} draft • by ${staffName}`,
+                            es: `${pubCount} publicado(s), ${draftCount} borrador(es) • por ${staffName}` },
+                    link: '/schedule',
+                    tag: `bulk_delete:${Date.now()}`,
+                    createdBy: staffName,
+                    excludeStaff: staffName,
+                }).catch(() => {});
             },
             { delayMs: 5000, undoLabel: tx('Undo', 'Deshacer'), kind: 'warn' }
         );
@@ -2387,6 +2446,21 @@ ${dayBlocks}
                     // recipient's device.
                     { allowSelf: true, tagSuffix: `week:${toDateStr(weekStart)}` });
             }
+            // Admin summary — one roll-up so co-managers see the publish
+            // even if it was tiny (e.g. one shift). excludeStaff skips the
+            // publisher (they already got the toast).
+            const weekStartStr = toDateStr(weekStart);
+            notifyAdmins({
+                type: 'week_published_admin',
+                title: { en: `📢 Schedule published (week of ${weekStartStr})`,
+                         es: `📢 Horario publicado (semana del ${weekStartStr})` },
+                body: { en: `${drafts.length} shift${drafts.length === 1 ? '' : 's'} • ${byStaff.size} staff • by ${staffName}`,
+                        es: `${drafts.length} turno${drafts.length === 1 ? '' : 's'} • ${byStaff.size} persona(s) • por ${staffName}` },
+                link: '/schedule',
+                tag: `week_published_admin:${weekStartStr}`,
+                createdBy: staffName,
+                excludeStaff: staffName,
+            }).catch(() => {});
         } catch (e) {
             console.error('Publish failed:', e);
             toast(tx('Publish error: ', 'Error al publicar: ') + e.message);
