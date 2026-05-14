@@ -89,21 +89,51 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
     const messaging = await getMessagingSafely();
     if (!messaging) return { ok: false, reason: "messaging-unsupported" };
 
-    // Register the FCM service worker. CRITICAL: must use the deployed base
-    // path, not "/". Vite ships this site under base "/dd-mau-portal/" on
-    // GitHub Pages — registering "/firebase-messaging-sw.js" 404'd, so the
-    // SW never installed, so background pushes were silently dropped (the
-    // user only saw foreground in-app notifications when the app was open).
-    // import.meta.env.BASE_URL resolves to "/dd-mau-portal/" in production
-    // and "/" in dev, so this works in both.
+    // Register the FCM service worker on its DEDICATED scope. CRITICAL:
+    // the PWA SW (src/pwa.js → /sw.js) registers at scope "/" for offline
+    // caching. A browser allows only ONE active SW per scope — registering
+    // FCM at scope "/" too means the two SWs stomp on each other on every
+    // page load, and whichever registers SECOND invalidates the first's
+    // push subscription. That kills the FCM token within seconds of being
+    // issued (observed 2026-05-14 in Cloud Function logs: token works for
+    // ~50s of pushes, then `registration-token-not-registered`).
+    //
+    // Firebase's canonical scope for messaging is
+    // `/firebase-cloud-messaging-push-scope` — a dedicated namespace that
+    // doesn't conflict with the PWA SW's scope "/". Push events arrive at
+    // the SW regardless of scope (they come over the push subscription,
+    // not fetch interception), so narrowing scope here has no functional
+    // downside.
+    //
+    // BASE_URL is "/" in production (custom domain at apex) and "/" in dev,
+    // so the resulting scope is "/firebase-cloud-messaging-push-scope".
     const swUrl = (import.meta.env.BASE_URL || "/") + "firebase-messaging-sw.js";
-    const swScope = import.meta.env.BASE_URL || "/";
+    const swScope = (import.meta.env.BASE_URL || "/") + "firebase-cloud-messaging-push-scope";
     let swRegistration = null;
     if ("serviceWorker" in navigator) {
         try {
+            // Legacy cleanup: devices that registered before the
+            // dedicated-scope fix have a firebase-messaging-sw.js
+            // registration at scope "/" colliding with the PWA SW.
+            // Find and unregister it before installing the new one at
+            // the dedicated scope — otherwise the orphaned registration
+            // sits there indefinitely.
+            try {
+                const all = await navigator.serviceWorker.getRegistrations();
+                for (const r of all) {
+                    const sw = r.active || r.installing || r.waiting;
+                    if (!sw || !sw.scriptURL) continue;
+                    if (!sw.scriptURL.includes("firebase-messaging-sw.js")) continue;
+                    if (r.scope === swScope) continue;  // keep the correct one
+                    await r.unregister();
+                    console.log("[FCM] unregistered legacy SW at scope", r.scope);
+                }
+            } catch (e) {
+                console.warn("FCM legacy SW cleanup failed (non-fatal):", e);
+            }
             swRegistration = await navigator.serviceWorker.register(swUrl, { scope: swScope });
         } catch (e) {
-            console.warn("FCM service worker register failed:", e, "url=", swUrl);
+            console.warn("FCM service worker register failed:", e, "url=", swUrl, "scope=", swScope);
             return { ok: false, reason: "sw-register-failed" };
         }
     }
