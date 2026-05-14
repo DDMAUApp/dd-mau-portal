@@ -642,6 +642,7 @@ export const MODULES = [
                     "No eating or gum chewing at the register. Drinks stay out of sight — under the counter, in the back, never on top where guests can see.",
                     "If the line is long, ring faster — be friendly AND fast. Don't stop ringing to chat. The next guest in line is also a guest.",
                     "Pause orders when the kitchen is behind. If you can see the kitchen is backed up, you can hold off ringing. When the manager tells you to pause ordering, tell the guests in line: 'We have to pause orders for 5 minutes to let the kitchen catch up — sorry for the wait, we'll be right with you.' Stay calm and friendly. Protecting food quality is why we do this.",
+                    "This is a very rare event.",
                 ],
                 contentEs: [
                     "Voids, reembolsos, y comps van al gerente. Siempre. El gerente tiene autoridad completa en esto — tú no. Si un cliente pide un reembolso o comp, sonríe y dile 'déjame llamar al gerente.' Nunca lo proceses tú.",
@@ -654,6 +655,7 @@ export const MODULES = [
                     "Sin comer ni mascar chicle en la caja. Las bebidas se quedan fuera de la vista — debajo del mostrador, en la parte de atrás, nunca arriba donde los clientes puedan verlas.",
                     "Si la fila está larga, cobra más rápido — sé amable Y rápido. No pares de cobrar para platicar. El siguiente en la fila también es cliente.",
                     "Pausa órdenes cuando la cocina va atrasada. Si ves que la cocina está saturada, puedes dejar de cobrar. Cuando el gerente te diga que pauses, dile a los clientes en la fila: 'Tenemos que pausar las órdenes por 5 minutos para que la cocina se ponga al día — disculpen la espera, ya estamos con ustedes.' Mantente calmado y amable. Hacemos esto para proteger la calidad de la comida.",
+                    "Este es un evento muy raro.",
                 ],
             },
             {
