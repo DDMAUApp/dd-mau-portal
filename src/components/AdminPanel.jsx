@@ -1956,6 +1956,21 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         const tokens = (me?.fcmTokens || []).length;
                         const swSupported = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
                         const perm = typeof Notification !== 'undefined' ? Notification.permission : 'unsupported';
+                        // iOS push gate: iOS Safari refuses to deliver
+                        // push to non-standalone (non-PWA) sessions, even
+                        // with permission granted. Detect iOS + non-
+                        // standalone and surface the exact remediation
+                        // ("Add to Home Screen, then open from there"),
+                        // otherwise users see a green diagnostic but
+                        // never receive a single push.
+                        const ua = typeof navigator !== 'undefined' ? (navigator.userAgent || '') : '';
+                        const isIOS = /iPad|iPhone|iPod/.test(ua)
+                            || (ua.includes('Mac') && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1);
+                        const isStandalone = typeof window !== 'undefined' && (
+                            window.matchMedia?.('(display-mode: standalone)')?.matches
+                            || window.navigator?.standalone === true
+                        );
+                        const iosBlocksPush = isIOS && !isStandalone;
                         const sendTestPush = async () => {
                             try {
                                 const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
@@ -1986,7 +2001,34 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     <li><strong>{language === 'es' ? 'Service Worker:' : 'Service Worker:'}</strong> {swSupported ? '✅' : '❌'} {swSupported ? (language === 'es' ? 'soportado' : 'supported') : (language === 'es' ? 'no soportado en este dispositivo' : 'not supported on this device')}</li>
                                     <li><strong>{language === 'es' ? 'Permiso del navegador:' : 'Browser permission:'}</strong> {perm === 'granted' ? '✅' : perm === 'denied' ? '🚫' : '⚠️'} {perm}</li>
                                     <li><strong>{language === 'es' ? 'Tokens FCM registrados:' : 'FCM tokens registered:'}</strong> {tokens > 0 ? '✅' : '❌'} {tokens}</li>
+                                    {isIOS && (
+                                        <li>
+                                            <strong>{language === 'es' ? 'Modo iOS:' : 'iOS mode:'}</strong>{' '}
+                                            {isStandalone ? '✅' : '🚫'}{' '}
+                                            {isStandalone
+                                                ? (language === 'es' ? 'PWA instalado (pushes funcionarán)' : 'Installed PWA (push works)')
+                                                : (language === 'es' ? 'Safari — iOS NO entregará push aquí' : 'Safari — iOS will NOT deliver push here')}
+                                        </li>
+                                    )}
                                 </ul>
+                                {iosBlocksPush && (
+                                    <div className="mb-3 p-3 rounded-lg bg-amber-100 border-2 border-amber-300 text-xs text-amber-900">
+                                        <div className="font-bold mb-1">
+                                            🍎 {language === 'es' ? 'iOS bloquea push en Safari' : 'iOS blocks push in Safari'}
+                                        </div>
+                                        <div className="leading-relaxed">
+                                            {language === 'es'
+                                                ? 'Apple sólo permite notificaciones push cuando la app está instalada en la pantalla de inicio. Para activar:'
+                                                : "Apple only allows push notifications when the app is installed to your Home Screen. To enable:"}
+                                            <ol className="list-decimal ml-4 mt-1 space-y-0.5">
+                                                <li>{language === 'es' ? 'Toca el ícono de Compartir (cuadro con flecha arriba) en Safari' : 'Tap the Share icon (square with up-arrow) in Safari'}</li>
+                                                <li>{language === 'es' ? 'Desplázate y toca "Añadir a pantalla de inicio"' : 'Scroll down → tap "Add to Home Screen"'}</li>
+                                                <li>{language === 'es' ? 'Cierra Safari y abre DD Mau desde el ícono nuevo' : 'Close Safari and open DD Mau from the new icon'}</li>
+                                                <li>{language === 'es' ? 'Acepta el permiso de notificaciones cuando aparezca' : 'Accept the notification permission when prompted'}</li>
+                                            </ol>
+                                        </div>
+                                    </div>
+                                )}
                                 {/* Recent notifications for THIS staff — proves
                                     whether the issue is "notification docs aren't
                                     being written" vs "they are written but FCM
