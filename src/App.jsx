@@ -36,6 +36,7 @@ const ShiftHandoff = lazy(() => import('./components/ShiftHandoff'));
 const Onboarding = lazy(() => import('./components/Onboarding'));
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
+const InstallSplash = lazy(() => import('./components/InstallSplash'));
 
 // Error boundary — catches render errors in child components
 class ErrorBoundary extends Component {
@@ -220,6 +221,16 @@ function readOnboardingMode() {
         if (token) return { mode: 'portal', token };
         if (params.get('apply') === '1' || params.get('apply') === 'true') {
             return { mode: 'apply' };
+        }
+        // Install splash — reached via NFC sticker scan
+        // (?install=1 in the URL). Skipped automatically if the page
+        // is already running standalone (display-mode media query OR
+        // navigator.standalone), so an installed user who scans the
+        // sticker just lands on the normal lock screen.
+        if (params.get('install') === '1' || params.get('install') === 'true') {
+            const standalone = window.matchMedia?.('(display-mode: standalone)')?.matches
+                || window.navigator?.standalone === true;
+            if (!standalone) return { mode: 'install' };
         }
         // Path-based detection: /apply (or /apply/ with trailing slash).
         const path = window.location.pathname.replace(/\/+$/, '');
@@ -526,6 +537,27 @@ export default function App() {
         return (
             <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
                 <OnboardingPortal token={onboardingMode.token} language={language} />
+            </Suspense>
+        );
+    }
+    if (onboardingMode.mode === 'install') {
+        // NFC-sticker install splash. Clears ?install=1 from the URL
+        // when the user taps "Skip" so a refresh doesn't keep showing
+        // the splash. Replace history entry so the splash isn't
+        // navigable-back-to.
+        return (
+            <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
+                <InstallSplash
+                    language={language}
+                    onSkip={() => {
+                        try {
+                            const u = new URL(window.location.href);
+                            u.searchParams.delete('install');
+                            window.history.replaceState({}, '', u.pathname + (u.search ? u.search : ''));
+                        } catch {}
+                        setOnboardingMode({ mode: null });
+                    }}
+                />
             </Suspense>
         );
     }
