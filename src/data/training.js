@@ -13,7 +13,6 @@
 // admin panel before the staff can retry.
 
 export const MODULES = [
-    // ── M1 — WELCOME TO DD MAU ─────────────────────────────────────────
     {
         id: "m1",
         code: "M1",
@@ -32,16 +31,16 @@ export const MODULES = [
                     "Hey — welcome to DD Mau. Whether this is your first restaurant gig or you've been on a line for years, we're glad to have you.",
                     "DD Mau isn't a sit-down place and it isn't a drive-through. We live in the sweet spot where amazing Vietnamese food meets quick, energetic service. Think of us as Vietnamese street food, elevated, with hospitality to match.",
                     "Our name means 'hurry up' in Vietnamese — because great food and great service shouldn't take forever.",
-                    "What we expect from you: bring your real personality. Be warm, be fast, be honest. Read these training modules end to end — they cover everything from greeting a guest to cleaning a sink after raw chicken. Then live it on the floor.",
-                    "What you can expect from us: a clean kitchen, fair tips, real coaching, and a team that has your back when it gets crazy.",
+                    "What we expect from you: bring your real personality. Be warm, be fast, be honest. Read these training modules end to end — they cover everything from greeting a guest to cleaning a sink after raw chicken. ",
+                    "What you can expect from us: a clean kitchen, fair tips, real coaching, and a team that has your back when it gets crazy."
                 ],
                 contentEs: [
                     "Bienvenido a DD Mau. Sea este tu primer trabajo en un restaurante o que tengas años de experiencia, nos alegra tenerte en el equipo.",
                     "DD Mau no es un restaurante de mesa ni un drive-through. Estamos en el punto medio donde la comida vietnamita increíble se encuentra con un servicio rápido y enérgico. Somos comida callejera vietnamita, elevada, con hospitalidad a la altura.",
                     "Nuestro nombre significa 'apúrate' en vietnamita — porque la buena comida y el buen servicio no deben tardar.",
                     "Lo que esperamos de ti: trae tu personalidad real. Sé cálido, sé rápido, sé honesto. Lee estos módulos completos — cubren todo, desde saludar a un cliente hasta limpiar un fregadero después del pollo crudo. Después aplícalo en el piso.",
-                    "Lo que puedes esperar de nosotros: cocina limpia, propinas justas, entrenamiento real y un equipo que te respalda cuando todo se pone intenso.",
-                ],
+                    "Lo que puedes esperar de nosotros: cocina limpia, propinas justas, entrenamiento real y un equipo que te respalda cuando todo se pone intenso."
+                ]
             },
             {
                 id: "m1-l2",
@@ -50,13 +49,13 @@ export const MODULES = [
                 contentEn: [
                     "DD Mau was founded by Julie Truong. She opened our first location in Maryland Heights in 2018 with a simple dream — bring authentic, fast-casual Vietnamese food to St. Louis.",
                     "Today we run two locations: Maryland Heights (MH) and Webster Groves (WG). You're hired for one specific location — but it doesn't matter which store you work at, our standards are the same. The way you greet a guest, build a bowl, and close the kitchen should look identical at both stores.",
-                    "Both locations are fast casual. Guests order at the counter. We run the food to the table. We don't serve at the table the way a sit-down spot does, and we don't have a drive-through window. We move like a counter-service spot but we treat guests like a sit-down spot.",
+                    "Both locations are fast casual. Guests order at the counter. We run the food to the table. We don't serve at the table the way a sit-down spot does, and we don't have a drive-through window. We move like a counter-service spot but we treat guests like a sit-down spot."
                 ],
                 contentEs: [
                     "DD Mau fue fundado por Julie Truong. Ella abrió nuestra primera ubicación en Maryland Heights en 2018 con un sueño simple — traer comida vietnamita auténtica y casual rápida a St. Louis.",
                     "Hoy operamos dos ubicaciones: Maryland Heights (MH) y Webster Groves (WG). Te contratamos para una ubicación específica — pero no importa en qué tienda trabajes, nuestros estándares son iguales. La forma de saludar al cliente, armar un bowl y cerrar la cocina debe verse igual en ambas tiendas.",
-                    "Ambas son casual rápido. Los clientes ordenan en el mostrador. Nosotros llevamos la comida a la mesa. No servimos en la mesa como un restaurante de mesa, y no tenemos ventanilla drive-through. Nos movemos como un servicio de mostrador pero tratamos a los clientes como en un restaurante de mesa.",
-                ],
+                    "Ambas son casual rápido. Los clientes ordenan en el mostrador. Nosotros llevamos la comida a la mesa. No servimos en la mesa como un restaurante de mesa, y no tenemos ventanilla drive-through. Nos movemos como un servicio de mostrador pero tratamos a los clientes como en un restaurante de mesa."
+                ]
             },
             {
                 id: "m1-l3",
@@ -66,14 +65,14 @@ export const MODULES = [
                     "Three things make us different and they are non-negotiable. Hospitality comes first — the food and the speed only matter if the guest feels seen.",
                     "1. Hospitality is everything. We're a counter-service spot, but we are not a transaction machine. Eye contact. A smile. Greet the guest in 10 seconds. Read the room. The difference between a guest who comes back and one who doesn't is almost always how you made them feel — not the food.",
                     "2. Fresh meets fast. The pho broth simmered overnight. The vinaigrette was made this week. The egg rolls were rolled by hand in the back. Speed comes from prep, organization, and station discipline — not from cutting corners.",
-                    "3. Vietnamese street food, elevated. Our menu is built on traditional Vietnamese flavors — fish sauce, lemongrass, fresh herbs, rice noodles, banh mi — but we plate them for a fast-casual setting. The flavors are real. The presentation is sharp. The price is fair.",
+                    "3. Vietnamese street food, elevated. Our menu is built on traditional Vietnamese flavors — fish sauce, lemongrass, fresh herbs, rice noodles, banh mi — but we plate them for a fast-casual setting. The flavors are real. The presentation is sharp. The price is fair."
                 ],
                 contentEs: [
                     "Tres cosas nos hacen diferentes y no son negociables. La hospitalidad va primero — la comida y la velocidad solo importan si el cliente se siente visto.",
                     "1. La hospitalidad lo es todo. Somos servicio de mostrador, pero no somos una máquina de transacciones. Contacto visual. Sonrisa. Saluda al cliente en 10 segundos. Lee la sala. La diferencia entre un cliente que regresa y uno que no, casi siempre es cómo lo hiciste sentir — no la comida.",
                     "2. Fresco y rápido. El caldo de pho se cocinó toda la noche. La vinagreta se hizo esta semana. Los rollos primavera se enrollaron a mano. La velocidad viene del prep, la organización y la disciplina de estación — no de tomar atajos.",
-                    "3. Comida callejera vietnamita, elevada. Nuestro menú se construye sobre sabores vietnamitas tradicionales — salsa de pescado, hierba limón, hierbas frescas, fideos de arroz, banh mi — pero los presentamos para un ambiente casual rápido. Los sabores son reales. La presentación es nítida. El precio es justo.",
-                ],
+                    "3. Comida callejera vietnamita, elevada. Nuestro menú se construye sobre sabores vietnamitas tradicionales — salsa de pescado, hierba limón, hierbas frescas, fideos de arroz, banh mi — pero los presentamos para un ambiente casual rápido. Los sabores son reales. La presentación es nítida. El precio es justo."
+                ]
             },
             {
                 id: "m1-l4",
@@ -88,7 +87,7 @@ export const MODULES = [
                     "• Speak Up — greet them out loud.",
                     "• Show Up — do the work without being asked: restock, run food, check the line, check the tables.",
                     "🛟 RESTORE — our service-recovery framework for when something goes wrong. Recognize, Empathize, Solve it now, Tell the Lead, Offer something extra, Re-greet, Examine. The full breakdown is in M19. The short version: when a guest complains, do not argue and do not blame the kitchen. Take ownership. Solve it. Make it right.",
-                    "These three frameworks together cover ~90% of what 'good service' looks like at DD Mau. Memorize the names now. We'll work the details into your bones over your first 30 days.",
+                    "These three frameworks together cover ~90% of what 'good service' looks like at DD Mau. Memorize the names now. We'll work the details into your bones over your first 30 days."
                 ],
                 contentEs: [
                     "Usamos un lenguaje compartido para que todo el equipo esté en la misma página. Escucharás estas frases en cada manual y en cada reunión de pre-turno. El detalle profundo está en el módulo de Servicio al Cliente (M19). Por ahora, solo aprende los nombres para reconocerlos cuando un compañero o líder los use en el piso.",
@@ -99,9 +98,9 @@ export const MODULES = [
                     "• Habla Alto — salúdalos en voz alta.",
                     "• Aparece — haz el trabajo sin que te lo pidan: reabastecer, llevar comida, revisar la línea, revisar las mesas.",
                     "🛟 RESTORE — nuestro marco de recuperación de servicio para cuando algo sale mal. Reconocer, Empatizar, Solucionar ahora, Tell al líder, Ofrecer algo extra, Re-saludar, Examinar. El desglose completo está en M19. La versión corta: cuando un cliente se queja, no discutas y no culpes a la cocina. Toma responsabilidad. Soluciónalo. Hazlo bien.",
-                    "Estos tres marcos juntos cubren ~90% de lo que parece 'buen servicio' en DD Mau. Memoriza los nombres ahora. Los detalles se te grabarán en los primeros 30 días.",
-                ],
-            },
+                    "Estos tres marcos juntos cubren ~90% de lo que parece 'buen servicio' en DD Mau. Memoriza los nombres ahora. Los detalles se te grabarán en los primeros 30 días."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -111,66 +110,144 @@ export const MODULES = [
                     questionEn: "What does 'DD Mau' mean in Vietnamese?",
                     questionEs: "¿Qué significa 'DD Mau' en vietnamita?",
                     options: [
-                        { id: "a", textEn: "Hurry up", textEs: "Apúrate" },
-                        { id: "b", textEn: "Welcome", textEs: "Bienvenido" },
-                        { id: "c", textEn: "Delicious", textEs: "Delicioso" },
-                        { id: "d", textEn: "Family", textEs: "Familia" },
+                        {
+                            id: "a",
+                            textEn: "Hurry up",
+                            textEs: "Apúrate"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Welcome",
+                            textEs: "Bienvenido"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Delicious",
+                            textEs: "Delicioso"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Family",
+                            textEs: "Familia"
+                        }
                     ],
-                    correct: "a",
+                    correct: "a"
                 },
                 {
                     id: "m1-q2",
                     questionEn: "DD Mau is best described as:",
                     questionEs: "DD Mau se describe mejor como:",
                     options: [
-                        { id: "a", textEn: "A drive-through", textEs: "Un drive-through" },
-                        { id: "b", textEn: "A fine dining sit-down restaurant", textEs: "Un restaurante de mesa fina" },
-                        { id: "c", textEn: "A fast-casual Vietnamese counter-service spot", textEs: "Un lugar casual rápido vietnamita de mostrador" },
-                        { id: "d", textEn: "A food truck", textEs: "Un food truck" },
+                        {
+                            id: "a",
+                            textEn: "A drive-through",
+                            textEs: "Un drive-through"
+                        },
+                        {
+                            id: "b",
+                            textEn: "A fine dining sit-down restaurant",
+                            textEs: "Un restaurante de mesa fina"
+                        },
+                        {
+                            id: "c",
+                            textEn: "A fast-casual Vietnamese counter-service spot",
+                            textEs: "Un lugar casual rápido vietnamita de mostrador"
+                        },
+                        {
+                            id: "d",
+                            textEn: "A food truck",
+                            textEs: "Un food truck"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m1-q3",
                     questionEn: "Within how many seconds should every guest be acknowledged when they walk in?",
                     questionEs: "¿Dentro de cuántos segundos se debe reconocer a cada cliente cuando entra?",
                     options: [
-                        { id: "a", textEn: "30 seconds", textEs: "30 segundos" },
-                        { id: "b", textEn: "10 seconds", textEs: "10 segundos" },
-                        { id: "c", textEn: "60 seconds", textEs: "60 segundos" },
-                        { id: "d", textEn: "Whenever you finish what you're doing", textEs: "Cuando termines lo que haces" },
+                        {
+                            id: "a",
+                            textEn: "30 seconds",
+                            textEs: "30 segundos"
+                        },
+                        {
+                            id: "b",
+                            textEn: "10 seconds",
+                            textEs: "10 segundos"
+                        },
+                        {
+                            id: "c",
+                            textEn: "60 seconds",
+                            textEs: "60 segundos"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Whenever you finish what you're doing",
+                            textEs: "Cuando termines lo que haces"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m1-q4",
                     questionEn: "What are the four words of the 'Bright 4'?",
                     questionEs: "¿Cuáles son las cuatro palabras de los 'Bright 4'?",
                     options: [
-                        { id: "a", textEn: "Eyes Up, Light Up, Speak Up, Show Up", textEs: "Ojos Arriba, Cara Iluminada, Habla Alto, Aparece" },
-                        { id: "b", textEn: "Smile, Speak, Serve, Sweep", textEs: "Sonríe, Habla, Sirve, Barre" },
-                        { id: "c", textEn: "Hurry Up, Stand Up, Speak Up, Show Up", textEs: "Apúrate, Levántate, Habla, Aparece" },
-                        { id: "d", textEn: "Listen, Look, Lead, Learn", textEs: "Escucha, Mira, Lidera, Aprende" },
+                        {
+                            id: "a",
+                            textEn: "Eyes Up, Light Up, Speak Up, Show Up",
+                            textEs: "Ojos Arriba, Cara Iluminada, Habla Alto, Aparece"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Smile, Speak, Serve, Sweep",
+                            textEs: "Sonríe, Habla, Sirve, Barre"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Hurry Up, Stand Up, Speak Up, Show Up",
+                            textEs: "Apúrate, Levántate, Habla, Aparece"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Listen, Look, Lead, Learn",
+                            textEs: "Escucha, Mira, Lidera, Aprende"
+                        }
                     ],
-                    correct: "a",
+                    correct: "a"
                 },
                 {
                     id: "m1-q5",
                     questionEn: "RESTORE is used when:",
                     questionEs: "RESTORE se usa cuando:",
                     options: [
-                        { id: "a", textEn: "Opening the restaurant", textEs: "Abriendo el restaurante" },
-                        { id: "b", textEn: "Something goes wrong with a guest", textEs: "Algo sale mal con un cliente" },
-                        { id: "c", textEn: "Closing the cash drawer", textEs: "Cerrando la caja" },
-                        { id: "d", textEn: "Restocking the boba station", textEs: "Reabasteciendo la estación de boba" },
+                        {
+                            id: "a",
+                            textEn: "Opening the restaurant",
+                            textEs: "Abriendo el restaurante"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Something goes wrong with a guest",
+                            textEs: "Algo sale mal con un cliente"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Closing the cash drawer",
+                            textEs: "Cerrando la caja"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Restocking the boba station",
+                            textEs: "Reabasteciendo la estación de boba"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M2 — DAY 1 LOGISTICS ───────────────────────────────────────────
     {
         id: "m2",
         code: "M2",
@@ -186,38 +263,38 @@ export const MODULES = [
                 titleEn: "Paperwork & Onboarding",
                 titleEs: "Papeleo e Incorporación",
                 contentEn: [
-                    "Before you ever touch food, money, or guests, here's the paperwork.",
-                    "What you'll fill out: W-4 (federal + state tax), I-9 (work eligibility), direct deposit form. Your manager will hand you these on Day 1.",
+                    "Before you ever touch food, money, or speak to guests, here's the paperwork.",
+                    "What you'll fill out: W-4 (federal + state tax), I-9 (work eligibility), direct deposit form. Your manager will send you these on Day 1.",
                     "Bring two forms of ID to your first shift: passport OR driver's license + Social Security card or birth certificate. Without ID we cannot put you on the schedule.",
-                    "You'll get a 4-digit Toast POS PIN from your manager. This PIN is yours alone. Do NOT share it with anyone — not a teammate, not a shift lead. Voids and time clock punches are tied to your PIN.",
-                    "Sign the New Hire Acknowledgment with your manager once you finish your training. Your manager keeps the signed copy in your file.",
+                    "You'll get a 4-digit Toast POS PIN from your manager. This PIN is yours alone. Do NOT share it with anyone — . Voids and time clock punches are tied to your PIN.",
+                    "Sign the DD Mau hand book, Your manager keeps the signed copy in your file."
                 ],
                 contentEs: [
                     "Antes de tocar comida, dinero o clientes, esto es el papeleo.",
                     "Lo que vas a llenar: W-4 (impuesto federal + estatal), I-9 (elegibilidad de trabajo), formulario de depósito directo. Tu gerente te los dará el Día 1.",
                     "Trae dos formas de identificación a tu primer turno: pasaporte O licencia de manejar + tarjeta de Seguro Social o acta de nacimiento. Sin ID no podemos ponerte en el horario.",
                     "Vas a recibir un PIN de 4 dígitos de Toast POS de tu gerente. Este PIN es solo tuyo. NO lo compartas con nadie — ni con un compañero, ni con un líder de turno. Los voids y registro de horas están atados a tu PIN.",
-                    "Firma el Acuerdo de Nuevo Empleado con tu gerente cuando termines tu capacitación. Tu gerente guarda la copia firmada en tu archivo.",
-                ],
+                    "Firma el Acuerdo de Nuevo Empleado con tu gerente cuando termines tu capacitación. Tu gerente guarda la copia firmada en tu archivo."
+                ]
             },
             {
                 id: "m2-l2",
                 titleEn: "Schedule, Time Clock, Breaks",
                 titleEs: "Horario, Reloj de Tiempo, Descansos",
                 contentEn: [
-                    "Schedule. Shifts post weekly. Check Sling (or whatever scheduling app your manager uses) at least 48 hours before your next shift. If you spot a conflict, message your manager immediately — not the night before.",
+                    "Schedule. Shifts post weekly. Check the scheduling App (or whatever scheduling app your manager uses) at least 48 hours before your next shift. If you spot a conflict, message your manager immediately — not the night before.",
                     "Show up 10 minutes early. Showing up 'on time' really means showing up 10 minutes early. That gives you time to put on your apron, wash hands, and get a quick read of the floor before you clock in.",
-                    "Clock in on Toast at the start of your shift, AFTER you are in uniform and ready to work the floor — not before. Clocking in while changing or eating breakfast is wage theft.",
+                    "Clock in on Toast at the start of your shift, AFTER you are in uniform and ready to work the floor — not before. Clocking in while changing or eating breakfast is not allowed.",
                     "Clock out at the end of your shift, AFTER all your closing duties are signed off by the Shift Lead. If you forgot to clock in or out, tell the Lead immediately so they can correct it.",
-                    "Breaks. Every double shift gets a 1-hour unpaid break. Always check with the Shift Lead before you take your break.",
+                    "Breaks. Every double shift gets a 1-hour unpaid break. Always check with the Shift Lead before you take your break. They will have the break schedule planned out"
                 ],
                 contentEs: [
                     "Horario. Los turnos se publican semanalmente. Revisa Sling (o la app de horario que use tu gerente) al menos 48 horas antes de tu siguiente turno. Si detectas un conflicto, escríbele a tu gerente inmediatamente — no la noche anterior.",
                     "Llega 10 minutos temprano. Llegar 'a tiempo' realmente significa llegar 10 minutos temprano. Eso te da tiempo para ponerte el delantal, lavarte las manos, y leer el piso antes de marcar entrada.",
                     "Marca entrada en Toast al inicio de tu turno, DESPUÉS de estar en uniforme y listo para trabajar — no antes. Marcar entrada mientras te cambias o desayunas es robo de salario.",
                     "Marca salida al final de tu turno, DESPUÉS de que el líder firme tus deberes de cierre. Si olvidaste marcar entrada o salida, dile al líder inmediatamente para que lo corrija.",
-                    "Descansos. Cada turno doble recibe un descanso de 1 hora sin pagar. Siempre revisa con el líder antes de tomar tu descanso.",
-                ],
+                    "Descansos. Cada turno doble recibe un descanso de 1 hora sin pagar. Siempre revisa con el líder antes de tomar tu descanso."
+                ]
             },
             {
                 id: "m2-l3",
@@ -227,11 +304,11 @@ export const MODULES = [
                     "Dress code first, hygiene second. Both matter — guests read both immediately when you walk up to take their order.",
                     "DRESS CODE",
                     "• Clean DD Mau shirt — no stains. If your shirt has a stain that won't come out, talk to your manager about a replacement.",
-                    "• Pants — color doesn't matter. No rips, no holes, no designs or graphics. No yoga pants/leggings. Shorts are fine (clean, no rips, no graphics).",
+                    "• Pants — color, dark, khaki. No rips, no holes, no designs or graphics. No yoga pants/leggings. Shorts are fine (clean, no rips, no graphics).",
                     "• Non-slip, closed-toe shoes — REQUIRED, no exceptions. This is a safety rule, not a fashion rule. Wet kitchen floors are how people break wrists.",
                     "• Hair tied back and secured. If it touches your collar, it goes up.",
                     "• Beards must be neat and short, or use a beard guard.",
-                    "• Trimmed nails. No nail polish, no acrylics — food safety rule. Polish chips off into food. Acrylics hide bacteria.",
+                    "• Trimmed nails. no acrylics clean nails— food safety rule. Polish chips off into food. Acrylics hide bacteria.",
                     "• Minimal jewelry. A wedding band and small stud earrings are fine. Nothing dangling. Nothing that could fall into food.",
                     "PERSONAL HYGIENE — DAILY",
                     "• Show up guest-ready. No body odor, fresh breath, clean face and hands. You're closer to guests than you think — they notice immediately.",
@@ -239,11 +316,10 @@ export const MODULES = [
                     "ON THE FLOOR",
                     "• No eating on the floor. Drinks stay out of sight — under the counter, in the back, never on top of a station or anywhere a guest can see.",
                     "• No gum chewing on the floor.",
-                    "• No tasting food with your fingers. Use a clean spoon, and never re-dip the same spoon.",
+                    "• No tasting food with your fingers. Use a clean spoon, and never double-dip the same spoon.",
                     "• Cover coughs and sneezes into your elbow, turn away from food and people, then wash your hands.",
                     "• Don't touch your face, hair, teeth, ears, or eyes on the floor. If you do, wash your hands before touching food again.",
-                    "• No sharing drinks, vapes, or utensils between teammates.",
-                    "Handwashing rules, glove rules, when-you're-sick rules, and cuts/burns are all covered in detail in M3 Food Safety Basics.",
+                    "• "
                 ],
                 contentEs: [
                     "Primero el código de vestimenta, segundo la higiene. Ambos importan — el cliente los lee de inmediato cuando llegas a tomar su orden.",
@@ -265,8 +341,8 @@ export const MODULES = [
                     "• Cubre tos y estornudos con el codo, voltéate de la comida y de la gente, luego lávate las manos.",
                     "• No te toques la cara, cabello, dientes, oídos ni ojos en el piso. Si lo haces, lávate las manos antes de tocar comida otra vez.",
                     "• No compartas bebidas, vapes ni utensilios entre compañeros.",
-                    "Las reglas de lavado de manos, guantes, cuándo estás enfermo, y cortes/quemaduras están cubiertas a detalle en M3 Bases de Seguridad Alimentaria.",
-                ],
+                    ""
+                ]
             },
             {
                 id: "m2-l4",
@@ -275,9 +351,9 @@ export const MODULES = [
                 contentEn: [
                     "Phone Policy. Phones stay in the back during your shift. Period. If you need to check something urgently, ask the Shift Lead and step off the floor. No phones at the register, expo, or boba station — guests notice immediately.",
                     "Emergency? Tell the Shift Lead. We will work it out. Family emergency, sick kid, childcare falling through — we are not heartless, we just need to know.",
-                    "Calling Out. If you cannot make a shift, call your manager as soon as you know — not 10 minutes before clock-in. The earlier you call, the easier it is to cover. A no-call/no-show is one of the few things that gets you let go fast at DD Mau.",
+                    "Calling Out. If you cannot make a shift, call your manager as soon as you know and try to find a replacement. — not 10 minutes before clock-in. The earlier you call, the easier it is to cover. A no-call/no-show is one of the few things that gets you let go fast at DD Mau.",
                     "Tardiness. Late is late. If your shift starts at 11:00, we expect you on the floor and ready at 11:00 — not walking in to start changing. There is no free grace period.",
-                    "If you know you'll be late, text or call the Shift Lead the moment you know — in the car, at the door, whatever. Sooner is always better; it lets us shift positions to cover. Communicating doesn't excuse being late, but 'late + told us' is much better than 'late + radio silence.' The latter is treated as a no-call/no-show.",
+                    "If you know you'll be late, text or call the Shift Lead the moment you know — in the car, at the door, whatever. Sooner is always better; it lets us shift positions to cover. Communicating doesn't excuse being late, but 'late + told us' is much better than 'late + radio silence.' The very late is treated as a no-call/no-show.",
                     "How tardiness is tracked — rolling 60-day window:",
                     "• 1st late = noted in your file, no formal warning.",
                     "• 2nd late within 60 days = written warning. You sign it.",
@@ -286,9 +362,9 @@ export const MODULES = [
                     "Hard limits, regardless of strike count:",
                     "• 30+ minutes late without communicating ahead = automatic written warning.",
                     "• 3 lates in any 30-day window = automatic written warning + GM check-in. We catch the 'always 5 minutes late' pattern early.",
-                    "Why we run it this way: one bad commute shouldn't end a job. But a pattern of being late steals from the rest of the team — they cover your station, take your tickets, stay later. The strike system gives you a real chance to course-correct after the first miss.",
+                    "Why we run it this way: one bad commute shouldn't end a job. But a pattern of being late steals from the rest of the team — they cover your station, stay later. The strike system gives you a real chance to course-correct after the first miss.",
                     "Pay. Pay periods are bi-weekly. Direct deposit lands on Friday. If your paycheck is wrong — wrong hours, missing tips, anything — talk to your General Manager FIRST. Do not wait. Payroll fixes are fastest within the same pay period.",
-                    "Tip Pool. Tips are pooled and split 50% Front of House / 50% Back of House. Why 50/50? Because most of our tips come from to-go orders ordered online — those orders feed both sides equally, so they're split evenly. Within each side, tips are distributed by hours worked during the pay period.",
+                    "Tip Pool. Tips are pooled and split 50% Front of House / 50% Back of House. Why 50/50? Because most of our tips come from to-go orders ordered online — those orders feed both sides equally, so they're split evenly. Within each side, tips are distributed by hours worked during the pay period. Owners will never participate in the tip pool "
                 ],
                 contentEs: [
                     "Política de Teléfonos. Los teléfonos se quedan atrás durante tu turno. Punto. Si necesitas revisar algo urgente, pídele al líder y sal del piso. Sin teléfonos en caja, expo, o estación de boba — los clientes notan al instante.",
@@ -306,9 +382,9 @@ export const MODULES = [
                     "• 3 tardanzas en cualquier ventana de 30 días = advertencia escrita automática + reunión con GM. Capturamos el patrón de 'siempre 5 minutos tarde' temprano.",
                     "Por qué lo hacemos así: un mal tráfico no debería terminar tu trabajo. Pero un patrón de llegar tarde le roba al resto del equipo — ellos cubren tu estación, toman tus tickets, se quedan más tarde. El sistema de strikes te da oportunidad real de corregir después del primer fallo.",
                     "Pago. Los periodos de pago son cada dos semanas. El depósito directo cae el viernes. Si tu cheque está mal — horas mal, propinas faltantes, lo que sea — habla con tu Gerente General PRIMERO. No esperes. Los arreglos de nómina son más rápidos dentro del mismo periodo de pago.",
-                    "Pool de Propinas. Las propinas se juntan y se dividen 50% Front of House / 50% Back of House. ¿Por qué 50/50? Porque la mayoría de nuestras propinas vienen de pedidos para llevar ordenados en línea — esos pedidos alimentan a ambos lados por igual, así que se dividen igual. Dentro de cada lado, las propinas se distribuyen por horas trabajadas durante el periodo.",
-                ],
-            },
+                    "Pool de Propinas. Las propinas se juntan y se dividen 50% Front of House / 50% Back of House. ¿Por qué 50/50? Porque la mayoría de nuestras propinas vienen de pedidos para llevar ordenados en línea — esos pedidos alimentan a ambos lados por igual, así que se dividen igual. Dentro de cada lado, las propinas se distribuyen por horas trabajadas durante el periodo."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -318,66 +394,144 @@ export const MODULES = [
                     questionEn: "When should you clock in for your shift?",
                     questionEs: "¿Cuándo debes marcar entrada en tu turno?",
                     options: [
-                        { id: "a", textEn: "When you arrive at the building, before changing", textEs: "Cuando llegas al edificio, antes de cambiarte" },
-                        { id: "b", textEn: "After you're in uniform and ready to work the floor", textEs: "Después de estar en uniforme y listo para el piso" },
-                        { id: "c", textEn: "Whenever you remember", textEs: "Cuando te acuerdes" },
-                        { id: "d", textEn: "Only after the Shift Lead clocks in", textEs: "Solo después de que el líder marca entrada" },
+                        {
+                            id: "a",
+                            textEn: "When you arrive at the building, before changing",
+                            textEs: "Cuando llegas al edificio, antes de cambiarte"
+                        },
+                        {
+                            id: "b",
+                            textEn: "After you're in uniform and ready to work the floor",
+                            textEs: "Después de estar en uniforme y listo para el piso"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Whenever you remember",
+                            textEs: "Cuando te acuerdes"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only after the Shift Lead clocks in",
+                            textEs: "Solo después de que el líder marca entrada"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m2-q2",
                     questionEn: "How is the tip pool split at DD Mau?",
                     questionEs: "¿Cómo se divide el pool de propinas en DD Mau?",
                     options: [
-                        { id: "a", textEn: "100% FOH", textEs: "100% FOH" },
-                        { id: "b", textEn: "70% FOH / 30% BOH", textEs: "70% FOH / 30% BOH" },
-                        { id: "c", textEn: "50% FOH / 50% BOH", textEs: "50% FOH / 50% BOH" },
-                        { id: "d", textEn: "Tips are individual, not pooled", textEs: "Las propinas son individuales, no en pool" },
+                        {
+                            id: "a",
+                            textEn: "100% FOH",
+                            textEs: "100% FOH"
+                        },
+                        {
+                            id: "b",
+                            textEn: "70% FOH / 30% BOH",
+                            textEs: "70% FOH / 30% BOH"
+                        },
+                        {
+                            id: "c",
+                            textEn: "50% FOH / 50% BOH",
+                            textEs: "50% FOH / 50% BOH"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Tips are individual, not pooled",
+                            textEs: "Las propinas son individuales, no en pool"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m2-q3",
                     questionEn: "Where do phones stay during your shift?",
                     questionEs: "¿Dónde se quedan los teléfonos durante tu turno?",
                     options: [
-                        { id: "a", textEn: "In your pocket — they're fine if guests don't see", textEs: "En el bolsillo — está bien si los clientes no ven" },
-                        { id: "b", textEn: "At the register so you can check the time", textEs: "En la caja para ver la hora" },
-                        { id: "c", textEn: "In the back. Period.", textEs: "En la parte de atrás. Punto." },
-                        { id: "d", textEn: "At the boba station for the timer", textEs: "En la estación de boba para el timer" },
+                        {
+                            id: "a",
+                            textEn: "In your pocket — they're fine if guests don't see",
+                            textEs: "En el bolsillo — está bien si los clientes no ven"
+                        },
+                        {
+                            id: "b",
+                            textEn: "At the register so you can check the time",
+                            textEs: "En la caja para ver la hora"
+                        },
+                        {
+                            id: "c",
+                            textEn: "In the back. Period.",
+                            textEs: "En la parte de atrás. Punto."
+                        },
+                        {
+                            id: "d",
+                            textEn: "At the boba station for the timer",
+                            textEs: "En la estación de boba para el timer"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m2-q4",
                     questionEn: "If you can't make a shift, when should you tell your manager?",
                     questionEs: "Si no puedes hacer un turno, ¿cuándo debes avisar a tu gerente?",
                     options: [
-                        { id: "a", textEn: "10 minutes before the shift starts", textEs: "10 minutos antes del turno" },
-                        { id: "b", textEn: "When you arrive late", textEs: "Cuando llegues tarde" },
-                        { id: "c", textEn: "As soon as you know — earlier is always better", textEs: "Apenas lo sepas — más temprano siempre es mejor" },
-                        { id: "d", textEn: "After the shift ends", textEs: "Después que termine el turno" },
+                        {
+                            id: "a",
+                            textEn: "10 minutes before the shift starts",
+                            textEs: "10 minutos antes del turno"
+                        },
+                        {
+                            id: "b",
+                            textEn: "When you arrive late",
+                            textEs: "Cuando llegues tarde"
+                        },
+                        {
+                            id: "c",
+                            textEn: "As soon as you know — earlier is always better",
+                            textEs: "Apenas lo sepas — más temprano siempre es mejor"
+                        },
+                        {
+                            id: "d",
+                            textEn: "After the shift ends",
+                            textEs: "Después que termine el turno"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m2-q5",
                     questionEn: "Which is NOT acceptable footwear for the floor?",
                     questionEs: "¿Cuál NO es calzado aceptable para el piso?",
                     options: [
-                        { id: "a", textEn: "Non-slip closed-toe sneakers", textEs: "Tenis cerrados antideslizantes" },
-                        { id: "b", textEn: "Crocs (closed-toe, slip-resistant)", textEs: "Crocs (cerrados, antideslizantes)" },
-                        { id: "c", textEn: "Open-toe sandals", textEs: "Sandalias abiertas" },
-                        { id: "d", textEn: "Black slip-resistant work shoes", textEs: "Zapatos negros antideslizantes" },
+                        {
+                            id: "a",
+                            textEn: "Non-slip closed-toe sneakers",
+                            textEs: "Tenis cerrados antideslizantes"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Crocs (closed-toe, slip-resistant)",
+                            textEs: "Crocs (cerrados, antideslizantes)"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Open-toe sandals",
+                            textEs: "Sandalias abiertas"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Black slip-resistant work shoes",
+                            textEs: "Zapatos negros antideslizantes"
+                        }
                     ],
-                    correct: "c",
-                },
-            ],
-        },
+                    correct: "c"
+                }
+            ]
+        }
     },
-
-    // ── M3 — FOOD SAFETY BASICS ────────────────────────────────────────
     {
         id: "m3",
         code: "M3",
@@ -403,7 +557,7 @@ export const MODULES = [
                     "• After handling raw meat, raw chicken, raw fish, or raw eggs.",
                     "• After handling trash, dirty dishes, or cleaning chemicals.",
                     "• Between switching tasks (changing stations, switching ingredients).",
-                    "Hand sanitizer is NOT a substitute for handwashing. Sanitizer is for between-wash convenience after you've already done a real wash.",
+                    "Hand sanitizer is NOT a substitute for handwashing. Sanitizer is for between-wash convenience after you've already done a real wash."
                 ],
                 contentEs: [
                     "Lávate las manos al menos 20 segundos con agua caliente y jabón. Veinte segundos es aproximadamente 'Feliz Cumpleaños' dos veces. Menos que eso es performance, no higiene.",
@@ -416,8 +570,8 @@ export const MODULES = [
                     "• Después de manejar carne cruda, pollo crudo, pescado crudo o huevos crudos.",
                     "• Después de manejar basura, platos sucios o químicos.",
                     "• Entre cambios de tarea (cambiar de estación, cambiar de ingrediente).",
-                    "El gel antibacterial NO sustituye el lavado de manos. El gel es para conveniencia entre lavados después de haber hecho un lavado real.",
-                ],
+                    "El gel antibacterial NO sustituye el lavado de manos. El gel es para conveniencia entre lavados después de haber hecho un lavado real."
+                ]
             },
             {
                 id: "m3-l2",
@@ -429,8 +583,8 @@ export const MODULES = [
                     "Change gloves between proteins. Chicken to shrimp = new gloves. Pork to beef = new gloves. The only allergen worse than the wrong allergen is the cross-contaminated wrong allergen.",
                     "Change gloves whenever they tear or get dirty.",
                     "Change gloves after touching your face, hair, or phone.",
-                    "Never reuse gloves. Toss and grab a new pair. They cost pennies. A foodborne illness lawsuit costs hundreds of thousands.",
-                    "Gloves don't replace good hygiene — they add a layer on top of it. If you wouldn't be comfortable handling food bare-handed, gloves don't make it OK.",
+                    "Never reuse gloves. Toss and grab a new pair.  ",
+                    "Gloves don't replace good hygiene — they add a layer on top of it. "
                 ],
                 contentEs: [
                     "Lávate las manos ANTES de ponerte guantes. Los guantes no son atajo del lavado de manos — las bacterias de tus manos pasan por dentro del guante y vuelven a la comida cuando el guante se rompe.",
@@ -439,8 +593,8 @@ export const MODULES = [
                     "Cambia guantes cuando se rompan o se ensucien.",
                     "Cambia guantes después de tocar tu cara, cabello o teléfono.",
                     "Nunca reuses guantes. Tira y agarra un par nuevo. Cuestan centavos. Una demanda por enfermedad transmitida por alimentos cuesta cientos de miles.",
-                    "Los guantes no reemplazan la buena higiene — agregan una capa encima. Si no te sentirías cómodo manejando comida con las manos, los guantes no lo hacen aceptable.",
-                ],
+                    "Los guantes no reemplazan la buena higiene — agregan una capa encima. Si no te sentirías cómodo manejando comida con las manos, los guantes no lo hacen aceptable."
+                ]
             },
             {
                 id: "m3-l3",
@@ -452,8 +606,8 @@ export const MODULES = [
                     "The Danger Zone: 41°F–135°F. Bacteria multiply fastest in this range. We never let cooked food sit in this range for more than 4 hours total.",
                     "Temp logs are filled out by the Shift Lead at open, mid-shift, and close. If you take a temp and it's in the danger zone, tell the Shift Lead immediately.",
                     "Sani buckets. Made fresh every shift. Changed every 4 hours OR sooner if the water gets cloudy. Concentration: quat sanitizer at 200–400 ppm — test with a quat strip, should turn dark blue.",
-                    "One bucket per station. Wiping cloths stay IN the bucket between uses, never on the counter. A cloth on a counter dries out and grows bacteria.",
-                    "Never put a sani bucket on a food prep surface. Never let the bucket touch a cooler shelf. Sani buckets live on the floor or on a dedicated cleaning shelf.",
+                    "One bucket per station. Toweld stay IN the bucket between uses, never on the counter. A towel on a counter dries out and grows bacteria.",
+                    "Never put a sani bucket on a food prep surface. Never let the bucket touch a cooler shelf. Sani buckets live on the floor or on a dedicated cleaning shelf."
                 ],
                 contentEs: [
                     "Frío: 41°F o menos. Refrigeradores, walk-ins, low-boys de la línea de prep. Si un termómetro marca más de 41°F, dile al líder inmediatamente — puede que tengamos que sacar producto.",
@@ -462,8 +616,8 @@ export const MODULES = [
                     "Los logs de temperatura los llena el líder al abrir, a media tarde y al cerrar. Si tomas una temperatura y está en zona de peligro, dile al líder inmediatamente.",
                     "Cubetas de Desinfectante. Se hacen nuevas cada turno. Se cambian cada 4 horas O antes si el agua se ve turbia. Concentración: desinfectante quat a 200–400 ppm — prueba con tira quat, debe ponerse azul oscuro.",
                     "Una cubeta por estación. Los trapos se quedan DENTRO de la cubeta entre usos, nunca en el mostrador. Un trapo en el mostrador se seca y crece bacterias.",
-                    "Nunca pongas una cubeta de desinfectante en una superficie de prep. Nunca dejes que la cubeta toque un estante del cooler. Las cubetas viven en el piso o en un estante dedicado a limpieza.",
-                ],
+                    "Nunca pongas una cubeta de desinfectante en una superficie de prep. Nunca dejes que la cubeta toque un estante del cooler. Las cubetas viven en el piso o en un estante dedicado a limpieza."
+                ]
             },
             {
                 id: "m3-l4",
@@ -471,21 +625,21 @@ export const MODULES = [
                 titleEs: "Alérgenos, Enfermedad, Cortes y Quemaduras",
                 contentEn: [
                     "Big 9 Allergens — every staff member needs to know these: Milk, Eggs, Fish, Shellfish, Tree Nuts, Peanuts, Wheat, Soy, Sesame.",
-                    "If a guest mentions ANY of these, take it seriously. Stop. Get the Shift Lead. Don't guess. The full Allergen Matrix is in M17.",
-                    "When YOU are sick. Stay home if you have any of these symptoms: vomiting or diarrhea (within the last 24 hours), fever, sore throat with fever, jaundice (yellow skin or eyes), an infected cut or wound on your hand. Call the Shift Lead. We would rather be short-staffed for one shift than send a foodborne illness home with our guests.",
+                    "If a guest mentions ANY of these, take it seriously. Stop. Get the Shift Lead if you are un sure. Don't guess. The full Allergen Matrix is in M17.",
+                    "",
                     "Cut on your hand. Stop. Wash. Bandage with a blue food-safety bandage (we keep them by the first-aid kit — blue so it shows up if it falls into food). Put on a glove over the bandage. Tell the Shift Lead.",
                     "Burn. Cool with cold water. Tell the Shift Lead. Do NOT apply ice — ice can damage the burned skin further.",
-                    "Anything more serious — bleeding that won't stop, a deep cut, a head injury — stop work, get the Shift Lead, fill out an injury report. Do not 'tough it out.'",
+                    "Anything more serious — bleeding that won't stop, a deep cut, a head injury — stop work, get the Shift Lead, "
                 ],
                 contentEs: [
                     "Los 9 Grandes alérgenos — todo el equipo debe conocerlos: Leche, Huevos, Pescado, Mariscos, Frutos Secos, Cacahuates, Trigo, Soya, Ajonjolí.",
                     "Si un cliente menciona CUALQUIERA de estos, tómalo en serio. Para. Llama al líder. No adivines. La Matriz de Alérgenos completa está en M17.",
-                    "Cuando TÚ estás enfermo. Quédate en casa si tienes cualquiera de estos síntomas: vómito o diarrea (en las últimas 24 horas), fiebre, dolor de garganta con fiebre, ictericia (piel u ojos amarillos), corte infectado en la mano. Llama al líder. Preferimos estar corto un turno que mandar una enfermedad transmitida por alimentos a casa de nuestros clientes.",
+                    "",
                     "Corte en la mano. Para. Lava. Venda con una bandita azul de seguridad alimentaria (las tenemos junto al botiquín — azul para que se vea si cae en la comida). Pon un guante sobre la bandita. Dile al líder.",
                     "Quemadura. Enfría con agua fría. Dile al líder. NO apliques hielo — el hielo puede dañar más la piel quemada.",
-                    "Algo más serio — sangrado que no para, corte profundo, golpe en la cabeza — para de trabajar, llama al líder, llena un reporte de lesión. No 'aguantes'.",
-                ],
-            },
+                    "Algo más serio — sangrado que no para, corte profundo, golpe en la cabeza — para de trabajar, llama al líder, llena un reporte de lesión. No 'aguantes'."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -495,66 +649,116 @@ export const MODULES = [
                     questionEn: "How long should you wash your hands?",
                     questionEs: "¿Por cuánto tiempo debes lavarte las manos?",
                     options: [
-                        { id: "a", textEn: "5 seconds with cold water", textEs: "5 segundos con agua fría" },
-                        { id: "b", textEn: "At least 20 seconds with hot water and soap", textEs: "Al menos 20 segundos con agua caliente y jabón" },
-                        { id: "c", textEn: "Hand sanitizer is enough", textEs: "El gel antibacterial es suficiente" },
-                        { id: "d", textEn: "Just rinse — gloves do the rest", textEs: "Solo enjuaga — los guantes hacen el resto" },
+                        {
+                            id: "a",
+                            textEn: "5 seconds with cold water",
+                            textEs: "5 segundos con agua fría"
+                        },
+                        {
+                            id: "b",
+                            textEn: "At least 20 seconds with hot water and soap",
+                            textEs: "Al menos 20 segundos con agua caliente y jabón"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Hand sanitizer is enough",
+                            textEs: "El gel antibacterial es suficiente"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Just rinse — gloves do the rest",
+                            textEs: "Solo enjuaga — los guantes hacen el resto"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m3-q2",
                     questionEn: "Cold-hold temperature for refrigerators is:",
                     questionEs: "La temperatura de refrigeración es:",
                     options: [
-                        { id: "a", textEn: "Below 50°F", textEs: "Bajo 50°F" },
-                        { id: "b", textEn: "Below 41°F", textEs: "Bajo 41°F" },
-                        { id: "c", textEn: "Below 32°F", textEs: "Bajo 32°F" },
-                        { id: "d", textEn: "Whatever the cooler is set to", textEs: "Lo que sea que marque el cooler" },
+                        {
+                            id: "a",
+                            textEn: "Below 50°F",
+                            textEs: "Bajo 50°F"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Below 41°F",
+                            textEs: "Bajo 41°F"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Below 32°F",
+                            textEs: "Bajo 32°F"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Whatever the cooler is set to",
+                            textEs: "Lo que sea que marque el cooler"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m3-q3",
                     questionEn: "When must you change gloves?",
                     questionEs: "¿Cuándo debes cambiar los guantes?",
                     options: [
-                        { id: "a", textEn: "Only when they tear", textEs: "Solo cuando se rompan" },
-                        { id: "b", textEn: "Once per shift", textEs: "Una vez por turno" },
-                        { id: "c", textEn: "Between raw and cooked food, between proteins, when torn or dirty, after touching face/hair/phone", textEs: "Entre comida cruda y cocida, entre proteínas, al romperse o ensuciarse, después de tocar cara/cabello/teléfono" },
-                        { id: "d", textEn: "Only at the start of the shift", textEs: "Solo al inicio del turno" },
+                        {
+                            id: "a",
+                            textEn: "Only when they tear",
+                            textEs: "Solo cuando se rompan"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Once per shift",
+                            textEs: "Una vez por turno"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Between raw and cooked food, between proteins, when torn or dirty, after touching face/hair/phone",
+                            textEs: "Entre comida cruda y cocida, entre proteínas, al romperse o ensuciarse, después de tocar cara/cabello/teléfono"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only at the start of the shift",
+                            textEs: "Solo al inicio del turno"
+                        }
                     ],
-                    correct: "c",
-                },
-                {
-                    id: "m3-q4",
-                    questionEn: "If you have vomiting or diarrhea in the last 24 hours, you should:",
-                    questionEs: "Si tuviste vómito o diarrea en las últimas 24 horas, debes:",
-                    options: [
-                        { id: "a", textEn: "Show up but skip food prep", textEs: "Presentarte pero saltarte el prep de comida" },
-                        { id: "b", textEn: "Stay home and call the Shift Lead", textEs: "Quedarte en casa y llamar al líder" },
-                        { id: "c", textEn: "Wear extra gloves", textEs: "Usar guantes extra" },
-                        { id: "d", textEn: "Drink water and push through", textEs: "Tomar agua y aguantar" },
-                    ],
-                    correct: "b",
+                    correct: "c"
                 },
                 {
                     id: "m3-q5",
                     questionEn: "What do you do for a cut on your hand?",
                     questionEs: "¿Qué haces si te cortas la mano?",
                     options: [
-                        { id: "a", textEn: "Keep working — it's small", textEs: "Sigue trabajando — es chico" },
-                        { id: "b", textEn: "Wash, blue food-safety bandage, glove over it, tell the Shift Lead", textEs: "Lavar, bandita azul de seguridad alimentaria, guante encima, avisar al líder" },
-                        { id: "c", textEn: "Wrap in a paper towel", textEs: "Envolver en una toalla de papel" },
-                        { id: "d", textEn: "Use any color bandage", textEs: "Usar bandita de cualquier color" },
+                        {
+                            id: "a",
+                            textEn: "Keep working — it's small",
+                            textEs: "Sigue trabajando — es chico"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Wash, blue food-safety bandage, glove over it, tell the Shift Lead",
+                            textEs: "Lavar, bandita azul de seguridad alimentaria, guante encima, avisar al líder"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Wrap in a paper towel",
+                            textEs: "Envolver en una toalla de papel"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Use any color bandage",
+                            textEs: "Usar bandita de cualquier color"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M6 — CASHIER ───────────────────────────────────────────────────
     {
         id: "m6",
         code: "M6",
@@ -574,13 +778,13 @@ export const MODULES = [
                     "OPENING SETUP — first 30 minutes of your shift:",
                     "• Clock in. Wash hands.",
                     "• Log into Toast with your PIN. Confirm the printer at the kitchen line is printing.",
-                    "• Sign the cash sheet. The drawer is already counted by the manager — just confirm and sign for it.",
+                    "• ",
                     "• Wipe down the register, card reader, phone, and counter. Make sure the area is organized and the table numbers are stacked and ready to go.",
-                    "• Stock 1oz sauce cups, lids, napkins, utensils, and to-go bags within reach.",
+                    "• Stock cups, lids, napkins, utensils, and to-go bags within reach.",
                     "• Stock extra bowls, plates, and to-go utensils.",
                     "• Stock the soda fridge so every drink has 2 rows facing forward.",
                     "• Take note of any out-of-stock items and check with the Shift Lead that they're still out.",
-                    "• Smile. Take a deep breath. Ready up.",
+                    "• Smile. Take a deep breath. Ready up."
                 ],
                 contentEs: [
                     "Eres la cara de DD Mau. La primera impresión de cada cliente empieza contigo. Tu trabajo: saludarlos, tomar su orden en Toast, cobrarles, contestar preguntas del menú, y poner la energía de su visita. La Regla de los 10 Segundos empieza contigo.",
@@ -593,8 +797,8 @@ export const MODULES = [
                     "• Surte bowls extra, platos y utensilios para llevar.",
                     "• Surte el refrigerador de sodas — cada bebida con 2 filas al frente.",
                     "• Toma nota de los artículos agotados y confirma con el líder que siguen agotados.",
-                    "• Sonríe. Respira. Listo.",
-                ],
+                    "• Sonríe. Respira. Listo."
+                ]
             },
             {
                 id: "m6-l2",
@@ -611,7 +815,7 @@ export const MODULES = [
                     "Use the modifier buttons in Toast for protein, sauce, extras, and removals. NEVER type modifications as free text — the kitchen will not see free-text notes.",
                     "Read the order back before you cash them out. 'Pho with brisket, two egg rolls, and a Thai tea — sound right?' This catches more mistakes than any other single habit.",
                     "Hand the guest a number tent and tell them where to find condiments and silverware.",
-                    "Call out 'behind!' or 'corner!' when moving with hot drinks or trays.",
+                    "Call out 'behind!' or 'corner!' when moving with hot drinks or trays."
                 ],
                 contentEs: [
                     "Reconoce a cada cliente en 10 segundos — contacto visual, sonrisa, '¡Bienvenido a DD Mau!' No es negociable. Aunque no puedas tomarle la orden todavía, necesita saber que lo viste.",
@@ -624,25 +828,25 @@ export const MODULES = [
                     "Usa los botones de modificador en Toast para proteína, salsa, extras y omisiones. NUNCA escribas modificaciones como texto libre — la cocina no ve las notas de texto libre.",
                     "Repite la orden antes de cobrar. 'Pho con pecho, dos rollos primavera y un té tailandés — ¿correcto?' Esto atrapa más errores que cualquier otro hábito.",
                     "Dale al cliente un número de mesa y dile dónde encontrar condimentos y cubiertos.",
-                    "Grita '¡detrás!' o '¡esquina!' cuando te muevas con bebidas calientes o bandejas.",
-                ],
+                    "Grita '¡detrás!' o '¡esquina!' cuando te muevas con bebidas calientes o bandejas."
+                ]
             },
             {
                 id: "m6-l3",
                 titleEn: "Handoffs, Restocks, and Cash Rules",
                 titleEs: "Entregas, Reabastecimiento y Reglas de Efectivo",
                 contentEn: [
-                    "Voids, refunds, and comps go to the manager. Always. The manager has full authority on these — you do not. If a guest asks for a refund or comp, smile and say 'let me grab the manager for you.' Never process it yourself.",
+                    "Voids, refunds, and comps go to the manager. Always. The manager has full authority on these. If a guest asks for a refund or comp, smile and say 'let me grab the manager for you.' Never process it yourself.",
                     "Why: tracking voids is for accountability, not blame. Going through the manager keeps the cash drawer clean and protects you.",
                     "Cash handling at the register: never take a card out of a guest's hand. Direct them to insert/tap the reader themselves. (PCI security rule.)",
-                    "Cash payment: enter the tendered amount in Toast, count the change in front of the guest, and hand it back. Only print a receipt if the guest selected 'print receipt' in Toast — otherwise no paper.",
+                    "Cash payment: enter the tendered amount in Toast, count the change in front of the guest, and hand it back. Only print a receipt if the guest selected 'print receipt' in Toast — otherwise no paper Receipt.",
                     "Restock between rushes — don't wait until you run out. Cups, lids, sauces, napkins, to-go bags. The line backing up because you ran out of forks is on you.",
                     "Re-check the 86'd list in Toast whenever the Shift Lead updates it. If you're not sure whether something's still 86'd, check before you ring it.",
                     "Phone Policy at the register: phone stays in the back. No exceptions. Guests notice immediately.",
                     "No eating or gum chewing at the register. Drinks stay out of sight — under the counter, in the back, never on top where guests can see.",
                     "If the line is long, ring faster — be friendly AND fast. Don't stop ringing to chat. The next guest in line is also a guest.",
                     "Pause orders when the kitchen is behind. If you can see the kitchen is backed up, you can hold off ringing. When the manager tells you to pause ordering, tell the guests in line: 'We have to pause orders for 5 minutes to let the kitchen catch up — sorry for the wait, we'll be right with you.' Stay calm and friendly. Protecting food quality is why we do this.",
-                    "This is a very rare event.",
+                    "This is a very rare event."
                 ],
                 contentEs: [
                     "Voids, reembolsos, y comps van al gerente. Siempre. El gerente tiene autoridad completa en esto — tú no. Si un cliente pide un reembolso o comp, sonríe y dile 'déjame llamar al gerente.' Nunca lo proceses tú.",
@@ -655,15 +859,15 @@ export const MODULES = [
                     "Sin comer ni mascar chicle en la caja. Las bebidas se quedan fuera de la vista — debajo del mostrador, en la parte de atrás, nunca arriba donde los clientes puedan verlas.",
                     "Si la fila está larga, cobra más rápido — sé amable Y rápido. No pares de cobrar para platicar. El siguiente en la fila también es cliente.",
                     "Pausa órdenes cuando la cocina va atrasada. Si ves que la cocina está saturada, puedes dejar de cobrar. Cuando el gerente te diga que pauses, dile a los clientes en la fila: 'Tenemos que pausar las órdenes por 5 minutos para que la cocina se ponga al día — disculpen la espera, ya estamos con ustedes.' Mantente calmado y amable. Hacemos esto para proteger la calidad de la comida.",
-                    "Este es un evento muy raro.",
-                ],
+                    "Este es un evento muy raro."
+                ]
             },
             {
                 id: "m6-l4",
                 titleEn: "Closing & Common Mistakes",
                 titleEs: "Cierre y Errores Comunes",
                 contentEn: [
-                    "CLOSING — the 3-team or 4-team wall checklist is the source of truth. This list is a quick reference.",
+                    "CLOSING — the 5-team or 7-team usually for closing and closing dates will be on the board. This list is a quick reference.",
                     "• Organize the number tents.",
                     "• Wipe down the register, card reader, and phones.",
                     "• Check sodas and restock the fridge so it looks presentable.",
@@ -674,10 +878,10 @@ export const MODULES = [
                     "COMMON MISTAKES — skip the painful learning curve:",
                     "• Looking down at the register when a guest walks in. Always Eyes Up.",
                     "• Forgetting to ask about allergies. Non-negotiable.",
-                    "• Punching modifications free-form into Toast instead of using the modifier buttons. The kitchen does not see typed notes.",
+                    "• Punching modifications free-form into Toast instead of using the modifier buttons. The kitchen does not see typed notes. Just the modification when possible",
                     "• Processing a void or refund yourself. Never — Shift Lead only.",
                     "• Letting the line back up because you stopped ringing to chat.",
-                    "• Eating, drinking, or chewing gum at the register.",
+                    "• Eating, drinking, or chewing gum at the register."
                 ],
                 contentEs: [
                     "CIERRE — el checklist de la pared (3 personas o 4 personas) es la fuente verdadera. Esta lista es referencia rápida.",
@@ -694,9 +898,9 @@ export const MODULES = [
                     "• Escribir modificaciones como texto libre en Toast en lugar de usar los botones de modificador. La cocina no ve las notas escritas.",
                     "• Procesar un void o reembolso tú solo. Nunca — solo el líder.",
                     "• Dejar que la fila se atore porque paraste de cobrar para platicar.",
-                    "• Comer, beber o mascar chicle en la caja.",
-                ],
-            },
+                    "• Comer, beber o mascar chicle en la caja."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -706,90 +910,144 @@ export const MODULES = [
                     questionEn: "A guest asks for a refund. What do you do?",
                     questionEs: "Un cliente pide un reembolso. ¿Qué haces?",
                     options: [
-                        { id: "a", textEn: "Process the refund yourself in Toast", textEs: "Procesa el reembolso tú mismo en Toast" },
-                        { id: "b", textEn: "Tell the guest 'no refunds'", textEs: "Dile al cliente 'sin reembolsos'" },
-                        { id: "c", textEn: "Smile and say 'let me grab the manager for you'", textEs: "Sonríe y di 'déjame llamar al gerente'" },
-                        { id: "d", textEn: "Call the General Manager directly on their cell", textEs: "Llama al Gerente General directamente al celular" },
+                        {
+                            id: "a",
+                            textEn: "Process the refund yourself in Toast",
+                            textEs: "Procesa el reembolso tú mismo en Toast"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Tell the guest 'no refunds'",
+                            textEs: "Dile al cliente 'sin reembolsos'"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Smile and say 'let me grab the manager for you'",
+                            textEs: "Sonríe y di 'déjame llamar al gerente'"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Call the General Manager directly on their cell",
+                            textEs: "Llama al Gerente General directamente al celular"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m6-q2",
                     questionEn: "When ringing an order in Toast, how do you handle modifications like 'no peanuts' or 'sub vegan beef'?",
                     questionEs: "Al cobrar una orden en Toast, ¿cómo manejas modificaciones como 'sin cacahuates' o 'cambia a carne vegana'?",
                     options: [
-                        { id: "a", textEn: "Type a free-text note for the kitchen", textEs: "Escribe una nota de texto libre para la cocina" },
-                        { id: "b", textEn: "Tap the modifier buttons — never free-text", textEs: "Toca los botones de modificador — nunca texto libre" },
-                        { id: "c", textEn: "Tell the guest verbally and trust the kitchen will figure it out", textEs: "Dile verbalmente al cliente y confía en que la cocina lo entenderá" },
-                        { id: "d", textEn: "Skip Toast and walk back to the kitchen to tell the cook", textEs: "Sáltate Toast y ve a la cocina a decirle al cocinero" },
+                        {
+                            id: "a",
+                            textEn: "Type a free-text note for the kitchen",
+                            textEs: "Escribe una nota de texto libre para la cocina"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Tap the modifier buttons — never free-text",
+                            textEs: "Toca los botones de modificador — nunca texto libre"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Tell the guest verbally and trust the kitchen will figure it out",
+                            textEs: "Dile verbalmente al cliente y confía en que la cocina lo entenderá"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Skip Toast and walk back to the kitchen to tell the cook",
+                            textEs: "Sáltate Toast y ve a la cocina a decirle al cocinero"
+                        }
                     ],
-                    correct: "b",
-                },
-                {
-                    id: "m6-q3",
-                    questionEn: "What's the cake par to take out for the next day?",
-                    questionEs: "¿Cuál es el par de pasteles a sacar para el siguiente día?",
-                    options: [
-                        { id: "a", textEn: "9 VC, 6 VL, 6 TL, 6 VT", textEs: "9 VC, 6 VL, 6 TL, 6 VT" },
-                        { id: "b", textEn: "6 of each", textEs: "6 de cada uno" },
-                        { id: "c", textEn: "Whatever the Shift Lead says that night", textEs: "Lo que diga el líder esa noche" },
-                        { id: "d", textEn: "12 VC, 8 of others", textEs: "12 VC, 8 de los demás" },
-                    ],
-                    correct: "a",
-                },
-                {
-                    id: "m6-q4",
-                    questionEn: "What is the opening cash bank?",
-                    questionEs: "¿Cuánto es el banco inicial de caja?",
-                    options: [
-                        { id: "a", textEn: "$100", textEs: "$100" },
-                        { id: "b", textEn: "$200", textEs: "$200" },
-                        { id: "c", textEn: "$300", textEs: "$300" },
-                        { id: "d", textEn: "$500", textEs: "$500" },
-                    ],
-                    correct: "c",
+                    correct: "b"
                 },
                 {
                     id: "m6-q5",
                     questionEn: "When must you ask about allergies?",
                     questionEs: "¿Cuándo debes preguntar por alergias?",
                     options: [
-                        { id: "a", textEn: "Only if the guest looks like they might have an allergy", textEs: "Solo si el cliente parece tener una alergia" },
-                        { id: "b", textEn: "Only on dine-in orders, not to-go", textEs: "Solo en órdenes para comer aquí, no para llevar" },
-                        { id: "c", textEn: "Every order, every time — even if the guest seems annoyed", textEs: "Cada orden, cada vez — aunque el cliente se moleste" },
-                        { id: "d", textEn: "Only when ordering pho or peanut sauce", textEs: "Solo al ordenar pho o salsa de cacahuate" },
+                        {
+                            id: "a",
+                            textEn: "Only if the guest looks like they might have an allergy",
+                            textEs: "Solo si el cliente parece tener una alergia"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Only on dine-in orders, not to-go",
+                            textEs: "Solo en órdenes para comer aquí, no para llevar"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Every order, every time — even if the guest seems annoyed",
+                            textEs: "Cada orden, cada vez — aunque el cliente se moleste"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only when ordering pho or peanut sauce",
+                            textEs: "Solo al ordenar pho o salsa de cacahuate"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m6-q6",
                     questionEn: "A guest hands you their card. What do you do?",
                     questionEs: "Un cliente te da su tarjeta. ¿Qué haces?",
                     options: [
-                        { id: "a", textEn: "Take it and run it on the reader for them", textEs: "Tómala y pásala en el lector por ellos" },
-                        { id: "b", textEn: "Politely direct them to insert or tap the reader themselves (PCI rule)", textEs: "Indícale amablemente que inserte o toque el lector ella misma (regla PCI)" },
-                        { id: "c", textEn: "Type the card number into Toast manually", textEs: "Escribe el número de tarjeta en Toast manualmente" },
-                        { id: "d", textEn: "Take it and ask for ID", textEs: "Tómala y pide identificación" },
+                        {
+                            id: "a",
+                            textEn: "Take it and run it on the reader for them",
+                            textEs: "Tómala y pásala en el lector por ellos"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Politely direct them to insert or tap the reader themselves",
+                            textEs: "Indícale amablemente que inserte o toque el lector ella misma (regla PCI)"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Type the card number into Toast manually",
+                            textEs: "Escribe el número de tarjeta en Toast manualmente"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Take it and ask for ID",
+                            textEs: "Tómala y pide identificación"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m6-q7",
                     questionEn: "A guest orders a Black Milk Tea and mentions they have a milk allergy. What do you do?",
                     questionEs: "Un cliente pide un Black Milk Tea y menciona que tiene alergia a la leche. ¿Qué haces?",
                     options: [
-                        { id: "a", textEn: "Tell them it's safe — the bag says non-dairy creamer", textEs: "Dile que es seguro — la bolsa dice non-dairy creamer" },
-                        { id: "b", textEn: "Offer to sub oat or almond milk in the milk tea", textEs: "Ofrece cambiar a leche de avena o almendra en el milk tea" },
-                        { id: "c", textEn: "Tell them our milk-powder base has the creamer pre-mixed (we can't take it out) and redirect them to a fruit tea — the only safe option", textEs: "Dile que la base de leche en polvo ya tiene la crema pre-mezclada (no podemos quitarla) y redirígelo a un fruit tea — la única opción segura" },
-                        { id: "d", textEn: "Make it with less creamer to be safe", textEs: "Hazlo con menos crema para estar seguro" },
+                        {
+                            id: "a",
+                            textEn: "Tell them it's safe — the bag says non-dairy creamer",
+                            textEs: "Dile que es seguro — la bolsa dice non-dairy creamer"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Offer to sub oat or almond milk in the milk tea",
+                            textEs: "Ofrece cambiar a leche de avena o almendra en el milk tea"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Tell them our milk-powder base has the creamer pre-mixed (we can't take it out) and redirect them to a fruit tea — the only safe option",
+                            textEs: "Dile que la base de leche en polvo ya tiene la crema pre-mezclada (no podemos quitarla) y redirígelo a un fruit tea — la única opción segura"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Make it with less creamer to be safe",
+                            textEs: "Hazlo con menos crema para estar seguro"
+                        }
                     ],
-                    correct: "c",
-                },
-            ],
-        },
+                    correct: "c"
+                }
+            ]
+        }
     },
-
-    // ── M7 — BAGGER ────────────────────────────────────────────────────
     {
         id: "m7",
         code: "M7",
@@ -813,7 +1071,7 @@ export const MODULES = [
                     "• Restock 1oz sauces, condiments, utensil packs, and napkins on the expo line.",
                     "• Restock pho plates and pho garnish trays.",
                     "• Make sure stickers (round dots), staplers, Sharpies, and sleeves are at the bagging station.",
-                    "• Confirm the current 86'd list in Toast with the Shift Lead.",
+                    "• Confirm the current 86'd list in Toast with the Shift Lead."
                 ],
                 contentEs: [
                     "Empacas cada orden para llevar. En DD Mau cada bolsa sale IGUAL, sin importar el tamaño — misma lógica de empaque, mismo ticket en la bolsa, misma entrega. El cliente que ordena un banh mi recibe el mismo cuidado que el que ordena para toda la oficina.",
@@ -824,8 +1082,8 @@ export const MODULES = [
                     "• Surte salsas de 1oz, condimentos, paquetes de utensilios y servilletas en la línea de expo.",
                     "• Surte platos de pho y bandejas de guarnición de pho.",
                     "• Confirma que las calcomanías (dots redondos), engrapadora, Sharpies y sleeves estén en la estación de empaque.",
-                    "• Confirma la lista actual de 86 en Toast con el líder.",
-                ],
+                    "• Confirma la lista actual de 86 en Toast con el líder."
+                ]
             },
             {
                 id: "m7-l2",
@@ -836,11 +1094,11 @@ export const MODULES = [
                     "BUILD THE BAG. Heavy items at the bottom (pho, fried rice), sauces and lighter items on top, drinks separate. Cold drinks NEVER go at the bottom of a hot bag.",
                     "STAPLE THE TICKET on the OUTSIDE of the bag. Customer name and item list visible at a glance — that's how the cashier or food runner knows whose order it is.",
                     "IF THE ORDER HAS DESSERT, write 'DESSERT IN BAG' on the ticket with the Sharpie. The handler sees the note and confirms before handing the bag over.",
-                    "IF THE ORDER HAS A DRINK, the cashier should already have placed a round sticker (dot) on the ticket. The sticker is the signal: 'this order needs a drink picked up from the Drinks station before it goes to the guest.' If you see a drink on the ticket but no sticker, add one yourself before passing the bag to hand-off.",
-                    "IF THE ORDER IS A CALL-IN, the ticket will have CALL IN circled. Circled = the handler must take payment when the guest arrives to pick up. If you see CALL IN on the ticket and it isn't circled, circle it.",
+                    "IF THE ORDER HAS A DRINK, the cashier should already have placed a round sticker (dot) on the ticket. The sticker is the signal: 'this order needs a drink picked up from the Drinks station before it goes to the guest.' If you see a drink on the ticket but no sticker, Let the Bagger know.",
+                    "IF THE ORDER IS A CALL-IN, the ticket will have CALL IN circled. Circled = the handler must take payment when the guest arrives to pick up. If you see CALL IN on the ticket and it isn't circled, circle it. And let the bagger know",
                     "MULTI-BAG ORDERS — large to-go or catering — write 'BAG 1 OF 2' (or 1 OF 3, etc.) on each ticket and staple matching tickets so the handler knows to grab all bags.",
                     "TRIPLE-CHECK SAUCE on every order. Forgotten sauce is the #1 guest complaint we get.",
-                    "Done? Place the bag at the hand-off area for the cashier or food runner to grab.",
+                    "Done? Place the bag at the hand-off area for the cashier or food runner to grab."
                 ],
                 contentEs: [
                     "LEE EL TICKET PRIMERO. Cada vez. Nombre del cliente, lista de artículos, modificadores, notas de alergia. El ticket es la única fuente verdadera.",
@@ -851,8 +1109,8 @@ export const MODULES = [
                     "SI LA ORDEN ES CALL-IN, el ticket tendrá CALL IN circulado. Circulado = la persona que entrega debe cobrar cuando el cliente llega a recoger. Si ves CALL IN en el ticket y no está circulado, circúlalo.",
                     "ÓRDENES DE VARIAS BOLSAS — para llevar grandes o catering — escribe 'BAG 1 OF 2' (o 1 OF 3, etc.) en cada ticket y engrapa los tickets correspondientes para que la persona que entrega sepa agarrar todas las bolsas.",
                     "REVISA TRES VECES LA SALSA en cada orden. La salsa olvidada es la queja #1 de clientes.",
-                    "¿Listo? Pon la bolsa en el área de entrega para que el cajero o food runner la agarre.",
-                ],
+                    "¿Listo? Pon la bolsa en el área de entrega para que el cajero o food runner la agarre."
+                ]
             },
             {
                 id: "m7-l3",
@@ -865,7 +1123,7 @@ export const MODULES = [
                     "3. The pho garnish tray — thai basil, bean sprouts, lime, jalapeños — goes in a SEPARATE bag or tray so the garnishes stay cold and don't wilt next to the hot soup.",
                     "EGG ROLLS go in a paper-lined sleeve, not directly in the plastic to-go box. Plastic-on-egg-roll steams them soggy by the time the guest gets home.",
                     "BAO SLIDERS — wrap each individually in paper before bagging so they don't stick to each other.",
-                    "If something on the ticket is unclear (modifier you can't read, missing protein, an allergy note that doesn't match the items), STOP and ask the Shift Lead. A 30-second pause is much cheaper than a wrong order.",
+                    "If something on the ticket is unclear (modifier you can't read, missing protein, an allergy note that doesn't match the items), STOP and ask the Shift Lead. A 30-second pause is much cheaper than a wrong order."
                 ],
                 contentEs: [
                     "PHO PARA LLEVAR tiene un orden específico de empaque:",
@@ -874,8 +1132,8 @@ export const MODULES = [
                     "3. El plato de guarnición de pho — albahaca tailandesa, brotes de soja, limón, jalapeños — va en una bolsa o bandeja SEPARADA para que las guarniciones queden frías y no se marchiten junto al caldo caliente.",
                     "LOS ROLLOS PRIMAVERA van en una manga forrada de papel, no directo en la caja de plástico para llevar. El plástico sobre el rollo lo cuece al vapor y queda blando cuando el cliente llega a casa.",
                     "BAO SLIDERS — envuelve cada uno individualmente en papel antes de empacar para que no se peguen entre sí.",
-                    "Si algo en el ticket no está claro (un modificador que no puedes leer, falta proteína, una nota de alergia que no encaja con los artículos), DETENTE y pregúntale al líder. Una pausa de 30 segundos es mucho más barata que una orden equivocada.",
-                ],
+                    "Si algo en el ticket no está claro (un modificador que no puedes leer, falta proteína, una nota de alergia que no encaja con los artículos), DETENTE y pregúntale al líder. Una pausa de 30 segundos es mucho más barata que una orden equivocada."
+                ]
             },
             {
                 id: "m7-l4",
@@ -901,7 +1159,7 @@ export const MODULES = [
                     "• Forgetting to circle CALL IN — the handler doesn't take payment from the call-in guest.",
                     "• Forgetting to tag multi-bag orders ('1 OF 2') — the handler walks out with only one bag.",
                     "• Putting cold drinks at the bottom of a hot bag.",
-                    "• Mixing up two similar tickets in a rush.",
+                    "• Mixing up two similar tickets in a rush."
                 ],
                 contentEs: [
                     "CIERRE — el checklist de la pared es la fuente verdadera.",
@@ -923,9 +1181,9 @@ export const MODULES = [
                     "• Olvidar circular CALL IN — la persona no cobra al cliente que llamó.",
                     "• Olvidar marcar las órdenes de varias bolsas ('1 OF 2') — la persona se va con solo una bolsa.",
                     "• Poner bebidas frías al fondo de una bolsa caliente.",
-                    "• Confundir dos tickets parecidos en un rush.",
-                ],
-            },
+                    "• Confundir dos tickets parecidos en un rush."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -935,78 +1193,172 @@ export const MODULES = [
                     questionEn: "What's the FIRST thing you do before building a to-go bag?",
                     questionEs: "¿Qué es lo PRIMERO que haces antes de armar una bolsa para llevar?",
                     options: [
-                        { id: "a", textEn: "Grab the bag and start filling", textEs: "Agarrar la bolsa y empezar a llenar" },
-                        { id: "b", textEn: "Read the ticket — customer name, items, modifiers, allergy notes", textEs: "Leer el ticket — nombre del cliente, artículos, modificadores, notas de alergia" },
-                        { id: "c", textEn: "Yell to the kitchen what's coming", textEs: "Gritarle a la cocina qué viene" },
-                        { id: "d", textEn: "Ask the guest to confirm their order", textEs: "Pedirle al cliente que confirme su orden" },
+                        {
+                            id: "a",
+                            textEn: "Grab the bag and start filling",
+                            textEs: "Agarrar la bolsa y empezar a llenar"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Read the ticket — customer name, items, modifiers, allergy notes",
+                            textEs: "Leer el ticket — nombre del cliente, artículos, modificadores, notas de alergia"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Yell to the kitchen what's coming",
+                            textEs: "Gritarle a la cocina qué viene"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Ask the guest to confirm their order",
+                            textEs: "Pedirle al cliente que confirme su orden"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m7-q2",
                     questionEn: "How is pho-to-go packaged?",
                     questionEs: "¿Cómo se empaca el pho para llevar?",
                     options: [
-                        { id: "a", textEn: "Everything in one container", textEs: "Todo en un recipiente" },
-                        { id: "b", textEn: "Hot broth in soup container + sleeve + bag · noodles/protein separate · garnish tray separate so it stays cold", textEs: "Caldo en recipiente de sopa + sleeve + bolsa · fideos/proteína aparte · bandeja de guarnición aparte para que se mantenga fría" },
-                        { id: "c", textEn: "In a paper bowl with a lid", textEs: "En un bowl de papel con tapa" },
-                        { id: "d", textEn: "Whatever fits in the to-go tray", textEs: "Lo que quepa en la bandeja" },
+                        {
+                            id: "a",
+                            textEn: "Everything in one container",
+                            textEs: "Todo en un recipiente"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Hot broth in soup container + sleeve + bag · noodles/protein separate · garnish tray separate so it stays cold",
+                            textEs: "Caldo en recipiente de sopa + sleeve + bolsa · fideos/proteína aparte · bandeja de guarnición aparte para que se mantenga fría"
+                        },
+                        {
+                            id: "c",
+                            textEn: "In a paper bowl with a lid",
+                            textEs: "En un bowl de papel con tapa"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Whatever fits in the to-go tray",
+                            textEs: "Lo que quepa en la bandeja"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m7-q3",
                     questionEn: "What does a round sticker on the order ticket mean?",
                     questionEs: "¿Qué significa una calcomanía redonda en el ticket?",
                     options: [
-                        { id: "a", textEn: "The order has dessert", textEs: "La orden tiene postre" },
-                        { id: "b", textEn: "The order has a drink — handler must grab it from the Drinks station", textEs: "La orden tiene bebida — quien entrega debe agarrarla en la estación de Drinks" },
-                        { id: "c", textEn: "The order is paid in cash", textEs: "La orden está pagada en efectivo" },
-                        { id: "d", textEn: "The customer is a regular", textEs: "El cliente es habitual" },
+                        {
+                            id: "a",
+                            textEn: "The order has dessert",
+                            textEs: "La orden tiene postre"
+                        },
+                        {
+                            id: "b",
+                            textEn: "The order has a drink — handler must grab it from the Drinks station",
+                            textEs: "La orden tiene bebida — quien entrega debe agarrarla en la estación de Drinks"
+                        },
+                        {
+                            id: "c",
+                            textEn: "The order is paid in cash",
+                            textEs: "La orden está pagada en efectivo"
+                        },
+                        {
+                            id: "d",
+                            textEn: "The customer is a regular",
+                            textEs: "El cliente es habitual"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m7-q4",
                     questionEn: "An order has dessert. What do you do on the ticket?",
                     questionEs: "Una orden tiene postre. ¿Qué haces en el ticket?",
                     options: [
-                        { id: "a", textEn: "Nothing — the bag is enough", textEs: "Nada — con la bolsa basta" },
-                        { id: "b", textEn: "Write 'DESSERT IN BAG' with the Sharpie so the handler sees it", textEs: "Escribe 'DESSERT IN BAG' con el Sharpie para que la persona que entrega lo vea" },
-                        { id: "c", textEn: "Put a triangle sticker", textEs: "Pon una calcomanía triangular" },
-                        { id: "d", textEn: "Tell the customer verbally", textEs: "Avísale al cliente verbalmente" },
+                        {
+                            id: "a",
+                            textEn: "Nothing — the bag is enough",
+                            textEs: "Nada — con la bolsa basta"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Write 'DESSERT IN BAG' with the Sharpie so the handler sees it",
+                            textEs: "Escribe 'DESSERT IN BAG' con el Sharpie para que la persona que entrega lo vea"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Put a triangle sticker",
+                            textEs: "Pon una calcomanía triangular"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Tell the customer verbally",
+                            textEs: "Avísale al cliente verbalmente"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m7-q5",
                     questionEn: "What does CALL IN circled on the ticket mean?",
                     questionEs: "¿Qué significa CALL IN circulado en el ticket?",
                     options: [
-                        { id: "a", textEn: "The order is already paid", textEs: "La orden ya está pagada" },
-                        { id: "b", textEn: "The handler must take payment when the guest arrives to pick up", textEs: "Quien entrega debe cobrar cuando el cliente llegue a recoger" },
-                        { id: "c", textEn: "The kitchen is calling — bring it back", textEs: "La cocina llama — devuelve la orden" },
-                        { id: "d", textEn: "The order is a delivery", textEs: "La orden es delivery" },
+                        {
+                            id: "a",
+                            textEn: "The order is already paid",
+                            textEs: "La orden ya está pagada"
+                        },
+                        {
+                            id: "b",
+                            textEn: "The handler must take payment when the guest arrives to pick up",
+                            textEs: "Quien entrega debe cobrar cuando el cliente llegue a recoger"
+                        },
+                        {
+                            id: "c",
+                            textEn: "The kitchen is calling — bring it back",
+                            textEs: "La cocina llama — devuelve la orden"
+                        },
+                        {
+                            id: "d",
+                            textEn: "The order is a delivery",
+                            textEs: "La orden es delivery"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m7-q6",
                     questionEn: "An order takes two bags. How do you tag it?",
                     questionEs: "Una orden requiere dos bolsas. ¿Cómo la marcas?",
                     options: [
-                        { id: "a", textEn: "Just bag both — the handler will figure it out", textEs: "Solo empaca las dos — la persona descubre" },
-                        { id: "b", textEn: "Write 'BAG 1 OF 2' on each ticket and staple matching tickets", textEs: "Escribe 'BAG 1 OF 2' en cada ticket y engrapa los tickets correspondientes" },
-                        { id: "c", textEn: "Tape the two bags together", textEs: "Pega las dos bolsas con cinta" },
-                        { id: "d", textEn: "Verbally tell the cashier", textEs: "Avísale verbalmente al cajero" },
+                        {
+                            id: "a",
+                            textEn: "Just bag both — the handler will figure it out",
+                            textEs: "Solo empaca las dos — la persona descubre"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Write 'BAG 1 OF 2' on each ticket and staple matching tickets",
+                            textEs: "Escribe 'BAG 1 OF 2' en cada ticket y engrapa los tickets correspondientes"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Tape the two bags together",
+                            textEs: "Pega las dos bolsas con cinta"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Verbally tell the cashier",
+                            textEs: "Avísale verbalmente al cajero"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M8 — EXPO ──────────────────────────────────────────────────────
     {
         id: "m8",
         code: "M8",
@@ -1031,7 +1383,7 @@ export const MODULES = [
                     "• Pull hoisin and sriracha bottles out of the fridge and onto the line. (They live in the fridge overnight, on the line during service.)",
                     "• Confirm the 86'd list, ticket printer paper, and pen at the expo station.",
                     "• Verify the heat lamps are on and at temp.",
-                    "• Stock pho garnish trays (thai basil, bean sprouts, lime, jalapeños) — Expo finishes every pho plate with the garnish tray before it leaves the window.",
+                    "• Stock pho garnish trays (thai basil, bean sprouts, lime, jalapeños) — Expo finishes every pho plate with the garnish tray before it leaves the window."
                 ],
                 contentEs: [
                     "Estás parado en la ventana de comida. Eres el último par de ojos de la cocina — cada plato para comer aquí que sale de la línea pasa por ti. Tú revisas calidad, anuncias tickets en voz alta, terminas el plato (guarnición, vasito de salsa, acompañamientos) para que esté listo para que el food runner lo lleve a la mesa, y manejas el flujo cuando la cocina se atora. Expo es una posición de pensar.",
@@ -1043,8 +1395,8 @@ export const MODULES = [
                     "• Saca las botellas de hoisin y sriracha del refri y ponlas en la línea. (Viven en el refri de noche, en la línea durante servicio.)",
                     "• Confirma la lista de 86, el papel de la impresora de tickets, y la pluma en la estación de expo.",
                     "• Verifica que las lámparas de calor estén encendidas y a temperatura.",
-                    "• Surte bandejas de guarnición de pho (albahaca tailandesa, brotes de soja, limón, jalapeños) — Expo termina cada plato de pho con la bandeja de guarnición antes de salir de la ventana.",
-                ],
+                    "• Surte bandejas de guarnición de pho (albahaca tailandesa, brotes de soja, limón, jalapeños) — Expo termina cada plato de pho con la bandeja de guarnición antes de salir de la ventana."
+                ]
             },
             {
                 id: "m8-l2",
@@ -1056,7 +1408,7 @@ export const MODULES = [
                     "If a plate is wrong, STOP it. Send it back to the line. Never 'let it slide' because the kitchen is busy. Wrong plates create complaints, refunds, and remakes — all of which cost more time than fixing it now.",
                     "Use kitchen-call language so the team knows what's coming: 'All day, 4 pho, 2 fried rice!' means total tickets in queue. 'Walking with…' means food is leaving the line.",
                     "Quality-check garnish plates on every pho: thai basil, bean sprouts, lime. Every pho gets the FULL garnish. Forgetting garnish on pho is a guest-experience killer.",
-                    "If you spot an allergy-flagged ticket (red in Toast), confirm with the cook that the protein, sauce, and base were all built fresh — not from the line where cross-contamination could happen. Get the Shift Lead if you're not sure.",
+                    "If you spot an allergy-flagged ticket (red in Toast), confirm with the cook that the protein, sauce, and base were all built fresh — not from the line where cross-contamination could happen. Get the Shift Lead if you're not sure."
                 ],
                 contentEs: [
                     "LEE CADA TICKET EN VOZ ALTA al imprimirse. 'Orden entrando: vermicelli cerdo, té tailandés, mesa 7.' El volumen importa — la cocina debe ESCUCHARTE sobre el ruido.",
@@ -1064,8 +1416,8 @@ export const MODULES = [
                     "Si un plato está mal, DETÉN la salida. Devuélvelo a la línea. Nunca 'lo dejes pasar' porque la cocina esté ocupada. Los platos mal hechos generan quejas, reembolsos y rehaces — todo cuesta más tiempo que arreglarlo ahora.",
                     "Usa lenguaje de cocina para que el equipo sepa qué viene: '¡All day, 4 pho, 2 arroz frito!' significa total de tickets en cola. 'Walking with...' significa que sale comida.",
                     "Revisa los platos de guarnición en cada pho: albahaca tailandesa, brotes de soja, limón. Cada pho lleva la guarnición COMPLETA. Olvidarla en un pho arruina la experiencia del cliente.",
-                    "Si ves un ticket marcado con alergia (rojo en Toast), confirma con el cocinero que la proteína, la salsa y la base fueron preparados frescos — no de la línea donde puede haber contaminación cruzada. Llama al líder si no estás seguro.",
-                ],
+                    "Si ves un ticket marcado con alergia (rojo en Toast), confirma con el cocinero que la proteína, la salsa y la base fueron preparados frescos — no de la línea donde puede haber contaminación cruzada. Llama al líder si no estás seguro."
+                ]
             },
             {
                 id: "m8-l3",
@@ -1077,7 +1429,7 @@ export const MODULES = [
                     "Restock the condiment station throughout the shift — never let it run dry. Hoisin, sriracha, sweet chili, peanut, soy, sambal, fish sauce.",
                     "Stay calm during a rush. Expo sets the energy of the kitchen. If you panic, the line panics. If you're calm and clear, the line stays calm and clear.",
                     "If you're slammed and a runner asks 'what's next?' — tell them clearly. Don't make them guess. 'Next out: table 12, pho with brisket.'",
-                    "Help Bagging seal to-go orders during a rush — two sets of eyes catch missing items.",
+                    "Help Bagging seal to-go orders during a rush — two sets of eyes catch missing items."
                 ],
                 contentEs: [
                     "Cuando el pho está saturado, frena los bowls para que la cocina se ponga al día. Expo maneja el flujo — tú decides qué sale siguiente basado en el tiempo de cocción y el orden de los tickets.",
@@ -1085,8 +1437,8 @@ export const MODULES = [
                     "Surte la estación de condimentos durante todo el turno — nunca la dejes secar. Hoisin, sriracha, sweet chili, cacahuate, soya, sambal, salsa de pescado.",
                     "Mantén la calma durante un rush. Expo pone la energía de la cocina. Si entras en pánico, la línea entra en pánico. Si estás tranquilo y claro, la línea queda tranquila y clara.",
                     "Si estás saturado y un runner pregunta '¿qué sigue?' — díselo claro. No lo hagas adivinar. 'Sigue: mesa 12, pho con pecho.'",
-                    "Ayuda a Empaque a sellar órdenes para llevar durante un rush — dos pares de ojos atrapan artículos faltantes.",
-                ],
+                    "Ayuda a Empaque a sellar órdenes para llevar durante un rush — dos pares de ojos atrapan artículos faltantes."
+                ]
             },
             {
                 id: "m8-l4",
@@ -1108,7 +1460,7 @@ export const MODULES = [
                     "• Calling tickets quietly. The kitchen needs to HEAR you.",
                     "• Forgetting the garnish plate on pho.",
                     "• Stacking up tickets without telling the Shift Lead the line is backing up.",
-                    "• Doing other people's jobs during a rush instead of expo-ing. Stay at the line.",
+                    "• Doing other people's jobs during a rush instead of expo-ing. Stay at the line."
                 ],
                 contentEs: [
                     "CIERRE — el checklist de la pared es la fuente verdadera.",
@@ -1126,9 +1478,9 @@ export const MODULES = [
                     "• Anunciar tickets bajito. La cocina debe ESCUCHARTE.",
                     "• Olvidar el plato de guarnición en pho.",
                     "• Acumular tickets sin avisarle al líder que la línea se está atorando.",
-                    "• Hacer el trabajo de otros durante un rush en lugar de expear. Quédate en la línea.",
-                ],
-            },
+                    "• Hacer el trabajo de otros durante un rush en lugar de expear. Quédate en la línea."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -1138,78 +1490,172 @@ export const MODULES = [
                     questionEn: "Expo's job, in one phrase:",
                     questionEs: "El trabajo de Expo, en una frase:",
                     options: [
-                        { id: "a", textEn: "The kitchen's last set of eyes — quality check every plate before it leaves", textEs: "El último par de ojos de la cocina — revisar calidad de cada plato antes de salir" },
-                        { id: "b", textEn: "Cooking the food", textEs: "Cocinar la comida" },
-                        { id: "c", textEn: "Running food to tables", textEs: "Llevar comida a las mesas" },
-                        { id: "d", textEn: "Taking guest orders", textEs: "Tomar órdenes de clientes" },
+                        {
+                            id: "a",
+                            textEn: "The kitchen's last set of eyes — quality check every plate before it leaves",
+                            textEs: "El último par de ojos de la cocina — revisar calidad de cada plato antes de salir"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Cooking the food",
+                            textEs: "Cocinar la comida"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Running food to tables",
+                            textEs: "Llevar comida a las mesas"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Taking guest orders",
+                            textEs: "Tomar órdenes de clientes"
+                        }
                     ],
-                    correct: "a",
+                    correct: "a"
                 },
                 {
                     id: "m8-q2",
                     questionEn: "Every pho gets:",
                     questionEs: "Cada pho lleva:",
                     options: [
-                        { id: "a", textEn: "Just the broth and protein", textEs: "Solo el caldo y la proteína" },
-                        { id: "b", textEn: "Full garnish plate: thai basil, bean sprouts, lime", textEs: "Plato completo de guarnición: albahaca tailandesa, brotes de soja, limón" },
-                        { id: "c", textEn: "Garnish only if requested", textEs: "Guarnición solo si se pide" },
-                        { id: "d", textEn: "Lime only", textEs: "Solo limón" },
+                        {
+                            id: "a",
+                            textEn: "Just the broth and protein",
+                            textEs: "Solo el caldo y la proteína"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Full garnish plate: thai basil, bean sprouts, lime",
+                            textEs: "Plato completo de guarnición: albahaca tailandesa, brotes de soja, limón"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Garnish only if requested",
+                            textEs: "Guarnición solo si se pide"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Lime only",
+                            textEs: "Solo limón"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m8-q3",
                     questionEn: "A plate comes off the line and the protein is wrong. You:",
                     questionEs: "Un plato sale de la línea y la proteína está mal. Tú:",
                     options: [
-                        { id: "a", textEn: "Send it out — the kitchen is busy", textEs: "Lo mandas — la cocina está ocupada" },
-                        { id: "b", textEn: "Stop it and send it back to the line", textEs: "Lo detienes y lo devuelves a la línea" },
-                        { id: "c", textEn: "Add the right protein on top yourself", textEs: "Le agregas la proteína correcta encima tú mismo" },
-                        { id: "d", textEn: "Tell the runner to apologize to the guest", textEs: "Le dices al runner que se disculpe con el cliente" },
+                        {
+                            id: "a",
+                            textEn: "Send it out — the kitchen is busy",
+                            textEs: "Lo mandas — la cocina está ocupada"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Stop it and send it back to the line",
+                            textEs: "Lo detienes y lo devuelves a la línea"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Add the right protein on top yourself",
+                            textEs: "Le agregas la proteína correcta encima tú mismo"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Tell the runner to apologize to the guest",
+                            textEs: "Le dices al runner que se disculpe con el cliente"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m8-q4",
                     questionEn: "Hoisin and sriracha bottles live where overnight?",
                     questionEs: "¿Dónde viven las botellas de hoisin y sriracha de noche?",
                     options: [
-                        { id: "a", textEn: "On the condiment station", textEs: "En la estación de condimentos" },
-                        { id: "b", textEn: "On the expo line", textEs: "En la línea de expo" },
-                        { id: "c", textEn: "In the fridge", textEs: "En el refrigerador" },
-                        { id: "d", textEn: "In the dry storage", textEs: "En el almacén seco" },
+                        {
+                            id: "a",
+                            textEn: "On the condiment station",
+                            textEs: "En la estación de condimentos"
+                        },
+                        {
+                            id: "b",
+                            textEn: "On the expo line",
+                            textEs: "En la línea de expo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "In the fridge",
+                            textEs: "En el refrigerador"
+                        },
+                        {
+                            id: "d",
+                            textEn: "In the dry storage",
+                            textEs: "En el almacén seco"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m8-q5",
                     questionEn: "When a bowl ticket is over 10 minutes old, you:",
                     questionEs: "Cuando un ticket de bowl tiene más de 10 minutos, tú:",
                     options: [
-                        { id: "a", textEn: "Wait silently for it to come out", textEs: "Esperas en silencio que salga" },
-                        { id: "b", textEn: "Tell the Shift Lead so they can communicate with the guest", textEs: "Le avisas al líder para que pueda comunicarle al cliente" },
-                        { id: "c", textEn: "Walk to the table and apologize yourself", textEs: "Vas a la mesa y te disculpas tú mismo" },
-                        { id: "d", textEn: "Cancel the ticket", textEs: "Cancelas el ticket" },
+                        {
+                            id: "a",
+                            textEn: "Wait silently for it to come out",
+                            textEs: "Esperas en silencio que salga"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Tell the Shift Lead so they can communicate with the guest",
+                            textEs: "Le avisas al líder para que pueda comunicarle al cliente"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Walk to the table and apologize yourself",
+                            textEs: "Vas a la mesa y te disculpas tú mismo"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Cancel the ticket",
+                            textEs: "Cancelas el ticket"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m8-q6",
                     questionEn: "Where should you be during a rush?",
                     questionEs: "¿Dónde debes estar durante un rush?",
                     options: [
-                        { id: "a", textEn: "Helping bag every order", textEs: "Ayudando a empacar cada orden" },
-                        { id: "b", textEn: "At the expo line — that's the job", textEs: "En la línea de expo — ese es el trabajo" },
-                        { id: "c", textEn: "Running food to tables", textEs: "Llevando comida a las mesas" },
-                        { id: "d", textEn: "Cooking on the line to help the kitchen", textEs: "Cocinando en la línea para ayudar a la cocina" },
+                        {
+                            id: "a",
+                            textEn: "Helping bag every order",
+                            textEs: "Ayudando a empacar cada orden"
+                        },
+                        {
+                            id: "b",
+                            textEn: "At the expo line — that's the job",
+                            textEs: "En la línea de expo — ese es el trabajo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Running food to tables",
+                            textEs: "Llevando comida a las mesas"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Cooking on the line to help the kitchen",
+                            textEs: "Cocinando en la línea para ayudar a la cocina"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M9 — DRINKS ────────────────────────────────────────────────────
     {
         id: "m9",
         code: "M9",
@@ -1237,7 +1683,7 @@ export const MODULES = [
                     "• Restock 12oz cups, 2oz cups, and lids.",
                     "• Restock to-go boxes, pho containers, and lids.",
                     "• Stock napkins.",
-                    "• Empty water from the water dispenser tray.",
+                    "• Empty water from the water dispenser tray."
                 ],
                 contentEs: [
                     "Eres la estación de bebidas. Armas cada boba, fruit tea, milk tea, matcha, té tailandés, masala chai, lychee limeade y slush que sale por la puerta. La Tabla de Bebidas en la estación de boba es tu biblia — síguela exactamente. No improvises.",
@@ -1252,8 +1698,8 @@ export const MODULES = [
                     "• Surte vasos de 12oz, vasos de 2oz, y tapas.",
                     "• Surte cajas para llevar, recipientes de pho, y tapas.",
                     "• Surte servilletas.",
-                    "• Vacía el agua de la bandeja del dispensador.",
-                ],
+                    "• Vacía el agua de la bandeja del dispensador."
+                ]
             },
             {
                 id: "m9-l2",
@@ -1266,7 +1712,7 @@ export const MODULES = [
                     "SHAKER LETTERS — the shaker has letters A, B, C, D marked on the side. Use them to measure liquids. The chart tells you which letter for which drink. Eyeballing measurements is the #1 reason a drink tastes wrong.",
                     "ALWAYS shake or stir 8–10 seconds. Undissolved powder is the #1 boba complaint we get. If you can see specks of powder when you hold the cup up to the light, keep stirring.",
                     "SEALER vs LID. Cold drinks get a sealed top from the sealer. Hot drinks get a hot lid. A cold drink with a regular lid will pop in the bag and make a mess.",
-                    "HOT DRINKS go in the stainless steel pitcher → milk frother → hot milk setting (per the chart). Don't pour hot tea over ice — that's a different drink.",
+                    "HOT DRINKS go in the stainless steel pitcher → milk frother → hot milk setting (per the chart). Don't pour hot tea over ice — that's a different drink."
                 ],
                 contentEs: [
                     "Arma cada bebida según el estándar de la Tabla de Bebidas. Sin improvisar. La tabla en la estación muestra el build para las 11 bebidas (Black Milk Tea, Jasmine Milk Tea, Brown Sugar Milk Tea, Milk Tea, Fruit Tea, Matcha Milk Tea, Matcha + Fruta, Té Tailandés, Masala Chai, Lychee Limeade, Slush de Fresa/Mango).",
@@ -1275,8 +1721,8 @@ export const MODULES = [
                     "LETRAS DEL SHAKER — el shaker tiene letras A, B, C, D marcadas en el costado. Úsalas para medir líquidos. La tabla te dice cuál letra para cuál bebida. Adivinar las medidas es la razón #1 por la que una bebida sabe mal.",
                     "SIEMPRE agita o revuelve 8–10 segundos. El polvo sin disolver es la queja #1 de boba que recibimos. Si ves manchitas de polvo cuando levantas el vaso a la luz, sigue revolviendo.",
                     "SELLADORA vs TAPA. Las bebidas frías llevan tapa sellada. Las bebidas calientes llevan tapa caliente. Una bebida fría con tapa regular se sale en la bolsa y hace un desastre.",
-                    "BEBIDAS CALIENTES van en la jarra de acero inoxidable → espumador de leche → ajuste de leche caliente (según la tabla). No viertas té caliente sobre hielo — esa es otra bebida diferente.",
-                ],
+                    "BEBIDAS CALIENTES van en la jarra de acero inoxidable → espumador de leche → ajuste de leche caliente (según la tabla). No viertas té caliente sobre hielo — esa es otra bebida diferente."
+                ]
             },
             {
                 id: "m9-l3",
@@ -1291,7 +1737,7 @@ export const MODULES = [
                     "WATER DISPENSER TRAY needs to be emptied AND wiped/sanitized daily, not just emptied. Standing water grows bacteria fast.",
                     "Restock condiments and to-go supplies between every rush — your station feeds expo and bagging.",
                     "Phones stay in the back. Eating/drinking at the boba station is a no.",
-                    "If a guest asks about a drink we don't make, say 'we don't make that, but we do have…' and recommend the closest thing on the chart. Don't try to invent.",
+                    "If a guest asks about a drink we don't make, say 'we don't make that, but we do have…' and recommend the closest thing on the chart. Don't try to invent."
                 ],
                 contentEs: [
                     "VIDA ÚTIL DEL TÉ — 3 días máximo. Huélelo. Si huele raro, el color se ve oscuro o turbio, tíralo. Si dudas, tíralo. El costo de una jarra de té desperdiciada es mucho menor que el de un cliente enfermo.",
@@ -1302,8 +1748,8 @@ export const MODULES = [
                     "LA BANDEJA DEL DISPENSADOR DE AGUA se debe vaciar Y limpiar/desinfectar diariamente, no solo vaciar. El agua estancada genera bacterias rápido.",
                     "Surte condimentos y suministros para llevar entre cada rush — tu estación alimenta a expo y empaque.",
                     "Los teléfonos se quedan atrás. Comer/beber en la estación de boba no se permite.",
-                    "Si un cliente pregunta por una bebida que no hacemos, di 'esa no la hacemos, pero tenemos…' y recomienda lo más parecido en la tabla. No intentes inventar.",
-                ],
+                    "Si un cliente pregunta por una bebida que no hacemos, di 'esa no la hacemos, pero tenemos…' y recomienda lo más parecido en la tabla. No intentes inventar."
+                ]
             },
             {
                 id: "m9-l4",
@@ -1328,7 +1774,7 @@ export const MODULES = [
                     "• Using tea more than 3 days old. Smell it. If unsure, dump it.",
                     "• Forgetting to seal cold drinks.",
                     "• Substituting sugar+cream for condensed milk on Vietnamese coffee. Don't do it.",
-                    "• Letting a guest drop matcha or brown sugar below 50% — drink will taste bad and you'll get the complaint.",
+                    "• Letting a guest drop matcha or brown sugar below 50% — drink will taste bad and you'll get the complaint."
                 ],
                 contentEs: [
                     "CIERRE — el checklist de la pared es la fuente verdadera.",
@@ -1349,9 +1795,9 @@ export const MODULES = [
                     "• Usar té de más de 3 días. Huélelo. Si dudas, tíralo.",
                     "• Olvidar sellar bebidas frías.",
                     "• Sustituir azúcar+crema por leche condensada en el café vietnamita. No lo hagas.",
-                    "• Dejar que un cliente baje el matcha o brown sugar a menos de 50% — la bebida sabrá mal y la queja te llega a ti.",
-                ],
-            },
+                    "• Dejar que un cliente baje el matcha o brown sugar a menos de 50% — la bebida sabrá mal y la queja te llega a ti."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -1361,78 +1807,172 @@ export const MODULES = [
                     questionEn: "How long should you shake or stir a drink?",
                     questionEs: "¿Cuánto debes agitar o revolver una bebida?",
                     options: [
-                        { id: "a", textEn: "2-3 seconds", textEs: "2-3 segundos" },
-                        { id: "b", textEn: "8-10 seconds", textEs: "8-10 segundos" },
-                        { id: "c", textEn: "20+ seconds", textEs: "20+ segundos" },
-                        { id: "d", textEn: "Until your arm gets tired", textEs: "Hasta que se canse el brazo" },
+                        {
+                            id: "a",
+                            textEn: "2-3 seconds",
+                            textEs: "2-3 segundos"
+                        },
+                        {
+                            id: "b",
+                            textEn: "8-10 seconds",
+                            textEs: "8-10 segundos"
+                        },
+                        {
+                            id: "c",
+                            textEn: "20+ seconds",
+                            textEs: "20+ segundos"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Until your arm gets tired",
+                            textEs: "Hasta que se canse el brazo"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m9-q2",
                     questionEn: "Tea is good for how many days?",
                     questionEs: "¿Por cuántos días se puede usar el té?",
                     options: [
-                        { id: "a", textEn: "1 day", textEs: "1 día" },
-                        { id: "b", textEn: "3 days max — smell it; if unsure, dump it", textEs: "3 días máx — huélelo; si dudas, tíralo" },
-                        { id: "c", textEn: "1 week", textEs: "1 semana" },
-                        { id: "d", textEn: "Until it's gone", textEs: "Hasta que se acabe" },
+                        {
+                            id: "a",
+                            textEn: "1 day",
+                            textEs: "1 día"
+                        },
+                        {
+                            id: "b",
+                            textEn: "3 days max — smell it; if unsure, dump it",
+                            textEs: "3 días máx — huélelo; si dudas, tíralo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "1 week",
+                            textEs: "1 semana"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Until it's gone",
+                            textEs: "Hasta que se acabe"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m9-q3",
                     questionEn: "What sweetness levels do we offer?",
                     questionEs: "¿Qué niveles de dulzor ofrecemos?",
                     options: [
-                        { id: "a", textEn: "0%, 25%, 50%, 75%, 100%", textEs: "0%, 25%, 50%, 75%, 100%" },
-                        { id: "b", textEn: "50% and 100% — 100% is standard", textEs: "50% y 100% — 100% es estándar" },
-                        { id: "c", textEn: "Whatever the guest wants", textEs: "Lo que el cliente quiera" },
-                        { id: "d", textEn: "100% only", textEs: "Solo 100%" },
+                        {
+                            id: "a",
+                            textEn: "0%, 25%, 50%, 75%, 100%",
+                            textEs: "0%, 25%, 50%, 75%, 100%"
+                        },
+                        {
+                            id: "b",
+                            textEn: "50% and 100% — 100% is standard",
+                            textEs: "50% y 100% — 100% es estándar"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Whatever the guest wants",
+                            textEs: "Lo que el cliente quiera"
+                        },
+                        {
+                            id: "d",
+                            textEn: "100% only",
+                            textEs: "Solo 100%"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m9-q4",
                     questionEn: "How do you measure liquids on the build chart?",
                     questionEs: "¿Cómo mides líquidos según la tabla de bebidas?",
                     options: [
-                        { id: "a", textEn: "Eyeball it — you'll learn the right amount with practice", textEs: "Adivínalo — aprenderás la cantidad con práctica" },
-                        { id: "b", textEn: "Use the shaker letters (A, B, C, D) marked on the side", textEs: "Usa las letras del shaker (A, B, C, D) marcadas en el costado" },
-                        { id: "c", textEn: "Pour to the rim", textEs: "Llena hasta el borde" },
-                        { id: "d", textEn: "Use a measuring cup", textEs: "Usa una taza medidora" },
+                        {
+                            id: "a",
+                            textEn: "Eyeball it — you'll learn the right amount with practice",
+                            textEs: "Adivínalo — aprenderás la cantidad con práctica"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Use the shaker letters (A, B, C, D) marked on the side",
+                            textEs: "Usa las letras del shaker (A, B, C, D) marcadas en el costado"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Pour to the rim",
+                            textEs: "Llena hasta el borde"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Use a measuring cup",
+                            textEs: "Usa una taza medidora"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m9-q5",
                     questionEn: "Cold drink gets which top?",
                     questionEs: "¿Qué tapa lleva una bebida fría?",
                     options: [
-                        { id: "a", textEn: "Hot lid", textEs: "Tapa caliente" },
-                        { id: "b", textEn: "Sealed top from the sealer", textEs: "Tapa sellada de la selladora" },
-                        { id: "c", textEn: "No top", textEs: "Sin tapa" },
-                        { id: "d", textEn: "Plastic wrap", textEs: "Plástico" },
+                        {
+                            id: "a",
+                            textEn: "Hot lid",
+                            textEs: "Tapa caliente"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Sealed top from the sealer",
+                            textEs: "Tapa sellada de la selladora"
+                        },
+                        {
+                            id: "c",
+                            textEn: "No top",
+                            textEs: "Sin tapa"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Plastic wrap",
+                            textEs: "Plástico"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m9-q6",
                     questionEn: "A guest asks for Vietnamese coffee with sugar and cream instead of condensed milk. You:",
                     questionEs: "Un cliente pide café vietnamita con azúcar y crema en vez de leche condensada. Tú:",
                     options: [
-                        { id: "a", textEn: "Make it however they want", textEs: "Lo haces como quiera" },
-                        { id: "b", textEn: "Politely tell them it's a fundamentally different drink — Vietnamese coffee uses condensed milk by design", textEs: "Le dices amablemente que es una bebida fundamentalmente diferente — el café vietnamita usa leche condensada por diseño" },
-                        { id: "c", textEn: "Charge extra for the modification", textEs: "Cobras extra por la modificación" },
-                        { id: "d", textEn: "Refuse and say nothing", textEs: "Rechazas y no dices nada" },
+                        {
+                            id: "a",
+                            textEn: "Make it however they want",
+                            textEs: "Lo haces como quiera"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Politely tell them it's a fundamentally different drink — Vietnamese coffee uses condensed milk by design",
+                            textEs: "Le dices amablemente que es una bebida fundamentalmente diferente — el café vietnamita usa leche condensada por diseño"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Charge extra for the modification",
+                            textEs: "Cobras extra por la modificación"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Refuse and say nothing",
+                            textEs: "Rechazas y no dices nada"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M10 — SHIFT LEAD DUTIES (Lead-tier) ────────────────────────────
     {
         id: "m10",
         code: "M10",
@@ -1458,7 +1998,7 @@ export const MODULES = [
                     "• Team accountability — who is on time, who is signed off on duties, who needs coaching.",
                     "• The shift report — sales, cash, food waste, callouts, incidents.",
                     "• Locking up at close.",
-                    "Front-line team members do NOT have void/refund/comp authority. That's you. They do NOT count the cash drawer alone. That's also you (with one team member).",
+                    "Front-line team members do NOT have void/refund/comp authority. That's you. They do NOT count the cash drawer alone. That's also you (with one team member)."
                 ],
                 contentEs: [
                     "Líder de Turno no es una posición propia — es un conjunto de responsabilidades que tomas para el día, además de trabajar una estación regular (Cajero, Bagger, Expo, Drinks, o Food Runner). Cada turno, una persona es designada como el Líder. Posees el piso. El equipo trabaja las estaciones; tú aseguras que las estaciones estén funcionando.",
@@ -1471,8 +2011,8 @@ export const MODULES = [
                     "• Responsabilidad del equipo — quién llega a tiempo, quién está firmado en sus deberes, quién necesita coaching.",
                     "• El reporte de turno — ventas, efectivo, desperdicio de comida, faltas, incidentes.",
                     "• Cerrar al final del día.",
-                    "Los miembros del equipo de primera línea NO tienen autoridad de voids/reembolsos/comps. Esa es tuya. Ellos NO cuentan la caja solos. Eso también es tuyo (con un miembro del equipo).",
-                ],
+                    "Los miembros del equipo de primera línea NO tienen autoridad de voids/reembolsos/comps. Esa es tuya. Ellos NO cuentan la caja solos. Eso también es tuyo (con un miembro del equipo)."
+                ]
             },
             {
                 id: "m10-l2",
@@ -1494,7 +2034,7 @@ export const MODULES = [
                     "DINING ROOM:",
                     "• Walk the dining room — clean tables, stocked condiment bar, restrooms checked and signed.",
                     "PRE-SHIFT HUDDLE:",
-                    "• 5-minute team meeting before doors open. Cover today's 86s, expected volume, anything special (event, large catering order, allergy guest with a reservation, etc.).",
+                    "• 5-minute team meeting before doors open. Cover today's 86s, expected volume, anything special (event, large catering order, allergy guest with a reservation, etc.)."
                 ],
                 contentEs: [
                     "Se hace al menos 30 minutos antes de abrir. Camina la cocina con la hoja de Line Check de Pre-Turno.",
@@ -1512,8 +2052,8 @@ export const MODULES = [
                     "COMEDOR:",
                     "• Camina el comedor — mesas limpias, bar de condimentos surtido, baños revisados y firmados.",
                     "REUNIÓN DE PRE-TURNO:",
-                    "• Reunión de 5 minutos con el equipo antes de abrir. Cubre los 86 del día, volumen esperado, algo especial (evento, orden grande de catering, cliente con alergia con reservación, etc.).",
-                ],
+                    "• Reunión de 5 minutos con el equipo antes de abrir. Cubre los 86 del día, volumen esperado, algo especial (evento, orden grande de catering, cliente con alergia con reservación, etc.)."
+                ]
             },
             {
                 id: "m10-l3",
@@ -1529,7 +2069,7 @@ export const MODULES = [
                     "86 MANAGEMENT — three rules:",
                     "1. The moment a cook tells you we're out of something, update Toast immediately. Don't wait for the register to ring it through and have the kitchen reject it.",
                     "2. If we're getting close (lemongrass shrimp down to 1 bag), give the register a heads-up before you 86 it so they can soft-pitch a different protein.",
-                    "3. Tell the team in the next station rotation which substitutions are easy ('we're 86 lemongrass shrimp; suggest grilled chicken').",
+                    "3. Tell the team in the next station rotation which substitutions are easy ('we're 86 lemongrass shrimp; suggest grilled chicken')."
                 ],
                 contentEs: [
                     "En la marca de 4 horas del turno (o después del rush de almuerzo), haz un walkthrough de 10 minutos.",
@@ -1541,8 +2081,8 @@ export const MODULES = [
                     "MANEJO DE 86 — tres reglas:",
                     "1. En el momento que un cocinero te diga que se acabó algo, actualiza Toast inmediatamente. No esperes a que la caja lo cobre y la cocina lo rechace.",
                     "2. Si estamos cerca (camarón con hierba limón quedan 1 bolsa), avísale a la caja antes de 86-lo para que sugieran suavemente otra proteína.",
-                    "3. Dile al equipo en la siguiente rotación qué sustituciones son fáciles ('estamos 86 camarón con hierba limón; sugieran pollo a la parrilla').",
-                ],
+                    "3. Dile al equipo en la siguiente rotación qué sustituciones son fáciles ('estamos 86 camarón con hierba limón; sugieran pollo a la parrilla')."
+                ]
             },
             {
                 id: "m10-l4",
@@ -1562,7 +2102,7 @@ export const MODULES = [
                     "• Any equipment failure affecting food safety (cooler down, hot-hold not holding).",
                     "• Any team conflict you can't resolve on the floor.",
                     "• Any visit from a health inspector (GM on the phone within 5 minutes).",
-                    "• Any no-call/no-show or walkout.",
+                    "• Any no-call/no-show or walkout."
                 ],
                 contentEs: [
                     "BANCO INICIAL son $300. Verifica con el manager saliente (o abre la caja fuerte y sácalo tú si eres el AM lead). El miembro del equipo en caja firma la hoja de caja al abrir.",
@@ -1578,8 +2118,8 @@ export const MODULES = [
                     "• Cualquier falla de equipo que afecte la seguridad alimentaria (cooler caído, hot-hold no aguantando).",
                     "• Cualquier conflicto del equipo que no puedas resolver en el piso.",
                     "• Cualquier visita de un inspector de salud (GM al teléfono en 5 minutos).",
-                    "• Cualquier no-call/no-show o walkout.",
-                ],
+                    "• Cualquier no-call/no-show o walkout."
+                ]
             },
             {
                 id: "m10-l5",
@@ -1599,7 +2139,7 @@ export const MODULES = [
                     "• Floater (Boba) — boba dumped, items off, condiment station refilled, sweep/mop done.",
                     "• Restrooms — locked, lights off, log signed.",
                     "• Lockup — back door locked, alarm set, lights off, open sign off.",
-                    "DON'T let team members clock out before you've signed off their section. The clock is part of their accountability — once they clock out, the section is locked.",
+                    "DON'T let team members clock out before you've signed off their section. The clock is part of their accountability — once they clock out, the section is locked."
                 ],
                 contentEs: [
                     "REPORTE DE FIN DE TURNO — llénalo y mándalo por correo al GM (o déjalo en el binder según la práctica de la ubicación). Campos requeridos:",
@@ -1615,9 +2155,9 @@ export const MODULES = [
                     "• Floater (Boba) — boba tirado, equipos apagados, estación de condimentos surtida, barrido/trapeado hecho.",
                     "• Baños — cerrados, luces apagadas, log firmado.",
                     "• Lockup — puerta trasera cerrada, alarma puesta, luces apagadas, letrero abierto apagado.",
-                    "NO dejes que el equipo marque salida antes de que firmes su sección. El reloj es parte de su responsabilidad — una vez que marcan salida, la sección queda cerrada.",
-                ],
-            },
+                    "NO dejes que el equipo marque salida antes de que firmes su sección. El reloj es parte de su responsabilidad — una vez que marcan salida, la sección queda cerrada."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.85,
@@ -1627,90 +2167,200 @@ export const MODULES = [
                     questionEn: "What's the opening cash bank?",
                     questionEs: "¿Cuál es el banco inicial?",
                     options: [
-                        { id: "a", textEn: "$100", textEs: "$100" },
-                        { id: "b", textEn: "$200", textEs: "$200" },
-                        { id: "c", textEn: "$300", textEs: "$300" },
-                        { id: "d", textEn: "$500", textEs: "$500" },
+                        {
+                            id: "a",
+                            textEn: "$100",
+                            textEs: "$100"
+                        },
+                        {
+                            id: "b",
+                            textEn: "$200",
+                            textEs: "$200"
+                        },
+                        {
+                            id: "c",
+                            textEn: "$300",
+                            textEs: "$300"
+                        },
+                        {
+                            id: "d",
+                            textEn: "$500",
+                            textEs: "$500"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m10-q2",
                     questionEn: "Who counts the closing drawer?",
                     questionEs: "¿Quién cuenta la caja al cierre?",
                     options: [
-                        { id: "a", textEn: "Shift Lead alone", textEs: "El Líder solo" },
-                        { id: "b", textEn: "Shift Lead + one team member, never alone", textEs: "El Líder + un miembro del equipo, nunca solo" },
-                        { id: "c", textEn: "Whoever is at register that night", textEs: "Quien sea que esté en caja esa noche" },
-                        { id: "d", textEn: "The GM only", textEs: "Solo el GM" },
+                        {
+                            id: "a",
+                            textEn: "Shift Lead alone",
+                            textEs: "El Líder solo"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Shift Lead + one team member, never alone",
+                            textEs: "El Líder + un miembro del equipo, nunca solo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Whoever is at register that night",
+                            textEs: "Quien sea que esté en caja esa noche"
+                        },
+                        {
+                            id: "d",
+                            textEn: "The GM only",
+                            textEs: "Solo el GM"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m10-q3",
                     questionEn: "Pre-shift line check happens:",
                     questionEs: "El line check de pre-turno se hace:",
                     options: [
-                        { id: "a", textEn: "Right when you walk in the door", textEs: "Apenas entras por la puerta" },
-                        { id: "b", textEn: "At least 30 minutes before doors open", textEs: "Al menos 30 minutos antes de abrir puertas" },
-                        { id: "c", textEn: "After the lunch rush", textEs: "Después del rush de almuerzo" },
-                        { id: "d", textEn: "Only on weekends", textEs: "Solo los fines de semana" },
+                        {
+                            id: "a",
+                            textEn: "Right when you walk in the door",
+                            textEs: "Apenas entras por la puerta"
+                        },
+                        {
+                            id: "b",
+                            textEn: "At least 30 minutes before doors open",
+                            textEs: "Al menos 30 minutos antes de abrir puertas"
+                        },
+                        {
+                            id: "c",
+                            textEn: "After the lunch rush",
+                            textEs: "Después del rush de almuerzo"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only on weekends",
+                            textEs: "Solo los fines de semana"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m10-q4",
                     questionEn: "Sani bucket spec is:",
                     questionEs: "La especificación de cubeta de desinfectante es:",
                     options: [
-                        { id: "a", textEn: "100-200 ppm quat, light blue strip", textEs: "100-200 ppm quat, tira azul claro" },
-                        { id: "b", textEn: "200-400 ppm quat, dark blue strip", textEs: "200-400 ppm quat, tira azul oscuro" },
-                        { id: "c", textEn: "Bleach water, no test needed", textEs: "Agua con cloro, sin necesidad de prueba" },
-                        { id: "d", textEn: "Whatever the bucket says", textEs: "Lo que diga la cubeta" },
+                        {
+                            id: "a",
+                            textEn: "100-200 ppm quat, light blue strip",
+                            textEs: "100-200 ppm quat, tira azul claro"
+                        },
+                        {
+                            id: "b",
+                            textEn: "200-400 ppm quat, dark blue strip",
+                            textEs: "200-400 ppm quat, tira azul oscuro"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Bleach water, no test needed",
+                            textEs: "Agua con cloro, sin necesidad de prueba"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Whatever the bucket says",
+                            textEs: "Lo que diga la cubeta"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m10-q5",
                     questionEn: "A guest reports a possible allergic reaction. You:",
                     questionEs: "Un cliente reporta una posible reacción alérgica. Tú:",
                     options: [
-                        { id: "a", textEn: "Comp the meal and move on", textEs: "Comp la comida y sigue" },
-                        { id: "b", textEn: "Tell them it's probably nothing", textEs: "Dile que probablemente no es nada" },
-                        { id: "c", textEn: "Escalate to the GM immediately", textEs: "Escala al GM inmediatamente" },
-                        { id: "d", textEn: "Have the cook explain the recipe", textEs: "Haz que el cocinero explique la receta" },
+                        {
+                            id: "a",
+                            textEn: "Comp the meal and move on",
+                            textEs: "Comp la comida y sigue"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Tell them it's probably nothing",
+                            textEs: "Dile que probablemente no es nada"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Escalate to the GM immediately",
+                            textEs: "Escala al GM inmediatamente"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Have the cook explain the recipe",
+                            textEs: "Haz que el cocinero explique la receta"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m10-q6",
                     questionEn: "Do we do a mid-shift cash skim?",
                     questionEs: "¿Hacemos skim de efectivo a mitad de turno?",
                     options: [
-                        { id: "a", textEn: "Yes, when the drawer hits $300", textEs: "Sí, cuando la caja llegue a $300" },
-                        { id: "b", textEn: "No — drawer is counted at close, not pulled mid-shift", textEs: "No — la caja se cuenta al cierre, no se saca a mitad de turno" },
-                        { id: "c", textEn: "Only on weekends", textEs: "Solo los fines de semana" },
-                        { id: "d", textEn: "Only if requested by the GM", textEs: "Solo si lo pide el GM" },
+                        {
+                            id: "a",
+                            textEn: "Yes, when the drawer hits $300",
+                            textEs: "Sí, cuando la caja llegue a $300"
+                        },
+                        {
+                            id: "b",
+                            textEn: "No — drawer is counted at close, not pulled mid-shift",
+                            textEs: "No — la caja se cuenta al cierre, no se saca a mitad de turno"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Only on weekends",
+                            textEs: "Solo los fines de semana"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only if requested by the GM",
+                            textEs: "Solo si lo pide el GM"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m10-q7",
                     questionEn: "A team member has full void/refund authority. True or false?",
                     questionEs: "Un miembro del equipo tiene autoridad completa de void/reembolso. ¿Verdadero o falso?",
                     options: [
-                        { id: "a", textEn: "True — anyone with a Toast PIN can void", textEs: "Verdadero — cualquier persona con PIN de Toast puede hacer void" },
-                        { id: "b", textEn: "False — only Shift Leads process voids, refunds, and comps", textEs: "Falso — solo los Líderes procesan voids, reembolsos y comps" },
-                        { id: "c", textEn: "True if the manager is on break", textEs: "Verdadero si el manager está en descanso" },
-                        { id: "d", textEn: "True for amounts under $5", textEs: "Verdadero para cantidades menores a $5" },
+                        {
+                            id: "a",
+                            textEn: "True — anyone with a Toast PIN can void",
+                            textEs: "Verdadero — cualquier persona con PIN de Toast puede hacer void"
+                        },
+                        {
+                            id: "b",
+                            textEn: "False — only Shift Leads process voids, refunds, and comps",
+                            textEs: "Falso — solo los Líderes procesan voids, reembolsos y comps"
+                        },
+                        {
+                            id: "c",
+                            textEn: "True if the manager is on break",
+                            textEs: "Verdadero si el manager está en descanso"
+                        },
+                        {
+                            id: "d",
+                            textEn: "True for amounts under $5",
+                            textEs: "Verdadero para cantidades menores a $5"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M11 — FOOD RUNNER ──────────────────────────────────────────────
     {
         id: "m11",
         code: "M11",
@@ -1735,7 +2385,7 @@ export const MODULES = [
                     "• Restock the silverware caddy and napkin dispenser.",
                     "• Confirm there's a number tent on every table.",
                     "• Stock a pre-bus bin or bucket within reach so you can grab dirty plates fast.",
-                    "• Confirm the 86'd list with the Shift Lead.",
+                    "• Confirm the 86'd list with the Shift Lead."
                 ],
                 contentEs: [
                     "Tú llevas los platos para comer aquí desde la ventana de Expo hasta la mesa. También mantienes el comedor en movimiento mientras tanto — pre-bussing platos terminados, limpiando mesas, llenando agua y salsas, y revisando con los clientes durante su comida.",
@@ -1747,8 +2397,8 @@ export const MODULES = [
                     "• Surte el caddy de cubiertos y el dispensador de servilletas.",
                     "• Confirma que haya un número de mesa en cada mesa.",
                     "• Ten una cubeta o bin de pre-bus al alcance para agarrar platos sucios rápido.",
-                    "• Confirma la lista de 86 con el líder.",
-                ],
+                    "• Confirma la lista de 86 con el líder."
+                ]
             },
             {
                 id: "m11-l2",
@@ -1760,7 +2410,7 @@ export const MODULES = [
                     "When you arrive at the table, call out the number and the dish: 'Number 14, your pho with brisket — enjoy!' Don't just drop and walk.",
                     "Place plates with the protein at 6 o'clock from the guest. Sauce cup at 11 o'clock. Garnish plate to the side. The presentation tells the guest you care.",
                     "If a guest at the table asks for something while you're delivering, finish placing the plate, then say 'I'll grab that for you right now' — don't make them wait. Get it done before you walk back to expo.",
-                    "Call out 'behind!' or 'corner!' when you're moving with hot plates.",
+                    "Call out 'behind!' or 'corner!' when you're moving with hot plates."
                 ],
                 contentEs: [
                     "Cuando Expo anuncie un ticket, camina a la ventana y lee el número de mesa del ticket. El pho se enfría en 90 segundos — el pho va primero cuando hay cola.",
@@ -1768,8 +2418,8 @@ export const MODULES = [
                     "Cuando llegues a la mesa, anuncia el número y el platillo: 'Número 14, su pho con pecho — buen provecho.' No solo lo dejes y te vas.",
                     "Coloca los platos con la proteína a las 6 en punto desde el cliente. El vasito de salsa a las 11 en punto. El plato de guarnición al lado. La presentación le dice al cliente que te importa.",
                     "Si un cliente en la mesa te pide algo mientras llevas el plato, termina de colocarlo, luego di 'ahorita se lo traigo' — no lo hagas esperar. Hazlo antes de regresar a expo.",
-                    "Grita '¡detrás!' o '¡esquina!' cuando te muevas con platos calientes.",
-                ],
+                    "Grita '¡detrás!' o '¡esquina!' cuando te muevas con platos calientes."
+                ]
             },
             {
                 id: "m11-l3",
@@ -1782,7 +2432,7 @@ export const MODULES = [
                     "SAUCE REFILLS — if a guest is dipping their last bite into an empty sauce cup, ask 'want me to grab you another?' before they have to ask.",
                     "READ THE ROOM — every time you walk through, scan all the tables. Eye contact with anyone who looks like they need something. A guest waving at you isn't a problem; a guest who shouldn't have HAD to wave is. Catch them before they wave.",
                     "If a guest is finished and the plates are still on the table, they may want them cleared so they have room — pre-bus.",
-                    "If a guest is unhappy or has a complaint, do NOT try to handle it yourself. Find the Shift Lead immediately. The Lead handles RESTORE recovery, not you.",
+                    "If a guest is unhappy or has a complaint, do NOT try to handle it yourself. Find the Shift Lead immediately. The Lead handles RESTORE recovery, not you."
                 ],
                 contentEs: [
                     "PRE-BUS sobre la marcha. Cuando regreses de entregar comida, escanea el comedor. ¿Vaso vacío en una mesa? Agárralo. ¿Pila de platos terminados? Agárralos. No hagas un viaje especial — incluye el pre-bus en cada caminada de regreso a la línea.",
@@ -1791,8 +2441,8 @@ export const MODULES = [
                     "RELLENO DE SALSA — si ves a un cliente untar su último bocado en un vasito vacío, pregunta '¿le traigo otro?' antes de que tenga que pedir.",
                     "LEE LA SALA — cada vez que camines por el comedor, escanea todas las mesas. Contacto visual con cualquiera que parezca necesitar algo. Un cliente saludándote no es problema; un cliente que NO debió haber tenido que saludar sí lo es. Atrápalo antes de que salude.",
                     "Si un cliente terminó y los platos siguen en la mesa, quizá quiere que los retiren para tener espacio — pre-bus.",
-                    "Si un cliente está molesto o tiene una queja, NO trates de manejarlo tú solo. Busca al líder inmediatamente. El líder maneja la recuperación con RESTORE, no tú.",
-                ],
+                    "Si un cliente está molesto o tiene una queja, NO trates de manejarlo tú solo. Busca al líder inmediatamente. El líder maneja la recuperación con RESTORE, no tú."
+                ]
             },
             {
                 id: "m11-l4",
@@ -1812,7 +2462,7 @@ export const MODULES = [
                     "• Restock silverware and napkins.",
                     "• Bring all dirty plates and bus tubs to the dish pit.",
                     "• Sweep and mop the dining room floor.",
-                    "• Confirm number tents are back on tables.",
+                    "• Confirm number tents are back on tables."
                 ],
                 contentEs: [
                     "Cuando también ayudas a entregar órdenes para llevar en el mostrador, LEE EL TICKET en la bolsa antes de entregarla. El bagger lo marcó: postre, bebida (calcomanía redonda), call-in (circulado), varias bolsas (1 OF 2). TU trabajo es confirmar:",
@@ -1828,9 +2478,9 @@ export const MODULES = [
                     "• Surte cubiertos y servilletas.",
                     "• Lleva todos los platos sucios y bus tubs al área de lavado.",
                     "• Barre y mopea el piso del comedor.",
-                    "• Confirma que los números de mesa estén de regreso en las mesas.",
-                ],
-            },
+                    "• Confirma que los números de mesa estén de regreso en las mesas."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -1840,78 +2490,172 @@ export const MODULES = [
                     questionEn: "Pho cools in 90 seconds. When there's a queue at the expo window, pho:",
                     questionEs: "El pho se enfría en 90 segundos. Cuando hay cola en la ventana de expo, el pho:",
                     options: [
-                        { id: "a", textEn: "Goes last so other plates don't get cold", textEs: "Va al último para que los otros platos no se enfríen" },
-                        { id: "b", textEn: "Goes first", textEs: "Va primero" },
-                        { id: "c", textEn: "Doesn't matter — order doesn't affect temperature", textEs: "No importa — el orden no afecta la temperatura" },
-                        { id: "d", textEn: "Stays under the heat lamp", textEs: "Se queda bajo la lámpara de calor" },
+                        {
+                            id: "a",
+                            textEn: "Goes last so other plates don't get cold",
+                            textEs: "Va al último para que los otros platos no se enfríen"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Goes first",
+                            textEs: "Va primero"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Doesn't matter — order doesn't affect temperature",
+                            textEs: "No importa — el orden no afecta la temperatura"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Stays under the heat lamp",
+                            textEs: "Se queda bajo la lámpara de calor"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m11-q2",
                     questionEn: "When delivering a plate to a table, you should:",
                     questionEs: "Al entregar un plato en una mesa, debes:",
                     options: [
-                        { id: "a", textEn: "Drop it silently and walk away fast", textEs: "Dejarlo en silencio y caminar rápido" },
-                        { id: "b", textEn: "Call the table number and the dish: 'Number 14, your pho with brisket — enjoy!'", textEs: "Anunciar el número y el platillo: 'Número 14, su pho con pecho — buen provecho.'" },
-                        { id: "c", textEn: "Ask the guest to confirm what they ordered", textEs: "Pedir al cliente que confirme qué ordenó" },
-                        { id: "d", textEn: "Just say 'enjoy' and move on", textEs: "Solo decir 'buen provecho' y seguir" },
+                        {
+                            id: "a",
+                            textEn: "Drop it silently and walk away fast",
+                            textEs: "Dejarlo en silencio y caminar rápido"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Call the table number and the dish: 'Number 14, your pho with brisket — enjoy!'",
+                            textEs: "Anunciar el número y el platillo: 'Número 14, su pho con pecho — buen provecho.'"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Ask the guest to confirm what they ordered",
+                            textEs: "Pedir al cliente que confirme qué ordenó"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Just say 'enjoy' and move on",
+                            textEs: "Solo decir 'buen provecho' y seguir"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m11-q3",
                     questionEn: "An empty table just cleared. How fast should you wipe it down?",
                     questionEs: "Una mesa se acaba de desocupar. ¿Qué tan rápido debes limpiarla?",
                     options: [
-                        { id: "a", textEn: "When you have time", textEs: "Cuando tengas tiempo" },
-                        { id: "b", textEn: "Within 1 minute — a dirty empty table is the most visible sign of a neglected dining room", textEs: "En menos de 1 minuto — una mesa vacía sucia es la señal más visible de un comedor desatendido" },
-                        { id: "c", textEn: "Only at the end of the rush", textEs: "Solo al final del rush" },
-                        { id: "d", textEn: "Only if a guest is waiting for it", textEs: "Solo si un cliente está esperando" },
+                        {
+                            id: "a",
+                            textEn: "When you have time",
+                            textEs: "Cuando tengas tiempo"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Within 1 minute — a dirty empty table is the most visible sign of a neglected dining room",
+                            textEs: "En menos de 1 minuto — una mesa vacía sucia es la señal más visible de un comedor desatendido"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Only at the end of the rush",
+                            textEs: "Solo al final del rush"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Only if a guest is waiting for it",
+                            textEs: "Solo si un cliente está esperando"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m11-q4",
                     questionEn: "You're handing out a to-go bag and see a round sticker on the ticket. You:",
                     questionEs: "Estás entregando una bolsa para llevar y ves una calcomanía redonda en el ticket. Tú:",
                     options: [
-                        { id: "a", textEn: "Hand the bag over — sticker is just decoration", textEs: "Entregas la bolsa — la calcomanía es decoración" },
-                        { id: "b", textEn: "Walk to the Drinks station and grab the drink before handing over the bag", textEs: "Caminas a la estación de Drinks y agarras la bebida antes de entregar la bolsa" },
-                        { id: "c", textEn: "Ask the guest if they ordered a drink", textEs: "Pregúntale al cliente si pidió bebida" },
-                        { id: "d", textEn: "Take payment", textEs: "Cobras" },
+                        {
+                            id: "a",
+                            textEn: "Hand the bag over — sticker is just decoration",
+                            textEs: "Entregas la bolsa — la calcomanía es decoración"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Walk to the Drinks station and grab the drink before handing over the bag",
+                            textEs: "Caminas a la estación de Drinks y agarras la bebida antes de entregar la bolsa"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Ask the guest if they ordered a drink",
+                            textEs: "Pregúntale al cliente si pidió bebida"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Take payment",
+                            textEs: "Cobras"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m11-q5",
                     questionEn: "CALL IN is circled on the ticket. You:",
                     questionEs: "CALL IN está circulado en el ticket. Tú:",
                     options: [
-                        { id: "a", textEn: "Hand the bag over normally", textEs: "Entregas la bolsa normalmente" },
-                        { id: "b", textEn: "Take payment from the guest before handing the bag over", textEs: "Cobras al cliente antes de entregar la bolsa" },
-                        { id: "c", textEn: "Bring it back to the kitchen", textEs: "Lo llevas de regreso a la cocina" },
-                        { id: "d", textEn: "Ask the cashier", textEs: "Pregúntale al cajero" },
+                        {
+                            id: "a",
+                            textEn: "Hand the bag over normally",
+                            textEs: "Entregas la bolsa normalmente"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Take payment from the guest before handing the bag over",
+                            textEs: "Cobras al cliente antes de entregar la bolsa"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Bring it back to the kitchen",
+                            textEs: "Lo llevas de regreso a la cocina"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Ask the cashier",
+                            textEs: "Pregúntale al cajero"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m11-q6",
                     questionEn: "A guest at a table is unhappy with their meal. You:",
                     questionEs: "Un cliente en una mesa está molesto con su comida. Tú:",
                     options: [
-                        { id: "a", textEn: "Comp the meal yourself", textEs: "Comp la comida tú solo" },
-                        { id: "b", textEn: "Try to fix it yourself", textEs: "Intentas arreglarlo tú solo" },
-                        { id: "c", textEn: "Find the Shift Lead immediately — they handle RESTORE, not you", textEs: "Buscas al líder inmediatamente — ellos manejan RESTORE, no tú" },
-                        { id: "d", textEn: "Tell them to ask the cashier for a refund", textEs: "Diles que pidan reembolso al cajero" },
+                        {
+                            id: "a",
+                            textEn: "Comp the meal yourself",
+                            textEs: "Comp la comida tú solo"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Try to fix it yourself",
+                            textEs: "Intentas arreglarlo tú solo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Find the Shift Lead immediately — they handle RESTORE, not you",
+                            textEs: "Buscas al líder inmediatamente — ellos manejan RESTORE, no tú"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Tell them to ask the cashier for a refund",
+                            textEs: "Diles que pidan reembolso al cajero"
+                        }
                     ],
-                    correct: "c",
-                },
-            ],
-        },
+                    correct: "c"
+                }
+            ]
+        }
     },
-
-    // ── M12 — DINING ROOM ──────────────────────────────────────────────
     {
         id: "m12",
         code: "M12",
@@ -1937,7 +2681,7 @@ export const MODULES = [
                     "• Restock the condiment bar continuously — hoisin, sriracha, soy, sambal, sauce cups, napkins.",
                     "• Empty bus tubs to the dish pit before they overflow.",
                     "• Help the food runner with multi-plate dine-in deliveries when they call for help.",
-                    "On a non-busy day, this position folds back into the Food Runner — same person does both.",
+                    "On a non-busy day, this position folds back into the Food Runner — same person does both."
                 ],
                 contentEs: [
                     "Comedor es un rol solo para días ocupados. En almuerzos pesados, rushes de cena, y volumen de fin de semana, agregamos una persona dedicada cuyo único trabajo es mantener el comedor limpio y las mesas listas.",
@@ -1950,8 +2694,8 @@ export const MODULES = [
                     "• Surte el bar de condimentos continuamente — hoisin, sriracha, soya, sambal, vasitos de salsa, servilletas.",
                     "• Vacía los bus tubs al área de lavado antes de que se desborden.",
                     "• Ayuda al food runner con entregas de varios platos cuando pida apoyo.",
-                    "En día no-ocupado, esta posición se incluye en Food Runner — la misma persona hace ambas.",
-                ],
+                    "En día no-ocupado, esta posición se incluye en Food Runner — la misma persona hace ambas."
+                ]
             },
             {
                 id: "m12-l2",
@@ -1972,7 +2716,7 @@ export const MODULES = [
                     "• Refilling water only when guests ask — the goal is to refill before they ask.",
                     "• Forgetting to reset the number tent after wiping.",
                     "• Letting bus tubs overflow.",
-                    "• Trying to handle a guest complaint solo — that's the Shift Lead's job.",
+                    "• Trying to handle a guest complaint solo — that's the Shift Lead's job."
                 ],
                 contentEs: [
                     "LEE LA SALA. Cada vuelta por el comedor, escaneas TODAS las mesas. Atrapa:",
@@ -1989,9 +2733,9 @@ export const MODULES = [
                     "• Rellenar agua solo cuando el cliente pide — la meta es rellenar antes de que pida.",
                     "• Olvidar resetear el número de mesa después de limpiar.",
                     "• Dejar que los bus tubs se desborden.",
-                    "• Intentar manejar una queja de cliente solo — eso es trabajo del líder.",
-                ],
-            },
+                    "• Intentar manejar una queja de cliente solo — eso es trabajo del líder."
+                ]
+            }
         ],
         quiz: {
             passThreshold: 0.8,
@@ -2001,66 +2745,144 @@ export const MODULES = [
                     questionEn: "Dining Room is which kind of role?",
                     questionEs: "¿Qué tipo de rol es Comedor?",
                     options: [
-                        { id: "a", textEn: "A position you work every shift", textEs: "Una posición que trabajas cada turno" },
-                        { id: "b", textEn: "A busy-day-only role focused on table cleaning, pre-bussing, refills, and resets", textEs: "Un rol solo para días ocupados enfocado en limpiar mesas, pre-bus, rellenos y resets" },
-                        { id: "c", textEn: "A role that builds drinks", textEs: "Un rol que arma bebidas" },
-                        { id: "d", textEn: "A leadership role", textEs: "Un rol de liderazgo" },
+                        {
+                            id: "a",
+                            textEn: "A position you work every shift",
+                            textEs: "Una posición que trabajas cada turno"
+                        },
+                        {
+                            id: "b",
+                            textEn: "A busy-day-only role focused on table cleaning, pre-bussing, refills, and resets",
+                            textEs: "Un rol solo para días ocupados enfocado en limpiar mesas, pre-bus, rellenos y resets"
+                        },
+                        {
+                            id: "c",
+                            textEn: "A role that builds drinks",
+                            textEs: "Un rol que arma bebidas"
+                        },
+                        {
+                            id: "d",
+                            textEn: "A leadership role",
+                            textEs: "Un rol de liderazgo"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m12-q2",
                     questionEn: "When should you wipe a table down after guests leave?",
                     questionEs: "¿Cuándo debes limpiar una mesa después de que se vayan los clientes?",
                     options: [
-                        { id: "a", textEn: "Only when another guest is waiting", textEs: "Solo cuando otro cliente esté esperando" },
-                        { id: "b", textEn: "At the end of the shift", textEs: "Al final del turno" },
-                        { id: "c", textEn: "Within 1 minute — the goal is to NEVER make a guest wait for a clean table", textEs: "En menos de 1 minuto — la meta es que NUNCA un cliente espere por una mesa limpia" },
-                        { id: "d", textEn: "When the Shift Lead asks", textEs: "Cuando el líder lo pida" },
+                        {
+                            id: "a",
+                            textEn: "Only when another guest is waiting",
+                            textEs: "Solo cuando otro cliente esté esperando"
+                        },
+                        {
+                            id: "b",
+                            textEn: "At the end of the shift",
+                            textEs: "Al final del turno"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Within 1 minute — the goal is to NEVER make a guest wait for a clean table",
+                            textEs: "En menos de 1 minuto — la meta es que NUNCA un cliente espere por una mesa limpia"
+                        },
+                        {
+                            id: "d",
+                            textEn: "When the Shift Lead asks",
+                            textEs: "Cuando el líder lo pida"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m12-q3",
                     questionEn: "The water at a guest's glass is at one-third. You:",
                     questionEs: "El agua en el vaso de un cliente está a un tercio. Tú:",
                     options: [
-                        { id: "a", textEn: "Wait until they ask", textEs: "Esperas a que pidan" },
-                        { id: "b", textEn: "Top it off when you walk by — don't ask, just do it", textEs: "Lo rellenas al pasar — no preguntes, solo hazlo" },
-                        { id: "c", textEn: "Bring a pitcher and let them serve themselves", textEs: "Trae una jarra y deja que se sirvan" },
-                        { id: "d", textEn: "Ignore — it's not empty yet", textEs: "Ignóralo — aún no está vacío" },
+                        {
+                            id: "a",
+                            textEn: "Wait until they ask",
+                            textEs: "Esperas a que pidan"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Top it off when you walk by — don't ask, just do it",
+                            textEs: "Lo rellenas al pasar — no preguntes, solo hazlo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Bring a pitcher and let them serve themselves",
+                            textEs: "Trae una jarra y deja que se sirvan"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Ignore — it's not empty yet",
+                            textEs: "Ignóralo — aún no está vacío"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m12-q4",
                     questionEn: "You spot a guest with a complaint at table 7. You:",
                     questionEs: "Ves a un cliente con una queja en la mesa 7. Tú:",
                     options: [
-                        { id: "a", textEn: "Try to fix it yourself", textEs: "Intentas arreglarlo tú solo" },
-                        { id: "b", textEn: "Comp the meal", textEs: "Comp la comida" },
-                        { id: "c", textEn: "Find the Shift Lead immediately", textEs: "Buscas al líder inmediatamente" },
-                        { id: "d", textEn: "Walk away and pretend you didn't see it", textEs: "Te vas y finges que no lo viste" },
+                        {
+                            id: "a",
+                            textEn: "Try to fix it yourself",
+                            textEs: "Intentas arreglarlo tú solo"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Comp the meal",
+                            textEs: "Comp la comida"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Find the Shift Lead immediately",
+                            textEs: "Buscas al líder inmediatamente"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Walk away and pretend you didn't see it",
+                            textEs: "Te vas y finges que no lo viste"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m12-q5",
                     questionEn: "The best Dining Room person looks like they're:",
                     questionEs: "La mejor persona de Comedor parece que está:",
                     options: [
-                        { id: "a", textEn: "Standing still and watching", textEs: "Parada y observando" },
-                        { id: "b", textEn: "Walking laps continuously, scanning every table", textEs: "Dando vueltas continuamente, escaneando cada mesa" },
-                        { id: "c", textEn: "Talking to other staff", textEs: "Hablando con otro staff" },
-                        { id: "d", textEn: "Hanging out at the register", textEs: "En la caja" },
+                        {
+                            id: "a",
+                            textEn: "Standing still and watching",
+                            textEs: "Parada y observando"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Walking laps continuously, scanning every table",
+                            textEs: "Dando vueltas continuamente, escaneando cada mesa"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Talking to other staff",
+                            textEs: "Hablando con otro staff"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Hanging out at the register",
+                            textEs: "En la caja"
+                        }
                     ],
-                    correct: "b",
-                },
-            ],
-        },
+                    correct: "b"
+                }
+            ]
+        }
     },
-
-    // ── M17 — ALLERGEN MATRIX ──────────────────────────────────────────
     {
         id: "m17",
         code: "M17",
@@ -2087,7 +2909,7 @@ export const MODULES = [
                     "• Crushed peanuts go on Vermicelli Bowls and Salad Bowls by default. Always ask about peanut allergies — and even then, omit them if a guest looks unsure.",
                     "• Most lemongrass-marinated proteins (chicken, pork, beef, shrimp) contain FISH (fish sauce in marinade) and SOY (oyster sauce).",
                     "• Our boba milk tea creamer is labeled 'Non-Dairy' but contains SODIUM CASEINATE + LACTOSE + MILK FLAVOR. It IS a milk allergen. The 'non-dairy' label means no butterfat — it does NOT mean milk-allergy-safe. Oat and soy milk are the only milk-allergy-safe substitutes for milk teas. Almond milk = tree nut allergen.",
-                    "When in doubt: GET THE SHIFT LEAD. Allergen calls are above your pay grade and that's by design.",
+                    "When in doubt: GET THE SHIFT LEAD. Allergen calls are above your pay grade and that's by design."
                 ],
                 contentEs: [
                     "Los 9 Alérgenos Alimentarios Mayores: Leche, Huevos, Pescado, Mariscos, Frutos Secos, Cacahuates, Trigo, Soya, Ajonjolí. Rastreamos los 9 más sensibilidad al MSG (técnicamente no es alérgeno, pero los clientes preguntan constantemente).",
@@ -2101,8 +2923,8 @@ export const MODULES = [
                     "• Los cacahuates molidos van encima de Vermicelli Bowls y Salad Bowls por defecto. Siempre pregunta por alergia al cacahuate — y aún así, omítelos si el cliente se ve dudoso.",
                     "• La mayoría de proteínas marinadas con hierba limón (pollo, cerdo, res, camarón) contienen PESCADO (salsa de pescado en el marinado) y SOYA (salsa de ostión).",
                     "• Nuestra crema de boba milk tea dice 'Non-Dairy' pero contiene CASEINATO DE SODIO + LACTOSA + SABOR DE LECHE. SÍ es un alérgeno de leche. La etiqueta 'non-dairy' significa sin grasa de mantequilla — NO significa segura para alergia a leche. Avena y soya son los únicos sustitutos seguros para milk teas. Almendra = fruto seco.",
-                    "Cuando dudes: LLAMA AL LÍDER. Las decisiones de alergia están sobre tu nivel y eso es por diseño.",
-                ],
+                    "Cuando dudes: LLAMA AL LÍDER. Las decisiones de alergia están sobre tu nivel y eso es por diseño."
+                ]
             },
             {
                 id: "m17-l2",
@@ -2118,7 +2940,7 @@ export const MODULES = [
                     "• BASE (Vermicelli Bowl): contains PEANUT (crushed peanut topping), WHEAT/GLUTEN (egg roll), EGG (egg roll), MSG, ⚠ SESAME possible.",
                     "• PROTEIN (chicken lemongrass): adds FISH (fish sauce), SOY (oyster sauce), SESAME, MSG.",
                     "• SAUCE (Peanut Dressing): adds PEANUT (already there), SOY, WHEAT/GLUTEN.",
-                    "Combined profile: PEANUT + WHEAT + SOY + EGG + FISH + SESAME + MSG. If a guest tells you any of those, you have to redirect them.",
+                    "Combined profile: PEANUT + WHEAT + SOY + EGG + FISH + SESAME + MSG. If a guest tells you any of those, you have to redirect them."
                 ],
                 contentEs: [
                     "La Matriz de Alérgenos está dividida en cuatro secciones. Para responder cualquier pregunta de alergia correctamente, recorres la matriz en este orden:",
@@ -2130,8 +2952,8 @@ export const MODULES = [
                     "• BASE (Vermicelli Bowl): contiene CACAHUATE (cacahuate molido encima), TRIGO/GLUTEN (rollo primavera), HUEVO (rollo primavera), MSG, ⚠ AJONJOLÍ posible.",
                     "• PROTEÍNA (pollo con hierba limón): agrega PESCADO (salsa de pescado), SOYA (salsa de ostión), AJONJOLÍ, MSG.",
                     "• SALSA (Peanut Dressing): agrega CACAHUATE (ya estaba), SOYA, TRIGO/GLUTEN.",
-                    "Perfil combinado: CACAHUATE + TRIGO + SOYA + HUEVO + PESCADO + AJONJOLÍ + MSG. Si un cliente te dice cualquiera de esos, tienes que redirigirlo.",
-                ],
+                    "Perfil combinado: CACAHUATE + TRIGO + SOYA + HUEVO + PESCADO + AJONJOLÍ + MSG. Si un cliente te dice cualquiera de esos, tienes que redirigirlo."
+                ]
             },
             {
                 id: "m17-l3",
@@ -2139,11 +2961,11 @@ export const MODULES = [
                 titleEs: "Matriz de Alérgenos — Entrees y Snacks",
                 contentEn: [
                     "This is the official chart. Scroll right to see all allergen columns. ● = contains. ◐ = may contain or depends on choice. Blank = does not typically contain. ✓ = vegan-friendly. ✓* = can be made vegan.",
-                    "When in doubt — get the Shift Lead. Cross-contact is always possible in a shared kitchen.",
+                    "When in doubt — get the Shift Lead. Cross-contact is always possible in a shared kitchen."
                 ],
                 contentEs: [
                     "Esta es la tabla oficial. Desliza a la derecha para ver todas las columnas. ● = contiene. ◐ = puede contener o depende de la elección. En blanco = no contiene típicamente. ✓ = apto vegano. ✓* = se puede hacer vegano.",
-                    "En duda — llama al líder. El contacto cruzado siempre es posible en una cocina compartida.",
+                    "En duda — llama al líder. El contacto cruzado siempre es posible en una cocina compartida."
                 ],
                 matrix: {
                     sections: [
@@ -2151,39 +2973,307 @@ export const MODULES = [
                             titleEn: "ENTREES",
                             titleEs: "PLATOS PRINCIPALES",
                             rows: [
-                                { itemEn: "Vermicelli Bowl", itemEs: "Vermicelli Bowl", v: { eggs: "◐", fish: "◐", shell: "◐", peanut: "◐", wheat: "◐", soy: "●" }, vegan: "✓*", notesEn: "Can be made gluten-free, vegetarian, OR vegan. Peanut topping is OPTIONAL — omit for peanut-allergic. Vinaigrette has fish sauce (sub Vegan Vinaigrette). Egg roll add-on = wheat+egg. Wheat only if egg roll added.", notesEs: "Se puede hacer sin gluten, vegetariano, o vegano. Cacahuate ENCIMA es OPCIONAL — quítalo para alérgicos. Vinagreta lleva pescado (sustituye Vegana). Trigo sólo si añade egg roll." },
-                                { itemEn: "Salad Bowl", itemEs: "Salad Bowl", v: { eggs: "◐", fish: "◐", shell: "◐", peanut: "◐", wheat: "◐", soy: "●" }, vegan: "✓*", notesEn: "Can be made gluten-free, vegetarian, OR vegan. Same as vermicelli bowl, spring mix instead of noodles. Peanut OPTIONAL.", notesEs: "Se puede hacer sin gluten, vegetariano, o vegano. Igual al vermicelli, mezcla de hojas en vez de fideos. Cacahuate OPCIONAL." },
-                                { itemEn: "Rice Bowl", itemEs: "Rice Bowl", v: { eggs: "●", fish: "◐", shell: "◐", peanut: "◐", soy: "●" }, vegan: "✓*", notesEn: "Can be made gluten-free, vegetarian, OR vegan. Default has over-easy egg — request 'no egg' for vegan. Peanut topping OPTIONAL. Soy in sauce.", notesEs: "Se puede hacer sin gluten, vegetariano, o vegano. Por defecto huevo estrellado — pide 'sin huevo' para vegano. Cacahuate OPCIONAL. Soya en la salsa." },
-                                { itemEn: "Pho (regular)", itemEs: "Pho (regular)", v: { fish: "●", shell: "◐", soy: "●" }, vegan: "—", notesEn: "GLUTEN-FREE. Broth uses fish sauce. Shellfish only if combo/shrimp/seafood. Regular size only — NO large pho.", notesEs: "SIN GLUTEN. Caldo lleva salsa de pescado. Mariscos sólo en combo/camarón/seafood. Sólo tamaño regular." },
-                                { itemEn: "Pho *VEGAN", itemEs: "Pho *VEGANO", v: { soy: "●" }, vegan: "✓", notesEn: "GLUTEN-FREE. Vegan broth — separate pot. Confirm with kitchen.", notesEs: "SIN GLUTEN. Caldo vegano — olla separada. Confirma con cocina." },
-                                { itemEn: "Lo Mein", itemEs: "Lo Mein", v: { shell: "●", wheat: "●", soy: "●", sesame: "●" }, vegan: "✓*", notesEn: "NOT gluten-free. Wheat noodles + soy sauce. Sauce includes oyster sauce (shellfish) + sesame oil. Our oyster sauce is gluten-free, but the noodles still contain wheat.", notesEs: "NO sin gluten. Fideos de trigo + soya. Salsa con ostión (mariscos) + ajonjolí. Nuestro ostión es sin gluten, pero los fideos sí tienen trigo." },
-                                { itemEn: "Fried Rice", itemEs: "Arroz Frito", v: { eggs: "●", shell: "◐", soy: "●" }, vegan: "✓*", notesEn: "Default has egg. Can be made vegan (no egg) on request. Soy sauce base.", notesEs: "Por defecto lleva huevo. Se puede hacer vegano (sin huevo) si se pide. Base de soya." },
-                                { itemEn: "Tacos (Roti)", itemEs: "Tacos (Roti)", v: { milk: "◐", eggs: "◐", fish: "◐", shell: "◐", wheat: "●", soy: "●" }, vegan: "✓*", notesEn: "Roti tortilla = wheat. Mayo-based sauces = egg. Spicy by default.", notesEs: "Tortilla roti = trigo. Salsas con mayo = huevo. Picante." },
-                                { itemEn: "Banh Mi", itemEs: "Banh Mi", v: { milk: "◐", eggs: "●", fish: "◐", shell: "◐", wheat: "●", soy: "●" }, vegan: "✓*", notesEn: "Baguette = wheat. Mayo = egg. Spicy by default. May contain dairy in butter.", notesEs: "Baguette = trigo. Mayo = huevo. Picante. Puede tener lácteo en mantequilla." },
-                                { itemEn: "Bao Sliders", itemEs: "Bao Sliders", v: { milk: "●", eggs: "◐", fish: "◐", shell: "◐", wheat: "●", soy: "●" }, vegan: "—", notesEn: "CONTAINS DAIRY per menu (bao bun). Flour bao = wheat.", notesEs: "CONTIENE LÁCTEO según menú (pan bao). Bao = trigo." },
-                                { itemEn: "Spring Rolls (fresh)", itemEs: "Spring Rolls (frescos)", v: { fish: "◐", shell: "◐", peanut: "◐", soy: "●" }, vegan: "✓*", notesEn: "GLUTEN-FREE (rice paper). Peanut sauce is OPTIONAL — only contains peanut if guest adds the peanut sauce dip. Sweet chili dip = peanut-free.", notesEs: "SIN GLUTEN (papel de arroz). La salsa de cacahuate es OPCIONAL — sólo lleva cacahuate si el cliente la pide. Sweet chili = sin cacahuate." },
-                                { itemEn: "Garlic String Beans", itemEs: "Ejotes con Ajo", v: { soy: "●" }, vegan: "✓", notesEn: "Vegan-friendly. Soy in seasoning.", notesEs: "Apto vegano. Soya en el sazón." },
-                            ],
+                                {
+                                    itemEn: "Vermicelli Bowl",
+                                    itemEs: "Vermicelli Bowl",
+                                    v: {
+                                        eggs: "◐",
+                                        fish: "◐",
+                                        shell: "◐",
+                                        peanut: "◐",
+                                        wheat: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "Can be made gluten-free, vegetarian, OR vegan. Peanut topping is OPTIONAL — omit for peanut-allergic. Vinaigrette has fish sauce (sub Vegan Vinaigrette). Egg roll add-on = wheat+egg. Wheat only if egg roll added.",
+                                    notesEs: "Se puede hacer sin gluten, vegetariano, o vegano. Cacahuate ENCIMA es OPCIONAL — quítalo para alérgicos. Vinagreta lleva pescado (sustituye Vegana). Trigo sólo si añade egg roll."
+                                },
+                                {
+                                    itemEn: "Salad Bowl",
+                                    itemEs: "Salad Bowl",
+                                    v: {
+                                        eggs: "◐",
+                                        fish: "◐",
+                                        shell: "◐",
+                                        peanut: "◐",
+                                        wheat: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "Can be made gluten-free, vegetarian, OR vegan. Same as vermicelli bowl, spring mix instead of noodles. Peanut OPTIONAL.",
+                                    notesEs: "Se puede hacer sin gluten, vegetariano, o vegano. Igual al vermicelli, mezcla de hojas en vez de fideos. Cacahuate OPCIONAL."
+                                },
+                                {
+                                    itemEn: "Rice Bowl",
+                                    itemEs: "Rice Bowl",
+                                    v: {
+                                        eggs: "●",
+                                        fish: "◐",
+                                        shell: "◐",
+                                        peanut: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "Can be made gluten-free, vegetarian, OR vegan. Default has over-easy egg — request 'no egg' for vegan. Peanut topping OPTIONAL. Soy in sauce.",
+                                    notesEs: "Se puede hacer sin gluten, vegetariano, o vegano. Por defecto huevo estrellado — pide 'sin huevo' para vegano. Cacahuate OPCIONAL. Soya en la salsa."
+                                },
+                                {
+                                    itemEn: "Pho (regular)",
+                                    itemEs: "Pho (regular)",
+                                    v: {
+                                        fish: "●",
+                                        shell: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "GLUTEN-FREE. Broth uses fish sauce. Shellfish only if combo/shrimp/seafood. Regular size only — NO large pho.",
+                                    notesEs: "SIN GLUTEN. Caldo lleva salsa de pescado. Mariscos sólo en combo/camarón/seafood. Sólo tamaño regular."
+                                },
+                                {
+                                    itemEn: "Pho *VEGAN",
+                                    itemEs: "Pho *VEGANO",
+                                    v: {
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "GLUTEN-FREE. Vegan broth — separate pot. Confirm with kitchen.",
+                                    notesEs: "SIN GLUTEN. Caldo vegano — olla separada. Confirma con cocina."
+                                },
+                                {
+                                    itemEn: "Lo Mein",
+                                    itemEs: "Lo Mein",
+                                    v: {
+                                        shell: "●",
+                                        wheat: "●",
+                                        soy: "●",
+                                        sesame: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "NOT gluten-free. Wheat noodles + soy sauce. Sauce includes oyster sauce (shellfish) + sesame oil. Our oyster sauce is gluten-free, but the noodles still contain wheat.",
+                                    notesEs: "NO sin gluten. Fideos de trigo + soya. Salsa con ostión (mariscos) + ajonjolí. Nuestro ostión es sin gluten, pero los fideos sí tienen trigo."
+                                },
+                                {
+                                    itemEn: "Fried Rice",
+                                    itemEs: "Arroz Frito",
+                                    v: {
+                                        eggs: "●",
+                                        shell: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "Default has egg. Can be made vegan (no egg) on request. Soy sauce base.",
+                                    notesEs: "Por defecto lleva huevo. Se puede hacer vegano (sin huevo) si se pide. Base de soya."
+                                },
+                                {
+                                    itemEn: "Tacos (Roti)",
+                                    itemEs: "Tacos (Roti)",
+                                    v: {
+                                        milk: "◐",
+                                        eggs: "◐",
+                                        fish: "◐",
+                                        shell: "◐",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "Roti tortilla = wheat. Mayo-based sauces = egg. Spicy by default.",
+                                    notesEs: "Tortilla roti = trigo. Salsas con mayo = huevo. Picante."
+                                },
+                                {
+                                    itemEn: "Banh Mi",
+                                    itemEs: "Banh Mi",
+                                    v: {
+                                        milk: "◐",
+                                        eggs: "●",
+                                        fish: "◐",
+                                        shell: "◐",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "Baguette = wheat. Mayo = egg. Spicy by default. May contain dairy in butter.",
+                                    notesEs: "Baguette = trigo. Mayo = huevo. Picante. Puede tener lácteo en mantequilla."
+                                },
+                                {
+                                    itemEn: "Bao Sliders",
+                                    itemEs: "Bao Sliders",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "◐",
+                                        fish: "◐",
+                                        shell: "◐",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "CONTAINS DAIRY per menu (bao bun). Flour bao = wheat.",
+                                    notesEs: "CONTIENE LÁCTEO según menú (pan bao). Bao = trigo."
+                                },
+                                {
+                                    itemEn: "Spring Rolls (fresh)",
+                                    itemEs: "Spring Rolls (frescos)",
+                                    v: {
+                                        fish: "◐",
+                                        shell: "◐",
+                                        peanut: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "GLUTEN-FREE (rice paper). Peanut sauce is OPTIONAL — only contains peanut if guest adds the peanut sauce dip. Sweet chili dip = peanut-free.",
+                                    notesEs: "SIN GLUTEN (papel de arroz). La salsa de cacahuate es OPCIONAL — sólo lleva cacahuate si el cliente la pide. Sweet chili = sin cacahuate."
+                                },
+                                {
+                                    itemEn: "Garlic String Beans",
+                                    itemEs: "Ejotes con Ajo",
+                                    v: {
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Vegan-friendly. Soy in seasoning.",
+                                    notesEs: "Apto vegano. Soya en el sazón."
+                                }
+                            ]
                         },
                         {
                             titleEn: "SNACKS & APPETIZERS",
                             titleEs: "SNACKS Y APERITIVOS",
                             rows: [
-                                { itemEn: "Thai Chili Wings", itemEs: "Thai Chili Wings", v: { wheat: "●", soy: "●", sesame: "◐" }, vegan: "—", notesEn: "Wing batter = 4 cups all-purpose flour. Sauce may have sesame.", notesEs: "Empanizado = 4 tazas de harina. La salsa puede tener ajonjolí." },
-                                { itemEn: "Sweet Garlic Wings", itemEs: "Sweet Garlic Wings", v: { wheat: "●", soy: "●" }, vegan: "—", notesEn: "Wing batter = flour. Sweet garlic glaze = soy base (16 cups soy sauce).", notesEs: "Empanizado = harina. Glaseado dulce de ajo = base soya (16 tazas salsa de soya)." },
-                                { itemEn: "Buffalo Sweet Chili Wings", itemEs: "Buffalo Sweet Chili Wings", v: { milk: "◐", wheat: "●", soy: "●" }, vegan: "—", notesEn: "Wing batter = flour. Buffalo sauce may have dairy.", notesEs: "Empanizado = harina. La salsa Buffalo puede tener lácteo." },
-                                { itemEn: "Crab Rangoons", itemEs: "Crab Rangoons", v: { milk: "●", eggs: "●", fish: "●", wheat: "●" }, vegan: "—", notesEn: "Imitation crab is FISH (surimi/white fish), NOT shellfish. Cream cheese = milk. Wonton wrapper = wheat + egg.", notesEs: "El cangrejo de imitación es PESCADO (surimi/pescado blanco), NO mariscos. Queso crema = lácteo. Envoltura wonton = trigo + huevo." },
-                                { itemEn: "Vietnamese Egg Rolls", itemEs: "Vietnamese Egg Rolls", v: { eggs: "●", shell: "◐", wheat: "●", soy: "●", sesame: "●" }, vegan: "—", notesEn: "Pork filling + 3 cups sesame oil in mix. Wheat + egg wrapper.", notesEs: "Relleno de cerdo + 3 tazas de aceite de ajonjolí. Envoltura trigo + huevo." },
-                                { itemEn: "Veggie Egg Rolls", itemEs: "Veggie Egg Rolls", v: { eggs: "●", wheat: "●", soy: "●", sesame: "●" }, vegan: "✓*", notesEn: "3.5 cups sesame oil in mix. Wheat + egg wrapper. Fryer cross-contact possible.", notesEs: "3.5 tazas de aceite de ajonjolí en la mezcla. Envoltura trigo + huevo. Posible contacto cruzado en freidora." },
-                                { itemEn: "Fried Shrimp Rolls", itemEs: "Fried Shrimp Rolls", v: { eggs: "●", shell: "●", wheat: "●", soy: "●" }, vegan: "—", notesEn: "Shellfish. Wheat breading.", notesEs: "Mariscos. Empanizado de trigo." },
-                                { itemEn: "Coconut Shrimp", itemEs: "Coconut Shrimp", v: { eggs: "●", shell: "●", treenut: "●", wheat: "●", soy: "●" }, vegan: "—", notesEn: "Coconut = FDA tree nut. Shrimp = shellfish.", notesEs: "Coco = fruto seco según FDA. Camarón = mariscos." },
-                                { itemEn: "Vegan Popcorn Shrimp", itemEs: "Vegan Popcorn Shrimp", v: { wheat: "●", soy: "●" }, vegan: "✓", notesEn: "Plant-based. Wheat breading.", notesEs: "Plant-based. Empanizado de trigo." },
-                                { itemEn: "Buffalo Sweet Chili Tofu", itemEs: "Buffalo Sweet Chili Tofu", v: { wheat: "◐", soy: "●" }, vegan: "✓", notesEn: "Tofu = soy. Sauce may contain wheat.", notesEs: "Tofu = soya. Salsa puede tener trigo." },
-                                { itemEn: "Sweet Potato Waffle Fries", itemEs: "Papas Waffle de Camote", v: {}, vegan: "✓", notesEn: "Check fryer oil for shared use.", notesEs: "Verifica si la freidora se comparte." },
-                            ],
-                        },
-                    ],
-                },
+                                {
+                                    itemEn: "Thai Chili Wings",
+                                    itemEs: "Thai Chili Wings",
+                                    v: {
+                                        wheat: "●",
+                                        soy: "●",
+                                        sesame: "◐"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Wing batter = 4 cups all-purpose flour. Sauce may have sesame.",
+                                    notesEs: "Empanizado = 4 tazas de harina. La salsa puede tener ajonjolí."
+                                },
+                                {
+                                    itemEn: "Sweet Garlic Wings",
+                                    itemEs: "Sweet Garlic Wings",
+                                    v: {
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Wing batter = flour. Sweet garlic glaze = soy base (16 cups soy sauce).",
+                                    notesEs: "Empanizado = harina. Glaseado dulce de ajo = base soya (16 tazas salsa de soya)."
+                                },
+                                {
+                                    itemEn: "Buffalo Sweet Chili Wings",
+                                    itemEs: "Buffalo Sweet Chili Wings",
+                                    v: {
+                                        milk: "◐",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Wing batter = flour. Buffalo sauce may have dairy.",
+                                    notesEs: "Empanizado = harina. La salsa Buffalo puede tener lácteo."
+                                },
+                                {
+                                    itemEn: "Crab Rangoons",
+                                    itemEs: "Crab Rangoons",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "●",
+                                        fish: "●",
+                                        wheat: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Imitation crab is FISH (surimi/white fish), NOT shellfish. Cream cheese = milk. Wonton wrapper = wheat + egg.",
+                                    notesEs: "El cangrejo de imitación es PESCADO (surimi/pescado blanco), NO mariscos. Queso crema = lácteo. Envoltura wonton = trigo + huevo."
+                                },
+                                {
+                                    itemEn: "Vietnamese Egg Rolls",
+                                    itemEs: "Vietnamese Egg Rolls",
+                                    v: {
+                                        eggs: "●",
+                                        shell: "◐",
+                                        wheat: "●",
+                                        soy: "●",
+                                        sesame: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Pork filling + 3 cups sesame oil in mix. Wheat + egg wrapper.",
+                                    notesEs: "Relleno de cerdo + 3 tazas de aceite de ajonjolí. Envoltura trigo + huevo."
+                                },
+                                {
+                                    itemEn: "Veggie Egg Rolls",
+                                    itemEs: "Veggie Egg Rolls",
+                                    v: {
+                                        eggs: "●",
+                                        wheat: "●",
+                                        soy: "●",
+                                        sesame: "●"
+                                    },
+                                    vegan: "✓*",
+                                    notesEn: "3.5 cups sesame oil in mix. Wheat + egg wrapper. Fryer cross-contact possible.",
+                                    notesEs: "3.5 tazas de aceite de ajonjolí en la mezcla. Envoltura trigo + huevo. Posible contacto cruzado en freidora."
+                                },
+                                {
+                                    itemEn: "Fried Shrimp Rolls",
+                                    itemEs: "Fried Shrimp Rolls",
+                                    v: {
+                                        eggs: "●",
+                                        shell: "●",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Shellfish. Wheat breading.",
+                                    notesEs: "Mariscos. Empanizado de trigo."
+                                },
+                                {
+                                    itemEn: "Coconut Shrimp",
+                                    itemEs: "Coconut Shrimp",
+                                    v: {
+                                        eggs: "●",
+                                        shell: "●",
+                                        treenut: "●",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Coconut = FDA tree nut. Shrimp = shellfish.",
+                                    notesEs: "Coco = fruto seco según FDA. Camarón = mariscos."
+                                },
+                                {
+                                    itemEn: "Vegan Popcorn Shrimp",
+                                    itemEs: "Vegan Popcorn Shrimp",
+                                    v: {
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Plant-based. Wheat breading.",
+                                    notesEs: "Plant-based. Empanizado de trigo."
+                                },
+                                {
+                                    itemEn: "Buffalo Sweet Chili Tofu",
+                                    itemEs: "Buffalo Sweet Chili Tofu",
+                                    v: {
+                                        wheat: "◐",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Tofu = soy. Sauce may contain wheat.",
+                                    notesEs: "Tofu = soya. Salsa puede tener trigo."
+                                },
+                                {
+                                    itemEn: "Sweet Potato Waffle Fries",
+                                    itemEs: "Papas Waffle de Camote",
+                                    v: {},
+                                    vegan: "✓",
+                                    notesEn: "Check fryer oil for shared use.",
+                                    notesEs: "Verifica si la freidora se comparte."
+                                }
+                            ]
+                        }
+                    ]
+                }
             },
             {
                 id: "m17-l4",
@@ -2191,11 +3281,11 @@ export const MODULES = [
                 titleEs: "Matriz de Alérgenos — Postres, Salsas y Bebidas",
                 contentEn: [
                     "Page 2 of the official chart. Same legend: ● contains, ◐ may contain, blank = doesn't typically contain, ✓ vegan, ✓* can be made vegan.",
-                    "⚠ This chart is for staff reference. Vietnamese cooking commonly uses fish sauce, soy sauce, sesame, and peanuts — cross-contact is always possible. ALWAYS confirm allergies with a manager and the kitchen before serving. Never guess.",
+                    "⚠ This chart is for staff reference. Vietnamese cooking commonly uses fish sauce, soy sauce, sesame, and peanuts — cross-contact is always possible. ALWAYS confirm allergies with a manager and the kitchen before serving. Never guess."
                 ],
                 contentEs: [
                     "Página 2 de la tabla oficial. Misma leyenda: ● contiene, ◐ puede contener, en blanco = no contiene típicamente, ✓ vegano, ✓* se puede hacer vegano.",
-                    "⚠ Esta tabla es para referencia del personal. La cocina vietnamita usa salsa de pescado, soya, ajonjolí y cacahuate — el contacto cruzado siempre es posible. SIEMPRE confirma alergias con el gerente y la cocina antes de servir. Nunca adivines.",
+                    "⚠ Esta tabla es para referencia del personal. La cocina vietnamita usa salsa de pescado, soya, ajonjolí y cacahuate — el contacto cruzado siempre es posible. SIEMPRE confirma alergias con el gerente y la cocina antes de servir. Nunca adivines."
                 ],
                 matrix: {
                     sections: [
@@ -2203,48 +3293,285 @@ export const MODULES = [
                             titleEn: "DESSERTS",
                             titleEs: "POSTRES",
                             rows: [
-                                { itemEn: "Passion Fruit Mousse", itemEs: "Mousse de Maracuyá", v: { milk: "●", eggs: "●", wheat: "◐" }, vegan: "—", notesEn: "Dairy mousse. Check gelatin.", notesEs: "Mousse lácteo. Verifica gelatina." },
-                                { itemEn: "Flan", itemEs: "Flan", v: { milk: "●", eggs: "●" }, vegan: "—", notesEn: "Eggs, milk, sugar — classic custard.", notesEs: "Huevos, leche, azúcar — flan clásico." },
-                                { itemEn: "Sesame Balls", itemEs: "Bolas de Ajonjolí", v: { sesame: "●" }, vegan: "✓", notesEn: "Sesame seeds! Glutinous rice (no wheat gluten).", notesEs: "¡Semillas de ajonjolí! Arroz glutinoso (sin gluten de trigo)." },
-                                { itemEn: "Vegan Chocolate Cake", itemEs: "Pastel de Chocolate Vegano", v: { wheat: "●", soy: "●" }, vegan: "✓", notesEn: "Plant-based. Wheat flour, likely soy.", notesEs: "Plant-based. Harina de trigo, probable soya." },
-                                { itemEn: "Tres Leches Cake", itemEs: "Pastel Tres Leches", v: { milk: "●", eggs: "●", wheat: "●" }, vegan: "—", notesEn: "Three dairies + egg + wheat cake.", notesEs: "Tres lácteos + huevo + pastel de trigo." },
-                                { itemEn: "Strawberry Matcha Tres Leches", itemEs: "Tres Leches de Fresa Matcha", v: { milk: "●", eggs: "●", wheat: "●" }, vegan: "—", notesEn: "Same as tres leches + matcha.", notesEs: "Igual a tres leches + matcha." },
-                                { itemEn: "Vegan Iced Oatmeal Cookies", itemEs: "Galletas Veganas de Avena Glaseadas", v: { wheat: "●", soy: "●" }, vegan: "✓", notesEn: "Oats cross-contact with wheat. Soy common.", notesEs: "Avena con contacto cruzado con trigo. Soya común." },
-                            ],
+                                {
+                                    itemEn: "Passion Fruit Mousse",
+                                    itemEs: "Mousse de Maracuyá",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "●",
+                                        wheat: "◐"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Dairy mousse. Check gelatin.",
+                                    notesEs: "Mousse lácteo. Verifica gelatina."
+                                },
+                                {
+                                    itemEn: "Flan",
+                                    itemEs: "Flan",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Eggs, milk, sugar — classic custard.",
+                                    notesEs: "Huevos, leche, azúcar — flan clásico."
+                                },
+                                {
+                                    itemEn: "Sesame Balls",
+                                    itemEs: "Bolas de Ajonjolí",
+                                    v: {
+                                        sesame: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Sesame seeds! Glutinous rice (no wheat gluten).",
+                                    notesEs: "¡Semillas de ajonjolí! Arroz glutinoso (sin gluten de trigo)."
+                                },
+                                {
+                                    itemEn: "Vegan Chocolate Cake",
+                                    itemEs: "Pastel de Chocolate Vegano",
+                                    v: {
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Plant-based. Wheat flour, likely soy.",
+                                    notesEs: "Plant-based. Harina de trigo, probable soya."
+                                },
+                                {
+                                    itemEn: "Tres Leches Cake",
+                                    itemEs: "Pastel Tres Leches",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "●",
+                                        wheat: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Three dairies + egg + wheat cake.",
+                                    notesEs: "Tres lácteos + huevo + pastel de trigo."
+                                },
+                                {
+                                    itemEn: "Strawberry Matcha Tres Leches",
+                                    itemEs: "Tres Leches de Fresa Matcha",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "●",
+                                        wheat: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Same as tres leches + matcha.",
+                                    notesEs: "Igual a tres leches + matcha."
+                                },
+                                {
+                                    itemEn: "Vegan Iced Oatmeal Cookies",
+                                    itemEs: "Galletas Veganas de Avena Glaseadas",
+                                    v: {
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Oats cross-contact with wheat. Soy common.",
+                                    notesEs: "Avena con contacto cruzado con trigo. Soya común."
+                                }
+                            ]
                         },
                         {
                             titleEn: "SAUCES",
                             titleEs: "SALSAS",
                             rows: [
-                                { itemEn: "DD Sauce", itemEs: "DD Sauce", v: { eggs: "●" }, vegan: "—", notesEn: "Egg yolks + oil + pickled medley + sugar. NO soy, fish, or wheat. Egg-allergy = skip.", notesEs: "Yemas + aceite + pickled medley + azúcar. SIN soya, pescado ni trigo. Alergia a huevo = saltar." },
-                                { itemEn: "Spicy DD", itemEs: "Spicy DD", v: { eggs: "●" }, vegan: "—", notesEn: "DD base + Sriracha + cayenne. Egg yolks only — no soy/fish/wheat.", notesEs: "Base DD + Sriracha + cayena. Solo yemas — sin soya/pescado/trigo." },
-                                { itemEn: "Vietnamese Vinaigrette", itemEs: "Vinagreta Vietnamita", v: { fish: "●" }, vegan: "—", notesEn: "Fish sauce (nuoc mam) base.", notesEs: "Base de salsa de pescado (nuoc mam)." },
-                                { itemEn: "Vegan Vietnamese Vinaigrette", itemEs: "Vinagreta Vietnamita Vegana", v: { soy: "●" }, vegan: "✓", notesEn: "Soy replaces fish sauce.", notesEs: "La soya reemplaza a la salsa de pescado." },
-                                { itemEn: "Peanut Sauce", itemEs: "Salsa de Cacahuate", v: { peanut: "●", wheat: "●", soy: "●" }, vegan: "✓", notesEn: "Peanut butter + our house hoisin + sugar. Hoisin contains wheat. NO shellfish.", notesEs: "Crema de cacahuate + nuestro hoisin de la casa + azúcar. Hoisin lleva trigo. SIN mariscos." },
-                                { itemEn: "Spicy Peanut Sauce", itemEs: "Salsa Picante de Cacahuate", v: { peanut: "●", wheat: "●", soy: "●" }, vegan: "✓", notesEn: "Peanut sauce + cayenne. Same allergens. NO shellfish.", notesEs: "Salsa de cacahuate + cayena. Mismos alérgenos. SIN mariscos." },
-                                { itemEn: "Hoisin (DD Mau version)", itemEs: "Hoisin (versión DD Mau)", v: { peanut: "●", wheat: "●", soy: "●" }, vegan: "✓", notesEn: "Our house recipe — peanut butter + base hoisin + soy. Contains wheat. NO shellfish (despite some commercial hoisin brands containing oyster extract — ours doesn't).", notesEs: "Receta de la casa — crema de cacahuate + hoisin base + soya. Lleva trigo. SIN mariscos (aunque algunos hoisin comerciales tienen extracto de ostión — el nuestro no)." },
-                                { itemEn: "Sweet Chili", itemEs: "Sweet Chili", v: {}, vegan: "✓", notesEn: "Typically allergen-clean.", notesEs: "Típicamente sin alérgenos comunes." },
-                                { itemEn: "Creamy Sweet Chili", itemEs: "Creamy Sweet Chili", v: { eggs: "●" }, vegan: "—", notesEn: "Mayo base (egg yolks). No milk.", notesEs: "Base de mayo (yemas de huevo). Sin lácteo." },
-                                { itemEn: "Lime Ranch", itemEs: "Lime Ranch", v: { milk: "●", eggs: "●" }, vegan: "—", notesEn: "Ranch = dairy + egg (buttermilk, mayo).", notesEs: "Ranch = lácteo + huevo (buttermilk, mayo)." },
-                                { itemEn: "Chili Oil", itemEs: "Aceite de Chile", v: {}, vegan: "✓", notesEn: "Typically clean. Confirm no sesame oil blend.", notesEs: "Típicamente limpio. Confirma que no sea mezcla con aceite de ajonjolí." },
-                                { itemEn: "Sambal", itemEs: "Sambal", v: {}, vegan: "✓", notesEn: "Chili paste — typically clean.", notesEs: "Pasta de chile — típicamente limpia." },
-                                { itemEn: "Sriracha", itemEs: "Sriracha", v: {}, vegan: "✓", notesEn: "Typically clean.", notesEs: "Típicamente limpia." },
-                            ],
+                                {
+                                    itemEn: "DD Sauce",
+                                    itemEs: "DD Sauce",
+                                    v: {
+                                        eggs: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Egg yolks + oil + pickled medley + sugar. NO soy, fish, or wheat. Egg-allergy = skip.",
+                                    notesEs: "Yemas + aceite + pickled medley + azúcar. SIN soya, pescado ni trigo. Alergia a huevo = saltar."
+                                },
+                                {
+                                    itemEn: "Spicy DD",
+                                    itemEs: "Spicy DD",
+                                    v: {
+                                        eggs: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "DD base + Sriracha + cayenne. Egg yolks only — no soy/fish/wheat.",
+                                    notesEs: "Base DD + Sriracha + cayena. Solo yemas — sin soya/pescado/trigo."
+                                },
+                                {
+                                    itemEn: "Vietnamese Vinaigrette",
+                                    itemEs: "Vinagreta Vietnamita",
+                                    v: {
+                                        fish: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Fish sauce (nuoc mam) base.",
+                                    notesEs: "Base de salsa de pescado (nuoc mam)."
+                                },
+                                {
+                                    itemEn: "Vegan Vietnamese Vinaigrette",
+                                    itemEs: "Vinagreta Vietnamita Vegana",
+                                    v: {
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Soy replaces fish sauce.",
+                                    notesEs: "La soya reemplaza a la salsa de pescado."
+                                },
+                                {
+                                    itemEn: "Peanut Sauce",
+                                    itemEs: "Salsa de Cacahuate",
+                                    v: {
+                                        peanut: "●",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Peanut butter + our house hoisin + sugar. Hoisin contains wheat. NO shellfish.",
+                                    notesEs: "Crema de cacahuate + nuestro hoisin de la casa + azúcar. Hoisin lleva trigo. SIN mariscos."
+                                },
+                                {
+                                    itemEn: "Spicy Peanut Sauce",
+                                    itemEs: "Salsa Picante de Cacahuate",
+                                    v: {
+                                        peanut: "●",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Peanut sauce + cayenne. Same allergens. NO shellfish.",
+                                    notesEs: "Salsa de cacahuate + cayena. Mismos alérgenos. SIN mariscos."
+                                },
+                                {
+                                    itemEn: "Hoisin (DD Mau version)",
+                                    itemEs: "Hoisin (versión DD Mau)",
+                                    v: {
+                                        peanut: "●",
+                                        wheat: "●",
+                                        soy: "●"
+                                    },
+                                    vegan: "✓",
+                                    notesEn: "Our house recipe — peanut butter + base hoisin + soy. Contains wheat. NO shellfish (despite some commercial hoisin brands containing oyster extract — ours doesn't).",
+                                    notesEs: "Receta de la casa — crema de cacahuate + hoisin base + soya. Lleva trigo. SIN mariscos (aunque algunos hoisin comerciales tienen extracto de ostión — el nuestro no)."
+                                },
+                                {
+                                    itemEn: "Sweet Chili",
+                                    itemEs: "Sweet Chili",
+                                    v: {},
+                                    vegan: "✓",
+                                    notesEn: "Typically allergen-clean.",
+                                    notesEs: "Típicamente sin alérgenos comunes."
+                                },
+                                {
+                                    itemEn: "Creamy Sweet Chili",
+                                    itemEs: "Creamy Sweet Chili",
+                                    v: {
+                                        eggs: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Mayo base (egg yolks). No milk.",
+                                    notesEs: "Base de mayo (yemas de huevo). Sin lácteo."
+                                },
+                                {
+                                    itemEn: "Lime Ranch",
+                                    itemEs: "Lime Ranch",
+                                    v: {
+                                        milk: "●",
+                                        eggs: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Ranch = dairy + egg (buttermilk, mayo).",
+                                    notesEs: "Ranch = lácteo + huevo (buttermilk, mayo)."
+                                },
+                                {
+                                    itemEn: "Chili Oil",
+                                    itemEs: "Aceite de Chile",
+                                    v: {},
+                                    vegan: "✓",
+                                    notesEn: "Typically clean. Confirm no sesame oil blend.",
+                                    notesEs: "Típicamente limpio. Confirma que no sea mezcla con aceite de ajonjolí."
+                                },
+                                {
+                                    itemEn: "Sambal",
+                                    itemEs: "Sambal",
+                                    v: {},
+                                    vegan: "✓",
+                                    notesEn: "Chili paste — typically clean.",
+                                    notesEs: "Pasta de chile — típicamente limpia."
+                                },
+                                {
+                                    itemEn: "Sriracha",
+                                    itemEs: "Sriracha",
+                                    v: {},
+                                    vegan: "✓",
+                                    notesEn: "Typically clean.",
+                                    notesEs: "Típicamente limpia."
+                                }
+                            ]
                         },
                         {
                             titleEn: "BEVERAGES (key allergens)",
                             titleEs: "BEBIDAS (alérgenos principales)",
                             rows: [
-                                { itemEn: "Matcha Latte, Masala Chai", itemEs: "Matcha Latte, Masala Chai", v: { milk: "●", treenut: "◐", soy: "◐" }, vegan: "—", notesEn: "Real milk default — true dairy. Oat or soy milk safe substitutes for milk allergy. Almond milk = tree nut allergen. Confirm sub before ringing.", notesEs: "Leche real por defecto — lácteo verdadero. Avena o soya son sustitutos seguros para alergia a leche. Almendra = fruto seco. Confirma sustitución antes de cobrar." },
-                                { itemEn: "Vietnamese Coffee/Latte", itemEs: "Café Vietnamita / Latte", v: { milk: "●" }, vegan: "—", notesEn: "Made with condensed milk per recipe — true dairy. Cannot be subbed without changing the drink fundamentally.", notesEs: "Hecho con leche condensada por receta — lácteo verdadero. No se puede sustituir sin cambiar la bebida fundamentalmente." },
-                                { itemEn: "Thai Iced Tea", itemEs: "Thai Iced Tea", v: { milk: "●", treenut: "◐", soy: "◐" }, vegan: "—", notesEn: "Condensed milk default — true dairy. Oat or soy safe for milk allergy. Almond = tree nut.", notesEs: "Leche condensada por defecto — lácteo verdadero. Avena o soya seguras para alergia a leche. Almendra = fruto seco." },
-                                { itemEn: "All Boba Milk Teas (9 flavors)", itemEs: "Todos los Boba Milk Teas (9 sabores)", v: { milk: "●", treenut: "◐", soy: "◐" }, vegan: "—", notesEn: "⚠ CRITICAL — the milk-tea BASE is a milk powder with non-dairy creamer pre-mixed in. The creamer contains sodium caseinate + lactose + milk flavor — all milk derivatives. We CANNOT take the creamer out. Subbing oat or almond milk does NOT remove the allergen — the base itself is the problem. For a milk allergy, redirect the guest to a FRUIT TEA (only safe option, never touches the base). Tapioca pearls themselves are typically allergen-free. Cashier MUST give the boba disclosure on every milk tea order.", notesEs: "⚠ CRÍTICO — la BASE del milk tea es una leche en polvo con la crema non-dairy pre-mezclada. La crema contiene caseinato de sodio + lactosa + sabor de leche — todos derivados lácteos. NO podemos quitar la crema. Cambiar a leche de avena o almendra NO elimina el alérgeno — la base es el problema. Para alergia a la leche, redirige al cliente a un FRUIT TEA (única opción segura, nunca toca la base). Las perlas de tapioca típicamente sin alérgenos. El cajero DEBE dar el aviso de boba en cada orden de milk tea." },
-                                { itemEn: "Lychee Limeade, Boba Fruit Teas, Slushies, Hot Teas", itemEs: "Lychee Limeade, Boba Fruit Teas, Slushies, Tés Calientes", v: {}, vegan: "✓", notesEn: "Fruit & plain-tea drinks — no common allergens. SAFE for milk allergies: fruit teas never touch the milk-powder base used by milk teas. This is the ONLY milk-allergy-safe path on the boba menu. Recommend these as the go-to substitute when a guest with a milk allergy asks about boba.", notesEs: "Bebidas de fruta y té solo — sin alérgenos comunes. SEGURAS para alergia a leche: los fruit teas nunca tocan la base de leche en polvo que usan los milk teas. Esta es la ÚNICA opción segura en el menú de boba para alergia a la leche. Recomiéndalos como la sustitución principal cuando un cliente con alergia a la leche pregunte por boba." },
-                            ],
-                        },
-                    ],
-                },
-            },
+                                {
+                                    itemEn: "Matcha Latte, Masala Chai",
+                                    itemEs: "Matcha Latte, Masala Chai",
+                                    v: {
+                                        milk: "●",
+                                        treenut: "◐",
+                                        soy: "◐"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Real milk default — true dairy. Oat or soy milk safe substitutes for milk allergy. Almond milk = tree nut allergen. Confirm sub before ringing.",
+                                    notesEs: "Leche real por defecto — lácteo verdadero. Avena o soya son sustitutos seguros para alergia a leche. Almendra = fruto seco. Confirma sustitución antes de cobrar."
+                                },
+                                {
+                                    itemEn: "Vietnamese Coffee/Latte",
+                                    itemEs: "Café Vietnamita / Latte",
+                                    v: {
+                                        milk: "●"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Made with condensed milk per recipe — true dairy. Cannot be subbed without changing the drink fundamentally.",
+                                    notesEs: "Hecho con leche condensada por receta — lácteo verdadero. No se puede sustituir sin cambiar la bebida fundamentalmente."
+                                },
+                                {
+                                    itemEn: "Thai Iced Tea",
+                                    itemEs: "Thai Iced Tea",
+                                    v: {
+                                        milk: "●",
+                                        treenut: "◐",
+                                        soy: "◐"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "Condensed milk default — true dairy. Oat or soy safe for milk allergy. Almond = tree nut.",
+                                    notesEs: "Leche condensada por defecto — lácteo verdadero. Avena o soya seguras para alergia a leche. Almendra = fruto seco."
+                                },
+                                {
+                                    itemEn: "All Boba Milk Teas (9 flavors)",
+                                    itemEs: "Todos los Boba Milk Teas (9 sabores)",
+                                    v: {
+                                        milk: "●",
+                                        treenut: "◐",
+                                        soy: "◐"
+                                    },
+                                    vegan: "—",
+                                    notesEn: "⚠ CRITICAL — the milk-tea BASE is a milk powder with non-dairy creamer pre-mixed in. The creamer contains sodium caseinate + lactose + milk flavor — all milk derivatives. We CANNOT take the creamer out. Subbing oat or almond milk does NOT remove the allergen — the base itself is the problem. For a milk allergy, redirect the guest to a FRUIT TEA (only safe option, never touches the base). Tapioca pearls themselves are typically allergen-free. Cashier MUST give the boba disclosure on every milk tea order.",
+                                    notesEs: "⚠ CRÍTICO — la BASE del milk tea es una leche en polvo con la crema non-dairy pre-mezclada. La crema contiene caseinato de sodio + lactosa + sabor de leche — todos derivados lácteos. NO podemos quitar la crema. Cambiar a leche de avena o almendra NO elimina el alérgeno — la base es el problema. Para alergia a la leche, redirige al cliente a un FRUIT TEA (única opción segura, nunca toca la base). Las perlas de tapioca típicamente sin alérgenos. El cajero DEBE dar el aviso de boba en cada orden de milk tea."
+                                },
+                                {
+                                    itemEn: "Lychee Limeade, Boba Fruit Teas, Slushies, Hot Teas",
+                                    itemEs: "Lychee Limeade, Boba Fruit Teas, Slushies, Tés Calientes",
+                                    v: {},
+                                    vegan: "✓",
+                                    notesEn: "Fruit & plain-tea drinks — no common allergens. SAFE for milk allergies: fruit teas never touch the milk-powder base used by milk teas. This is the ONLY milk-allergy-safe path on the boba menu. Recommend these as the go-to substitute when a guest with a milk allergy asks about boba.",
+                                    notesEs: "Bebidas de fruta y té solo — sin alérgenos comunes. SEGURAS para alergia a leche: los fruit teas nunca tocan la base de leche en polvo que usan los milk teas. Esta es la ÚNICA opción segura en el menú de boba para alergia a la leche. Recomiéndalos como la sustitución principal cuando un cliente con alergia a la leche pregunte por boba."
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
         ],
         quiz: {
             passThreshold: 0.85,
@@ -2254,88 +3581,200 @@ export const MODULES = [
                     questionEn: "When a guest tells you they have a serious allergy, the FIRST thing you do is:",
                     questionEs: "Cuando un cliente te dice que tiene alergia grave, lo PRIMERO que haces es:",
                     options: [
-                        { id: "a", textEn: "Tell them what's safe based on what you remember", textEs: "Dile qué es seguro según lo que recuerdes" },
-                        { id: "b", textEn: "Stop, get the Shift Lead, and let them confirm", textEs: "Para, llama al líder y deja que confirme" },
-                        { id: "c", textEn: "Take the order and put it through carefully", textEs: "Toma la orden y mándala con cuidado" },
-                        { id: "d", textEn: "Tell them to check the menu allergen card", textEs: "Dile que revise la tarjeta de alérgenos del menú" },
+                        {
+                            id: "a",
+                            textEn: "Tell them what's safe based on what you remember",
+                            textEs: "Dile qué es seguro según lo que recuerdes"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Stop, get the Shift Lead, and let them confirm",
+                            textEs: "Para, llama al líder y deja que confirme"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Take the order and put it through carefully",
+                            textEs: "Toma la orden y mándala con cuidado"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Tell them to check the menu allergen card",
+                            textEs: "Dile que revise la tarjeta de alérgenos del menú"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m17-q2",
                     questionEn: "Vermicelli Bowl by default comes with:",
                     questionEs: "El Vermicelli Bowl por defecto viene con:",
                     options: [
-                        { id: "a", textEn: "Crushed peanuts on top + Vietnamese egg roll", textEs: "Cacahuates molidos arriba + rollo primavera vietnamita" },
-                        { id: "b", textEn: "No peanuts, no egg roll", textEs: "Sin cacahuates, sin rollo" },
-                        { id: "c", textEn: "Almond crumbs + spring roll", textEs: "Migas de almendra + spring roll" },
-                        { id: "d", textEn: "Just rice noodles and dressing", textEs: "Solo fideos de arroz y aderezo" },
+                        {
+                            id: "a",
+                            textEn: "Crushed peanuts on top + Vietnamese egg roll",
+                            textEs: "Cacahuates molidos arriba + rollo primavera vietnamita"
+                        },
+                        {
+                            id: "b",
+                            textEn: "No peanuts, no egg roll",
+                            textEs: "Sin cacahuates, sin rollo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Almond crumbs + spring roll",
+                            textEs: "Migas de almendra + spring roll"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Just rice noodles and dressing",
+                            textEs: "Solo fideos de arroz y aderezo"
+                        }
                     ],
-                    correct: "a",
+                    correct: "a"
                 },
                 {
                     id: "m17-q3",
                     questionEn: "A guest is allergic to FISH. Which is NOT safe?",
                     questionEs: "Un cliente es alérgico a PESCADO. ¿Cuál NO es seguro?",
                     options: [
-                        { id: "a", textEn: "Tofu Rice Bowl with Sweet Chili", textEs: "Tofu Rice Bowl con Sweet Chili" },
-                        { id: "b", textEn: "Vegan Beef Vermicelli Bowl with Vegan Vinaigrette", textEs: "Vermicelli Bowl de Carne Vegana con Vinagreta Vegana" },
-                        { id: "c", textEn: "Lemongrass Chicken Rice Bowl with DD Dressing", textEs: "Rice Bowl de Pollo con Hierba Limón con DD Dressing" },
-                        { id: "d", textEn: "Veggie Spring Rolls with Sweet Chili", textEs: "Spring Rolls Vegetarianos con Sweet Chili" },
+                        {
+                            id: "a",
+                            textEn: "Tofu Rice Bowl with Sweet Chili",
+                            textEs: "Tofu Rice Bowl con Sweet Chili"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Vegan Beef Vermicelli Bowl with Vegan Vinaigrette",
+                            textEs: "Vermicelli Bowl de Carne Vegana con Vinagreta Vegana"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Lemongrass Chicken Rice Bowl with DD Dressing",
+                            textEs: "Rice Bowl de Pollo con Hierba Limón con DD Dressing"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Veggie Spring Rolls with Sweet Chili",
+                            textEs: "Spring Rolls Vegetarianos con Sweet Chili"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m17-q4",
                     questionEn: "Vegan Cream Cheese is made from:",
                     questionEs: "El Queso Crema Vegano se hace de:",
                     options: [
-                        { id: "a", textEn: "Soy", textEs: "Soya" },
-                        { id: "b", textEn: "Almond (tree nut allergen)", textEs: "Almendra (alérgeno de fruto seco)" },
-                        { id: "c", textEn: "Coconut", textEs: "Coco" },
-                        { id: "d", textEn: "Dairy", textEs: "Lácteos" },
+                        {
+                            id: "a",
+                            textEn: "Soy",
+                            textEs: "Soya"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Almond (tree nut allergen)",
+                            textEs: "Almendra (alérgeno de fruto seco)"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Coconut",
+                            textEs: "Coco"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Dairy",
+                            textEs: "Lácteos"
+                        }
                     ],
-                    correct: "b",
+                    correct: "b"
                 },
                 {
                     id: "m17-q5",
                     questionEn: "Our oyster sauce is:",
                     questionEs: "Nuestra salsa de ostión es:",
                     options: [
-                        { id: "a", textEn: "Gluten-free (verified)", textEs: "Sin gluten (verificado)" },
-                        { id: "b", textEn: "Contains wheat", textEs: "Contiene trigo" },
-                        { id: "c", textEn: "Vegan", textEs: "Vegana" },
-                        { id: "d", textEn: "Dairy-based", textEs: "A base de lácteos" },
+                        {
+                            id: "a",
+                            textEn: "Gluten-free (verified)",
+                            textEs: "Sin gluten (verificado)"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Contains wheat",
+                            textEs: "Contiene trigo"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Vegan",
+                            textEs: "Vegana"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Dairy-based",
+                            textEs: "A base de lácteos"
+                        }
                     ],
-                    correct: "a",
+                    correct: "a"
                 },
                 {
                     id: "m17-q6",
                     questionEn: "A guest with PEANUT allergy orders a Vermicelli Bowl. What sauces are SAFE for them?",
                     questionEs: "Un cliente con alergia a CACAHUATE ordena Vermicelli Bowl. ¿Qué salsas SON seguras?",
                     options: [
-                        { id: "a", textEn: "Peanut Dressing only", textEs: "Solo Peanut Dressing" },
-                        { id: "b", textEn: "Hoisin (it's our house version)", textEs: "Hoisin (es nuestra versión casera)" },
-                        { id: "c", textEn: "Vietnamese Vinaigrette, Vegan Vinaigrette, Sweet Chili, DD, Spicy DD — peanuts must also be omitted from the bowl topping", textEs: "Vinagreta Vietnamita, Vinagreta Vegana, Sweet Chili, DD, Spicy DD — también omitir cacahuates encima del bowl" },
-                        { id: "d", textEn: "Spicy Peanut only", textEs: "Solo Spicy Peanut" },
+                        {
+                            id: "a",
+                            textEn: "Peanut Dressing only",
+                            textEs: "Solo Peanut Dressing"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Hoisin (it's our house version)",
+                            textEs: "Hoisin (es nuestra versión casera)"
+                        },
+                        {
+                            id: "c",
+                            textEn: "Vietnamese Vinaigrette, Vegan Vinaigrette, Sweet Chili, DD, Spicy DD — peanuts must also be omitted from the bowl topping",
+                            textEs: "Vinagreta Vietnamita, Vinagreta Vegana, Sweet Chili, DD, Spicy DD — también omitir cacahuates encima del bowl"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Spicy Peanut only",
+                            textEs: "Solo Spicy Peanut"
+                        }
                     ],
-                    correct: "c",
+                    correct: "c"
                 },
                 {
                     id: "m17-q7",
                     questionEn: "For a VEGAN guest, which sauce is NOT vegan?",
                     questionEs: "Para un cliente VEGANO, ¿cuál salsa NO es vegana?",
                     options: [
-                        { id: "a", textEn: "Vegan Vinaigrette", textEs: "Vinagreta Vegana" },
-                        { id: "b", textEn: "Sweet Chili", textEs: "Sweet Chili" },
-                        { id: "c", textEn: "DD Dressing (contains egg yolks)", textEs: "DD Dressing (contiene yemas de huevo)" },
-                        { id: "d", textEn: "Hoisin (DD Mau house)", textEs: "Hoisin (estilo DD Mau)" },
+                        {
+                            id: "a",
+                            textEn: "Vegan Vinaigrette",
+                            textEs: "Vinagreta Vegana"
+                        },
+                        {
+                            id: "b",
+                            textEn: "Sweet Chili",
+                            textEs: "Sweet Chili"
+                        },
+                        {
+                            id: "c",
+                            textEn: "DD Dressing (contains egg yolks)",
+                            textEs: "DD Dressing (contiene yemas de huevo)"
+                        },
+                        {
+                            id: "d",
+                            textEn: "Hoisin (DD Mau house)",
+                            textEs: "Hoisin (estilo DD Mau)"
+                        }
                     ],
-                    correct: "c",
-                },
-            ],
-        },
-    },
+                    correct: "c"
+                }
+            ]
+        }
+    }
 ];
 
 // Legacy export — keeps any imports of the old name working until the
