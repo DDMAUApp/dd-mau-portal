@@ -811,9 +811,14 @@ const realtime86Handler = (location) => async (event) => {
         );
         const afterItems = ((after.data() || {}).items || [])
             .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name);
+        const afterNames = new Set(afterItems.map((i) => i.name));
         const newlyOut = afterItems.filter((i) => !beforeNames.has(i.name));
-        if (newlyOut.length === 0) {
-            return;  // no new entries — silently skip
+        // Back-in-stock: was OUT_OF_STOCK before, isn't anymore (either
+        // removed from items[] OR status flipped to something else).
+        // Stored as plain names since we don't need the full item record.
+        const backInStock = [...beforeNames].filter((n) => !afterNames.has(n));
+        if (newlyOut.length === 0 && backInStock.length === 0) {
+            return;  // no transitions either way — silently skip
         }
         // Recipients = opted-in staff. Same gate as the scheduled
         // pings so admin only manages one toggle ("🚫 86 alerts") on
@@ -829,7 +834,7 @@ const realtime86Handler = (location) => async (event) => {
             return true;
         });
         if (recipients.length === 0) {
-            logger.info(`real-time 86 (${location}): ${newlyOut.length} new but no opted-in recipients`);
+            logger.info(`real-time 86 (${location}): ${newlyOut.length} new + ${backInStock.length} back, no opted-in recipients`);
             return;
         }
         const locLabel = location === "webster" ? "Webster" : "Maryland Heights";
@@ -838,6 +843,12 @@ const realtime86Handler = (location) => async (event) => {
         // stacking). For mass shortages (3+ items at once), we fan
         // them out so the user sees each one rather than a single
         // collapsed "3 items" toast that hides what they are.
+        //
+        // SHARED tag between "going out" and "back in stock" for the
+        // same item — `eighty_six:{location}:{itemName}` — so the OS
+        // replaces a stale "🚫 86" toast with the fresh "✅ back" toast
+        // when the same item comes back. Staff phone never shows
+        // contradictory toasts side-by-side.
         const ops = [];
         for (const item of newlyOut) {
             for (const r of recipients) {
@@ -847,7 +858,22 @@ const realtime86Handler = (location) => async (event) => {
                     title: `🚫 86: ${item.name}`,
                     body: `Just went out at ${locLabel}.`,
                     link: "/eighty6",
-                    tag: `eighty_six_new:${location}:${item.name}`,
+                    tag: `eighty_six:${location}:${item.name}`,
+                    createdAt: FieldValue.serverTimestamp(),
+                    read: false,
+                    createdBy: "realtime86Alert",
+                }));
+            }
+        }
+        for (const name of backInStock) {
+            for (const r of recipients) {
+                ops.push(db.collection("notifications").add({
+                    forStaff: r.name,
+                    type: "eighty_six_back",
+                    title: `✅ Back in stock: ${name}`,
+                    body: `${locLabel} can sell ${name} again.`,
+                    link: "/eighty6",
+                    tag: `eighty_six:${location}:${name}`,
                     createdAt: FieldValue.serverTimestamp(),
                     read: false,
                     createdBy: "realtime86Alert",
@@ -855,7 +881,7 @@ const realtime86Handler = (location) => async (event) => {
             }
         }
         await Promise.all(ops);
-        logger.info(`real-time 86 (${location}): pinged ${recipients.length} recipient(s) × ${newlyOut.length} new item(s)`);
+        logger.info(`real-time 86 (${location}): pinged ${recipients.length} recipient(s) — ${newlyOut.length} newly out, ${backInStock.length} back in stock`);
     } catch (err) {
         logger.error(`realtime86Handler(${location}) failed`, err);
     }
