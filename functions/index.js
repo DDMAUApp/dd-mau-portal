@@ -18,7 +18,7 @@
  * notification volume is tiny — well under free tier. Cloud Functions
  * REQUIRES the Blaze (pay-as-you-go) plan even though usage stays free.
  */
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { logger } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
@@ -781,4 +781,92 @@ exports.eightySixAlertsAfternoon = onSchedule(
 exports.eightySixAlertsEvening = onSchedule(
     { schedule: "0 20 * * *", timeZone: "America/Chicago", region: "us-central1" },
     () => eightySixSchedule("evening", "8pm", "8pm"),
+);
+
+// ── 8b. Real-time 86 alert ─────────────────────────────────────────────────
+// Diffs every write to /ops/86_{location} and pushes the MOMENT a new
+// item enters OUT_OF_STOCK. Complements the 3-times-daily schedule:
+// scheduled pings remind staff what's STILL out, this one pings the
+// instant something GOES out — so the kitchen / FOH knows in seconds,
+// not hours.
+//
+// Dedup: tag = `eighty_six_new:{location}:{itemName}`. Same item going
+// out a second time the same day → same tag → OS replaces the previous
+// notification. If 3 items go out at once (a delivery shortage), the
+// recipient sees them grouped because each new item gets its own tag
+// but they all arrive within seconds.
+//
+// Idempotency: we compare BEFORE → AFTER set membership, so a write
+// that doesn't actually add anything (e.g. low-stock list grew but
+// 86 list unchanged) produces zero notifications.
+const realtime86Handler = (location) => async (event) => {
+    try {
+        const before = event.data?.before;
+        const after = event.data?.after;
+        if (!after?.exists) return;  // doc deleted — no alert
+        const beforeNames = new Set(
+            ((before?.exists ? (before.data() || {}).items : []) || [])
+                .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name)
+                .map((i) => i.name)
+        );
+        const afterItems = ((after.data() || {}).items || [])
+            .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name);
+        const newlyOut = afterItems.filter((i) => !beforeNames.has(i.name));
+        if (newlyOut.length === 0) {
+            return;  // no new entries — silently skip
+        }
+        // Recipients = opted-in staff. Same gate as the scheduled
+        // pings so admin only manages one toggle ("🚫 86 alerts") on
+        // the staff card.
+        const staffDoc = await db.doc("config/staff").get();
+        const list = (staffDoc.data() || {}).list || [];
+        const seenNames = new Set();
+        const recipients = list.filter((s) => {
+            if (!s || !s.name) return false;
+            if (s.canReceive86Alerts !== true) return false;
+            if (seenNames.has(s.name)) return false;
+            seenNames.add(s.name);
+            return true;
+        });
+        if (recipients.length === 0) {
+            logger.info(`real-time 86 (${location}): ${newlyOut.length} new but no opted-in recipients`);
+            return;
+        }
+        const locLabel = location === "webster" ? "Webster" : "Maryland Heights";
+        // One push per recipient per item — keeps the per-item tag
+        // useful (item resurrected + re-86'd swaps the same tag, no
+        // stacking). For mass shortages (3+ items at once), we fan
+        // them out so the user sees each one rather than a single
+        // collapsed "3 items" toast that hides what they are.
+        const ops = [];
+        for (const item of newlyOut) {
+            for (const r of recipients) {
+                ops.push(db.collection("notifications").add({
+                    forStaff: r.name,
+                    type: "eighty_six_new",
+                    title: `🚫 86: ${item.name}`,
+                    body: `Just went out at ${locLabel}.`,
+                    link: "/eighty6",
+                    tag: `eighty_six_new:${location}:${item.name}`,
+                    createdAt: FieldValue.serverTimestamp(),
+                    read: false,
+                    createdBy: "realtime86Alert",
+                }));
+            }
+        }
+        await Promise.all(ops);
+        logger.info(`real-time 86 (${location}): pinged ${recipients.length} recipient(s) × ${newlyOut.length} new item(s)`);
+    } catch (err) {
+        logger.error(`realtime86Handler(${location}) failed`, err);
+    }
+};
+
+exports.realtime86Webster = onDocumentWritten(
+    { document: "ops/86_webster", region: "us-central1" },
+    realtime86Handler("webster"),
+);
+
+exports.realtime86Maryland = onDocumentWritten(
+    { document: "ops/86_maryland", region: "us-central1" },
+    realtime86Handler("maryland"),
 );
