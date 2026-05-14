@@ -6215,13 +6215,13 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
                     ) : notifications.map(n => (
                         <div key={n.id}
                             onClick={() => !n.read && onMarkRead(n.id)}
-                            className={`p-3 rounded-lg border cursor-pointer ${n.read ? 'bg-white border-gray-200' : 'bg-mint-50 border-mint-300'}`}>
-                            <div className="flex items-start gap-2">
-                                <span className="text-xl flex-shrink-0">{iconFor(n.type)}</span>
+                            className={`p-4 rounded-lg border cursor-pointer ${n.read ? 'bg-white border-gray-200' : 'bg-mint-50 border-mint-300'}`}>
+                            <div className="flex items-start gap-3">
+                                <span className="text-2xl flex-shrink-0">{iconFor(n.type)}</span>
                                 <div className="min-w-0 flex-1">
-                                    <div className={`font-bold text-sm ${n.read ? 'text-gray-700' : 'text-mint-800'}`}>{n.title}</div>
-                                    <div className="text-xs text-gray-600 mt-0.5">{n.body}</div>
-                                    <div className="text-[10px] text-gray-400 mt-1">{fmtTime(n.createdAt)}</div>
+                                    <div className={`font-bold text-base ${n.read ? 'text-gray-700' : 'text-mint-800'}`}>{n.title}</div>
+                                    <div className="text-sm text-gray-700 mt-1 leading-snug whitespace-pre-line">{n.body}</div>
+                                    <div className="text-xs text-gray-400 mt-1.5">{fmtTime(n.createdAt)}</div>
                                 </div>
                                 {!n.read && <span className="w-2 h-2 rounded-full bg-mint-600 flex-shrink-0 mt-1"></span>}
                             </div>
