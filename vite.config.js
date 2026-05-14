@@ -1,6 +1,30 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
+import { copyFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+
+// GitHub Pages SPA fallback: serve index.html for any unknown path.
+// Pages doesn't natively rewrite to index.html, but it DOES serve
+// /404.html for any 404'd path with a 200 status from the SPA's point
+// of view (the SPA bootstraps + reads window.location and routes).
+// Without this, /apply works on first load (via the Squarespace 302
+// or a typed URL) but pull-to-refresh on iOS reloads /apply, hits a
+// genuine 404, and the user sees GitHub's "file not found" page.
+//
+// The 404.html MUST be byte-identical to index.html for the same
+// hashed asset bundle, so we generate it from index.html post-build
+// rather than checking in a stale static copy that would drift.
+const spa404Fallback = () => ({
+  name: 'spa-404-fallback',
+  closeBundle() {
+    try {
+      copyFileSync(resolve('dist/index.html'), resolve('dist/404.html'));
+    } catch (e) {
+      console.warn('[spa-404-fallback] copy failed (non-fatal):', e.message);
+    }
+  },
+})
 
 const buildId = Date.now().toString(36)
 
@@ -20,7 +44,7 @@ export default defineConfig({
     __APP_BUILT_AT__: JSON.stringify(APP_BUILT_AT),
     __APP_OPERATOR__: JSON.stringify('Shih Technology'),
   },
-  plugins: [react()],
+  plugins: [react(), spa404Fallback()],
   // Custom domain (app.ddmaustl.com) serves from the apex, so assets
   // resolve at '/' not '/dd-mau-portal/'. A CNAME file in public/ tells
   // GitHub Pages which domain to serve from. The legacy
