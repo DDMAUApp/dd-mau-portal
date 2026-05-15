@@ -3677,14 +3677,26 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
     const headlineTone = !hasData ? 'bg-white text-dd-text-2 border-dd-line'
         : (advisory.under > 0 || advisory.over > 0) ? 'bg-amber-50 text-amber-800 border-amber-200'
         : 'bg-dd-green-50 text-dd-green-700 border-dd-green/30';
+    // Today's weather summary for the collapsed header chip. Pulls the
+    // first daytime period so the user sees the current forecast at a
+    // glance without having to expand the advisor. Per Andrew (2026-05-14):
+    // "above the schedule there used to be a weather" — this restores
+    // the at-a-glance visibility while keeping the full forecast inside
+    // the expanded advisor.
+    const todayWeather = weather?.periods?.find(p => p.isDaytime);
     return (
         <div className="mb-3">
             <button onClick={onToggle}
                 className={`w-full text-left flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border shadow-card hover:shadow-card-hov transition ${headlineTone}`}>
-                <span className="text-xs font-bold flex items-center gap-2">
+                <span className="text-xs font-bold flex items-center gap-2 flex-wrap">
                     <span className="w-7 h-7 rounded-lg bg-white/70 flex items-center justify-center text-sm shadow-sm">📊</span>
                     {headline}
-                    {(weatherTips?.length || 0) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold">🌧 {weatherTips.length} {tx('weather tip', 'aviso clima')}{weatherTips.length === 1 ? '' : 's'}</span>}
+                    {todayWeather && (
+                        <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold whitespace-nowrap">
+                            🌤 {todayWeather.temperature}°{todayWeather.temperatureUnit || 'F'} · {todayWeather.shortForecast}
+                        </span>
+                    )}
+                    {(weatherTips?.length || 0) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-bold">⚠️ {weatherTips.length} {tx('weather tip', 'aviso clima')}{weatherTips.length === 1 ? '' : 's'}</span>}
                 </span>
                 <span className="text-xs font-bold opacity-60">{open ? '▼' : '▶'}</span>
             </button>
