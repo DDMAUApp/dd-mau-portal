@@ -157,15 +157,26 @@ exports.sendShiftReminders = onSchedule(
 
             const [y, mo, d] = sh.date.split("-").map(Number);
             const [hh, mm] = sh.startTime.split(":").map(Number);
-            // The shift's start as a UTC timestamp built from local-business-day fields.
-            // Cloud Function runs in UTC, so we need to interpret the date as a local CT time.
-            // Use a Date with local fields then convert via DateTimeFormat? Simpler: build as
-            // ISO with the timezone offset for America/Chicago. CT is UTC-5 (CDT) or UTC-6 (CST);
-            // DST varies. We approximate using the server's local time conversion via
-            // Intl. For now: best-effort using JS Date.UTC + manual offset for May (CDT = -5).
-            // (For a perfect solution, use a tz library — overkill for a 5-min-window job.)
-            const cdtOffsetHours = 5; // CDT (DST) — matches DD Mau May timeframe
-            const shiftStartMs = Date.UTC(y, mo - 1, d, hh + cdtOffsetHours, mm);
+            // FIX (2026-05-14): compute the actual America/Chicago UTC
+            // offset for the SHIFT DATE via Intl, so reminders work
+            // correctly across DST boundaries. Previously hardcoded
+            // -5 (CDT), which would have made every winter (CST)
+            // reminder fire 1 hour late starting in November, and
+            // double-fire / skip around the spring + fall DST flips.
+            //
+            // Intl returns a shortOffset like "GMT-5" (CDT) or "GMT-6"
+            // (CST). We parse the integer offset, plus the sign, and
+            // ADD that to the wall-clock hours to get UTC.
+            const probe = new Date(Date.UTC(y, mo - 1, d, 12, 0));
+            const offsetParts = new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/Chicago",
+                timeZoneName: "shortOffset",
+            }).formatToParts(probe);
+            const offsetLabel = offsetParts.find(p => p.type === "timeZoneName")?.value || "GMT-5";
+            // "GMT-5" → -5, "GMT-6" → -6 (Chicago never +)
+            const offsetMatch = /GMT([+-]?\d+)/.exec(offsetLabel);
+            const ctOffsetHours = offsetMatch ? -parseInt(offsetMatch[1], 10) : 5;
+            const shiftStartMs = Date.UTC(y, mo - 1, d, hh + ctOffsetHours, mm);
 
             if (shiftStartMs < windowStart) continue;
             if (shiftStartMs > windowEnd) continue;

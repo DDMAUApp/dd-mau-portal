@@ -35,6 +35,7 @@ import {
     APPLICATION_STATUS_META, computeMatchScore, labelFor,
 } from '../data/applyForm';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
+import { toast } from '../toast';
 const OnboardingTemplateEditor = reactLazy(() => import('./OnboardingTemplateEditor'));
 const OnboardingEmployerFill = reactLazy(() => import('./OnboardingEmployerFill'));
 
@@ -379,12 +380,21 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                                     'Move this hire to Complete? Their portal will become read-only — they can view what they submitted but can\'t edit. Use "Move back to active" if you need them to redo a doc.',
                                     '¿Mover a Completos? Su portal será de solo lectura. Usa "Volver a activos" si necesitas que rehagan algo.',
                                 ))) return;
-                                await updateDoc(doc(db, 'onboarding_hires', selected.id), {
-                                    status: HIRE_STATUS.COMPLETE,
-                                    completedAt: new Date().toISOString(),
-                                    completedBy: staffName || 'admin',
-                                });
-                                writeAudit('hire_moved_to_complete', { hireId: selected.id, hireName: selected.name });
+                                // FIX (2026-05-14): wrap admin updateDoc in try/catch.
+                                // Previously failures were silent — audit log fired as
+                                // if the write succeeded, state desync'd between admin
+                                // and hire's view.
+                                try {
+                                    await updateDoc(doc(db, 'onboarding_hires', selected.id), {
+                                        status: HIRE_STATUS.COMPLETE,
+                                        completedAt: new Date().toISOString(),
+                                        completedBy: staffName || 'admin',
+                                    });
+                                    writeAudit('hire_moved_to_complete', { hireId: selected.id, hireName: selected.name });
+                                } catch (e) {
+                                    console.error('Move to complete failed:', e);
+                                    toast(tx('Could not move to complete: ', 'No se pudo mover: ') + (e.message || e));
+                                }
                             }}
                             onMoveBackToActive={async () => {
                                 if (!confirm(tx(
@@ -396,24 +406,34 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                                 // in_progress). Don't reset checklist or
                                 // approvals; admin may just want them to
                                 // tweak one doc.
-                                await updateDoc(doc(db, 'onboarding_hires', selected.id), {
-                                    status: HIRE_STATUS.IN_PROGRESS,
-                                    unlockedAt: new Date().toISOString(),
-                                    unlockedBy: staffName || 'admin',
-                                });
-                                writeAudit('hire_unlocked_from_complete', { hireId: selected.id, hireName: selected.name });
+                                try {
+                                    await updateDoc(doc(db, 'onboarding_hires', selected.id), {
+                                        status: HIRE_STATUS.IN_PROGRESS,
+                                        unlockedAt: new Date().toISOString(),
+                                        unlockedBy: staffName || 'admin',
+                                    });
+                                    writeAudit('hire_unlocked_from_complete', { hireId: selected.id, hireName: selected.name });
+                                } catch (e) {
+                                    console.error('Move back to active failed:', e);
+                                    toast(tx('Could not move back to active: ', 'No se pudo reactivar: ') + (e.message || e));
+                                }
                             }}
                             onArchive={async () => {
                                 if (!confirm(tx(
                                     'Archive this hire? They\'re still kept for compliance retention.',
                                     '¿Archivar a esta persona? Se mantiene por cumplimiento.',
                                 ))) return;
-                                await updateDoc(doc(db, 'onboarding_hires', selected.id), {
-                                    status: HIRE_STATUS.ARCHIVED,
-                                    archivedAt: new Date().toISOString(),
-                                });
-                                writeAudit('hire_archived', { hireId: selected.id, hireName: selected.name });
-                                setSelectedId(null);
+                                try {
+                                    await updateDoc(doc(db, 'onboarding_hires', selected.id), {
+                                        status: HIRE_STATUS.ARCHIVED,
+                                        archivedAt: new Date().toISOString(),
+                                    });
+                                    writeAudit('hire_archived', { hireId: selected.id, hireName: selected.name });
+                                    setSelectedId(null);
+                                } catch (e) {
+                                    console.error('Archive failed:', e);
+                                    toast(tx('Could not archive: ', 'No se pudo archivar: ') + (e.message || e));
+                                }
                             }}
                             onResend={async () => {
                                 const token = makeInviteToken();

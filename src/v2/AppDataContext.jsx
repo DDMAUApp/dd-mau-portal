@@ -63,7 +63,34 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
     }, [staffName]);
 
     // shifts — next 14 days, date-bounded query (Firestore-side, not
-    // client-side filtering). Re-runs daily when `today` rolls over.
+    // client-side filtering).
+    //
+    // FIX (2026-05-14): re-subscribe daily so the `today` cutoff actually
+    // rolls over. Before, the query was bound to whatever `today` was
+    // at provider mount, so a device left open overnight kept showing
+    // yesterday's window — MobileHome's "today's shift" would miss the
+    // morning shift until manual refresh. We track `dayKey` in state
+    // and bump it (a) on visibility change (most common — phone wakes
+    // up the next morning) and (b) on a 6-hour heartbeat for the rare
+    // device that stays unlocked all night.
+    const [dayKey, setDayKey] = useState(() => {
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
+    useEffect(() => {
+        const maybeRoll = () => {
+            const d = new Date();
+            const next = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            setDayKey(prev => prev === next ? prev : next);
+        };
+        const onVis = () => { if (document.visibilityState === 'visible') maybeRoll(); };
+        document.addEventListener('visibilitychange', onVis);
+        const interval = setInterval(maybeRoll, 6 * 60 * 60 * 1000);
+        return () => {
+            document.removeEventListener('visibilitychange', onVis);
+            clearInterval(interval);
+        };
+    }, []);
     useEffect(() => {
         const today = new Date();
         const cutoff = new Date(today);
@@ -80,10 +107,7 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
             setShifts14(list);
         }, (err) => console.warn('shifts snapshot failed:', err));
         return () => unsub();
-    // No deps — the date window is computed inside; we let it stay live.
-    // If precise date rollover matters, the page-load + force-refresh
-    // listener already covers the daily case for closed-app users.
-    }, []);
+    }, [dayKey]);
 
     // time_off — full collection, but date-bounded by filtering downstream.
     // TODO: tighten with where('endDate', '>=', sixMonthsAgo) once we

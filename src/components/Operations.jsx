@@ -1223,8 +1223,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             };
 
             useEffect(() => {
-                // Load checklist data (new system)
-                const unsubChecklist = onSnapshot(doc(db, "ops", "checklists2_" + storeLocation), async (docSnap) => {
+                // Load checklist data (new system).
+                // FIX (2026-05-14): subscribe with includeMetadataChanges +
+                // hasPendingWrites guard, same pattern as the inventory
+                // listener below. Without it, two devices editing
+                // checklist state in the same tick could echo each
+                // other's local writes back as if they were remote
+                // updates and stomp the other side's input.
+                const unsubChecklist = onSnapshot(doc(db, "ops", "checklists2_" + storeLocation), { includeMetadataChanges: true }, async (docSnap) => {
+                    if (docSnap.metadata.hasPendingWrites) return;
                     if (docSnap.exists()) {
                         const data = docSnap.data();
                         const todayKey = getTodayKey();
@@ -1457,12 +1464,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (!tsMs) return false;
                     return Date.now() - tsMs > 30 * 1000;
                 };
+                // FIX (2026-05-14): track setTimeout ids so we can clear
+                // them on effect teardown. Without this, a scrape that
+                // completes JUST as the user navigates away from
+                // Operations leaves a pending setTimeout that calls
+                // setter(null) after unmount → "setState on unmounted
+                // component" warning + wasted work.
+                const pendingTimeouts = new Set();
+                const scheduleClear = (setter, ms) => {
+                    const id = setTimeout(() => {
+                        pendingTimeouts.delete(id);
+                        setter(null);
+                    }, ms);
+                    pendingTimeouts.add(id);
+                };
                 const applyTriggerSnapshot = (data, setter) => {
                     if ((data.status === "running" || data.status === "pending") && isTriggerStale(data)) { setter(null); return; }
                     if ((data.status === "done" || data.status === "error") && isCompletionStale(data)) { setter(null); return; }
                     if (data.status === "running") setter("running");
-                    else if (data.status === "done") { setter("done"); setTimeout(() => setter(null), 4000); }
-                    else if (data.status === "error") { setter("error"); setTimeout(() => setter(null), 5000); }
+                    else if (data.status === "done") { setter("done"); scheduleClear(setter, 4000); }
+                    else if (data.status === "error") { setter("error"); scheduleClear(setter, 5000); }
                     else if (data.status === "pending") setter("requesting");
                     else if (!data.trigger) setter(null);
                 };
@@ -1489,6 +1510,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return () => {
                     unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus();
                     unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus();
+                    pendingTimeouts.forEach(id => clearTimeout(id));
+                    pendingTimeouts.clear();
                 };
             }, []);
 

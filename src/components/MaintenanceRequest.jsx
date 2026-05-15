@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { db, storage } from '../firebase';
 import { doc, collection, query, orderBy, limit, onSnapshot, setDoc, deleteDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { t } from '../data/translations';
 import { toast } from '../toast';
 
@@ -61,12 +61,21 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
             const handleSubmit = async () => {
                 if (!description.trim() || !location) return;
                 setSubmitting(true);
+                // FIX (2026-05-14): orphan-photo cleanup. If the Firestore
+                // addDoc throws AFTER the Storage upload succeeded, the
+                // file persists forever with no DB reference — same
+                // class of bug fixed earlier in Operations.jsx photo
+                // capture. Track the photoRef so we can delete it on
+                // failure.
+                let photoRef = null;
+                let photoUploaded = false;
                 try {
                     let photoUrl = null;
                     if (photoFile) {
                         const photoPath = "maintenance-photos/" + Date.now() + "_" + photoFile.name;
-                        const photoRef = ref(storage, photoPath);
+                        photoRef = ref(storage, photoPath);
                         await uploadBytes(photoRef, photoFile);
+                        photoUploaded = true;
                         photoUrl = await getDownloadURL(photoRef);
                     }
                     const now = new Date();
@@ -92,6 +101,12 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                     setTimeout(() => setSubmitted(false), 3000);
                 } catch (err) {
                     console.error("Error submitting request:", err);
+                    // Clean up the orphaned photo if the Firestore write
+                    // failed after the upload succeeded.
+                    if (photoUploaded && photoRef) {
+                        try { await deleteObject(photoRef); }
+                        catch (cleanupErr) { console.warn("Maintenance photo orphan cleanup failed:", cleanupErr); }
+                    }
                     toast(language === "es" ? "Error al enviar solicitud" : "Error submitting request");
                 }
                 setSubmitting(false);
