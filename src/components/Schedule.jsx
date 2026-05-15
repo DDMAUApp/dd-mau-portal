@@ -524,13 +524,32 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // ── Weather forecast (NWS API, free, no key) ──
     // Two-step: lat/lng → grid point → forecast. Stored per location-coord.
     // We only need the next 7 daily periods for scheduling decisions.
+    //
+    // FIX (review 2026-05-14, perf): localStorage cache with 1-hour TTL.
+    // Schedule re-mounts (tab switch, location flip, deploy) used to
+    // fire two fresh api.weather.gov requests every time — wasteful on
+    // both ends and noticeable on slow networks. NWS data has hourly
+    // granularity anyway, so anything fresher than an hour is wasted.
     useEffect(() => {
         const COORDS = {
             webster:  { lat: 38.5917, lng: -90.3389, label: 'Webster Groves' },
             maryland: { lat: 38.7138, lng: -90.4391, label: 'Maryland Heights' },
         };
         const c = COORDS[storeLocation] || COORDS.webster;
+        const CACHE_KEY = `ddmau:weather:${storeLocation}`;
+        const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
         let cancelled = false;
+        // Try cache first — instant render, no flash of empty state.
+        try {
+            const raw = localStorage.getItem(CACHE_KEY);
+            if (raw) {
+                const cached = JSON.parse(raw);
+                if (cached && cached.savedAt && (Date.now() - cached.savedAt) < CACHE_TTL_MS) {
+                    setWeather({ location: cached.location, periods: cached.periods || [] });
+                    return; // cache fresh — skip the network call entirely
+                }
+            }
+        } catch { /* fall through to fetch */ }
         (async () => {
             try {
                 // Step 1: lat/lng → forecast URL.
@@ -548,10 +567,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 if (!fcRes.ok) return;
                 const fcData = await fcRes.json();
                 if (cancelled) return;
-                setWeather({
-                    location: c.label,
-                    periods: (fcData?.properties?.periods || []).slice(0, 14),
-                });
+                const periods = (fcData?.properties?.periods || []).slice(0, 14);
+                setWeather({ location: c.label, periods });
+                try {
+                    localStorage.setItem(CACHE_KEY, JSON.stringify({
+                        location: c.label, periods, savedAt: Date.now(),
+                    }));
+                } catch { /* storage full or disabled — non-fatal */ }
             } catch (e) {
                 console.warn('Weather fetch failed (non-fatal):', e?.message || e);
             }

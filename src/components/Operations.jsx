@@ -1411,97 +1411,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
-                // Live vendor prices (from scrapers)
-                const unsubSyscoPrices = onSnapshot(doc(db, "vendor_prices", "sysco"), (docSnap) => {
-                    if (docSnap.exists()) {
-                        setLivePrices(prev => ({ ...prev, sysco: docSnap.data() }));
-                    }
-                });
-
-                // Helper: determine if a trigger doc is "stale" (a previous scrape
-                // crashed or got killed mid-run, leaving status="running"/"pending"
-                // forever and locking the refresh button). 10-min ceiling matches
-                // the longest reasonable scrape time + buffer. Without this guard,
-                // a single crashed scrape jams the button until someone manually
-                // edits Firestore.
-                const TRIGGER_STALE_MS = 10 * 60 * 1000;
-                const isTriggerStale = (data) => {
-                    const ts = data.startedAt || data.requestedAt;
-                    if (!ts) return false;
-                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
-                    if (!tsMs) return false;
-                    return Date.now() - tsMs > TRIGGER_STALE_MS;
-                };
-                const isCompletionStale = (data) => {
-                    const ts = data.completedAt;
-                    if (!ts) return false;
-                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
-                    if (!tsMs) return false;
-                    // Completion banners only show for 30s — past that, an old
-                    // "done" or "error" state is just historical noise on page load.
-                    return Date.now() - tsMs > 30 * 1000;
-                };
-                const applyTriggerSnapshot = (data, setter) => {
-                    // Stale running/pending → treat as null so user can re-trigger.
-                    if ((data.status === "running" || data.status === "pending") && isTriggerStale(data)) {
-                        setter(null);
-                        return;
-                    }
-                    // Old done/error from a prior session → don't flash the banner.
-                    if ((data.status === "done" || data.status === "error") && isCompletionStale(data)) {
-                        setter(null);
-                        return;
-                    }
-                    if (data.status === "running") {
-                        setter("running");
-                    } else if (data.status === "done") {
-                        setter("done");
-                        setTimeout(() => setter(null), 4000);
-                    } else if (data.status === "error") {
-                        setter("error");
-                        setTimeout(() => setter(null), 5000);
-                    } else if (data.status === "pending") {
-                        setter("requesting");
-                    } else if (!data.trigger) {
-                        setter(null);
-                    }
-                };
-
-                // Listen for Sysco scrape trigger status updates
-                const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
-                    if (docSnap.exists()) {
-                        applyTriggerSnapshot(docSnap.data(), setSyscoTriggerStatus);
-                    }
-                });
-
-                // Listen for Sysco scrape health status (login_failed, no_prices, etc.)
-                const unsubSyscoStatus = onSnapshot(doc(db, "vendor_prices", "sysco_status"), (docSnap) => {
-                    if (docSnap.exists()) {
-                        setSyscoScrapeStatus(docSnap.data());
-                    }
-                });
-
-                // US Foods live prices
-                const unsubUsfoodsPrices = onSnapshot(doc(db, "vendor_prices", "usfoods"), (docSnap) => {
-                    if (docSnap.exists()) {
-                        setLivePrices(prev => ({ ...prev, usfoods: docSnap.data() }));
-                    }
-                });
-
-                // US Foods trigger status
-                const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
-                    if (docSnap.exists()) {
-                        applyTriggerSnapshot(docSnap.data(), setUsfoodsTriggerStatus);
-                    }
-                });
-
-                // US Foods scrape health status
-                const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
-                    if (docSnap.exists()) {
-                        setUsfoodsScrapeStatus(docSnap.data());
-                    }
-                });
-
                 // Inventory audit log — last 50 changes for this location.
                 // Drives the expandable "Recent changes" panel below the
                 // Save & Reset button. Server-side timestamp orders writes
@@ -1517,8 +1426,71 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     setInventoryAudits(rows);
                 }, (err) => console.warn('inventory audits subscribe failed', err));
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus(); unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus(); unsubInvAudits(); };
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubInvAudits(); };
             }, [storeLocation]);
+
+            // ── Vendor-price subscriptions (GLOBAL, not per-location) ──
+            // FIX (review 2026-05-14, perf): these 6 subscriptions used to live
+            // inside the location-keyed useEffect above. The docs at
+            // `vendor_prices/*` are the same regardless of which store the
+            // admin is currently viewing — but the old code tore them down +
+            // remounted them on every Webster ↔ Maryland toggle. Splitting
+            // them into their own `[]`-deps effect means a location switch
+            // only churns the 5 listeners that actually need to change.
+            useEffect(() => {
+                // Helper: determine if a trigger doc is "stale" (a previous scrape
+                // crashed or got killed mid-run, leaving status="running"/"pending"
+                // forever and locking the refresh button). 10-min ceiling matches
+                // the longest reasonable scrape time + buffer.
+                const TRIGGER_STALE_MS = 10 * 60 * 1000;
+                const isTriggerStale = (data) => {
+                    const ts = data.startedAt || data.requestedAt;
+                    if (!ts) return false;
+                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
+                    if (!tsMs) return false;
+                    return Date.now() - tsMs > TRIGGER_STALE_MS;
+                };
+                const isCompletionStale = (data) => {
+                    const ts = data.completedAt;
+                    if (!ts) return false;
+                    const tsMs = typeof ts === "string" ? Date.parse(ts) : 0;
+                    if (!tsMs) return false;
+                    return Date.now() - tsMs > 30 * 1000;
+                };
+                const applyTriggerSnapshot = (data, setter) => {
+                    if ((data.status === "running" || data.status === "pending") && isTriggerStale(data)) { setter(null); return; }
+                    if ((data.status === "done" || data.status === "error") && isCompletionStale(data)) { setter(null); return; }
+                    if (data.status === "running") setter("running");
+                    else if (data.status === "done") { setter("done"); setTimeout(() => setter(null), 4000); }
+                    else if (data.status === "error") { setter("error"); setTimeout(() => setter(null), 5000); }
+                    else if (data.status === "pending") setter("requesting");
+                    else if (!data.trigger) setter(null);
+                };
+
+                const unsubSyscoPrices = onSnapshot(doc(db, "vendor_prices", "sysco"), (docSnap) => {
+                    if (docSnap.exists()) setLivePrices(prev => ({ ...prev, sysco: docSnap.data() }));
+                });
+                const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
+                    if (docSnap.exists()) applyTriggerSnapshot(docSnap.data(), setSyscoTriggerStatus);
+                });
+                const unsubSyscoStatus = onSnapshot(doc(db, "vendor_prices", "sysco_status"), (docSnap) => {
+                    if (docSnap.exists()) setSyscoScrapeStatus(docSnap.data());
+                });
+                const unsubUsfoodsPrices = onSnapshot(doc(db, "vendor_prices", "usfoods"), (docSnap) => {
+                    if (docSnap.exists()) setLivePrices(prev => ({ ...prev, usfoods: docSnap.data() }));
+                });
+                const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
+                    if (docSnap.exists()) applyTriggerSnapshot(docSnap.data(), setUsfoodsTriggerStatus);
+                });
+                const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
+                    if (docSnap.exists()) setUsfoodsScrapeStatus(docSnap.data());
+                });
+
+                return () => {
+                    unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus();
+                    unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus();
+                };
+            }, []);
 
             // Midnight auto-reset: check every 60s if the business-day date has changed.
             // All mutable state read here goes through refs so the interval is installed once
