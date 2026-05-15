@@ -11,6 +11,32 @@
 // questionEn/Es, options[{id,textEn,textEs}], and correct id. Two consecutive
 // failed attempts lock the module — manager must clear the lock from the
 // admin panel before the staff can retry.
+//
+// ── HOW TO EDIT LESSON CONTENT ─────────────────────────────────────────
+// This file is the DEPLOYED DEFAULT. At runtime TrainingHub.jsx layers
+// per-lesson overrides from Firestore (/config/training_overrides) on
+// top of these arrays via applyLessonOverride(). Admins edit lessons
+// in the app — there's a ✏️ Edit button on every lesson visible to
+// isAdmin() users that writes to that doc, and the change propagates
+// to every device in ~1 second.
+//
+// DO edit this file for: structural changes (new modules, new lessons,
+// quiz question lists, fields like `tier`/`track`/`durationMin`,
+// allergen-matrix data tables). Anything not covered by the in-app
+// editor lives here.
+//
+// DON'T edit this file for: typo fixes, wording polish, or any
+// in-the-moment text tweak. Use the in-app Edit button — it survives
+// a redeploy of this file (override still applies on top of new baseline)
+// and doesn't require waiting on GitHub Pages.
+//
+// HISTORICAL NOTE: an earlier round-trip workflow (scripts/export-
+// training.mjs + scripts/import-training.mjs + TRAINING_EDIT.md) was
+// retired in 2026-05-15 because it competed with the in-app overrides.
+// A stale markdown import would silently clobber the baseline this
+// file represents, and the export script didn't know about Firestore
+// overrides — so the round-trip created a foot-gun pair. The in-app
+// Edit button is now the only sanctioned text-edit path.
 
 export const MODULES = [
     {
