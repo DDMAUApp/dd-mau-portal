@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { toast } from '../toast';
+import { escapeHtml as esc } from '../data/htmlEscape';
 
 export default function InventoryHistory({ language, customInventory: customInventoryProp, storeLocation }) {
             const [historyDates, setHistoryDates] = useState([]);
@@ -230,33 +231,38 @@ export default function InventoryHistory({ language, customInventory: customInve
                         @media print { body { padding: 10px; } h1 { font-size: 16px; } .no-print { display: none !important; } }
                     </style></head><body>`;
                 html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
-                html += `<h1>🍜 DD Mau — ${titleName}</h1>`;
-                html += `<div class="subtitle">${dateLabel} • ${language === "es" ? "Última actualización" : "Last updated"}: ${new Date(dayData.date).toLocaleString()}</div>`;
+                html += `<h1>🍜 DD Mau — ${esc(titleName)}</h1>`;
+                html += `<div class="subtitle">${esc(dateLabel)} • ${language === "es" ? "Última actualización" : "Last updated"}: ${esc(new Date(dayData.date).toLocaleString())}</div>`;
 
+                // FIX (review 2026-05-14, real): escape every item/category/
+                // vendor name before interpolating into the print HTML.
+                // Staff create custom items + categories so these are
+                // attacker-controlled. Numeric `count` fields are passed
+                // through directly — they're numbers, not strings.
                 if (vendors.length > 0) {
                     // Print grouped by vendor (matching Operations print style)
                     vendors.forEach(v => {
                         const items = vendorGroups[v].sort((a, b) => a.name.localeCompare(b.name));
-                        html += `<div class="vendor-header">${v} (${items.length} items)</div>`;
+                        html += `<div class="vendor-header">${esc(v)} (${items.length} items)</div>`;
                         html += `<table><tr><th>Item</th><th style="width:50px">Qty</th><th>Pack</th><th style="width:30px">✓</th></tr>`;
                         items.forEach(item => {
                             const name = language === "es" && item.nameEs ? item.nameEs : item.name;
                             const isOrdered = ordered[item.id];
-                            html += `<tr><td class="${isOrdered ? 'ordered' : ''}">${name} <span class="cat-label">${item.categoryName || ""}</span></td><td class="count">${item.count}</td><td class="pack">${item.pack || ""}</td><td>${isOrdered ? '<span class="check">✓</span>' : '☐'}</td></tr>`;
+                            html += `<tr><td class="${isOrdered ? 'ordered' : ''}">${esc(name)} <span class="cat-label">${esc(item.categoryName || "")}</span></td><td class="count">${item.count}</td><td class="pack">${esc(item.pack || "")}</td><td>${isOrdered ? '<span class="check">✓</span>' : '☐'}</td></tr>`;
                         });
                         html += `</table>`;
                     });
                 } else {
                     // Fallback: print by category if nothing counted
                     dayData.items.forEach(cat => {
-                        html += `<table><tr><th colspan="4">${cat.category}</th></tr>`;
+                        html += `<table><tr><th colspan="4">${esc(cat.category)}</th></tr>`;
                         cat.items.forEach(item => {
                             const count = dayData.counts?.[item.id] || 0;
                             const name = language === "es" && item.nameEs ? item.nameEs : item.name;
                             const vendorStr = getItemVendor(item);
-                            const vendorLabel = vendorStr ? ` <span class="cat-label">(${vendorStr})</span>` : "";
+                            const vendorLabel = vendorStr ? ` <span class="cat-label">(${esc(vendorStr)})</span>` : "";
                             const isOrdered = ordered[item.id];
-                            html += `<tr><td style="width:30px">${isOrdered ? '<span class="check">✓</span>' : '☐'}</td><td class="${isOrdered ? 'ordered' : ''}">${name}${vendorLabel}</td><td class="count">${count}</td><td class="pack">${item.pack || ""}</td></tr>`;
+                            html += `<tr><td style="width:30px">${isOrdered ? '<span class="check">✓</span>' : '☐'}</td><td class="${isOrdered ? 'ordered' : ''}">${esc(name)}${vendorLabel}</td><td class="count">${count}</td><td class="pack">${esc(item.pack || "")}</td></tr>`;
                         });
                         html += `</table>`;
                     });

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
+import { escapeHtml as esc } from '../data/htmlEscape';
 
 export default function ToastOrders({ language }) {
     const [orders, setOrders] = useState([]);
@@ -120,18 +121,23 @@ export default function ToastOrders({ language }) {
             ? new Date(ord.promisedDate).toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })
             : "";
 
+        // FIX (review 2026-05-14, real): every interpolated string (item
+        // names, modifiers, customer name, address, notes, server name,
+        // status) is escaped via esc() — Toast's API returns these as
+        // free-text strings, and customer-supplied fields like address /
+        // notes are clearly attacker-controllable.
         const itemRows = (ord.items || []).map(item => {
             const modsHtml = item.modifiers && item.modifiers.length > 0
-                ? item.modifiers.map(m => `<div style="padding-left:4px;color:#555;font-size:12px;">${m}</div>`).join("")
+                ? item.modifiers.map(m => `<div style="padding-left:4px;color:#555;font-size:12px;">${esc(m)}</div>`).join("")
                 : "";
             return `<tr style="border-bottom:1px solid #e5e5e5;">
-                <td style="padding:8px 4px;text-align:center;vertical-align:top;width:40px;font-weight:600;">${item.qty}</td>
-                <td style="padding:8px 4px;font-weight:600;vertical-align:top;">${item.name}</td>
+                <td style="padding:8px 4px;text-align:center;vertical-align:top;width:40px;font-weight:600;">${esc(item.qty)}</td>
+                <td style="padding:8px 4px;font-weight:600;vertical-align:top;">${esc(item.name)}</td>
                 <td style="padding:8px 4px;vertical-align:top;font-size:13px;">${modsHtml}</td>
             </tr>`;
         }).join("");
 
-        const html = `<!DOCTYPE html><html><head><title>Order #${ord.orderNumber || ""}</title>
+        const html = `<!DOCTYPE html><html><head><title>Order #${esc(ord.orderNumber || "")}</title>
         <style>
             body { font-family: Arial, Helvetica, sans-serif; max-width:700px; margin:0 auto; padding:30px 40px; color:#222; font-size:14px; }
             .no-print { position:sticky;top:0;z-index:1000;background:#255a37;padding:10px;text-align:center;box-shadow:0 2px 8px rgba(0,0,0,.3) }
@@ -148,24 +154,24 @@ export default function ToastOrders({ language }) {
             <td style="vertical-align:top;width:50%;">
                 <div style="font-size:20px;font-weight:bold;color:#333;margin-bottom:2px;">DD Mau</div>
                 <div style="font-size:11px;color:#888;margin-bottom:12px;">Vietnamese Eatery</div>
-                <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${locName}</div>
-                <div style="font-size:13px;color:#444;line-height:1.5;">${locAddr}</div>
+                <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${esc(locName)}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${esc(locAddr)}</div>
             </td>
             <td style="vertical-align:top;text-align:right;">
                 <div style="font-size:22px;font-weight:bold;margin-bottom:10px;">Order</div>
                 <table style="margin-left:auto;font-size:13px;">
-                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Order #</td><td>${ord.orderNumber || ""}</td></tr>
-                    ${ord.orderType ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Type</td><td>${ord.orderType}</td></tr>` : ""}
-                    ${timeStr ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Placed</td><td>${timeStr}</td></tr>` : ""}
-                    ${ord.status ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Status</td><td>${ord.status}</td></tr>` : ""}
-                    ${ord.serverName ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Server</td><td>${ord.serverName}</td></tr>` : ""}
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Order #</td><td>${esc(ord.orderNumber || "")}</td></tr>
+                    ${ord.orderType ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Type</td><td>${esc(ord.orderType)}</td></tr>` : ""}
+                    ${timeStr ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Placed</td><td>${esc(timeStr)}</td></tr>` : ""}
+                    ${ord.status ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Status</td><td>${esc(ord.status)}</td></tr>` : ""}
+                    ${ord.serverName ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Server</td><td>${esc(ord.serverName)}</td></tr>` : ""}
                 </table>
             </td>
         </tr></table>
 
-        ${ord.customerName ? `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:4px;">Customer</div><div style="font-size:13px;">${ord.customerName}</div>${ord.phone ? `<div style="font-size:13px;color:#444;">${ord.phone}</div>` : ""}</div>` : ""}
-        ${promisedStr ? `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:4px;">${ord.address ? "Delivery Time" : "Pickup Time"}</div><div style="font-size:13px;">${promisedStr}</div></div>` : ""}
-        ${ord.address ? `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:4px;">Delivery Address</div><div style="font-size:13px;">${ord.address}</div></div>` : ""}
+        ${ord.customerName ? `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:4px;">Customer</div><div style="font-size:13px;">${esc(ord.customerName)}</div>${ord.phone ? `<div style="font-size:13px;color:#444;">${esc(ord.phone)}</div>` : ""}</div>` : ""}
+        ${promisedStr ? `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:4px;">${ord.address ? "Delivery Time" : "Pickup Time"}</div><div style="font-size:13px;">${esc(promisedStr)}</div></div>` : ""}
+        ${ord.address ? `<div style="margin-bottom:16px;"><div style="font-weight:bold;margin-bottom:4px;">Delivery Address</div><div style="font-size:13px;">${esc(ord.address)}</div></div>` : ""}
 
         <div style="font-size:18px;font-weight:bold;margin-bottom:8px;">Order</div>
         <table style="width:100%;border-collapse:collapse;">
@@ -177,7 +183,7 @@ export default function ToastOrders({ language }) {
             <tbody>${itemRows}</tbody>
         </table>
 
-        ${ord.specialInstructions ? `<div style="margin-top:16px;padding:8px;background:#f5f5f5;border-radius:4px;font-size:13px;"><strong>Notes:</strong> ${ord.specialInstructions}</div>` : ""}
+        ${ord.specialInstructions ? `<div style="margin-top:16px;padding:8px;background:#f5f5f5;border-radius:4px;font-size:13px;"><strong>Notes:</strong> ${esc(ord.specialInstructions)}</div>` : ""}
         <div style="margin-top:30px;font-size:11px;color:#bbb;border-top:1px solid #ddd;padding-top:10px;">Printed from DD Mau Staff Portal</div>
         </body></html>`;
 

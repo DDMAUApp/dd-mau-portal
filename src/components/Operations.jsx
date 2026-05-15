@@ -5,6 +5,7 @@ import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { escapeHtml as escH } from '../data/htmlEscape';
 // Lazy-loaded sub-views — these are 500-1000+ line components that only
 // render when their specific sub-tab is active. Eager-importing them
 // added ~70KB gzip to the Operations chunk that wasn't needed for the
@@ -6288,9 +6289,13 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 if (assigned.length === 0) return null;
                                 return (
                                     <button onClick={() => {
+                                        // FIX (review 2026-05-14, real): escape staff/position names
+                                        // before interpolating into the print HTML. `today` comes from
+                                        // Date.toLocaleDateString so it's safe, but person names and
+                                        // wave-cover names are admin-editable strings.
                                         const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" });
                                         const staffMap = getStaffPositionMap();
-                                        let html = `<html><head><title>Break Plan - ${today}</title><style>
+                                        let html = `<html><head><title>Break Plan - ${escH(today)}</title><style>
                                             * { margin: 0; padding: 0; box-sizing: border-box; }
                                             body { font-family: Arial, sans-serif; padding: 20px; max-width: 700px; margin: 0 auto; }
                                             h1 { font-size: 22px; text-align: center; margin-bottom: 2px; }
@@ -6317,13 +6322,13 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             @media print { body { padding: 10px; } .no-print { display: none !important; } }
                                         </style></head><body>`;
                                         html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
-                                        html += `<h1>\u{1F35C} DD Mau Break Plan</h1><div class="date">${today}</div>`;
+                                        html += `<h1>\u{1F35C} DD Mau Break Plan</h1><div class="date">${escH(today)}</div>`;
 
                                         // Stations
                                         html += `<div class="section"><div class="section-header">\u{1F4CB} Today's Stations</div><div class="station-grid">`;
                                         ALL_POSITIONS.forEach(pos => {
                                             const person = breakPlan.stations?.[pos.id] || "\u{2014}";
-                                            html += `<div class="station"><div class="station-name">${pos.emoji} ${pos.nameEn}</div><div class="station-person">${person}</div></div>`;
+                                            html += `<div class="station"><div class="station-name">${pos.emoji} ${escH(pos.nameEn)}</div><div class="station-person">${escH(person)}</div></div>`;
                                         });
                                         html += `</div></div>`;
 
@@ -6332,15 +6337,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             const breakers = getWaveBreakers(wave.id);
                                             const available = getAvailableCovers(wave.id);
                                             const needCover = getPositionsNeedingCover(wave.id);
-                                            html += `<div class="section"><div class="wave-header">${wave.nameEn}</div><div class="wave-body">`;
+                                            html += `<div class="section"><div class="wave-header">${escH(wave.nameEn)}</div><div class="wave-body">`;
                                             if (breakers.length > 0) {
-                                                html += `<div style="margin-bottom:6px"><span class="breakers">On break: ${breakers.map(n => n.split(" ")[0]).join(", ")}</span></div>`;
+                                                html += `<div style="margin-bottom:6px"><span class="breakers">On break: ${escH(breakers.map(n => n.split(" ")[0]).join(", "))}</span></div>`;
                                                 needCover.forEach(nc => {
                                                     const coverName = nc.cover ? nc.cover.split(" ")[0] : "\u{26A0}\u{FE0F} UNCOVERED";
-                                                    html += `<div class="wave-row"><span>${nc.pos.emoji} ${nc.pos.nameEn} <span class="cover-label">(${nc.person.split(" ")[0]} on break)</span></span><span class="cover-name">\u{2192} ${coverName}</span></div>`;
+                                                    html += `<div class="wave-row"><span>${nc.pos.emoji} ${escH(nc.pos.nameEn)} <span class="cover-label">(${escH(nc.person.split(" ")[0])} on break)</span></span><span class="cover-name">\u{2192} ${escH(coverName)}</span></div>`;
                                                 });
                                                 if (available.length > 0) {
-                                                    html += `<div class="working">Still working: ${available.map(n => { const positions = (staffMap[n] || []).map(p => p.emoji).join(""); return positions + " " + n.split(" ")[0]; }).join(", ")}</div>`;
+                                                    html += `<div class="working">Still working: ${escH(available.map(n => { const positions = (staffMap[n] || []).map(p => p.emoji).join(""); return positions + " " + n.split(" ")[0]; }).join(", "))}</div>`;
                                                 }
                                             } else {
                                                 html += `<div style="color:#999;font-size:13px">No breaks assigned</div>`;

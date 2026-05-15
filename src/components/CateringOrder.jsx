@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, collection, query, orderBy, limit, addDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
+import { escapeHtml as esc } from '../data/htmlEscape';
 import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
 import { toast } from '../toast';
@@ -618,9 +619,16 @@ export default function CateringOrder({ language, staffName }) {
                 setStep(3);
             };
             const buildInvoiceHTML = (o) => {
+                // FIX (review 2026-05-14, real): every customer/staff-controlled
+                // string is escaped via esc() before being interpolated into
+                // this HTML template. Without it, a customer name containing
+                // an <img onerror=…> would execute script in the print
+                // window, which holds window.opener back to the authenticated
+                // portal. Numeric fields (qty, price, total) are passed
+                // through .toFixed() so they aren't user-controlled strings.
                 const c = o.customer || {};
                 const itemsHTML = (o.items || []).map((item, i) => {
-                    let details = item.isCustom ? "Custom Item" : item.size;
+                    let details = item.isCustom ? "Custom Item" : (item.size || "");
                     if (item.type) details += ' | Type: ' + item.type;
                     if (item.proteins && item.proteins.length) details += ' | Proteins: ' + item.proteins.join(', ');
                     if (item.sauces && item.sauces.length) details += ' | Sauces: ' + item.sauces.join(', ');
@@ -635,13 +643,13 @@ export default function CateringOrder({ language, staffName }) {
                     if (item.itemNote) details += ' | Note: ' + item.itemNote;
                     return `<tr>
                         <td style="padding:8px 6px;border-bottom:1px solid #ddd;font-weight:bold;vertical-align:top">${i+1}</td>
-                        <td style="padding:8px 6px;border-bottom:1px solid #ddd"><strong>${item.nameEn || item.name}</strong><br><span style="color:#555;font-size:12px">${details}</span></td>
-                        <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:center;font-weight:bold">${item.qty}</td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd"><strong>${esc(item.nameEn || item.name)}</strong><br><span style="color:#555;font-size:12px">${esc(details)}</span></td>
+                        <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:center;font-weight:bold">${esc(item.qty)}</td>
                         <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:right">$${item.price?.toFixed(2)}</td>
                         <td style="padding:8px 6px;border-bottom:1px solid #ddd;text-align:right;font-weight:bold">$${(item.price * item.qty)?.toFixed(2)}</td>
                     </tr>`;
                 }).join('');
-                return `<!DOCTYPE html><html><head><title>DD Mau Catering - ${c.name}</title>
+                return `<!DOCTYPE html><html><head><title>DD Mau Catering - ${esc(c.name)}</title>
                 <meta name="viewport" content="width=device-width, initial-scale=1">
                 <style>
                     *{box-sizing:border-box}
@@ -676,23 +684,23 @@ export default function CateringOrder({ language, staffName }) {
                         <h1>DD Mau Vietnamese Eatery</h1>
                         <p>Catering Order Invoice</p>
                     </div>
-                    <div class="order-num">ORDER #${o.id?.slice(-6).toUpperCase() || "------"}</div>
+                    <div class="order-num">ORDER #${esc(o.id?.slice(-6).toUpperCase() || "------")}</div>
                     <div class="info-grid">
                         <div class="info-box">
                             <h3>Customer</h3>
-                            <p><strong>${c.name}</strong></p>
-                            <p>Phone: ${c.phone}</p>
-                            <p>Email: ${c.email}</p>
+                            <p><strong>${esc(c.name)}</strong></p>
+                            <p>Phone: ${esc(c.phone)}</p>
+                            <p>Email: ${esc(c.email)}</p>
                         </div>
                         <div class="info-box">
                             <h3>Event Details</h3>
-                            <p>Date: ${c.date} @ ${c.time}</p>
-                            <p>Guests: ${c.guests}</p>
+                            <p>Date: ${esc(c.date)} @ ${esc(c.time)}</p>
+                            <p>Guests: ${esc(c.guests)}</p>
                             <p>Store: ${c.pickupLocation === "maryland" ? "Maryland Heights" : "Webster"}</p>
-                            <p>${c.orderType === "delivery" ? "Delivery: " + (c.address || "TBD") : "Pickup"}</p>
+                            <p>${c.orderType === "delivery" ? "Delivery: " + esc(c.address || "TBD") : "Pickup"}</p>
                         </div>
                     </div>
-                    ${o.specialNotes ? '<div class="notes"><strong>Special Notes:</strong> ' + o.specialNotes + '</div>' : ''}
+                    ${o.specialNotes ? '<div class="notes"><strong>Special Notes:</strong> ' + esc(o.specialNotes) + '</div>' : ''}
                     <table>
                         <thead><tr><th>#</th><th>Item</th><th>Qty</th><th style="text-align:right">Price</th><th style="text-align:right">Total</th></tr></thead>
                         <tbody>${itemsHTML}</tbody>
@@ -705,8 +713,8 @@ export default function CateringOrder({ language, staffName }) {
                         <div class="line total-line"><span>TOTAL:</span><span>$${o.total?.toFixed(2)}</span></div>
                     </div>
                     <div class="footer">
-                        <p>Taken by: ${o.takenBy || "Staff"} | ${o.createdAt ? new Date(o.createdAt).toLocaleString() : ""}</p>
-                        ${o.updatedAt && o.updatedAt !== o.createdAt ? '<p>Updated: ' + new Date(o.updatedAt).toLocaleString() + '</p>' : ''}
+                        <p>Taken by: ${esc(o.takenBy || "Staff")} | ${esc(o.createdAt ? new Date(o.createdAt).toLocaleString() : "")}</p>
+                        ${o.updatedAt && o.updatedAt !== o.createdAt ? '<p>Updated: ' + esc(new Date(o.updatedAt).toLocaleString()) + '</p>' : ''}
                         <p>DD Mau Vietnamese Eatery — ddmaustl.com</p>
                     </div>
                 </div>

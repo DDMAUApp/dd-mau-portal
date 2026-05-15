@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
+import { escapeHtml as esc } from '../data/htmlEscape';
 
 export default function ToastInvoices({ language }) {
     const [invoices, setInvoices] = useState([]);
@@ -31,18 +32,21 @@ export default function ToastInvoices({ language }) {
               + "<br>" + new Date(inv.promisedDate).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
             : "";
 
+        // FIX (review 2026-05-14, real): every interpolated string is
+        // escaped — same threat model as ToastOrders.jsx, see esc helper
+        // import + comment block on htmlEscape.js.
         const itemRows = (inv.items || []).map(item => {
             const modsHtml = item.modifiers && item.modifiers.length > 0
-                ? item.modifiers.map(m => `<div style="padding-left:4px;color:#555;font-size:12px;">${m}</div>`).join("")
+                ? item.modifiers.map(m => `<div style="padding-left:4px;color:#555;font-size:12px;">${esc(m)}</div>`).join("")
                 : "";
             return `<tr style="border-bottom:1px solid #e5e5e5;">
-                <td style="padding:8px 4px;text-align:center;vertical-align:top;width:40px;font-weight:600;">${item.qty}</td>
-                <td style="padding:8px 4px;font-weight:600;vertical-align:top;">${item.name}</td>
+                <td style="padding:8px 4px;text-align:center;vertical-align:top;width:40px;font-weight:600;">${esc(item.qty)}</td>
+                <td style="padding:8px 4px;font-weight:600;vertical-align:top;">${esc(item.name)}</td>
                 <td style="padding:8px 4px;vertical-align:top;font-size:13px;">${modsHtml}</td>
             </tr>`;
         }).join("");
 
-        const html = `<!DOCTYPE html><html><head><title>Invoice #${inv.invoiceNumber || ""}</title>
+        const html = `<!DOCTYPE html><html><head><title>Invoice #${esc(inv.invoiceNumber || "")}</title>
         <style>
             body { font-family: Arial, Helvetica, sans-serif; max-width:700px; margin:0 auto; padding:30px 40px; color:#222; font-size:14px; }
             .no-print { position:sticky; top:0; z-index:1000; background:#059669; padding:10px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,.3); }
@@ -61,16 +65,16 @@ export default function ToastInvoices({ language }) {
             <td style="vertical-align:top;width:50%;">
                 <div style="font-size:20px;font-weight:bold;color:#333;margin-bottom:2px;">DD Mau</div>
                 <div style="font-size:11px;color:#888;margin-bottom:12px;">Vietnamese Eatery</div>
-                <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${locName}</div>
-                <div style="font-size:13px;color:#444;line-height:1.5;">${locAddr}</div>
+                <div style="font-size:16px;font-weight:bold;margin-bottom:8px;">${esc(locName)}</div>
+                <div style="font-size:13px;color:#444;line-height:1.5;">${esc(locAddr)}</div>
             </td>
             <td style="vertical-align:top;text-align:right;">
                 <div style="font-size:22px;font-weight:bold;margin-bottom:10px;">Invoice</div>
                 <table style="margin-left:auto;font-size:13px;">
-                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Invoice Number</td><td>#${inv.invoiceNumber || ""}</td></tr>
-                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Invoice Date</td><td>${invoiceDate}</td></tr>
-                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Order Date</td><td>${orderDate}</td></tr>
-                    ${inv.status ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Status</td><td>${inv.status}</td></tr>` : ""}
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Invoice Number</td><td>#${esc(inv.invoiceNumber || "")}</td></tr>
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Invoice Date</td><td>${esc(invoiceDate)}</td></tr>
+                    <tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Order Date</td><td>${esc(orderDate)}</td></tr>
+                    ${inv.status ? `<tr><td style="text-align:right;font-weight:bold;padding:2px 10px;">Status</td><td>${esc(inv.status)}</td></tr>` : ""}
                 </table>
             </td>
         </tr></table>
@@ -79,21 +83,21 @@ export default function ToastInvoices({ language }) {
         <table style="width:100%;margin-bottom:20px;"><tr>
             <td style="vertical-align:top;width:50%;">
                 <div style="font-weight:bold;margin-bottom:4px;">Bill To</div>
-                ${inv.customerName ? `<div style="font-weight:bold;">${inv.customerName}</div>` : ""}
-                ${inv.email ? `<div style="font-size:13px;color:#444;">${inv.email}</div>` : ""}
-                ${inv.phone ? `<div style="font-size:13px;color:#444;">${inv.phone}</div>` : ""}
-                ${inv.companyName ? `<div style="font-size:13px;color:#444;">${inv.companyName}</div>` : ""}
+                ${inv.customerName ? `<div style="font-weight:bold;">${esc(inv.customerName)}</div>` : ""}
+                ${inv.email ? `<div style="font-size:13px;color:#444;">${esc(inv.email)}</div>` : ""}
+                ${inv.phone ? `<div style="font-size:13px;color:#444;">${esc(inv.phone)}</div>` : ""}
+                ${inv.companyName ? `<div style="font-size:13px;color:#444;">${esc(inv.companyName)}</div>` : ""}
             </td>
             <td style="vertical-align:top;">
                 ${pickupStr ? `<div style="font-weight:bold;margin-bottom:4px;">${inv.address ? "Delivery Time" : "Pickup Time"}</div>
-                <div style="font-size:13px;color:#444;line-height:1.5;">${pickupStr}</div>` : ""}
+                <div style="font-size:13px;color:#444;line-height:1.5;">${esc(pickupStr)}</div>` : ""}
             </td>
         </tr></table>
 
         <!-- Delivery address -->
         ${inv.address ? `<div style="margin-bottom:20px;">
             <div style="font-weight:bold;margin-bottom:4px;">Delivery Address</div>
-            <div style="font-size:13px;color:#444;">${inv.address}</div>
+            <div style="font-size:13px;color:#444;">${esc(inv.address)}</div>
         </div>` : ""}
 
         <!-- Order table -->

@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, setDoc, onSnapshot, query } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin } from '../data/staff';
 import { toast } from '../toast';
 
@@ -311,12 +312,18 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             @media print{.no-print{display:none !important} .day-header,.station{-webkit-print-color-adjust:exact;print-color-adjust:exact}}
         </style></head><body>`;
         html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
-        html += `<h1>DD Mau Weekly Prep List</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation}</div>`;
+        // FIX (review 2026-05-14, real): escape every user-controlled
+        // string (item names, station names, custom prep names) before
+        // interpolating into the print HTML. Without this, a staff
+        // member naming a custom prep item `<img onerror=…>` would
+        // execute script in a window with window.opener back to the
+        // authenticated portal.
+        html += `<h1>DD Mau Weekly Prep List</h1><div class="date">${esc(dateStr)} at ${esc(timeStr)} - ${esc(storeLocation)}</div>`;
         days.forEach((dayName, dayIdx) => {
             const dayItems = getItemsForDay(dayIdx).filter(item => doneItems[item.id]);
             const isToday = dayIdx === now.getDay();
             if (dayItems.length === 0) return;
-            html += `<div class="day-header" style="${isToday ? "background:#059669" : ""}">${dayName}${isToday ? " (TODAY)" : ""}<span class="count">${dayItems.length} items</span></div>`;
+            html += `<div class="day-header" style="${isToday ? "background:#059669" : ""}">${esc(dayName)}${isToday ? " (TODAY)" : ""}<span class="count">${dayItems.length} items</span></div>`;
             {
                 const byStation = {};
                 dayItems.forEach(item => {
@@ -325,10 +332,10 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                     byStation[key].push(item);
                 });
                 Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).forEach(([stName, items]) => {
-                    html += `<div class="station">${stName} (${items.length})</div>`;
+                    html += `<div class="station">${esc(stName)} (${items.length})</div>`;
                     html += `<table>`;
                     items.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => {
-                        html += `<tr><td>${item.name}</td><td class="unit">${item.unit || ""}</td><td style="width:30px"></td></tr>`;
+                        html += `<tr><td>${esc(item.name)}</td><td class="unit">${esc(item.unit || "")}</td><td style="width:30px"></td></tr>`;
                     });
                     html += `</table>`;
                 });
@@ -359,7 +366,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             if (!byStation[key]) byStation[key] = [];
             byStation[key].push(item);
         });
-        let html = `<html><head><title>DD Mau Prep Sheet - ${dayName}</title><style>
+        let html = `<html><head><title>DD Mau Prep Sheet - ${esc(dayName)}</title><style>
             body{font-family:Arial,sans-serif;max-width:800px;margin:0 auto;padding:20px;color:#333}
             h1{font-size:20px;color:#7c3aed;margin-bottom:4px}
             .date{font-size:12px;color:#888;margin-bottom:16px}
@@ -374,13 +381,16 @@ export default function PrepList({ language, staffName, storeLocation, staffList
             @media print{.no-print{display:none !important}}
         </style></head><body>`;
         html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){} setTimeout(function(){if(!window.closed){window.location.href='https://ddmauapp.github.io/dd-mau-portal/'}},300)">\u{2715} Close</button><button class="btn-print" onclick="window.print()">\u{1F5A8}\u{FE0F} Print</button></div>`;
-        html += `<h1>DD Mau Prep Sheet - ${dayName}</h1><div class="date">${dateStr} at ${timeStr} - ${storeLocation} - ${busyMode ? "BUSY" : "SLOW"} day</div>`;
+        // FIX (review 2026-05-14, real): escape every user-controlled
+        // string before interpolating into the print HTML. See printCart
+        // for the threat model.
+        html += `<h1>DD Mau Prep Sheet - ${esc(dayName)}</h1><div class="date">${esc(dateStr)} at ${esc(timeStr)} - ${esc(storeLocation)} - ${busyMode ? "BUSY" : "SLOW"} day</div>`;
         html += `<p style="font-size:13px;color:#555;margin-bottom:12px"><strong>${dayItems.length}</strong> items to prep</p>`;
         Object.entries(byStation).sort(([a],[b]) => a.localeCompare(b)).forEach(([stName, items]) => {
-            html += `<div class="station">${stName} (${items.length})</div>`;
+            html += `<div class="station">${esc(stName)} (${items.length})</div>`;
             html += `<table><tr><th>Item</th><th>Unit</th><th style="width:30px">\u2713</th></tr>`;
             items.sort((a, b) => a.name.localeCompare(b.name)).forEach(item => {
-                html += `<tr><td>${item.name}</td><td>${item.unit || ""}</td><td></td></tr>`;
+                html += `<tr><td>${esc(item.name)}</td><td>${esc(item.unit || "")}</td><td></td></tr>`;
             });
             html += `</table>`;
         });

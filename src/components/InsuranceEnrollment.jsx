@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { toast } from '../toast';
+import { escapeHtml as esc } from '../data/htmlEscape';
 
 export default function InsuranceEnrollment({ language, staffName, staffList }) {
   const [loading, setLoading] = useState(true);
@@ -283,11 +284,16 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
 
   // Print individual enrollment
   const printEnrollment = (enrollment) => {
+    // FIX (review 2026-05-14, real): EVERY field on a PII-bearing form
+    // gets escaped before interpolation. Legal name / address / phone /
+    // email / signature / dependent names are all self-reported by the
+    // hire, so they're untrusted strings; SSN-4 is numeric but escape
+    // anyway as defense-in-depth.
     const f = enrollment.formData || {};
     const deps = (f.dependents || []).map(d =>
-      `<tr><td>${d.name}</td><td>${d.relationship}</td><td>${d.dob}</td><td>***${d.ssn4}</td></tr>`
+      `<tr><td>${esc(d.name)}</td><td>${esc(d.relationship)}</td><td>${esc(d.dob)}</td><td>***${esc(d.ssn4)}</td></tr>`
     ).join("");
-    const html = `<!DOCTYPE html><html><head><title>Insurance Enrollment - ${enrollment.staffName}</title>
+    const html = `<!DOCTYPE html><html><head><title>Insurance Enrollment - ${esc(enrollment.staffName)}</title>
     <style>body{font-family:Arial,sans-serif;max-width:700px;margin:20px auto;font-size:14px}
     h1{color:#0d9488;font-size:20px;border-bottom:2px solid #0d9488;padding-bottom:8px}
     h2{font-size:14px;color:#555;margin-top:20px;text-transform:uppercase;letter-spacing:1px}
@@ -300,32 +306,32 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     .status{display:inline-block;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:bold}
     @media print{body{margin:0}}</style></head><body>
     <h1>DD Mau - Insurance Enrollment Form</h1>
-    <div class="row"><span class="label">Employee</span><span class="val">${enrollment.staffName}</span></div>
-    <div class="row"><span class="label">Status</span><span class="val">${enrollment.status}</span></div>
-    <div class="row"><span class="label">Submitted</span><span class="val">${enrollment.submittedAt ? new Date(enrollment.submittedAt).toLocaleDateString() : "—"}</span></div>
+    <div class="row"><span class="label">Employee</span><span class="val">${esc(enrollment.staffName)}</span></div>
+    <div class="row"><span class="label">Status</span><span class="val">${esc(enrollment.status)}</span></div>
+    <div class="row"><span class="label">Submitted</span><span class="val">${esc(enrollment.submittedAt ? new Date(enrollment.submittedAt).toLocaleDateString() : "—")}</span></div>
     <h2>Personal Information</h2>
-    <div class="row"><span class="label">Legal Name</span><span class="val">${f.legalFirstName} ${f.legalLastName}</span></div>
-    <div class="row"><span class="label">Date of Birth</span><span class="val">${f.dateOfBirth || "—"}</span></div>
-    <div class="row"><span class="label">SSN (last 4)</span><span class="val">***${f.ssn4 || "—"}</span></div>
-    <div class="row"><span class="label">Gender</span><span class="val">${f.gender || "—"}</span></div>
-    <div class="row"><span class="label">Marital Status</span><span class="val">${f.maritalStatus || "—"}</span></div>
-    <div class="row"><span class="label">Hours Per Week</span><span class="val">${f.hoursPerWeek || "—"}</span></div>
-    <div class="row"><span class="label">Current Insurance</span><span class="val">${f.hasCurrentInsurance || "—"}</span></div>
-    <div class="row"><span class="label">Desired Effective Date</span><span class="val">${f.desiredEffectiveDate || "—"}</span></div>
+    <div class="row"><span class="label">Legal Name</span><span class="val">${esc(f.legalFirstName)} ${esc(f.legalLastName)}</span></div>
+    <div class="row"><span class="label">Date of Birth</span><span class="val">${esc(f.dateOfBirth || "—")}</span></div>
+    <div class="row"><span class="label">SSN (last 4)</span><span class="val">***${esc(f.ssn4 || "—")}</span></div>
+    <div class="row"><span class="label">Gender</span><span class="val">${esc(f.gender || "—")}</span></div>
+    <div class="row"><span class="label">Marital Status</span><span class="val">${esc(f.maritalStatus || "—")}</span></div>
+    <div class="row"><span class="label">Hours Per Week</span><span class="val">${esc(f.hoursPerWeek || "—")}</span></div>
+    <div class="row"><span class="label">Current Insurance</span><span class="val">${esc(f.hasCurrentInsurance || "—")}</span></div>
+    <div class="row"><span class="label">Desired Effective Date</span><span class="val">${esc(f.desiredEffectiveDate || "—")}</span></div>
     <h2>Contact Information</h2>
-    <div class="row"><span class="label">Phone</span><span class="val">${f.phone || "—"}</span></div>
-    <div class="row"><span class="label">Email</span><span class="val">${f.email || "—"}</span></div>
-    <div class="row"><span class="label">Address</span><span class="val">${f.address || ""}, ${f.city || ""}, ${f.state || ""} ${f.zip || ""}</span></div>
+    <div class="row"><span class="label">Phone</span><span class="val">${esc(f.phone || "—")}</span></div>
+    <div class="row"><span class="label">Email</span><span class="val">${esc(f.email || "—")}</span></div>
+    <div class="row"><span class="label">Address</span><span class="val">${esc(f.address || "")}, ${esc(f.city || "")}, ${esc(f.state || "")} ${esc(f.zip || "")}</span></div>
     <h2>Coverage Selection</h2>
-    <div class="row"><span class="label">Medical</span><span class="val">${f.enrollMedical ? "Yes — " + (f.medicalPlan || "") : "No"}</span></div>
-    <div class="row"><span class="label">Dental</span><span class="val">${f.enrollDental ? "Yes — " + (f.dentalPlan || "") : "No"}</span></div>
-    <div class="row"><span class="label">Vision</span><span class="val">${f.enrollVision ? "Yes — " + (f.visionPlan || "") : "No"}</span></div>
-    <div class="row"><span class="label">Life Insurance</span><span class="val">${f.enrollLife ? "Yes — " + (f.lifePlan || "") : "No"}</span></div>
-    <div class="row"><span class="label">Coverage Tier</span><span class="val">${f.coverageTier || "—"}</span></div>
+    <div class="row"><span class="label">Medical</span><span class="val">${f.enrollMedical ? "Yes — " + esc(f.medicalPlan || "") : "No"}</span></div>
+    <div class="row"><span class="label">Dental</span><span class="val">${f.enrollDental ? "Yes — " + esc(f.dentalPlan || "") : "No"}</span></div>
+    <div class="row"><span class="label">Vision</span><span class="val">${f.enrollVision ? "Yes — " + esc(f.visionPlan || "") : "No"}</span></div>
+    <div class="row"><span class="label">Life Insurance</span><span class="val">${f.enrollLife ? "Yes — " + esc(f.lifePlan || "") : "No"}</span></div>
+    <div class="row"><span class="label">Coverage Tier</span><span class="val">${esc(f.coverageTier || "—")}</span></div>
     ${(f.dependents || []).length > 0 ? `<h2>Dependents</h2><table><tr><th>Name</th><th>Relationship</th><th>DOB</th><th>SSN4</th></tr>${deps}</table>` : ""}
     <div class="sig">
-    <div class="row"><span class="label">Signature</span><span class="val" style="font-style:italic">${f.signature || "—"}</span></div>
-    <div class="row"><span class="label">Date</span><span class="val">${f.signatureDate || "—"}</span></div>
+    <div class="row"><span class="label">Signature</span><span class="val" style="font-style:italic">${esc(f.signature || "—")}</span></div>
+    <div class="row"><span class="label">Date</span><span class="val">${esc(f.signatureDate || "—")}</span></div>
     </div></body></html>`;
     const win = window.open("", "_blank");
     if (!win) {
