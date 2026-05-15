@@ -898,12 +898,17 @@ export default function CateringOrder({ language, staffName }) {
             return (
                 <div className="p-4 pb-bottom-nav">
                     {/* ── Page Tab Bar ── */}
+                    {/* FIX (review 2026-05-14): clear `submitted` when leaving the
+                        Catering tab so the next return doesn't re-show the stale
+                        "Order submitted!" success screen with the old cart still
+                        populated. Per-tab navigation should feel fresh, not
+                        sticky-state. */}
                     <div className="flex gap-2 mb-4">
-                        <button onClick={() => setPageTab("orders")}
+                        <button onClick={() => { setPageTab("orders"); setSubmitted(false); }}
                             className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "orders" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
                             🛒 {language === "es" ? "Pedidos" : "Orders"}
                         </button>
-                        <button onClick={() => setPageTab("invoices")}
+                        <button onClick={() => { setPageTab("invoices"); setSubmitted(false); }}
                             className={`flex-1 py-2.5 rounded-lg font-bold text-sm border-2 transition ${pageTab === "invoices" ? "bg-mint-700 text-white border-mint-700" : "bg-white text-gray-600 border-gray-200"}`}>
                             🧾 {language === "es" ? "Facturas" : "Invoices"}
                         </button>

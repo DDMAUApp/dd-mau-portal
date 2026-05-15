@@ -242,7 +242,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [followUpAnswers, setFollowUpAnswers] = useState({});
             const [showFollowUpFor, setShowFollowUpFor] = useState(null); // task id to show follow-up prompt
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
-            const photoInputRef = useRef(null);
 
             // Determine current user's role early
             const currentIsAdmin = isAdmin(staffName, staffList);
@@ -3768,7 +3767,6 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             ) : (
                                                 <div>
                                                     <input type="file" accept="image/*" capture="environment"
-                                                        ref={capturingPhoto === item.id ? photoInputRef : null}
                                                         onChange={e => handlePhotoCapture(e, item.id)}
                                                         className="hidden" id={"photo-" + item.id} />
                                                     <button onClick={() => { setCapturingPhoto(item.id); document.getElementById("photo-" + item.id)?.click(); }}

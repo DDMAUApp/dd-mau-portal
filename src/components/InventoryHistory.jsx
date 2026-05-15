@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
-import { t } from '../data/translations';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 

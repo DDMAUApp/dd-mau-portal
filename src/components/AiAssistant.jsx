@@ -171,10 +171,13 @@ export default function AiAssistant({ language, staffName, storeLocation }) {
 
         } catch (err) {
             console.error("AI Router error:", err);
+            // FIX (review 2026-05-14): the non-timeout branch used to be `Error: ${err.message}`
+            // for both languages — identical string, so the ternary was a no-op and the message
+            // was English-only. Now localized.
             const isTimeout = err.name === "TimeoutError" || err.name === "AbortError";
             const errMsg = isTimeout
-                ? (isEs ? "La solicitud tomo demasiado tiempo. Intenta de nuevo." : "Request timed out. Try again.")
-                : (isEs ? `Error: ${err.message}` : `Error: ${err.message}`);
+                ? (isEs ? "La solicitud tomó demasiado tiempo. Intenta de nuevo." : "Request timed out. Try again.")
+                : (isEs ? `Error de IA: ${err.message}` : `AI error: ${err.message}`);
             setError(errMsg);
             // Add error as a system message
             setMessages(prev => [...prev, {

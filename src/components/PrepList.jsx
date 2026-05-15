@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot, query } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { escapeHtml as esc } from '../data/htmlEscape';
@@ -774,7 +774,10 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                 }
                 if (filteredItems.length === 0) return null;
 
-                const stKey = "prep-" + stIdx;
+                // FIX (review 2026-05-14): collapse state keyed by station.id, not array
+                // index. If stations reorder or a custom station is added/removed,
+                // index-based keys cause collapse state to attach to the wrong row.
+                const stKey = "prep-" + (station.id || stIdx);
                 const isCollapsed = collapsedStations[stKey] && !searchLower;
                 const doneCount = station.items.filter(i => doneItems[i.id]).length;
 

@@ -253,15 +253,20 @@ export default function ToastOrders({ language }) {
             ) : (
                 <div>
                     {orders.map((ord, i) => {
-                        const expanded = expandedOrder === ord.orderGuid;
+                        // FIX (review 2026-05-14): use a stable identifier for expand/
+                        // collapse even when orderGuid is missing. Without the fallback,
+                        // expand toggles on `null` and every row with a missing guid
+                        // expands/collapses together.
+                        const ordKey = ord.orderGuid || ord.id || `idx-${i}`;
+                        const expanded = expandedOrder === ordKey;
                         const timeStr = ord.createdDate
                             ? new Date(ord.createdDate).toLocaleTimeString(isEn ? "en-US" : "es-US", { hour: "numeric", minute: "2-digit" })
                             : "";
 
                         return (
-                            <div key={ord.orderGuid || i}
+                            <div key={ordKey}
                                 className={`bg-white border-2 rounded-lg p-3 mb-2 cursor-pointer transition ${expanded ? "border-mint-400 shadow-md" : "border-gray-200 hover:border-mint-300"}`}
-                                onClick={() => setExpandedOrder(expanded ? null : ord.orderGuid)}>
+                                onClick={() => setExpandedOrder(expanded ? null : ordKey)}>
 
                                 {/* Top row */}
                                 <div className="flex justify-between items-start">
