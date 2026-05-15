@@ -6490,8 +6490,24 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                     </div>
                     <div>
                         <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('How many people?', '¿Cuántas personas?')}</label>
+                        {/* FIX (2026-05-15, Andrew "slot box starts with a 1
+                            and i cant delete the 1 to type 5"): the previous
+                            onChange did Math.max(1, parseInt(v) || 1) which
+                            forced empty → 1, so the user could never clear the
+                            field to retype. Now we let the field hold "" while
+                            typing and coerce to ≥1 on blur. canSubmit still
+                            blocks save when count < 1, so the empty interim
+                            state is safe. */}
                         <input type="number" min="1" max="20" value={form.count}
-                            onChange={e => update('count', Math.max(1, parseInt(e.target.value) || 1))}
+                            onChange={e => {
+                                const v = e.target.value;
+                                if (v === '') { update('count', ''); return; }
+                                const n = parseInt(v, 10);
+                                if (Number.isFinite(n)) update('count', Math.min(20, Math.max(1, n)));
+                            }}
+                            onBlur={() => {
+                                if (form.count === '' || !Number.isFinite(form.count) || form.count < 1) update('count', 1);
+                            }}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                         {isEditing && (initial.filledStaff || []).length > 0 && (
                             <p className="text-[10px] text-amber-700 mt-1">
@@ -7040,8 +7056,21 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, we
                                                     <option key={g.id} value={g.id}>{g.emoji} {tx(g.labelEn, g.labelEs)}</option>
                                                 ))}
                                             </select>
+                                            {/* See StaffingNeedModal count input
+                                                for the rationale — let the field
+                                                hold "" so user can delete the
+                                                seed value and retype. Coerce on
+                                                blur. */}
                                             <input type="number" min="1" max="20" value={slot.count}
-                                                onChange={e => updateSlot(bi, si, "count", Math.max(1, parseInt(e.target.value) || 1))}
+                                                onChange={e => {
+                                                    const v = e.target.value;
+                                                    if (v === '') { updateSlot(bi, si, "count", ''); return; }
+                                                    const n = parseInt(v, 10);
+                                                    if (Number.isFinite(n)) updateSlot(bi, si, "count", Math.min(20, Math.max(1, n)));
+                                                }}
+                                                onBlur={() => {
+                                                    if (slot.count === '' || !Number.isFinite(slot.count) || slot.count < 1) updateSlot(bi, si, "count", 1);
+                                                }}
                                                 className="w-14 border border-gray-300 rounded px-2 py-1 text-xs text-center" />
                                             {b.slots.length > 1 && (
                                                 <button onClick={() => removeSlot(bi, si)} className="px-1.5 py-1 rounded bg-red-100 text-red-700 text-xs">×</button>
