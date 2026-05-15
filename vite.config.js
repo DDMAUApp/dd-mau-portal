@@ -45,6 +45,19 @@ export default defineConfig({
     __APP_OPERATOR__: JSON.stringify('Shih Technology'),
   },
   plugins: [react(), spa404Fallback()],
+  // Strip noisy console calls from production builds.
+  // `pure` marks these as side-effect-free so esbuild removes them
+  // when minifying (production only — dev keeps everything so we can
+  // debug). Keeps console.warn + console.error so real problems still
+  // surface in prod consoles.
+  //
+  // Why this matters in this app: Schedule.jsx has 52 console.* calls
+  // and Operations.jsx has 44. Many are inside hot loops or per-shift
+  // iterators. Each one allocates strings + formatting work on mobile,
+  // contributing to scroll judder even when DevTools isn't open.
+  esbuild: {
+    pure: ['console.log', 'console.info', 'console.debug', 'console.trace'],
+  },
   // Custom domain (app.ddmaustl.com) serves from the apex, so assets
   // resolve at '/' not '/dd-mau-portal/'. A CNAME file in public/ tells
   // GitHub Pages which domain to serve from. The legacy

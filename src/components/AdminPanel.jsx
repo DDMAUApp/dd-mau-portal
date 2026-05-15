@@ -195,6 +195,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // accordion expand.
             const [recipeViews, setRecipeViews] = useState([]);
             const [showAllViews, setShowAllViews] = useState(false);
+            // FIX (review 2026-05-14, perf): subscription gated by an
+            // expand toggle. Recipe-views grow as a 200-doc-cap descending
+            // query — every recipe open re-fires the snapshot. With the
+            // audit panel collapsed by default, the subscription doesn't
+            // start until admin actually wants to see the data.
+            const [recipeAuditExpanded, setRecipeAuditExpanded] = useState(false);
             // Heavy history panels are collapsed by default — they were
             // dominating the admin page and forcing people to scroll past
             // hundreds of rows to reach the more important controls.
@@ -381,7 +387,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Recipe view audit — last 200. Sorted client-side because
             // serverTimestamp() can be momentarily null on the writer's
             // own snapshot before round-trip; we sort by it once it lands.
+            // FIX (review 2026-05-14, perf): only subscribe when admin
+            // expands the audit panel. The 200-doc query was always-on
+            // before — a meaningful Firestore read every time the
+            // AdminPanel mounted, even though most admin sessions never
+            // look at the audit.
             useEffect(() => {
+                if (!recipeAuditExpanded) return;
                 const unsub = onSnapshot(
                     query(collection(db, "recipe_views"), orderBy("viewedAt", "desc"), limit(200)),
                     (snap) => {
@@ -392,7 +404,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     (err) => { console.warn("Error loading recipe views:", err); }
                 );
                 return () => unsub();
-            }, []);
+            }, [recipeAuditExpanded]);
 
             const updateRequestStatus = async (reqId, newStatus) => {
                 try {
@@ -1859,15 +1871,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         };
                         return (
                             <div className="mt-6 mb-4 border border-gray-200 rounded-xl bg-white p-4">
-                                <div className="flex items-center justify-between mb-2">
+                                <button onClick={() => setRecipeAuditExpanded(s => !s)}
+                                    className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
                                     <div className="flex items-center gap-2">
                                         <span className="text-xl">🔍</span>
                                         <h3 className="text-base font-bold text-gray-800">
                                             {language === 'es' ? 'Auditoría de recetas' : 'Recipe view audit'}
                                         </h3>
                                     </div>
-                                    <span className="text-[10px] text-gray-400">{recipeViews.length} {language === 'es' ? 'recientes' : 'recent'}</span>
-                                </div>
+                                    <span className="text-gray-400 text-sm">{recipeAuditExpanded ? '▼' : '▶'}</span>
+                                </button>
+                                {recipeAuditExpanded && (<>
                                 <p className="text-[11px] text-gray-500 mb-3">
                                     {language === 'es'
                                         ? 'Cada vez que alguien abre una receta queda registrado: quién, qué, cuándo y desde dónde.'
@@ -1938,6 +1952,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             : (language === 'es' ? `Ver todas (${recipeViews.length})` : `View all (${recipeViews.length})`)}
                                     </button>
                                 )}
+                                </>)}
                             </div>
                         );
                     })()}
