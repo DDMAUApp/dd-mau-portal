@@ -1710,33 +1710,61 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
-    const handleApplyTemplate = async (tpl, dateStr) => {
+    const handleApplyTemplate = async (tpl, dateOrDates) => {
         if (!canEditSide(tpl?.side || side)) return;
-        if (!tpl || !dateStr) return;
+        if (!tpl || !dateOrDates) return;
+        // FIX (2026-05-14): accept either a single date string (legacy
+        // single-day call) OR an array of date strings (new multi-day
+        // flow). Normalize to array.
+        const dateStrs = Array.isArray(dateOrDates) ? dateOrDates : [dateOrDates];
+        if (dateStrs.length === 0) return;
+        const location = tpl.location || (storeLocation !== 'both' ? storeLocation : 'webster');
+        const successes = [];
+        const failures = [];
         try {
-            // Each block × slot becomes one staffing_need.
-            for (const block of (tpl.blocks || [])) {
-                for (const slot of (block.slots || [])) {
-                    if (!slot.count || slot.count <= 0) continue;
-                    await addDoc(collection(db, 'staffing_needs'), {
-                        date: dateStr,
-                        side: tpl.side || 'foh',
-                        location: tpl.location || (storeLocation !== 'both' ? storeLocation : 'webster'),
-                        startTime: block.startTime,
-                        endTime: block.endTime,
-                        count: slot.count,
-                        roleGroup: slot.roleGroup || 'any',
-                        notes: block.label ? `${tpl.name} · ${block.label}` : tpl.name,
-                        filledStaff: [],
-                        filledShiftIds: [],
-                        fromTemplateId: tpl.id,
-                        createdBy: staffName,
-                        createdAt: serverTimestamp(),
-                    });
+            // Outer loop is per-date so a failure on one day doesn't block
+            // the other days — we collect failures and toast a partial-
+            // success summary at the end.
+            for (const dateStr of dateStrs) {
+                try {
+                    for (const block of (tpl.blocks || [])) {
+                        for (const slot of (block.slots || [])) {
+                            if (!slot.count || slot.count <= 0) continue;
+                            await addDoc(collection(db, 'staffing_needs'), {
+                                date: dateStr,
+                                side: tpl.side || 'foh',
+                                location,
+                                startTime: block.startTime,
+                                endTime: block.endTime,
+                                count: slot.count,
+                                roleGroup: slot.roleGroup || 'any',
+                                notes: block.label ? `${tpl.name} · ${block.label}` : tpl.name,
+                                filledStaff: [],
+                                filledShiftIds: [],
+                                fromTemplateId: tpl.id,
+                                createdBy: staffName,
+                                createdAt: serverTimestamp(),
+                            });
+                        }
+                    }
+                    successes.push(dateStr);
+                } catch (perDateErr) {
+                    console.error('Apply template per-date failed:', dateStr, perDateErr);
+                    failures.push(dateStr);
                 }
             }
             setShowApplyTemplate(false);
-            toast(tx(`✅ Applied "${tpl.name}" to ${dateStr}.`, `✅ "${tpl.name}" aplicada a ${dateStr}.`));
+            if (failures.length === 0) {
+                const label = dateStrs.length === 1 ? dateStrs[0] : `${dateStrs.length} ${tx('days', 'días')}`;
+                toast(tx(`✅ Applied "${tpl.name}" to ${label}.`, `✅ "${tpl.name}" aplicada a ${label}.`));
+            } else if (successes.length === 0) {
+                toast(tx(`Apply error — no days were updated.`, `Error — no se aplicó a ningún día.`), { kind: 'error' });
+            } else {
+                toast(tx(
+                    `✅ Applied to ${successes.length} day(s). ${failures.length} failed.`,
+                    `✅ Aplicada a ${successes.length} día(s). ${failures.length} fallaron.`
+                ), { kind: 'warn' });
+            }
         } catch (e) {
             console.error('Apply template failed:', e);
             toast(tx('Apply error: ', 'Error al aplicar: ') + e.message);
@@ -6930,45 +6958,99 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
 function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onDelete, weekStart, side, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     const [pickedTemplate, setPickedTemplate] = useState(null);
-    const [dateStr, setDateStr] = useState(toDateStr(weekStart));
-    // Matching-day templates first when a date is picked. Templates with
-    // an empty/missing daysOfWeek still rank as "matches anything" so they
-    // stay visible — they're back-compat templates that didn't opt in to
-    // the day filter, not "always apply" templates.
-    const pickedDayId = dayIdFromDateStr(dateStr);
-    const templateMatchesDay = (t) => {
-        if (!pickedDayId) return true;
+    // FIX (2026-05-14, Andrew): multi-day apply. Previously the modal had
+    // a single <input type="date"> — to apply a template to Mon + Tue +
+    // Wed you had to repeat the whole flow three times. Now: 7 day chips
+    // for the visible week, toggleable, applies in one shot. The chips
+    // show date numbers so the manager can target a specific week, and
+    // auto-pre-check when a template with daysOfWeek is selected.
+    const weekDays = useMemo(() => {
+        const out = [];
+        for (let i = 0; i < 7; i++) {
+            const d = addDays(weekStart, i);
+            out.push({
+                dateStr: toDateStr(d),
+                dayId: DAY_IDS[d.getDay()],
+                dayLabel: (isEn ? DAYS_EN : DAYS_ES)[d.getDay()],
+                dayNum: d.getDate(),
+            });
+        }
+        return out;
+    }, [weekStart, isEn]);
+    const [pickedDates, setPickedDates] = useState(() => new Set());
+    const togglePickedDate = (dateStr) => {
+        setPickedDates(prev => {
+            const next = new Set(prev);
+            if (next.has(dateStr)) next.delete(dateStr);
+            else next.add(dateStr);
+            return next;
+        });
+    };
+    // When a template gets selected, auto-pre-check the days it's tagged
+    // for so the common case ("apply Lunch Rush template to its usual
+    // days") is one tap instead of seven. Manager can still adjust.
+    useEffect(() => {
+        if (!pickedTemplate) return;
+        const tplDays = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
+        if (tplDays.length === 0) return;
+        const next = new Set();
+        for (const wd of weekDays) {
+            if (tplDays.includes(wd.dayId)) next.add(wd.dateStr);
+        }
+        setPickedDates(next);
+    }, [pickedTemplate, weekDays]);
+
+    // Filter: keep templates for the current side, sort by "any picked
+    // date matches the template's day tagging" so the relevant ones
+    // float to the top.
+    const pickedDayIds = useMemo(() => {
+        const ids = new Set();
+        for (const wd of weekDays) {
+            if (pickedDates.has(wd.dateStr)) ids.add(wd.dayId);
+        }
+        return ids;
+    }, [pickedDates, weekDays]);
+    const templateMatchesAnyPicked = (t) => {
+        if (pickedDayIds.size === 0) return true;
         if (!Array.isArray(t.daysOfWeek) || t.daysOfWeek.length === 0) return true;
-        return t.daysOfWeek.includes(pickedDayId);
+        return t.daysOfWeek.some(d => pickedDayIds.has(d));
     };
     const filtered = templates
         .filter(t => t.side === side)
         .slice()
         .sort((a, b) => {
-            const am = templateMatchesDay(a) ? 0 : 1;
-            const bm = templateMatchesDay(b) ? 0 : 1;
+            const am = templateMatchesAnyPicked(a) ? 0 : 1;
+            const bm = templateMatchesAnyPicked(b) ? 0 : 1;
             if (am !== bm) return am - bm;
             return (a.name || '').localeCompare(b.name || '');
         });
-    // Guarded apply — if the picked template has explicit days set and the
-    // chosen date doesn't fall on one, confirm before creating staffing
-    // needs that may be wrong. Lets the manager say "yes, apply anyway"
-    // without removing the safety net.
+
+    // Mismatch warning: any selected day that's NOT in the template's
+    // daysOfWeek (when template explicitly tags days). Surfaces in the
+    // apply button + a yellow banner so manager knows what's off-pattern.
+    const mismatchDates = useMemo(() => {
+        if (!pickedTemplate) return [];
+        const tplDays = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
+        if (tplDays.length === 0) return [];
+        return weekDays.filter(wd => pickedDates.has(wd.dateStr) && !tplDays.includes(wd.dayId));
+    }, [pickedTemplate, pickedDates, weekDays]);
+
     const handleApplyClick = () => {
         if (!pickedTemplate) return;
-        const days = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
-        if (days.length > 0 && pickedDayId && !days.includes(pickedDayId)) {
-            const dayName = (isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[DAY_IDS.indexOf(pickedDayId)] || pickedDayId;
-            const tplDayNames = days
+        const dateStrs = Array.from(pickedDates);
+        if (dateStrs.length === 0) return;
+        if (mismatchDates.length > 0) {
+            const dayNames = mismatchDates.map(m => m.dayLabel).join(', ');
+            const tplDays = (pickedTemplate.daysOfWeek || [])
                 .map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)] || d)
                 .join(', ');
             const msg = tx(
-                `"${pickedTemplate.name}" is set up for: ${tplDayNames}.\n\nApply to ${dayName} anyway?`,
-                `"${pickedTemplate.name}" está configurada para: ${tplDayNames}.\n\n¿Aplicar al ${dayName} de todos modos?`,
+                `"${pickedTemplate.name}" is set up for: ${tplDays}.\n\nApply to ${dayNames} anyway?`,
+                `"${pickedTemplate.name}" está configurada para: ${tplDays}.\n\n¿Aplicar a ${dayNames} de todos modos?`,
             );
             if (!confirm(msg)) return;
         }
-        onApply(pickedTemplate, dateStr);
+        onApply(pickedTemplate, dateStrs);
     };
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
@@ -7051,30 +7133,70 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                             })}
                         </div>
                     )}
-                    {pickedTemplate && (() => {
-                        const days = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
-                        const wrongDay = days.length > 0 && pickedDayId && !days.includes(pickedDayId);
-                        return (
-                            <div className="border-t border-gray-200 pt-3 space-y-2">
-                                <div className="text-xs font-bold text-gray-700">{tx("Apply", "Aplicar")} "{pickedTemplate.name}" {tx("to date:", "a fecha:")}</div>
-                                <input type="date" value={dateStr} onChange={e => setDateStr(e.target.value)}
-                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
-                                {wrongDay && (
-                                    <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 text-[11px] text-amber-900 leading-snug">
-                                        ⚠ {tx(
-                                            `This template is set up for ${days.map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)]).join(', ')}. The selected date is a ${(isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[DAY_IDS.indexOf(pickedDayId)]}.`,
-                                            `Esta plantilla es para ${days.map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)]).join(', ')}. La fecha elegida es ${(isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[DAY_IDS.indexOf(pickedDayId)]}.`,
-                                        )}
-                                    </div>
-                                )}
-                                <button onClick={handleApplyClick}
-                                    className={`w-full py-2 rounded-lg font-bold text-sm text-white transition ${wrongDay ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}>
-                                    ✓ {tx("Apply Template", "Aplicar Plantilla")}
-                                </button>
-                                <p className="text-[10px] text-gray-500 text-center">{tx("Creates one staffing need per role slot. You fill them next.", "Crea una necesidad por slot. Las llenas luego.")}</p>
+                    {pickedTemplate && (
+                        <div className="border-t border-gray-200 pt-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <div className="text-xs font-bold text-gray-700">
+                                    {tx("Apply", "Aplicar")} "{pickedTemplate.name}" {tx("to:", "a:")}
+                                </div>
+                                <div className="flex gap-1.5">
+                                    <button onClick={() => setPickedDates(new Set(weekDays.map(wd => wd.dateStr)))}
+                                        className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900">
+                                        {tx('All', 'Todos')}
+                                    </button>
+                                    <span className="text-[10px] text-gray-400">·</span>
+                                    <button onClick={() => setPickedDates(new Set())}
+                                        className="text-[10px] font-bold text-gray-600 hover:text-gray-900">
+                                        {tx('Clear', 'Limpiar')}
+                                    </button>
+                                </div>
                             </div>
-                        );
-                    })()}
+                            {/* 7 day chips for the current week. Each chip
+                                shows the day label + date number, and is
+                                tappable to toggle on/off. Pre-checked when
+                                the picked template has matching daysOfWeek. */}
+                            <div className="grid grid-cols-7 gap-1">
+                                {weekDays.map(wd => {
+                                    const isPicked = pickedDates.has(wd.dateStr);
+                                    const tplDays = Array.isArray(pickedTemplate.daysOfWeek) ? pickedTemplate.daysOfWeek : [];
+                                    const offPattern = tplDays.length > 0 && !tplDays.includes(wd.dayId);
+                                    return (
+                                        <button key={wd.dateStr} onClick={() => togglePickedDate(wd.dateStr)}
+                                            className={`py-2 rounded-lg border-2 text-center transition active:scale-95 ${
+                                                isPicked
+                                                    ? (offPattern ? 'bg-amber-100 border-amber-400 text-amber-900' : 'bg-indigo-600 border-indigo-700 text-white')
+                                                    : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
+                                            }`}>
+                                            <div className="text-[10px] font-black uppercase tracking-wider">{wd.dayLabel}</div>
+                                            <div className="text-sm font-bold">{wd.dayNum}</div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            {mismatchDates.length > 0 && (
+                                <div className="rounded-lg bg-amber-50 border border-amber-200 px-2.5 py-2 text-[11px] text-amber-900 leading-snug">
+                                    ⚠ {tx(
+                                        `Template is set up for ${(pickedTemplate.daysOfWeek || []).map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)]).join(', ')}. Yellow days are off-pattern.`,
+                                        `La plantilla es para ${(pickedTemplate.daysOfWeek || []).map(d => (isEn ? DAYS_EN : DAYS_ES)[DAY_IDS.indexOf(d)]).join(', ')}. Los días amarillos están fuera de patrón.`,
+                                    )}
+                                </div>
+                            )}
+                            <button onClick={handleApplyClick}
+                                disabled={pickedDates.size === 0}
+                                className={`w-full py-2 rounded-lg font-bold text-sm text-white transition disabled:opacity-40 disabled:cursor-not-allowed ${mismatchDates.length > 0 ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'}`}>
+                                ✓ {pickedDates.size === 0
+                                    ? tx('Pick at least one day', 'Elige al menos un día')
+                                    : tx(
+                                        `Apply to ${pickedDates.size} day${pickedDates.size === 1 ? '' : 's'}`,
+                                        `Aplicar a ${pickedDates.size} día${pickedDates.size === 1 ? '' : 's'}`,
+                                    )}
+                            </button>
+                            <p className="text-[10px] text-gray-500 text-center">
+                                {tx("Creates one staffing need per role slot per selected day. You fill them next.",
+                                    "Crea una necesidad por slot por cada día seleccionado. Las llenas luego.")}
+                            </p>
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
