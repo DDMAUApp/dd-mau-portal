@@ -1524,7 +1524,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // {"\u{2500}"}{"\u{2500}"} PUSH NOTIFICATION SYSTEM {"\u{2500}"}{"\u{2500}"}
             // {"\u{2500}"}{"\u{2500}"} NOTIFICATION SYSTEM {"\u{2500}"}{"\u{2500}"}
             const [activeAlerts, setActiveAlerts] = useState([]);
-            const [clockTick, setClockTick] = useState(0);
+            // clockTick state was previously bumped every 30s solely to
+            // force re-renders, but nothing in render actually reads it.
+            // checkDeadlines() does its own setActiveAlerts when there's
+            // new work to surface, so we don't need a heartbeat. Removed
+            // 2026-05-14 — saves a forced full Operations re-render every
+            // 30 seconds.
             const dismissedAlertsRef = useRef(new Set());
 
             const checkDeadlines = () => {
@@ -1614,7 +1619,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     Notification.requestPermission();
                 }
                 checkDeadlines(); // run immediately
-                const interval = setInterval(() => { checkDeadlines(); setClockTick(t => t + 1); }, 30000);
+                const interval = setInterval(() => { checkDeadlines(); }, 30000);
                 return () => clearInterval(interval);
             }, [staffName]);
 
