@@ -242,6 +242,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [followUpAnswers, setFollowUpAnswers] = useState({});
             const [showFollowUpFor, setShowFollowUpFor] = useState(null); // task id to show follow-up prompt
             const [capturingPhoto, setCapturingPhoto] = useState(null); // task id being photographed
+            // Re-entry guard for the actual upload (not the file-picker open).
+            // Using a ref because state updates are async — the previous
+            // setCapturingPhoto-in-button-onClick approach made `capturingPhoto`
+            // ALWAYS truthy by the time the input's onChange fired, so the
+            // "if (capturingPhoto) return" guard inside handlePhotoCapture
+            // early-returned and the upload never ran. A ref bypasses that
+            // race because we set + check it synchronously.
+            const photoUploadInProgressRef = useRef(false);
 
             // Determine current user's role early
             const currentIsAdmin = isAdmin(staffName, staffList);
@@ -2112,7 +2120,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (e.target) e.target.value = "";
                 if (!file) return;
                 // Re-entry guard: a rapid second tap (mobile Safari double-fire) must not start a parallel upload.
-                if (capturingPhoto) return;
+                // FIX (2026-05-14): ref instead of state — see comment on photoUploadInProgressRef.
+                if (photoUploadInProgressRef.current) return;
+                photoUploadInProgressRef.current = true;
                 setCapturingPhoto(taskId);
                 const todayKey = getTodayKey();
                 const photoRef = ref(storage, "checklist-photos/" + todayKey + "/" + taskId + "_" + Date.now() + ".jpg");
@@ -2145,6 +2155,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     toast(language === "es" ? "Error al subir foto" : "Error uploading photo");
                 }
                 setCapturingPhoto(null);
+                photoUploadInProgressRef.current = false;
             };
 
             // Reorder a task within its period array. fromIdx / toIdx are
@@ -3769,7 +3780,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     <input type="file" accept="image/*" capture="environment"
                                                         onChange={e => handlePhotoCapture(e, item.id)}
                                                         className="hidden" id={"photo-" + item.id} />
-                                                    <button onClick={() => { setCapturingPhoto(item.id); document.getElementById("photo-" + item.id)?.click(); }}
+                                                    {/* FIX (2026-05-14): don't pre-set capturingPhoto on click — that
+                                                        was racing the file picker and breaking the upload guard.
+                                                        handlePhotoCapture sets it when an upload actually starts. */}
+                                                    <button onClick={() => { document.getElementById("photo-" + item.id)?.click(); }}
                                                         disabled={capturingPhoto === item.id}
                                                         className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-xs font-bold text-blue-700 hover:bg-blue-100 transition">
                                                         {capturingPhoto === item.id

@@ -38,7 +38,26 @@ const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
 
-// Error boundary — catches render errors in child components
+// Error boundary — catches render errors in child components.
+//
+// The recurring "Something went wrong → refresh fixes it" pattern Andrew
+// reported (2026-05-14) is almost always a stale-chunk error: a phone has
+// the old index.html in cache, clicks a lazy-loaded route, and the import
+// tries to fetch a hash that no longer exists on the server. The browser
+// throws `ChunkLoadError` / "Failed to fetch dynamically imported module"
+// / "Importing a module script failed", which lands here.
+//
+// Two behavior changes:
+//   1. Detect chunk-load errors and AUTO-RELOAD the whole app once. The
+//      `triedReload` localStorage flag prevents a reload loop if the
+//      reload itself fails for some other reason.
+//   2. Show the real error message in dev so we can debug what's actually
+//      breaking. Production still shows a friendly message but now
+//      includes the error name (e.g. "ChunkLoadError") so support can
+//      diagnose at a glance.
+const CHUNK_ERR_PATTERN = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module/i;
+const RELOAD_FLAG_KEY = "ddmau:errorBoundaryReloaded";
+
 class ErrorBoundary extends Component {
     constructor(props) {
         super(props);
@@ -49,28 +68,93 @@ class ErrorBoundary extends Component {
     }
     componentDidCatch(error, errorInfo) {
         console.error("ErrorBoundary caught:", error, errorInfo);
+        // Stale-chunk recovery: hard-reload once. If reload happens to be
+        // racing some other failure we'd loop forever, so guard with a
+        // localStorage flag set right before reload and cleared on the
+        // next successful render (see useEffect in App below).
+        try {
+            const msg = (error && (error.message || error.toString())) || "";
+            const name = error?.name || "";
+            const isChunkErr = CHUNK_ERR_PATTERN.test(msg) || name === "ChunkLoadError";
+            const alreadyTried = (() => {
+                try { return sessionStorage.getItem(RELOAD_FLAG_KEY); } catch { return null; }
+            })();
+            if (isChunkErr && !alreadyTried) {
+                try { sessionStorage.setItem(RELOAD_FLAG_KEY, String(Date.now())); } catch {}
+                // Use replace to avoid adding to history; defer so React
+                // can finish painting the fallback (in case reload is
+                // blocked, the user still sees the friendly message).
+                setTimeout(() => { window.location.reload(); }, 50);
+            }
+        } catch (_) { /* swallow — fallback UI still rendered */ }
     }
     render() {
         if (this.state.hasError) {
             const isEs = this.props.language === "es";
+            const errName = this.state.error?.name || "Error";
+            const isChunk = CHUNK_ERR_PATTERN.test(this.state.error?.message || "") || errName === "ChunkLoadError";
             return (
                 <div style={{padding: "32px 16px", textAlign: "center"}}>
                     <p style={{fontSize: "40px", marginBottom: "12px"}}>⚠️</p>
                     <p style={{fontSize: "18px", fontWeight: 700, color: "#dc2626", marginBottom: "8px"}}>
                         {isEs ? "Algo salió mal" : "Something went wrong"}
                     </p>
-                    <p style={{fontSize: "14px", color: "#6b7280", marginBottom: "16px"}}>
-                        {isEs ? "Esta sección tuvo un error. Intenta recargar." : "This section had an error. Try reloading."}
+                    <p style={{fontSize: "14px", color: "#6b7280", marginBottom: "8px"}}>
+                        {isChunk
+                            ? (isEs ? "Actualizando la app… espera un momento." : "Updating the app — one moment.")
+                            : (isEs ? "Esta sección tuvo un error. Intenta recargar." : "This section had an error. Try reloading.")}
                     </p>
-                    <button onClick={() => this.setState({ hasError: false, error: null })}
-                        style={{padding: "10px 24px", background: "#059669", color: "white", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "14px", cursor: "pointer"}}>
+                    {/* Show error type for diagnosis (not the full stack — keeps it user-friendly). */}
+                    <p style={{fontSize: "11px", color: "#9ca3af", marginBottom: "16px", fontFamily: "monospace"}}>
+                        {errName}
+                    </p>
+                    <button onClick={() => { this.setState({ hasError: false, error: null }); try { sessionStorage.removeItem(RELOAD_FLAG_KEY); } catch {} }}
+                        style={{padding: "10px 24px", background: "#059669", color: "white", border: "none", borderRadius: "8px", fontWeight: 700, fontSize: "14px", cursor: "pointer", marginRight: "8px"}}>
                         {isEs ? "Reintentar" : "Try Again"}
+                    </button>
+                    <button onClick={() => { try { sessionStorage.removeItem(RELOAD_FLAG_KEY); } catch {} window.location.reload(); }}
+                        style={{padding: "10px 24px", background: "#fff", color: "#374151", border: "1px solid #d1d5db", borderRadius: "8px", fontWeight: 700, fontSize: "14px", cursor: "pointer"}}>
+                        {isEs ? "Recargar" : "Reload"}
                     </button>
                 </div>
             );
         }
         return this.props.children;
     }
+}
+
+// Clears the reload-flag on first successful render so the next chunk
+// error gets one fresh auto-reload attempt. Lives outside the boundary
+// because the boundary itself only mounts when something throws.
+function ChunkReloadFlagReset() {
+    useEffect(() => {
+        try { sessionStorage.removeItem(RELOAD_FLAG_KEY); } catch {}
+    }, []);
+    return null;
+}
+
+// Catch chunk-load errors that slip past the React boundary (e.g. when a
+// lazy import is triggered from inside an async callback after the
+// boundary has unmounted, or from outside a React tree). Same one-shot
+// auto-reload behavior as the boundary.
+if (typeof window !== "undefined") {
+    const maybeReload = (msg, name) => {
+        try {
+            const isChunk = CHUNK_ERR_PATTERN.test(msg || "") || name === "ChunkLoadError";
+            if (!isChunk) return;
+            const alreadyTried = sessionStorage.getItem(RELOAD_FLAG_KEY);
+            if (alreadyTried) return;
+            sessionStorage.setItem(RELOAD_FLAG_KEY, String(Date.now()));
+            setTimeout(() => { window.location.reload(); }, 50);
+        } catch {}
+    };
+    window.addEventListener("error", (e) => {
+        maybeReload(e?.message, e?.error?.name);
+    });
+    window.addEventListener("unhandledrejection", (e) => {
+        const r = e?.reason;
+        maybeReload(r?.message || String(r || ""), r?.name);
+    });
 }
 
 // Loading spinner for lazy-loaded components
@@ -672,6 +756,7 @@ export default function App() {
         const isHome = activeTab === 'home';
         return (
             <Suspense fallback={<div className="min-h-screen bg-dd-sage" />}>
+                <ChunkReloadFlagReset />
                 <AppShellV2
                     language={language}
                     staffName={staffName}
