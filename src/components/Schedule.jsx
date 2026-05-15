@@ -435,35 +435,55 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return unsub;
     }, [weekStart]);
 
+    // FIX (review 2026-05-14, perf): bound the collection listeners by a
+    // 6-month-past cutoff. The Schedule view never references dates older
+    // than what fits in the navigation window, but the full collection
+    // was being replayed on every doc add anywhere — major source of
+    // slowness. Future entries are unbounded (closures / time-off /
+    // needs are typically planned a few weeks out, never years).
+    //
+    // time_off has mixed schema (some entries use `startDate`, others
+    // just `date`), so we filter on `startDate` and the client-side
+    // isStaffOffOn() already handles the `date` fallback. Pre-existing
+    // entries without startDate would be dropped — but those are
+    // historical and unused by the current schedule view anyway.
+    const sixMonthsAgo = useMemo(() => {
+        const d = new Date(); d.setMonth(d.getMonth() - 6);
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }, []);
+
     // ── Listen for date blocks (restaurant closed days, no-time-off days) ──
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'date_blocks'), (snap) => {
+        const q = query(collection(db, 'date_blocks'), where('date', '>=', sixMonthsAgo));
+        const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setDateBlocks(items);
         }, (err) => console.error('date_blocks snapshot error:', err));
         return unsub;
-    }, []);
+    }, [sixMonthsAgo]);
 
     // ── Listen for time-off entries ──
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'time_off'), (snap) => {
+        const q = query(collection(db, 'time_off'), where('startDate', '>=', sixMonthsAgo));
+        const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setTimeOff(items);
         }, (err) => console.error('time_off snapshot error:', err));
         return unsub;
-    }, []);
+    }, [sixMonthsAgo]);
 
     // ── Listen for staffing-needs / shift slots ──
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'staffing_needs'), (snap) => {
+        const q = query(collection(db, 'staffing_needs'), where('date', '>=', sixMonthsAgo));
+        const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setStaffingNeeds(items);
         }, (err) => console.error('staffing_needs snapshot error:', err));
         return unsub;
-    }, []);
+    }, [sixMonthsAgo]);
 
     // ── Listen for day templates ──
     useEffect(() => {
