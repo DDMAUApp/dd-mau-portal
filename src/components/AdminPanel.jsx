@@ -876,6 +876,32 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
 
                         {staffExpanded && (
                             <div className="mt-2">
+                                {/* Empty-list nudge — surfaces the Import button
+                                    as a big tile when the staff list is brand
+                                    new or near-empty. The "where do I click to
+                                    add my whole team?" moment for a new owner
+                                    onboarding the app. Threshold of 5 catches
+                                    the just-installed and the "I'm just trying
+                                    it out with a couple test names" cases. */}
+                                {staffList.length < 5 && (
+                                    <div className="mb-3 bg-gradient-to-r from-blue-50 to-emerald-50 border-2 border-blue-300 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                                        <div className="flex-1">
+                                            <p className="text-sm font-bold text-blue-900 flex items-center gap-1.5">
+                                                <span className="text-lg">👋</span>
+                                                {language === "es" ? "¿Recién instalado?" : "Just getting started?"}
+                                            </p>
+                                            <p className="text-xs text-blue-700 mt-1">
+                                                {language === "es"
+                                                    ? "Importa toda tu lista de personal de una vez — pega los nombres, sube un CSV de Toast/Sling, o jala directo del scraper de Toast."
+                                                    : "Import your whole staff list at once — paste names, upload a Toast/Sling CSV, or pull straight from the Toast scraper."}
+                                            </p>
+                                        </div>
+                                        <button onClick={() => setShowImportStaff(true)}
+                                            className="flex-shrink-0 px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition text-sm">
+                                            📥 {language === "es" ? "Importar Personal" : "Import Staff"}
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="flex gap-1 justify-center mb-2 flex-wrap">
                                     {[{k:"all",en:"All",es:"Todos"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
                                         <button key={f.k} onClick={() => setStaffFilter(f.k)}

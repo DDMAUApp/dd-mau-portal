@@ -9,10 +9,16 @@
 // Three-stage flow:
 //   1. SOURCE   — paste names (one per line) OR upload a CSV exported
 //                 from Toast / Sling / wherever. Detected on-the-fly.
+//                 ALSO: "Fetch from Toast" button — reads the latest
+//                 employee dump the Railway scraper wrote to Firestore
+//                 (see TOAST_EMPLOYEES_DOC contract below).
 //   2. PICK     — diff parsed names against the existing staff list.
 //                 Show "new" names with checkboxes (all checked by
 //                 default), and a collapsed "already on list" group
 //                 so the admin can spot typos before importing.
+//                 ALSO: "Quick import N" — skips stage 3 and uses
+//                 defaults + auto-PINs for everyone. Fast path for
+//                 a brand-new restaurant onboarding 30+ staff at once.
 //   3. CONFIGURE — per-row table: role, location, scheduleSide, PIN,
 //                  flags (minor / shift lead / ops / recipes). Bulk
 //                  "apply to all" controls on top. Auto-PIN button
@@ -23,6 +29,24 @@
 // ready to merge into /config/staff.list[]. Parent does the actual
 // setState + Firestore write (existing saveStaffToFirestore pattern).
 //
+// ── Toast scraper contract (ops/toast_employees) ──────────────────────
+// The Railway scraper writes the current Toast employee list to:
+//   /ops/toast_employees
+// Shape:
+//   {
+//     employees: [
+//       { name: "Bill Johnson", role?: "Server",   location?: "webster"  },
+//       { name: "Emily Garcia", role?: "Cook",     location?: "maryland" },
+//       ...
+//     ],
+//     updatedAt: <serverTimestamp>,
+//     source: "toast"
+//   }
+// Optional per-employee fields (role, location) feed Stage 3's per-row
+// defaults so the admin doesn't have to set them by hand. If the doc
+// doesn't exist or has zero employees, the Fetch button surfaces a
+// helpful "scraper not synced yet" message instead of silently failing.
+//
 // Why a separate file:
 // AdminPanel.jsx is ~1900 lines already and we don't want to add 500
 // more inline. This modal owns its own state machine; it only needs
@@ -30,6 +54,8 @@
 // its job.
 
 import { useState, useMemo, useRef } from 'react';
+import { db } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
 
 // Canonical role list — mirrors AdminPanel.roleOptions so dropdowns
 // match the rest of the staff UI. Kept in sync manually; if either
@@ -49,27 +75,88 @@ function normalizeName(s) {
     return s.toString().toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim();
 }
 
-// Parse a raw text/CSV blob into a deduped list of clean names.
+// Normalize a free-text location value (from CSV / scraper) to one of
+// 'webster' | 'maryland' | 'both'. Returns undefined if we can't tell
+// — caller falls back to defaultLocation.
+function normalizeLocation(raw) {
+    if (!raw) return undefined;
+    const k = String(raw).toLowerCase().trim();
+    if (/^web/.test(k) || k === 'webster groves' || k === 'wg') return 'webster';
+    if (/^mary/.test(k) || k === 'maryland heights' || k === 'md' || k === 'mh') return 'maryland';
+    if (k === 'both' || k === 'all' || k === 'multi') return 'both';
+    return undefined;
+}
+
+// Normalize a free-text role to one of ROLE_OPTIONS. Falls back to
+// returning the raw role string (Stage 3 dropdown will show it if it's
+// a valid option; otherwise admin can re-pick).
+//
+// Light mapping for the most common Toast labels seen in the wild:
+//   "Server"           → "FOH"
+//   "Bartender"        → "FOH"
+//   "Cashier"          → "FOH"
+//   "Line Cook"        → "BOH"
+//   "Cook"             → "BOH"
+//   "Dishwasher"       → "Dish"
+//   "Prep Cook"        → "Prep"
+//   "Manager"          → "Manager"
+function normalizeRole(raw) {
+    if (!raw) return undefined;
+    const k = String(raw).toLowerCase().trim();
+    if (/server|bartender|cashier|host|host\/ess|hostess|busser/.test(k)) return 'FOH';
+    if (/line[ _]?cook|prep[ _]?cook|grill[ _]?cook/.test(k)) {
+        if (/prep/.test(k))  return 'Prep';
+        if (/grill/.test(k)) return 'Grill';
+        return 'BOH';
+    }
+    if (/^cook$|kitchen[ _]?staff/.test(k)) return 'BOH';
+    if (/dish/.test(k))               return 'Dish';
+    if (/fryer/.test(k))              return 'Fryer';
+    if (/pho/.test(k))                return 'Pho Station';
+    if (/kitchen[ _]?manager/.test(k))return 'Kitchen Manager';
+    if (/asst[\.]?[ _]?kitchen/.test(k)) return 'Asst Kitchen Manager';
+    if (/owner/.test(k))              return 'Owner';
+    if (/manager|gm/.test(k))         return 'Manager';
+    if (/shift[ _]?lead/.test(k))     return 'Shift Lead';
+    // Pass through if it's already a canonical option.
+    const exact = ROLE_OPTIONS.find(o => o.toLowerCase() === k);
+    return exact || undefined;
+}
+
+// Infer scheduleSide from a (possibly normalized) role. Mirrors the
+// FOH/BOH heuristic in AdminPanel + Schedule.
+function inferSide(role) {
+    if (!role) return 'foh';
+    if (/foh|server|host|bartender|cashier|busser/i.test(role)) return 'foh';
+    if (/boh|cook|prep|grill|fryer|dish|kitchen|pho/i.test(role)) return 'boh';
+    return 'foh';
+}
+
+// Parse a raw text/CSV blob into a deduped list of row objects.
+// Each row: { name, role?, location? } — role + location only set if
+// the CSV provided them and we could normalize the value.
+//
 // Heuristics:
 //   - Detect CSV by presence of commas in the first non-empty line.
-//   - If CSV header includes "first name" + "last name", join them.
-//   - If CSV header includes "name" or "employee name", use that col.
-//   - Otherwise treat each line as a single name (first non-empty
-//     comma-separated field).
-//   - Skip rows where the parsed name is empty or looks like a header
-//     (case-insensitive match against common header keywords).
-function parseNames(raw) {
+//   - Header detection: any column matching "first name", "last name",
+//     "name", "employee name", "role" / "position" / "job title",
+//     "location" / "store" / "primary location".
+//   - If CSV header is recognized, the first row is skipped as header.
+//   - Plain-text mode (no commas): one name per line, no extra fields.
+//   - Dedupe by normalized name, preserving first-seen casing.
+function parseRows(raw) {
     if (!raw) return [];
     const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     if (lines.length === 0) return [];
     const isCsv = lines[0].includes(',');
-    const names = [];
+    const collected = [];
     if (isCsv) {
         const headerCells = lines[0].split(',').map(c => c.trim().toLowerCase().replace(/^"|"$/g, ''));
         const firstIdx = headerCells.findIndex(c => /^first[ _]?name$/.test(c));
         const lastIdx  = headerCells.findIndex(c => /^last[ _]?name$/.test(c));
         const nameIdx  = headerCells.findIndex(c => /^(name|employee[ _]?name|full[ _]?name)$/.test(c));
-        // If we recognized a header, skip the first line.
+        const roleIdx  = headerCells.findIndex(c => /^(role|position|job[ _]?title|title)$/.test(c));
+        const locIdx   = headerCells.findIndex(c => /^(location|store|primary[ _]?location|site)$/.test(c));
         const hasHeader = firstIdx >= 0 || lastIdx >= 0 || nameIdx >= 0;
         const dataLines = hasHeader ? lines.slice(1) : lines;
         for (const line of dataLines) {
@@ -83,22 +170,27 @@ function parseNames(raw) {
                 // Unknown CSV shape: assume first non-empty cell is the name.
                 n = cells.find(Boolean) || '';
             }
-            if (n) names.push(n);
+            if (!n) continue;
+            collected.push({
+                name: n,
+                role: roleIdx >= 0 ? normalizeRole(cells[roleIdx]) : undefined,
+                location: locIdx >= 0 ? normalizeLocation(cells[locIdx]) : undefined,
+            });
         }
     } else {
-        for (const line of lines) names.push(line);
+        for (const line of lines) collected.push({ name: line });
     }
-    // Dedupe by normalized form, preserve first-seen casing.
+    // Dedupe by normalized form, preserve first-seen row (which keeps
+    // whatever role/location was attached to that row).
     const seen = new Set();
     const out = [];
-    for (const n of names) {
-        const key = normalizeName(n);
+    for (const r of collected) {
+        const key = normalizeName(r.name);
         if (!key) continue;
-        // Skip lines that look like header words even outside CSV mode.
         if (/^(name|employee|staff|first|last|full)$/.test(key)) continue;
         if (seen.has(key)) continue;
         seen.add(key);
-        out.push(n.trim());
+        out.push({ ...r, name: r.name.trim() });
     }
     return out;
 }
@@ -125,6 +217,10 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
     // For collapsing the "already on list" group on stage 2.
     const [showExisting, setShowExisting] = useState(false);
     const fileInputRef = useRef(null);
+    // Toast fetch state — 'idle' | 'loading' | 'success' | 'empty' | 'error'.
+    // 'empty' = doc exists but employees array is empty/missing (scraper
+    // hasn't synced yet). 'error' = network/permission denied.
+    const [toastFetch, setToastFetch] = useState({ status: 'idle', message: '' });
 
     // Normalized lookup over existing staff for fast diff.
     const existingByNorm = useMemo(() => {
@@ -148,14 +244,16 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
 
     // Parse the pasted/uploaded text on-the-fly so stage 1 can preview
     // the diff before the admin commits to a "next" click.
-    const parsed = useMemo(() => parseNames(pasted), [pasted]);
+    // Returns row objects { name, role?, location? } so we can carry
+    // CSV-extracted defaults through to Stage 3.
+    const parsed = useMemo(() => parseRows(pasted), [pasted]);
     const splitParsed = useMemo(() => {
         const newOnes = [];
         const existing = [];
-        for (const n of parsed) {
-            const key = normalizeName(n);
-            if (existingByNorm.has(key)) existing.push({ display: n, match: existingByNorm.get(key) });
-            else newOnes.push(n);
+        for (const r of parsed) {
+            const key = normalizeName(r.name);
+            if (existingByNorm.has(key)) existing.push({ display: r.name, match: existingByNorm.get(key) });
+            else newOnes.push(r);
         }
         return { newOnes, existing };
     }, [parsed, existingByNorm]);
@@ -178,24 +276,30 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
 
     // ── Stage 1 → 2 transition. Default-check every "new" name.
     const goToPick = () => {
-        const all = new Set(splitParsed.newOnes.map(n => normalizeName(n)));
+        const all = new Set(splitParsed.newOnes.map(r => normalizeName(r.name)));
         setSelected(all);
         setStage('pick');
     };
 
-    // ── Stage 2 → 3 transition. Build one configure-row per selected name.
-    const goToConfigure = () => {
+    // Build configure-rows from selected parsed rows, applying CSV /
+    // scraper hints (role + location) when they came through, and a
+    // batch-unique auto-PIN. Used by both:
+    //   • the "Configure →" path (admin gets to tweak each row), and
+    //   • the "Quick import" fast path (rows are built and immediately
+    //     handed to onImport with defaults preserved).
+    const buildRowsFromSelection = () => {
         const pinsInBatch = new Set();
-        const selectedNames = splitParsed.newOnes.filter(n => selected.has(normalizeName(n)));
-        const built = selectedNames.map((name, idx) => {
+        const selectedRows = splitParsed.newOnes.filter(r => selected.has(normalizeName(r.name)));
+        return selectedRows.map((src, idx) => {
             const pin = generatePin(existingPins, pinsInBatch);
             if (pin) pinsInBatch.add(pin);
+            const role = src.role || 'FOH';
             return {
                 tempId: `imp-${Date.now()}-${idx}`,
-                name,
-                role: 'FOH',
-                location: defaultLocation || 'webster',
-                scheduleSide: 'foh',
+                name: src.name,
+                role,
+                location: src.location || defaultLocation || 'webster',
+                scheduleSide: inferSide(role),
                 pin,
                 isMinor: false,
                 shiftLead: false,
@@ -203,8 +307,119 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                 recipesAccess: true, // opt-OUT model — default ON like Add Staff form
             };
         });
-        setRows(built);
+    };
+
+    // ── Stage 2 → 3 transition. Build one configure-row per selected name.
+    const goToConfigure = () => {
+        setRows(buildRowsFromSelection());
         setStage('configure');
+    };
+
+    // ── Stage 2 → IMPORT (skip configure). Builds rows with defaults
+    // (CSV-extracted role/location if present, otherwise defaults +
+    // auto-PINs) and submits directly. For new-restaurant bulk onboard
+    // where 30+ staff need to land NOW and the admin will refine flags
+    // later from the standard edit form.
+    const quickImport = () => {
+        const built = buildRowsFromSelection();
+        if (built.length === 0) return;
+        // Same final-record shape as handleSubmit — kept inline rather
+        // than refactored out because handleSubmit reads `rows` state
+        // and we're acting on the just-built array directly here.
+        const maxId = (existingStaff || []).reduce((m, s) => Math.max(m, Number(s.id) || 0), 0);
+        const finalRecords = built.map((r, i) => ({
+            id: maxId + 1 + i,
+            name: r.name.trim(),
+            role: r.role,
+            pin: r.pin,
+            location: r.location,
+            scheduleHome: r.location === 'both' ? 'both' : r.location,
+            scheduleSide: r.scheduleSide,
+            isMinor: false,
+            shiftLead: false,
+            opsAccess: false,
+            recipesAccess: true,
+            viewLabor: /manager|owner/i.test(r.role),
+            targetHours: 0,
+            canEditScheduleFOH: false,
+            canEditScheduleBOH: false,
+            preferredLanguage: 'en',
+            homeView: 'auto',
+            hiddenPages: [],
+        }));
+        onImport(finalRecords);
+    };
+
+    // ── "Fetch from Toast" — reads /ops/toast_employees written by
+    // the Railway scraper. See top-of-file contract block for the
+    // expected doc shape. If the doc is missing or empty (scraper
+    // hasn't run yet), surface a specific message rather than failing
+    // silently. On success we serialize the rows to CSV and append to
+    // the textarea so they flow through the same parser as paste/file
+    // input — single source of truth for downstream stages.
+    const fetchFromToast = async () => {
+        setToastFetch({ status: 'loading', message: '' });
+        try {
+            const snap = await getDoc(doc(db, 'ops', 'toast_employees'));
+            if (!snap.exists()) {
+                setToastFetch({
+                    status: 'empty',
+                    message: tx(
+                        'Toast scraper hasn\'t synced yet. The /ops/toast_employees doc doesn\'t exist. Ask your admin to set up the employees scraper on Railway.',
+                        'El scraper de Toast aún no ha sincronizado. El documento /ops/toast_employees no existe. Pide a tu administrador que configure el scraper de empleados en Railway.'
+                    ),
+                });
+                return;
+            }
+            const data = snap.data() || {};
+            const employees = Array.isArray(data.employees) ? data.employees : [];
+            if (employees.length === 0) {
+                setToastFetch({
+                    status: 'empty',
+                    message: tx(
+                        'Toast scraper synced but returned 0 employees. Check the scraper log on Railway.',
+                        'El scraper de Toast sincronizó pero devolvió 0 empleados. Revisa el log del scraper en Railway.'
+                    ),
+                });
+                return;
+            }
+            // Serialize to a CSV the parser already understands. Header
+            // line includes whatever fields we actually have data for,
+            // so the parser triggers its CSV path with proper column
+            // detection.
+            const hasRole = employees.some(e => e.role);
+            const hasLoc  = employees.some(e => e.location);
+            const headers = ['Name'];
+            if (hasRole) headers.push('Role');
+            if (hasLoc)  headers.push('Location');
+            const lines = [headers.join(',')];
+            for (const e of employees) {
+                const cells = [String(e.name || '').replace(/,/g, ' ')];
+                if (hasRole) cells.push(String(e.role || '').replace(/,/g, ' '));
+                if (hasLoc)  cells.push(String(e.location || '').replace(/,/g, ' '));
+                lines.push(cells.join(','));
+            }
+            const csv = lines.join('\n');
+            setPasted(prev => prev ? prev.trimEnd() + '\n' + csv : csv);
+            const fetchedTs = data.updatedAt?.toDate ? data.updatedAt.toDate() : null;
+            const ago = fetchedTs ? Math.round((Date.now() - fetchedTs.getTime()) / 60000) : null;
+            setToastFetch({
+                status: 'success',
+                message: tx(
+                    `Fetched ${employees.length} employee${employees.length === 1 ? '' : 's'} from Toast${ago != null ? ` (last sync ${ago} min ago)` : ''}.`,
+                    `Se obtuvieron ${employees.length} empleado${employees.length === 1 ? '' : 's'} de Toast${ago != null ? ` (última sincronización hace ${ago} min)` : ''}.`
+                ),
+            });
+        } catch (err) {
+            console.error('Toast fetch failed:', err);
+            setToastFetch({
+                status: 'error',
+                message: tx(
+                    'Couldn\'t reach the Toast employees doc. Check your network or Firestore rules for /ops/toast_employees.',
+                    'No se pudo acceder al documento de empleados de Toast. Verifica tu red o las reglas de Firestore para /ops/toast_employees.'
+                ),
+            });
+        }
     };
 
     const updateRow = (tempId, patch) => {
@@ -317,16 +532,43 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                                 rows={10}
                                 className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:border-blue-500 focus:outline-none" />
                         </div>
-                        <div className="border-t border-gray-200 pt-3">
+                        <div className="border-t border-gray-200 pt-3 flex flex-wrap items-center gap-2">
                             <button onClick={() => fileInputRef.current?.click()}
                                 className="px-4 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm font-bold hover:bg-blue-200">
                                 📂 {tx('Upload CSV / TXT', 'Subir CSV / TXT')}
                             </button>
                             <input ref={fileInputRef} type="file" accept=".csv,.txt" onChange={handleFile} className="hidden" />
-                            <span className="ml-3 text-xs text-gray-500">
+                            {/* Fetch from Toast — reads the scraper-written
+                                /ops/toast_employees doc. See top-of-file
+                                contract for the expected shape. */}
+                            <button onClick={fetchFromToast}
+                                disabled={toastFetch.status === 'loading'}
+                                className={`px-4 py-2 rounded-lg text-sm font-bold ${toastFetch.status === 'loading' ? 'bg-gray-300 text-gray-500 cursor-wait' : 'bg-amber-100 text-amber-800 hover:bg-amber-200'}`}>
+                                {toastFetch.status === 'loading'
+                                    ? '⏳ ' + tx('Fetching…', 'Obteniendo…')
+                                    : '🔄 ' + tx('Fetch from Toast', 'Obtener de Toast')}
+                            </button>
+                            <span className="text-xs text-gray-500">
                                 {tx('Adds to the names above', 'Se agrega a los nombres de arriba')}
                             </span>
                         </div>
+
+                        {/* Toast fetch result banner — colored by outcome. */}
+                        {toastFetch.status === 'success' && (
+                            <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-xs text-green-800 font-bold">
+                                ✓ {toastFetch.message}
+                            </div>
+                        )}
+                        {toastFetch.status === 'empty' && (
+                            <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-xs text-amber-800">
+                                ⚠ {toastFetch.message}
+                            </div>
+                        )}
+                        {toastFetch.status === 'error' && (
+                            <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-800">
+                                ✕ {toastFetch.message}
+                            </div>
+                        )}
 
                         {/* Live preview — surfaces the diff before they click Continue. */}
                         {parsed.length > 0 && (
@@ -371,7 +613,7 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                                 🆕 {tx('New names', 'Nuevos nombres')} ({selected.size}/{splitParsed.newOnes.length})
                             </h3>
                             <div className="flex gap-1">
-                                <button onClick={() => setSelected(new Set(splitParsed.newOnes.map(n => normalizeName(n))))}
+                                <button onClick={() => setSelected(new Set(splitParsed.newOnes.map(r => normalizeName(r.name))))}
                                     className="text-xs px-2 py-1 rounded bg-gray-200 hover:bg-gray-300 font-bold">
                                     {tx('All', 'Todos')}
                                 </button>
@@ -382,9 +624,12 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                             </div>
                         </div>
                         <div className="max-h-72 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
-                            {splitParsed.newOnes.map(n => {
-                                const key = normalizeName(n);
+                            {splitParsed.newOnes.map(r => {
+                                const key = normalizeName(r.name);
                                 const on = selected.has(key);
+                                // Surface CSV-extracted hints next to the name
+                                // so admin sees what's being carried into Stage 3.
+                                const hints = [r.role, r.location].filter(Boolean);
                                 return (
                                     <label key={key} className="flex items-center gap-3 px-3 py-2 hover:bg-blue-50 cursor-pointer">
                                         <input type="checkbox" checked={on}
@@ -396,7 +641,10 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                                                 });
                                             }}
                                             className="w-4 h-4 accent-blue-600" />
-                                        <span className="text-sm text-gray-800">{n}</span>
+                                        <span className="text-sm text-gray-800 flex-1">{r.name}</span>
+                                        {hints.length > 0 && (
+                                            <span className="text-[10px] text-gray-500 font-mono">{hints.join(' · ')}</span>
+                                        )}
                                     </label>
                                 );
                             })}
@@ -428,16 +676,30 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                             </div>
                         )}
 
-                        <div className="flex justify-between gap-2 pt-3 border-t border-gray-200">
+                        <div className="flex flex-wrap justify-between gap-2 pt-3 border-t border-gray-200">
                             <button onClick={() => setStage('source')}
                                 className="px-4 py-2 rounded-lg bg-gray-300 text-gray-700 font-bold hover:bg-gray-400 text-sm">
                                 ← {tx('Back', 'Atrás')}
                             </button>
-                            <button onClick={goToConfigure}
-                                disabled={selected.size === 0}
-                                className={`px-4 py-2 rounded-lg font-bold text-sm ${selected.size === 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                                {tx(`Configure ${selected.size} →`, `Configurar ${selected.size} →`)}
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                                {/* Quick Import — skips Stage 3 entirely. Uses
+                                    CSV/scraper-extracted role + location when
+                                    available, defaults otherwise (FOH +
+                                    defaultLocation), auto-PINs for everyone.
+                                    Right path for the "I have 40 names and
+                                    don't want to click through 40 cards" case. */}
+                                <button onClick={quickImport}
+                                    disabled={selected.size === 0}
+                                    title={tx('Skip configure — use CSV defaults / FOH / current store, auto-PIN everyone, import now', 'Saltar configurar — usa valores predeterminados, PIN automático, importar ahora')}
+                                    className={`px-4 py-2 rounded-lg font-bold text-sm ${selected.size === 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
+                                    ⚡ {tx(`Quick import ${selected.size}`, `Importar rápido ${selected.size}`)}
+                                </button>
+                                <button onClick={goToConfigure}
+                                    disabled={selected.size === 0}
+                                    className={`px-4 py-2 rounded-lg font-bold text-sm ${selected.size === 0 ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                                    {tx(`Configure ${selected.size} →`, `Configurar ${selected.size} →`)}
+                                </button>
+                            </div>
                         </div>
                     </div>
                 )}
