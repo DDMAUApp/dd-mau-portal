@@ -11,9 +11,8 @@
 // relevant Firestore collections internally so the sidebar always
 // reflects current state without prop-drilling counts from App.jsx.
 
-import { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { useMemo } from 'react';
+import { useAppData } from './AppDataContext';
 
 // NAV_GROUPS — every tab the v2 shell can render, with per-item access keys.
 // Items are filtered at render time based on the user's role/access flags
@@ -119,59 +118,23 @@ export default function Sidebar({
         ? 'translate-x-0'
         : '-translate-x-full md:translate-x-0';
 
-    // ── Live badge subscriptions ────────────────────────────────────────
-    const [draftCount, setDraftCount] = useState(0);
-    const [eighty6Count, setEighty6Count] = useState(0);
-    const [pendingPto, setPendingPto] = useState(0);
-    const [unreadNotifs, setUnreadNotifs] = useState(0);
-
-    // Drafts: shifts in the next 14 days that aren't published.
-    useEffect(() => {
-        const today = new Date();
-        const cutoff = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000);
-        const fmt = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-        const q = query(collection(db, 'shifts'), where('date', '>=', fmt(today)), where('date', '<', fmt(cutoff)));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => {
-                const sh = d.data();
-                if (sh.published === false && (storeLocation === 'both' || sh.location === storeLocation)) n++;
-            });
-            setDraftCount(n);
-        }, () => setDraftCount(0));
-        return () => unsub();
-    }, [storeLocation]);
-
-    // 86 board count.
-    useEffect(() => {
+    // FIX (review 2026-05-14, perf): read from the shared AppDataContext
+    // instead of four component-local Firestore subscriptions. Each
+    // badge is now a cheap useMemo over the shared data.
+    const { shifts14, eightySixByLoc, timeOff, unreadCount: unreadNotifs } = useAppData();
+    const draftCount = useMemo(() => {
+        return shifts14.filter(sh =>
+            sh.published === false &&
+            (storeLocation === 'both' || sh.location === storeLocation)
+        ).length;
+    }, [shifts14, storeLocation]);
+    const eighty6Count = useMemo(() => {
         const loc = storeLocation === 'both' ? 'webster' : storeLocation;
-        const unsub = onSnapshot(doc(db, 'ops', `86_${loc}`), (snap) => {
-            setEighty6Count(snap.exists() ? (snap.data().count || 0) : 0);
-        }, () => setEighty6Count(0));
-        return () => unsub();
-    }, [storeLocation]);
-
-    // Pending PTO requests.
-    useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'time_off'), (snap) => {
-            let n = 0;
-            snap.forEach(d => { if (d.data().status === 'pending') n++; });
-            setPendingPto(n);
-        }, () => setPendingPto(0));
-        return () => unsub();
-    }, []);
-
-    // Unread notifications for the current user.
-    useEffect(() => {
-        if (!staffName) return;
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => { if (!d.data().read) n++; });
-            setUnreadNotifs(n);
-        }, () => setUnreadNotifs(0));
-        return () => unsub();
-    }, [staffName]);
+        return eightySixByLoc[loc]?.count || 0;
+    }, [eightySixByLoc, storeLocation]);
+    const pendingPto = useMemo(() => {
+        return timeOff.filter(t => t.status === 'pending').length;
+    }, [timeOff]);
 
     // Map: tab → badge count (or null if no badge).
     const badges = {

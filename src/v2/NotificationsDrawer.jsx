@@ -21,9 +21,10 @@
 // the most recent 50, sorted by createdAt desc. Tapping an item marks
 // it read AND optionally navigates to its deepLink tab.
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { db } from '../firebase';
-import { collection, doc, onSnapshot, query, where, updateDoc, writeBatch } from 'firebase/firestore';
+import { doc, updateDoc, writeBatch } from 'firebase/firestore';
+import { useAppData } from './AppDataContext';
 
 function timeAgo(ts, isEs) {
     if (!ts) return '';
@@ -59,29 +60,13 @@ const KIND_META = {
 export default function NotificationsDrawer({ open, onClose, staffName, language = 'en', onNavigate }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
-    const [items, setItems] = useState([]);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-        if (!open || !staffName) return;
-        setLoading(true);
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
-        const unsub = onSnapshot(q, (snap) => {
-            const arr = [];
-            snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
-            // Sort by createdAt desc, fall back to insertion order if missing.
-            arr.sort((a, b) => {
-                const ta = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-                const tb = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
-                return tb - ta;
-            });
-            setItems(arr.slice(0, 50));
-            setLoading(false);
-        }, (err) => { console.warn('notif subscribe failed:', err); setLoading(false); });
-        return () => unsub();
-    }, [open, staffName]);
-
-    const unreadCount = items.filter(i => !i.read).length;
+    // FIX (review 2026-05-14, perf): read notifications from the shared
+    // AppDataContext instead of opening a per-drawer-open Firestore
+    // listener. Falls back to [] when staffName is empty (provider
+    // guards that case).
+    const { notifications: allNotifs, unreadCount } = useAppData();
+    const items = (allNotifs || []).slice(0, 50);
+    const loading = false;
 
     const markRead = async (id) => {
         try { await updateDoc(doc(db, 'notifications', id), { read: true }); }

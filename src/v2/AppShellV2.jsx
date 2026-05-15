@@ -22,6 +22,7 @@ import Sidebar from './Sidebar';
 import Header from './Header';
 import MobileBottomNav from './MobileBottomNav';
 import NotificationsDrawer from './NotificationsDrawer';
+import { AppDataProvider } from './AppDataContext';
 
 export default function AppShellV2({
     children,
@@ -47,6 +48,7 @@ export default function AppShellV2({
     const [notifOpen, setNotifOpen] = useState(false);     // cross-app notifications drawer
 
     return (
+        <AppDataProvider staffName={staffName} storeLocation={storeLocation}>
         <div className="min-h-screen bg-dd-sage text-dd-text font-sans">
             {/* Mobile drawer scrim — only opens when "More" is tapped */}
             {sidebarOpen && (
@@ -124,5 +126,6 @@ export default function AppShellV2({
                 hiddenPages={hiddenPages}
             />
         </div>
+        </AppDataProvider>
     );
 }

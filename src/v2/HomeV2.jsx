@@ -11,8 +11,9 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
+import { useAppData } from './AppDataContext';
 
 // ── Primitives ─────────────────────────────────────────────────────────
 function Card({ className = '', children, hover = false, ...rest }) {
@@ -131,57 +132,23 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
     // Resolve effective location for queries (multi-location admins might be 'both').
     const queryLoc = storeLocation === 'both' ? 'webster' : storeLocation;
 
-    // ── Live data ──
-    const [labor, setLabor] = useState({ loading: true, data: null });
-    const [eighty6, setEighty6] = useState({ loading: true, count: 0, items: [] });
-    const [shifts, setShifts] = useState({ loading: true, list: [] });
-    const [pendingPto, setPendingPto] = useState([]);
-
-    // Labor doc (current snapshot)
-    useEffect(() => {
-        setLabor({ loading: true, data: null });
-        const unsub = onSnapshot(doc(db, 'ops', `labor_${queryLoc}`), (snap) => {
-            setLabor({ loading: false, data: snap.exists() ? snap.data() : null });
-        }, (err) => { console.warn('labor subscribe failed:', err); setLabor({ loading: false, data: null }); });
-        return () => unsub();
-    }, [queryLoc]);
-
-    // 86 board
-    useEffect(() => {
-        setEighty6({ loading: true, count: 0, items: [] });
-        const unsub = onSnapshot(doc(db, 'ops', `86_${queryLoc}`), (snap) => {
-            const d = snap.exists() ? snap.data() : {};
-            setEighty6({ loading: false, count: d.count || 0, items: d.items || [] });
-        });
-        return () => unsub();
-    }, [queryLoc]);
-
-    // Shifts: pull this week + next 7 days for stats and "upcoming" list.
-    useEffect(() => {
-        setShifts({ loading: true, list: [] });
-        const start = todayKey();
-        const end = dayKey(8);
-        const q = query(collection(db, 'shifts'), where('date', '>=', start), where('date', '<', end));
-        const unsub = onSnapshot(q, (snap) => {
-            const list = [];
-            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-            setShifts({ loading: false, list });
-        }, (err) => { console.warn('shifts subscribe failed:', err); setShifts({ loading: false, list: [] }); });
-        return () => unsub();
-    }, []);
-
-    // Pending PTO requests (admins/managers see; otherwise irrelevant).
-    useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'time_off'), (snap) => {
-            const arr = [];
-            snap.forEach(d => {
-                const data = d.data();
-                if (data.status === 'pending') arr.push({ id: d.id, ...data });
-            });
-            setPendingPto(arr);
-        }, (err) => console.warn('time_off subscribe failed:', err));
-        return () => unsub();
-    }, []);
+    // FIX (review 2026-05-14, perf): read from the shared AppDataContext
+    // instead of four component-local Firestore subscriptions. The
+    // loading flags are kept in the same shape consumers rely on, just
+    // derived from "is the snapshot empty?" — the AppDataProvider seeds
+    // all values to [] / null so first paint behaves the same.
+    const { shifts14, timeOff, eightySixByLoc, laborByLoc } = useAppData();
+    const labor = useMemo(() => {
+        const data = laborByLoc[queryLoc] || null;
+        return { loading: data === null, data };
+    }, [laborByLoc, queryLoc]);
+    const eighty6 = useMemo(() => {
+        const d = eightySixByLoc[queryLoc];
+        if (d === null) return { loading: true, count: 0, items: [] };
+        return { loading: false, count: d?.count || 0, items: d?.items || [] };
+    }, [eightySixByLoc, queryLoc]);
+    const shifts = useMemo(() => ({ loading: false, list: shifts14 }), [shifts14]);
+    const pendingPto = useMemo(() => timeOff.filter(t => t.status === 'pending'), [timeOff]);
 
     // ── Derived ──
     const draftCount = useMemo(() =>

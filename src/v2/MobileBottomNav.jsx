@@ -30,9 +30,8 @@
 // home indicator. z-40 — modals (z-50) layer above this; sidebar (z-40)
 // equal but the drawer scrim covers the nav too while it's open.
 
-import { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { useMemo } from 'react';
+import { useAppData } from './AppDataContext';
 
 export default function MobileBottomNav({
     language,
@@ -47,45 +46,21 @@ export default function MobileBottomNav({
 }) {
     const isEs = language === 'es';
 
-    // ── Live badge subscriptions — same logic as the desktop Sidebar.
-    const [draftCount, setDraftCount] = useState(0);
-    const [eighty6Count, setEighty6Count] = useState(0);
-    const [unreadNotifs, setUnreadNotifs] = useState(0);
-
-    useEffect(() => {
-        const today = new Date();
-        const cutoff = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000);
-        const fmt = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-        const q = query(collection(db, 'shifts'), where('date', '>=', fmt(today)), where('date', '<', fmt(cutoff)));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => {
-                const sh = d.data();
-                if (sh.published === false && (storeLocation === 'both' || sh.location === storeLocation)) n++;
-            });
-            setDraftCount(n);
-        }, () => setDraftCount(0));
-        return () => unsub();
-    }, [storeLocation]);
-
-    useEffect(() => {
+    // FIX (review 2026-05-14, perf): read from the shared AppDataContext
+    // instead of three component-local Firestore subscriptions. The
+    // provider mounts in AppShellV2 and owns one listener per data
+    // stream; every consumer reads the same in-memory snapshot.
+    const { shifts14, eightySixByLoc, unreadCount: unreadNotifs } = useAppData();
+    const draftCount = useMemo(() => {
+        return shifts14.filter(sh =>
+            sh.published === false &&
+            (storeLocation === 'both' || sh.location === storeLocation)
+        ).length;
+    }, [shifts14, storeLocation]);
+    const eighty6Count = useMemo(() => {
         const loc = storeLocation === 'both' ? 'webster' : storeLocation;
-        const unsub = onSnapshot(doc(db, 'ops', `86_${loc}`), (snap) => {
-            setEighty6Count(snap.exists() ? (snap.data().count || 0) : 0);
-        }, () => setEighty6Count(0));
-        return () => unsub();
-    }, [storeLocation]);
-
-    useEffect(() => {
-        if (!staffName) return;
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => { if (!d.data().read) n++; });
-            setUnreadNotifs(n);
-        }, () => setUnreadNotifs(0));
-        return () => unsub();
-    }, [staffName]);
+        return eightySixByLoc[loc]?.count || 0;
+    }, [eightySixByLoc, storeLocation]);
 
     // Slot 3 is dynamic — Operations for staff with ops access (pre-shift
     // checklists, inventory), Recipes for those who only have recipes

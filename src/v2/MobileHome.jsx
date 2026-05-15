@@ -24,10 +24,11 @@
 //     every tappable surface so the app feels responsive even on mid-tier
 //     Android.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase';
-import { doc, collection, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
+import { useAppData } from './AppDataContext';
 
 function todayKey() {
     const d = new Date();
@@ -69,17 +70,46 @@ export default function MobileHome({
     const tx = (en, es) => (isEs ? es : en);
     const queryLoc = storeLocation === 'both' ? 'webster' : storeLocation;
 
-    // ── Live data ──────────────────────────────────────────────────────
-    const [todayShifts, setTodayShifts] = useState([]);
-    const [draftCount, setDraftCount]   = useState(0);
-    const [eighty6Count, setEighty6Count] = useState(0);
-    const [pendingPto, setPendingPto]   = useState(0);
-    const [unreadNotifs, setUnreadNotifs] = useState(0);
-    const [labor, setLabor] = useState(null);
-    const [pendingApplications, setPendingApplications] = useState(0);
+    // FIX (review 2026-05-14, perf): pull from the shared AppDataContext
+    // instead of 6 component-local Firestore subscriptions. The provider
+    // owns one listener per data stream.
+    const { shifts14, eightySixByLoc, laborByLoc, timeOff, unreadCount: unreadNotifs } = useAppData();
+
+    // Today's shifts for THIS staffer — derived from the shared shifts14.
+    const todayShifts = useMemo(() => {
+        if (!staffName) return [];
+        const today = todayKey();
+        return shifts14
+            .filter(sh => sh.date === today && sh.staffName === staffName && sh.published !== false)
+            .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
+    }, [shifts14, staffName]);
+
+    // Draft count — managers/admins only. Gated post-derivation so we
+    // still read from the shared snapshot without an extra subscription.
+    const draftCount = useMemo(() => {
+        if (!isManager && !isAdmin) return 0;
+        return shifts14.filter(sh =>
+            sh.published === false &&
+            (storeLocation === 'both' || sh.location === storeLocation)
+        ).length;
+    }, [shifts14, storeLocation, isManager, isAdmin]);
+
+    const eighty6Count = useMemo(() => eightySixByLoc[queryLoc]?.count || 0, [eightySixByLoc, queryLoc]);
+
+    const pendingPto = useMemo(() => {
+        if (!isManager && !isAdmin) return 0;
+        return timeOff.filter(t => t.status === 'pending').length;
+    }, [timeOff, isManager, isAdmin]);
+
+    // Labor — gated by canViewLabor (admins/managers default; staff opt-in).
+    const me = (staffList || []).find(s => s.name === staffName);
+    const canSeeLabor = canViewLabor(me);
+    const labor = useMemo(() => canSeeLabor ? laborByLoc[queryLoc] : null, [canSeeLabor, laborByLoc, queryLoc]);
 
     // Pending lock-screen apply submissions — drives the badge on the
-    // Onboarding tile so the owner sees new candidates without opening the tab.
+    // Onboarding tile. This one stays as a local subscription because
+    // /onboarding_applications isn't shared by any other v2 consumer.
+    const [pendingApplications, setPendingApplications] = useState(0);
     useEffect(() => {
         if (!hasOnboardingAccess) return;
         const unsub = onSnapshot(collection(db, 'onboarding_applications'), (snap) => {
@@ -87,82 +117,6 @@ export default function MobileHome({
         }, () => setPendingApplications(0));
         return () => unsub();
     }, [hasOnboardingAccess]);
-
-    useEffect(() => {
-        if (!staffName) return;
-        const today = todayKey();
-        const q = query(
-            collection(db, 'shifts'),
-            where('date', '==', today),
-            where('staffName', '==', staffName)
-        );
-        const unsub = onSnapshot(q, (snap) => {
-            const arr = [];
-            snap.forEach(d => {
-                const sh = { id: d.id, ...d.data() };
-                if (sh.published !== false) arr.push(sh);
-            });
-            arr.sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
-            setTodayShifts(arr);
-        }, () => setTodayShifts([]));
-        return () => unsub();
-    }, [staffName]);
-
-    useEffect(() => {
-        if (!isManager && !isAdmin) return;
-        const today = new Date();
-        const cutoff = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000);
-        const fmt = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-        const q = query(collection(db, 'shifts'), where('date', '>=', fmt(today)), where('date', '<', fmt(cutoff)));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => {
-                const sh = d.data();
-                if (sh.published === false && (storeLocation === 'both' || sh.location === storeLocation)) n++;
-            });
-            setDraftCount(n);
-        }, () => setDraftCount(0));
-        return () => unsub();
-    }, [storeLocation, isManager, isAdmin]);
-
-    useEffect(() => {
-        const unsub = onSnapshot(doc(db, 'ops', `86_${queryLoc}`), (snap) => {
-            setEighty6Count(snap.exists() ? (snap.data().count || 0) : 0);
-        }, () => setEighty6Count(0));
-        return () => unsub();
-    }, [queryLoc]);
-
-    useEffect(() => {
-        if (!isManager && !isAdmin) return;
-        const unsub = onSnapshot(collection(db, 'time_off'), (snap) => {
-            let n = 0;
-            snap.forEach(d => { if (d.data().status === 'pending') n++; });
-            setPendingPto(n);
-        }, () => setPendingPto(0));
-        return () => unsub();
-    }, [isManager, isAdmin]);
-
-    useEffect(() => {
-        if (!staffName) return;
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => { if (!d.data().read) n++; });
-            setUnreadNotifs(n);
-        }, () => setUnreadNotifs(0));
-        return () => unsub();
-    }, [staffName]);
-
-    // Labor — gated by canViewLabor (admins/managers default; staff opt-in).
-    const me = (staffList || []).find(s => s.name === staffName);
-    const canSeeLabor = canViewLabor(me);
-    useEffect(() => {
-        if (!canSeeLabor) return;
-        const unsub = onSnapshot(doc(db, 'ops', `labor_${queryLoc}`), (snap) => {
-            setLabor(snap.exists() ? snap.data() : null);
-        }, () => setLabor(null));
-        return () => unsub();
-    }, [queryLoc, canSeeLabor]);
 
     // ── Derived ────────────────────────────────────────────────────────
     const greeting = (() => {

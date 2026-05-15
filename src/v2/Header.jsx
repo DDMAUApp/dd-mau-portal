@@ -1,6 +1,4 @@
-import { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { useAppData } from './AppDataContext';
 
 // V2 header — Toast/Sling-style mission-control strip.
 //
@@ -30,17 +28,10 @@ export default function Header({
     const initials = (staffName || 'U')
         .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
     // Live unread-notification count for the bell badge.
-    const [unreadCount, setUnreadCount] = useState(0);
-    useEffect(() => {
-        if (!staffName) return;
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
-        const unsub = onSnapshot(q, (snap) => {
-            let n = 0;
-            snap.forEach(d => { if (!d.data().read) n++; });
-            setUnreadCount(n);
-        }, () => setUnreadCount(0));
-        return () => unsub();
-    }, [staffName]);
+    // FIX (review 2026-05-14, perf): read from the shared AppDataContext
+    // instead of opening a per-component Firestore listener. The provider
+    // owns one notifications subscription that every consumer reads from.
+    const { unreadCount } = useAppData();
     const loc = LOCATIONS.find(l => l.id === storeLocation) || LOCATIONS[0];
     const fullLabel = isEs ? loc.esLabel : loc.enLabel;
     const shortLabel = loc.short;
