@@ -1842,6 +1842,74 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </div>
                                                     </div>
 
+                                                    {/* LOCATION ROW — where this person works (eligibility)
+                                                        AND, when location === 'both', their home store
+                                                        (scheduleHome — which schedule grid they live on by
+                                                        default). Added 2026-05-15 so admins can fix the
+                                                        "appears on both grids but only fills in at one"
+                                                        problem without opening the per-staff edit modal.
+                                                        When location flips OFF 'both', scheduleHome is
+                                                        mirrored to the new location to keep the data
+                                                        consistent. */}
+                                                    {(() => {
+                                                        const loc = s.location || 'webster';
+                                                        const home = s.scheduleHome || s.location || 'both';
+                                                        const setLoc = (next) => {
+                                                            // Mirror scheduleHome to location for non-both
+                                                            // locations so getScheduleHome doesn't return
+                                                            // a stale value.
+                                                            const patch = { location: next };
+                                                            if (next !== 'both') patch.scheduleHome = next;
+                                                            handleBulkUpdate(s.id, patch);
+                                                        };
+                                                        return (
+                                                            <div className="mb-3">
+                                                                <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                                                                    {language === "es" ? "Ubicación" : "Location"}
+                                                                </div>
+                                                                <div className="flex flex-wrap gap-1.5">
+                                                                    <button onClick={() => setLoc("webster")}
+                                                                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${loc === "webster" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg"}`}>
+                                                                        Webster
+                                                                    </button>
+                                                                    <button onClick={() => setLoc("maryland")}
+                                                                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${loc === "maryland" ? "bg-purple-600 text-white border-purple-600" : "bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg"}`}>
+                                                                        Maryland Hts
+                                                                    </button>
+                                                                    <button onClick={() => setLoc("both")}
+                                                                        className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${loc === "both" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg"}`}>
+                                                                        {language === "es" ? "Ambas" : "Both"}
+                                                                    </button>
+                                                                </div>
+                                                                {/* Home-store picker — only meaningful when
+                                                                    location === 'both'. Lets a floater LIVE on
+                                                                    one grid by default; still eligible at the
+                                                                    other store via Add Shift. */}
+                                                                {loc === 'both' && (
+                                                                    <div className="mt-2 pl-2 border-l-2 border-amber-300 bg-amber-50 rounded-r-md py-1.5 pr-2">
+                                                                        <div className="text-[10px] font-bold uppercase tracking-wider text-amber-700 mb-1">
+                                                                            {language === "es" ? "Horario principal" : "Home schedule"}
+                                                                        </div>
+                                                                        <div className="flex flex-wrap gap-1.5">
+                                                                            <button onClick={() => handleBulkUpdate(s.id, { scheduleHome: "webster" })}
+                                                                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${home === "webster" ? "bg-emerald-600 text-white border-emerald-600" : "bg-white text-dd-text-2 border-dd-line"}`}>
+                                                                                Webster
+                                                                            </button>
+                                                                            <button onClick={() => handleBulkUpdate(s.id, { scheduleHome: "maryland" })}
+                                                                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${home === "maryland" ? "bg-purple-600 text-white border-purple-600" : "bg-white text-dd-text-2 border-dd-line"}`}>
+                                                                                Maryland
+                                                                            </button>
+                                                                            <button onClick={() => handleBulkUpdate(s.id, { scheduleHome: "both" })}
+                                                                                className={`px-2 py-0.5 rounded text-[10px] font-bold border transition ${home === "both" ? "bg-blue-600 text-white border-blue-600" : "bg-white text-dd-text-2 border-dd-line"}`}>
+                                                                                {language === "es" ? "Ambas" : "Both"}
+                                                                            </button>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })()}
+
                                                     {/* PAGE ACCESS ROW — what this person can SEE.
                                                         Includes the new viewLabor toggle (was missing). */}
                                                     <div className="mb-3">
