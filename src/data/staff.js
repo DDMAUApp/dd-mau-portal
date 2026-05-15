@@ -148,6 +148,39 @@ export const LOCATION_LABELS = {
   both: "Both Locations"
 };
 
+// scheduleHome — added 2026-05-15. Separates "where can this person
+// work" (location, used for shift-pick eligibility) from "which
+// store's schedule grid does this person belong to by default"
+// (scheduleHome). Some staff have location: 'both' because they can
+// cover at either store, but their HOME store is just one — they
+// shouldn't clutter the other store's regular schedule grid.
+//
+// Falls back to location for any record without an explicit
+// scheduleHome (so the field is purely additive — existing data keeps
+// working unchanged). Returns 'webster' | 'maryland' | 'both'.
+//
+// Use this for SCHEDULE GRID + HOURS + PTO filters. Do NOT use this
+// for shift-pick eligibility (Add Shift's staff dropdown) — that
+// stays on `location` so a 'both'-location floater can still be
+// pulled in to fill a shift at the non-home store.
+export function getScheduleHome(staff) {
+  if (!staff) return 'both';
+  if (staff.scheduleHome === 'webster' || staff.scheduleHome === 'maryland' || staff.scheduleHome === 'both') {
+    return staff.scheduleHome;
+  }
+  return staff.location || 'both';
+}
+
+// True iff this staff appears on the schedule grid for storeLocation.
+// storeLocation is 'webster' | 'maryland' | 'both'. Pairs with the
+// existing location-only filter to gate the grid view + hours + PTO
+// without breaking eligibility.
+export function isOnScheduleAt(staff, storeLocation) {
+  if (storeLocation === 'both') return true;
+  const home = getScheduleHome(staff);
+  return home === storeLocation || home === 'both';
+}
+
 export const DEFAULT_STAFF = [
   { id: 1, name: "Ada Rodriguez", role: "Pho", pin: "", location: "webster" },
   { id: 2, name: "Amelia Amelia", role: "FOH", pin: "", location: "webster" },

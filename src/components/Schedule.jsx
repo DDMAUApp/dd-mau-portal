@@ -30,7 +30,7 @@ import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     setDoc, serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
-import { canEditSchedule, isAdmin, LOCATION_LABELS } from '../data/staff';
+import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { notifyAdmins } from '../data/notify';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
@@ -860,8 +860,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const sideStaff = useMemo(() => {
         if (!Array.isArray(staffList)) return [];
         return staffList.filter(s => {
-            const locOk = storeLocation === 'both' || s.location === storeLocation || s.location === 'both';
-            if (!locOk) return false;
+            // SCHEDULE GRID FILTER — uses scheduleHome (not location) so a
+            // 'both'-location floater with scheduleHome === 'webster' only
+            // appears on Webster's grid by default. Add Shift's picker
+            // still uses raw `location` so they remain pickable as a
+            // fill-in at Maryland. See getScheduleHome() in data/staff.js.
+            if (!isOnScheduleAt(s, storeLocation)) return false;
             // Home side OR has any cross-side shift on the current side this week.
             return isOnSide(s, side) || crossSideNames.has(s.name);
         });
@@ -995,9 +999,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const hoursScoreboard = useMemo(() => {
         if (!Array.isArray(staffList)) return null;
-        const locStaff = staffList.filter(s =>
-            storeLocation === 'both' || s.location === storeLocation || s.location === 'both'
-        );
+        // Hours scoreboard counts staff whose scheduleHome includes this
+        // location, mirroring the grid filter. Floaters with a single
+        // scheduleHome don't pad the wrong store's totals.
+        const locStaff = staffList.filter(s => isOnScheduleAt(s, storeLocation));
         // Per-staff weekly hours across BOTH sides — week is the visible week.
         const weekStartStr = toDateStr(weekStart);
         const weekEndStr = toDateStr(addDays(weekStart, 7));
@@ -3349,7 +3354,7 @@ ${dayBlocks}
                                         // pending PTO from staff with no
                                         // shifts this week.
                                         locationStaffNames={new Set((staffList || [])
-                                            .filter(s => storeLocation === 'both' || s.location === storeLocation || s.location === 'both')
+                                            .filter(s => isOnScheduleAt(s, storeLocation))
                                             .map(s => s.name))}
                                         isEn={isEn}
                                         currentStaffName={staffName}

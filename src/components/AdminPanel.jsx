@@ -340,6 +340,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [newIsMinor, setNewIsMinor] = useState(false);
             const [newScheduleSide, setNewScheduleSide] = useState("foh");
             const [editLocation, setEditLocation] = useState("");
+            // scheduleHome — only meaningful when editLocation === 'both'.
+            // For single-location staff the schedule grid follows their
+            // location directly (see getScheduleHome in data/staff.js).
+            // For 'both' staff this picks WHICH store's grid they live on
+            // by default; they remain eligible to fill in at the other.
+            const [editScheduleHome, setEditScheduleHome] = useState("both");
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
             const [staffExpanded, setStaffExpanded] = useState(false);
@@ -560,7 +566,15 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: editLocation || s.location || "webster", opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
+                    // Resolve scheduleHome from the edit state. If location
+                    // isn't 'both' we mirror the location so getScheduleHome
+                    // returns the right value even if a stale scheduleHome
+                    // value was hanging around on the record.
+                    const finalLocation = editLocation || s.location || "webster";
+                    const finalScheduleHome = finalLocation === 'both'
+                        ? (editScheduleHome || 'both')
+                        : finalLocation;
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -568,6 +582,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 setEditPin("");
                 setEditRole("");
                 setEditLocation("");
+                setEditScheduleHome("both");
                 setEditOpsAccess(false);
                 setEditRecipesAccess(false);
                 setEditShiftLead(false);
@@ -964,7 +979,41 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <option value="maryland">Maryland Heights</option>
                                                             <option value="both">Both Locations</option>
                                                         </select>
+                                                        <p className="text-[10px] text-gray-500 mt-1 leading-snug">
+                                                            {language === "es"
+                                                                ? "Dónde puede trabajar esta persona (elegible para turnos)"
+                                                                : "Where this person can work (eligible for shifts)"}
+                                                        </p>
                                                     </div>
+                                                    {/* scheduleHome — only meaningful when location === 'both'.
+                                                        Lets a 'both'-location floater LIVE on one store's schedule
+                                                        grid without losing eligibility to fill in at the other. */}
+                                                    {editLocation === 'both' && (
+                                                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                                                            <p className="text-sm font-bold text-amber-900 mb-1">
+                                                                {language === "es" ? "Horario principal" : "Home schedule"}
+                                                            </p>
+                                                            <p className="text-[11px] text-amber-700 mb-2 leading-snug">
+                                                                {language === "es"
+                                                                    ? "En cuál tienda aparece esta persona en la cuadrícula del horario por defecto. La otra tienda aún puede asignarle turnos como suplente."
+                                                                    : "Which store's schedule grid this person appears on by default. The other store can still pull them in as a fill-in."}
+                                                            </p>
+                                                            <div className="grid grid-cols-3 gap-2">
+                                                                <button onClick={() => setEditScheduleHome("webster")}
+                                                                    className={`py-2 rounded-md text-xs font-bold ${editScheduleHome === "webster" ? "bg-emerald-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                    Webster
+                                                                </button>
+                                                                <button onClick={() => setEditScheduleHome("maryland")}
+                                                                    className={`py-2 rounded-md text-xs font-bold ${editScheduleHome === "maryland" ? "bg-purple-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                    Maryland
+                                                                </button>
+                                                                <button onClick={() => setEditScheduleHome("both")}
+                                                                    className={`py-2 rounded-md text-xs font-bold ${editScheduleHome === "both" ? "bg-blue-600 text-white" : "bg-white border border-gray-300 text-gray-600"}`}>
+                                                                    {language === "es" ? "Ambos" : "Both"}
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                     <div>
                                                         <label className="text-xs text-gray-600 font-semibold">{t("newPIN", language)}</label>
                                                         <input type="text" inputMode="numeric" maxLength={4} value={editPin}
@@ -1183,7 +1232,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditScheduleHome("both"); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -1193,10 +1242,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 <div className="p-3 flex items-center justify-between">
                                                     <div>
                                                         <p className="font-bold text-gray-800">{person.name}</p>
-                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
+                                                        <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"}{person.location === 'both' && person.scheduleHome && person.scheduleHome !== 'both' ? ` (${language === "es" ? "horario" : "schedule"}: ${LOCATION_LABELS[person.scheduleHome] || person.scheduleHome})` : ''} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
