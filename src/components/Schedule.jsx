@@ -341,6 +341,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // the admin section is taller than the remaining viewport.
     const moreBtnRef = useRef(null);
     const [moreMenuMaxH, setMoreMenuMaxH] = useState(420);
+    // FIX (2026-05-15, Andrew): mobile dropdown was clipping off-screen.
+    // The menu is 256px wide and was anchored `right-0` to the More
+    // button, meaning it extended LEFT from the button. If the button
+    // sat in the middle of a narrow toolbar (mobile <360px viewport),
+    // the menu's left edge would go negative. Now we measure the
+    // button's position and clamp the menu's left coordinate to the
+    // visible viewport with a 12px gutter on both sides.
+    const [moreMenuPos, setMoreMenuPos] = useState({ left: 0, top: 0 });
     useEffect(() => {
         if (!showMoreActions) return;
         const recompute = () => {
@@ -351,6 +359,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // (3-4 items visible) even if the button is near the
             // viewport bottom — internal scroll picks up the rest.
             setMoreMenuMaxH(Math.max(240, available));
+            // Horizontal: prefer right-align to button. If that would
+            // push the LEFT edge below the viewport's 12px gutter, slide
+            // the menu right. If the menu wider than viewport (true on
+            // <290px screens), pin to the gutter at both edges and let
+            // the menu shrink.
+            const MENU_W = 256;
+            const GUTTER = 12;
+            const vw = window.innerWidth;
+            let left = rect.right - MENU_W;       // right-aligned default
+            if (left < GUTTER) left = GUTTER;     // can't go below left gutter
+            if (left + MENU_W > vw - GUTTER) left = vw - MENU_W - GUTTER;
+            if (left < GUTTER) left = GUTTER;     // narrow phone — pin left, menu will overflow to right gutter
+            setMoreMenuPos({ left, top: rect.bottom + 4 });
         };
         recompute();
         window.addEventListener('resize', recompute);
@@ -1672,11 +1693,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Applying the template to a date creates one staffing_need per slot
     // (so each role gets its own fillable slot). Apply is non-destructive —
     // existing needs/shifts on that date are NOT touched.
-    const handleSaveTemplate = async (tpl) => {
+    const handleSaveTemplate = async (tpl, applyDates) => {
         // Templates can target FOH, BOH, or both. Gate by the template's
         // target side; fall back to page side if template doesn't declare.
         if (!canEditSide(tpl?.side || side)) return;
+        // FIX (2026-05-15, Andrew): support "Save & Apply" flow. When
+        // applyDates is a non-empty array, we save the template AND
+        // immediately materialize staffing_needs for each date — no
+        // need to close the editor and re-open the Apply modal.
         try {
+            let savedTpl = tpl;
             if (tpl.id) {
                 const { id, ...data } = tpl;
                 await updateDoc(doc(db, 'schedule_templates', id), {
@@ -1684,15 +1710,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     updatedAt: serverTimestamp(),
                     updatedBy: staffName,
                 });
+                savedTpl = { ...tpl };  // id retained
             } else {
-                await addDoc(collection(db, 'schedule_templates'), {
+                const newRef = await addDoc(collection(db, 'schedule_templates'), {
                     ...tpl,
                     createdAt: serverTimestamp(),
                     createdBy: staffName,
                 });
+                savedTpl = { ...tpl, id: newRef.id };
             }
             setShowTemplateEditor(false);
             setEditingTemplate(null);
+            // Now apply (after-save) so the template + the staffing
+            // needs land in one user-perceived action.
+            if (Array.isArray(applyDates) && applyDates.length > 0) {
+                await handleApplyTemplate(savedTpl, applyDates);
+            } else {
+                toast(tx(`✅ Template "${tpl.name}" saved.`, `✅ Plantilla "${tpl.name}" guardada.`));
+            }
         } catch (e) {
             console.error('Save template failed:', e);
             toast(tx('Could not save template: ', 'No se pudo guardar la plantilla: ') + e.message);
@@ -2879,19 +2914,24 @@ ${dayBlocks}
                         <>
                             {/* Click-outside backdrop */}
                             <div className="fixed inset-0 z-30" onClick={() => setShowMoreActions(false)} />
-                            {/* Anchor the popover to the RIGHT of the More
-                                button (right-0) so the 256px panel doesn't
-                                shoot off the right edge of the page (the
-                                button sits at the far end of the toolbar).
-                                Max-height is JS-driven from the button's
-                                live position so the menu always fits the
-                                visible viewport — see the moreBtnRef +
-                                moreMenuMaxH effect above. Internal scroll
-                                kicks in if the admin section is taller
-                                than the remaining space. */}
+                            {/* Fixed-positioned popover with viewport-clamped
+                                coords (see moreBtnRef + moreMenuPos effect
+                                above). Stays in the visible viewport on
+                                every screen size — previously we used
+                                `absolute right-0` which clipped on mobile
+                                when the More button was anywhere except the
+                                far right edge. Max-height is JS-driven so
+                                the menu always fits below the button;
+                                internal scroll picks up the rest. */}
                             <div
-                                style={{ maxHeight: `${moreMenuMaxH}px` }}
-                                className="absolute top-full right-0 mt-1 w-64 bg-white border border-dd-line rounded-xl shadow-card-hov z-40 overflow-y-auto">
+                                style={{
+                                    position: 'fixed',
+                                    left: `${moreMenuPos.left}px`,
+                                    top: `${moreMenuPos.top}px`,
+                                    maxHeight: `${moreMenuMaxH}px`,
+                                    maxWidth: 'calc(100vw - 24px)',
+                                }}
+                                className="w-64 bg-white border border-dd-line rounded-xl shadow-card-hov z-40 overflow-y-auto">
                                 {/* TOOLS */}
                                 <div className="px-3 py-2 border-b border-dd-line">
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Tools', 'Herramientas')}</div>
@@ -3509,6 +3549,7 @@ ${dayBlocks}
                     onSave={handleSaveTemplate}
                     storeLocation={storeLocation}
                     side={side}
+                    weekStart={weekStart}
                     isEn={isEn}
                 />
             )}
@@ -6724,7 +6765,7 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
 // Manager creates a named template: side + location + N blocks. Each block has
 // a label ("Morning") + start/end + role-slot rows (FOH / Lead / Manager etc.
 // with a count). Saved to schedule_templates.
-function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, isEn }) {
+function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, weekStart, isEn }) {
     const tx = (en, es) => (isEn ? en : es);
     const [tpl, setTpl] = useState(() => initial || {
         name: "",
@@ -6739,6 +6780,46 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
             { label: tx("Morning", "Mañana"), startTime: "09:00", endTime: "15:00", slots: [{ roleGroup: "foh-staff", count: 3 }] },
         ],
     });
+    // FIX (2026-05-15, Andrew): integrated apply flow. Build the template
+    // AND schedule it for the visible week in one window — no more
+    // bouncing between Edit Template and Apply Template modals. Each chip
+    // represents a date in the current week.
+    const applyDays = useMemo(() => {
+        if (!weekStart) return [];
+        const out = [];
+        for (let i = 0; i < 7; i++) {
+            const d = addDays(weekStart, i);
+            out.push({
+                dateStr: toDateStr(d),
+                dayId: DAY_IDS[d.getDay()],
+                dayLabel: (isEn ? DAYS_EN : DAYS_ES)[d.getDay()],
+                dayNum: d.getDate(),
+            });
+        }
+        return out;
+    }, [weekStart, isEn]);
+    const [applyDates, setApplyDates] = useState(() => new Set());
+    // When daysOfWeek tag changes on the template, auto-suggest the
+    // matching dates in the current week. Lets the user say "this
+    // template runs every Mon/Wed" and immediately see those days
+    // pre-checked for application without an extra step.
+    useEffect(() => {
+        const tagged = Array.isArray(tpl.daysOfWeek) ? tpl.daysOfWeek : [];
+        if (tagged.length === 0) return;
+        const next = new Set();
+        for (const d of applyDays) {
+            if (tagged.includes(d.dayId)) next.add(d.dateStr);
+        }
+        setApplyDates(next);
+    }, [tpl.daysOfWeek, applyDays]);
+    const toggleApplyDate = (dateStr) => {
+        setApplyDates(prev => {
+            const next = new Set(prev);
+            if (next.has(dateStr)) next.delete(dateStr);
+            else next.add(dateStr);
+            return next;
+        });
+    };
     // Existing templates predating daysOfWeek lack the field — guard so
     // toggleDay doesn't blow up with `undefined.includes`.
     const tplDays = Array.isArray(tpl.daysOfWeek) ? tpl.daysOfWeek : [];
@@ -6972,6 +7053,50 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                         ))}
                     </div>
                 </div>
+                {/* APPLY TO DAYS — pick from the visible week. Lets manager
+                    build a template AND schedule it in one window without
+                    closing + reopening the Apply modal. Optional: leave all
+                    blank to just save the template definition. */}
+                {applyDays.length > 0 && (
+                    <div className="border-t border-gray-200 px-4 pt-3 pb-1">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <div className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider">
+                                {tx('Apply to days (this week)', 'Aplicar a días (esta semana)')}
+                            </div>
+                            <div className="flex gap-1.5">
+                                <button onClick={() => setApplyDates(new Set(applyDays.map(d => d.dateStr)))}
+                                    className="text-[10px] font-bold text-indigo-700 hover:text-indigo-900">
+                                    {tx('All', 'Todos')}
+                                </button>
+                                <span className="text-[10px] text-gray-400">·</span>
+                                <button onClick={() => setApplyDates(new Set())}
+                                    className="text-[10px] font-bold text-gray-600 hover:text-gray-900">
+                                    {tx('Clear', 'Limpiar')}
+                                </button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-7 gap-1">
+                            {applyDays.map(d => {
+                                const isPicked = applyDates.has(d.dateStr);
+                                return (
+                                    <button key={d.dateStr} onClick={() => toggleApplyDate(d.dateStr)}
+                                        className={`py-2 rounded-lg border-2 text-center transition active:scale-95 ${
+                                            isPicked
+                                                ? 'bg-indigo-600 border-indigo-700 text-white'
+                                                : 'bg-white border-gray-200 text-gray-600 hover:border-indigo-300'
+                                        }`}>
+                                        <div className="text-[10px] font-black uppercase tracking-wider">{d.dayLabel}</div>
+                                        <div className="text-sm font-bold">{d.dayNum}</div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="text-[10px] text-gray-500 mt-1.5">
+                            {tx('Optional. Pick days to schedule this template immediately. Leave empty to save the template only.',
+                                'Opcional. Elige días para programar esta plantilla de inmediato. Déjalo vacío para solo guardar.')}
+                        </p>
+                    </div>
+                )}
                 <div className="border-t border-gray-200 p-3 space-y-2">
                     {!canSave && (
                         <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 text-center font-semibold">
@@ -6980,11 +7105,19 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                     )}
                     <div className="flex gap-2">
                         <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Cancel", "Cancelar")}</button>
-                        <button onClick={() => canSave && onSave(tpl)} disabled={!canSave}
-                            title={canSave ? '' : saveBlockedReason}
-                            className={`flex-1 py-2 rounded-lg font-bold text-white ${canSave ? "bg-indigo-600 hover:bg-indigo-700" : "bg-gray-300 cursor-not-allowed"}`}>
-                            {tx("Save Template", "Guardar Plantilla")}
-                        </button>
+                        {applyDates.size === 0 ? (
+                            <button onClick={() => canSave && onSave(tpl)} disabled={!canSave}
+                                title={canSave ? '' : saveBlockedReason}
+                                className={`flex-1 py-2 rounded-lg font-bold text-white ${canSave ? "bg-indigo-600 hover:bg-indigo-700" : "bg-gray-300 cursor-not-allowed"}`}>
+                                {tx("Save Template", "Guardar Plantilla")}
+                            </button>
+                        ) : (
+                            <button onClick={() => canSave && onSave(tpl, Array.from(applyDates))} disabled={!canSave}
+                                title={canSave ? '' : saveBlockedReason}
+                                className={`flex-1 py-2 rounded-lg font-bold text-white ${canSave ? "bg-green-600 hover:bg-green-700" : "bg-gray-300 cursor-not-allowed"}`}>
+                                {tx(`Save & Apply (${applyDates.size})`, `Guardar y Aplicar (${applyDates.size})`)}
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
