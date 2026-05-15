@@ -3772,23 +3772,38 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
                             </p>
                         </div>
                     )}
-                    {weatherTips?.length > 0 && (
+                    {/* Weather forecast — always renders when we have data,
+                        not just when there's a notable tip. Andrew (2026-05-14):
+                        previously this section was gated on weatherTips.length>0,
+                        which meant mild St. Louis weeks hid the forecast
+                        entirely. Restored to "always show the next few days
+                        when forecast data is loaded; layer tip warnings on
+                        top when present." */}
+                    {weather?.periods?.length > 0 && (
                         <div className="border-t border-dd-line pt-3">
                             <h4 className="text-[11px] font-bold text-blue-700 mb-1.5 uppercase tracking-wider">
                                 🌤 {tx(`Weather: ${weather?.location || ''}`, `Clima: ${weather?.location || ''}`)}
                             </h4>
                             <ul className="text-[11px] text-dd-text space-y-1.5">
-                                {weatherTips.map((tip, idx) => (
-                                    <li key={idx} className="flex items-start gap-2">
-                                        <span className="font-bold whitespace-nowrap text-dd-text">{tip.name}:</span>
-                                        <span>
-                                            <span className="text-dd-text-2">{tip.shortForecast} · {tip.tF}°F · {tip.rain}% rain</span>
-                                            {tip.parts.map((p, j) => (
-                                                <div key={j} className="text-[11px] text-amber-800 mt-0.5">⚠️ {isEn ? p.text : p.esText}</div>
-                                            ))}
-                                        </span>
-                                    </li>
-                                ))}
+                                {weather.periods.filter(p => p.isDaytime).slice(0, 4).map((p, idx) => {
+                                    // Find the matching tip for this day (if any) so warnings
+                                    // ride alongside the regular forecast row instead of
+                                    // appearing as a separate "tips only" section.
+                                    const tip = (weatherTips || []).find(t => t.name === p.name);
+                                    const rain = p.probabilityOfPrecipitation?.value || 0;
+                                    const tF = Number(p.temperature) || null;
+                                    return (
+                                        <li key={idx} className="flex items-start gap-2">
+                                            <span className="font-bold whitespace-nowrap text-dd-text">{p.name}:</span>
+                                            <span>
+                                                <span className="text-dd-text-2">{p.shortForecast}{tF != null && ` · ${tF}°F`}{rain > 0 && ` · ${rain}% rain`}</span>
+                                                {tip?.parts?.map((part, j) => (
+                                                    <div key={j} className="text-[11px] text-amber-800 mt-0.5">⚠️ {isEn ? part.text : part.esText}</div>
+                                                ))}
+                                            </span>
+                                        </li>
+                                    );
+                                })}
                             </ul>
                         </div>
                     )}
