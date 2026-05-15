@@ -6349,7 +6349,16 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
         notes: initial?.notes || '',
     }));
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    const canSubmit = form.date && form.startTime && form.endTime && form.count >= 1 && form.startTime < form.endTime;
+    // FIX (2026-05-14): surface specific reason save is blocked so user
+    // isn't stuck staring at a gray button.
+    const submitBlockedReason = (() => {
+        if (!form.date) return tx('Pick a date', 'Elige una fecha');
+        if (!form.startTime || !form.endTime) return tx('Pick start + end times', 'Elige inicio y fin');
+        if (form.startTime >= form.endTime) return tx('End time must be after start time', 'La hora de fin debe ser después del inicio');
+        if (!form.count || form.count < 1) return tx('Set count to at least 1', 'Cuenta mínima es 1');
+        return null;
+    })();
+    const canSubmit = submitBlockedReason === null;
     const handleSave = () => {
         if (!canSubmit) return;
         // When editing, preserve id + filledStaff/filledShiftIds so the count
@@ -6485,12 +6494,20 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                 </div>
-                <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2">
-                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
-                    <button onClick={handleSave} disabled={!canSubmit}
-                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300'}`}>
-                        {isEditing ? tx('Save Changes', 'Guardar Cambios') : tx('Save Need', 'Guardar Necesidad')}
-                    </button>
+                <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 space-y-2">
+                    {!canSubmit && (
+                        <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 text-center font-semibold">
+                            ⚠ {submitBlockedReason}
+                        </div>
+                    )}
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                        <button onClick={handleSave} disabled={!canSubmit}
+                            title={canSubmit ? '' : submitBlockedReason}
+                            className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}`}>
+                            {isEditing ? tx('Save Changes', 'Guardar Cambios') : tx('Save Need', 'Guardar Necesidad')}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -6767,7 +6784,22 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
         blocks: t.blocks.map((b, i) => i === bi ? { ...b, slots: b.slots.filter((_, j) => j !== si) } : b),
     }));
 
-    const canSave = tpl.name.trim() && tpl.blocks.length > 0 && tpl.blocks.every(b => b.startTime && b.endTime && b.startTime < b.endTime && b.slots.length > 0);
+    // FIX (2026-05-14, Andrew "save button isn't working"): surface the
+    // specific reason save is disabled. Previously the button just went
+    // gray and tapping did nothing — most common cause is missing
+    // template name, but a manager who's just set up time + days has no
+    // way to know that's the missing piece.
+    const saveBlockedReason = (() => {
+        if (!tpl.name.trim()) return tx('Add a name to save', 'Agrega un nombre para guardar');
+        if (tpl.blocks.length === 0) return tx('Add at least one time block', 'Agrega al menos un bloque');
+        for (const b of tpl.blocks) {
+            if (!b.startTime || !b.endTime) return tx('Each block needs a start + end time', 'Cada bloque necesita inicio + fin');
+            if (b.startTime >= b.endTime) return tx('End time must be after start time', 'La hora de fin debe ser después del inicio');
+            if (b.slots.length === 0) return tx('Each block needs at least one role slot', 'Cada bloque necesita al menos un slot');
+        }
+        return null;
+    })();
+    const canSave = saveBlockedReason === null;
 
     // Common time presets per block — same DD Mau set as Add Shift, scoped to side.
     const blockPresets = tpl.side === "boh"
@@ -6940,12 +6972,20 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, is
                         ))}
                     </div>
                 </div>
-                <div className="border-t border-gray-200 p-3 flex gap-2">
-                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Cancel", "Cancelar")}</button>
-                    <button onClick={() => canSave && onSave(tpl)} disabled={!canSave}
-                        className={`flex-1 py-2 rounded-lg font-bold text-white ${canSave ? "bg-indigo-600 hover:bg-indigo-700" : "bg-gray-300"}`}>
-                        {tx("Save Template", "Guardar Plantilla")}
-                    </button>
+                <div className="border-t border-gray-200 p-3 space-y-2">
+                    {!canSave && (
+                        <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2 py-1.5 text-center font-semibold">
+                            ⚠ {saveBlockedReason}
+                        </div>
+                    )}
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Cancel", "Cancelar")}</button>
+                        <button onClick={() => canSave && onSave(tpl)} disabled={!canSave}
+                            title={canSave ? '' : saveBlockedReason}
+                            className={`flex-1 py-2 rounded-lg font-bold text-white ${canSave ? "bg-indigo-600 hover:bg-indigo-700" : "bg-gray-300 cursor-not-allowed"}`}>
+                            {tx("Save Template", "Guardar Plantilla")}
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
