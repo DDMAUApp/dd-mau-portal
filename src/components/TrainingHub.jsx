@@ -1,9 +1,31 @@
 import { useState, useEffect, useMemo } from "react";
 import { db } from "../firebase";
-import { doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteField } from "firebase/firestore";
+import { doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteField, onSnapshot } from "firebase/firestore";
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
+
+// Lesson-content overrides — admins can edit lesson titles + bullets in
+// the app, written to /config/training_overrides. The doc shape is one
+// key per lesson: `${moduleId}__${lessonId}` → { titleEn, titleEs,
+// contentEn[], contentEs[] }. At render time we merge override over the
+// static MODULES data, so the static file stays the source-of-truth
+// default and Firestore holds the in-app edits.
+//
+// Why Firestore not training.js: training.js needs a redeploy to
+// change; Andrew wants to fix typos / tweak wording without waiting
+// for GitHub Pages. The override layer means edits are live in seconds
+// on every device.
+function applyLessonOverride(lesson, override) {
+    if (!override) return lesson;
+    return {
+        ...lesson,
+        titleEn: override.titleEn != null ? override.titleEn : lesson.titleEn,
+        titleEs: override.titleEs != null ? override.titleEs : lesson.titleEs,
+        contentEn: Array.isArray(override.contentEn) ? override.contentEn : lesson.contentEn,
+        contentEs: Array.isArray(override.contentEs) ? override.contentEs : lesson.contentEs,
+    };
+}
 
 // Doc id helper — staff name → safe Firestore doc id
 const staffDocId = (name) => (name || "unknown").toLowerCase().replace(/\s+/g, "_");
@@ -121,13 +143,27 @@ export default function TrainingHub({ staffName, language, staffList }) {
     const [allProgress, setAllProgress] = useState({});
     const [loadingTracker, setLoadingTracker] = useState(false);
 
-    // Filter modules by tier
+    // Lesson-level overrides from Firestore (admin in-app edits).
+    // Doc: /config/training_overrides → { [`${mId}__${lId}`]: {titleEn,...} }
+    const [overrides, setOverrides] = useState({});
+    const [editorOpen, setEditorOpen] = useState(false);
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, "config", "training_overrides"), (snap) => {
+            setOverrides(snap.exists() ? (snap.data() || {}) : {});
+        }, (err) => { console.warn("training_overrides snapshot failed:", err); });
+        return () => unsub();
+    }, []);
+
+    // Filter modules by tier + apply lesson overrides
     const visibleModules = useMemo(() => MODULES.filter(m => {
         if (m.tier === "all") return true;
         if (m.tier === "lead") return isLead;
         if (m.tier === "admin") return adminUser;
         return false;
-    }), [isLead, adminUser]);
+    }).map(m => ({
+        ...m,
+        lessons: m.lessons.map(l => applyLessonOverride(l, overrides[`${m.id}__${l.id}`])),
+    })), [isLead, adminUser, overrides]);
 
     const activeModule = useMemo(() => visibleModules.find(m => m.id === activeModuleId), [activeModuleId, visibleModules]);
     const activeLesson = useMemo(() => activeModule?.lessons.find(l => l.id === activeLessonId), [activeModule, activeLessonId]);
@@ -416,11 +452,36 @@ export default function TrainingHub({ staffName, language, staffList }) {
         const lIdx = m.lessons.findIndex(l => l.id === activeLessonId);
         const completed = moduleState(m.id).lessonsCompleted.includes(activeLessonId);
         const content = isEn ? activeLesson.contentEn : activeLesson.contentEs;
+        const overrideKey = `${m.id}__${activeLesson.id}`;
+        const hasOverride = !!overrides[overrideKey];
         return (
             <Shell><div className="p-4 pb-bottom-nav md:p-5">
                 <button onClick={() => setView("module")} className="text-sm text-mint-700 mb-3">← {tx("Back to module", "Volver al módulo")}</button>
                 <p className="text-xs text-gray-500 mb-1">{m.code} · {tx("Lesson", "Lección")} {lIdx + 1} / {m.lessons.length}</p>
-                <h2 className="text-xl font-bold text-mint-700 mb-4">{tx(activeLesson.titleEn, activeLesson.titleEs)}</h2>
+                <div className="flex items-start gap-2 mb-4">
+                    <h2 className="text-xl font-bold text-mint-700 flex-1">{tx(activeLesson.titleEn, activeLesson.titleEs)}</h2>
+                    {adminUser && (
+                        <button onClick={() => setEditorOpen(true)}
+                            className="shrink-0 px-3 py-1.5 rounded-lg bg-purple-100 text-purple-800 text-xs font-bold border border-purple-300 hover:bg-purple-200"
+                            title={tx("Admin: edit this lesson's content", "Admin: editar el contenido de esta lección")}>
+                            ✏️ {tx("Edit", "Editar")}{hasOverride ? ` · ${tx("edited", "editada")}` : ""}
+                        </button>
+                    )}
+                </div>
+                {editorOpen && adminUser && (
+                    <LessonEditor
+                        lesson={activeLesson}
+                        moduleId={m.id}
+                        moduleCode={m.code}
+                        lessonIdx={lIdx}
+                        overrideKey={overrideKey}
+                        hasOverride={hasOverride}
+                        editorBy={staffName}
+                        isEn={isEn}
+                        tx={tx}
+                        onClose={() => setEditorOpen(false)}
+                    />
+                )}
                 <div className="space-y-3 text-gray-800 text-sm leading-relaxed">
                     {content.map((para, i) => (
                         <p key={i} className={para.startsWith("•") || para.startsWith("—") || /^\d+\./.test(para) ? "ml-2" : ""}>{para}</p>
@@ -646,5 +707,168 @@ export default function TrainingHub({ staffName, language, staffList }) {
                 <p className="text-center text-gray-500 mt-12">{tx("No training modules yet.", "Aún no hay módulos de capacitación.")}</p>
             )}
         </div></Shell>
+    );
+}
+
+// ── LessonEditor ─────────────────────────────────────────────────────
+// Admin-only inline editor for a single lesson. Reads from the merged
+// lesson (static + any existing override) so the admin sees current
+// state, edits in place, and saves back to
+// /config/training_overrides.{moduleId}__{lessonId}.
+//
+// Storage shape — one giant doc with one key per edited lesson:
+//   /config/training_overrides = {
+//     "m6__m6-l2": { titleEn, titleEs, contentEn[], contentEs[],
+//                    editedAt, editedBy },
+//     ...
+//   }
+// Why one doc vs collection: 50-ish lessons max, edits are
+// infrequent, easier to snapshot-listen to one doc than collect a
+// collection. Stays under Firestore's 1MB doc limit comfortably (we
+// estimated ~140KB even if every lesson is edited).
+//
+// "Revert" button drops the override key so the static training.js
+// content takes over again — useful if Andrew makes a mess and wants
+// to roll back without redeploying.
+function LessonEditor({ lesson, moduleId, moduleCode, lessonIdx, overrideKey, hasOverride, editorBy, isEn, tx, onClose }) {
+    const [titleEn, setTitleEn] = useState(lesson.titleEn || "");
+    const [titleEs, setTitleEs] = useState(lesson.titleEs || "");
+    const [bodyEn, setBodyEn] = useState((lesson.contentEn || []).join("\n"));
+    const [bodyEs, setBodyEs] = useState((lesson.contentEs || []).join("\n"));
+    const [saving, setSaving] = useState(false);
+    const [err, setErr] = useState(null);
+
+    const enLines = bodyEn.split("\n").map(s => s.trimEnd()).filter(s => s.length > 0);
+    const esLines = bodyEs.split("\n").map(s => s.trimEnd()).filter(s => s.length > 0);
+    const balanced = enLines.length === esLines.length;
+
+    const save = async () => {
+        if (!balanced) {
+            if (!confirm(tx(
+                `EN has ${enLines.length} lines, ES has ${esLines.length}. Save anyway? The bilingual renderer expects them to match.`,
+                `EN tiene ${enLines.length} líneas, ES tiene ${esLines.length}. ¿Guardar igual? El renderer bilingüe espera que coincidan.`
+            ))) return;
+        }
+        setSaving(true); setErr(null);
+        try {
+            const ref = doc(db, "config", "training_overrides");
+            const patch = {
+                [overrideKey]: {
+                    titleEn: titleEn.trim(),
+                    titleEs: titleEs.trim(),
+                    contentEn: enLines,
+                    contentEs: esLines,
+                    editedAt: new Date().toISOString(),
+                    editedBy: editorBy || "admin",
+                }
+            };
+            try {
+                await updateDoc(ref, patch);
+            } catch (e) {
+                // First-time create
+                await setDoc(ref, patch, { merge: true });
+            }
+            onClose();
+        } catch (e) {
+            console.error("lesson save failed:", e);
+            setErr(e.message || String(e));
+            setSaving(false);
+        }
+    };
+
+    const revert = async () => {
+        if (!confirm(tx(
+            "Revert this lesson to the deployed default? Your in-app edits will be discarded.",
+            "¿Revertir esta lección al contenido por defecto? Tus ediciones se perderán."
+        ))) return;
+        setSaving(true); setErr(null);
+        try {
+            const ref = doc(db, "config", "training_overrides");
+            await updateDoc(ref, { [overrideKey]: deleteField() });
+            onClose();
+        } catch (e) {
+            console.error("lesson revert failed:", e);
+            setErr(e.message || String(e));
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-3 overflow-y-auto"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+            <div className="bg-white w-full max-w-3xl rounded-2xl shadow-2xl mt-4 mb-4">
+                <div className="sticky top-0 bg-white border-b border-gray-200 px-4 py-3 rounded-t-2xl flex items-center justify-between">
+                    <div>
+                        <div className="text-xs text-gray-500">{moduleCode} · {tx("Lesson", "Lección")} {lessonIdx + 1}</div>
+                        <h3 className="text-lg font-bold text-purple-800">✏️ {tx("Edit lesson", "Editar lección")}</h3>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                </div>
+                <div className="p-4 space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1">{tx("Title (EN)", "Título (EN)")}</label>
+                            <input type="text" value={titleEn} onChange={e => setTitleEn(e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-600 mb-1">{tx("Title (ES)", "Título (ES)")}</label>
+                            <input type="text" value={titleEs} onChange={e => setTitleEs(e.target.value)}
+                                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                        </div>
+                    </div>
+                    <p className="text-xs text-gray-500 leading-relaxed">
+                        {tx(
+                            "One bullet per line. Blank lines are dropped. Keep EN and ES at the same number of lines so the bilingual renderer doesn't drift.",
+                            "Un punto por línea. Las líneas en blanco se eliminan. Mantén EN y ES con el mismo número de líneas para que el renderer bilingüe no se desfase."
+                        )}
+                    </p>
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-bold text-gray-600">{tx("Body (EN)", "Cuerpo (EN)")} — {enLines.length} {tx("bullets", "puntos")}</label>
+                        </div>
+                        <textarea value={bodyEn} onChange={e => setBodyEn(e.target.value)}
+                            rows={Math.max(8, Math.min(24, enLines.length + 2))}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                    </div>
+                    <div>
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-bold text-gray-600">{tx("Body (ES)", "Cuerpo (ES)")} — {esLines.length} {tx("bullets", "puntos")}</label>
+                        </div>
+                        <textarea value={bodyEs} onChange={e => setBodyEs(e.target.value)}
+                            rows={Math.max(8, Math.min(24, esLines.length + 2))}
+                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                    </div>
+                    {!balanced && (
+                        <div className="p-2 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900">
+                            ⚠ {tx(`EN has ${enLines.length} lines, ES has ${esLines.length} — they should match.`,
+                                  `EN tiene ${enLines.length} líneas, ES tiene ${esLines.length} — deberían coincidir.`)}
+                        </div>
+                    )}
+                    {err && (
+                        <div className="p-2 rounded-lg bg-red-50 border border-red-300 text-xs text-red-800">
+                            {err}
+                        </div>
+                    )}
+                </div>
+                <div className="sticky bottom-0 bg-white border-t border-gray-200 px-4 py-3 rounded-b-2xl flex items-center gap-2">
+                    {hasOverride && (
+                        <button onClick={revert} disabled={saving}
+                            className="px-3 py-2 rounded-lg bg-white border-2 border-red-300 text-red-700 text-sm font-bold hover:bg-red-50 disabled:opacity-50">
+                            ↩ {tx("Revert to default", "Revertir")}
+                        </button>
+                    )}
+                    <div className="flex-1" />
+                    <button onClick={onClose} disabled={saving}
+                        className="px-4 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold hover:bg-gray-200 disabled:opacity-50">
+                        {tx("Cancel", "Cancelar")}
+                    </button>
+                    <button onClick={save} disabled={saving}
+                        className="px-4 py-2 rounded-lg bg-mint-700 text-white text-sm font-bold hover:bg-mint-800 disabled:opacity-50">
+                        {saving ? tx("Saving…", "Guardando…") : tx("Save", "Guardar")}
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }
