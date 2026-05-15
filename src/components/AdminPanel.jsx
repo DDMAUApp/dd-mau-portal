@@ -6,6 +6,7 @@ import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/sta
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
+import ImportStaffModal from './ImportStaffModal';
 import { toast, undoToast } from '../toast';
 import { enableFcmPush } from '../messaging';
 
@@ -160,6 +161,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editCanEditScheduleFOH, setEditCanEditScheduleFOH] = useState(false);
             const [editCanEditScheduleBOH, setEditCanEditScheduleBOH] = useState(false);
             const [showBulkTag, setShowBulkTag] = useState(false);
+            // Staff Import flow — paste names or upload CSV, diff against
+            // current staff list, configure new records (role / location /
+            // PIN / flags), commit as a batch. Lives in ImportStaffModal.
+            const [showImportStaff, setShowImportStaff] = useState(false);
             const [bulkSearch, setBulkSearch] = useState("");
             const [bulkFilter, setBulkFilter] = useState("all"); // all | untagged | foh | boh
             // Bulk toggles panel is collapsed by default so the staff list gets
@@ -883,6 +888,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         className="px-3 py-1 rounded-full text-xs font-bold border bg-purple-600 text-white border-purple-600 hover:bg-purple-700 transition ml-2">
                                         🏷 {language === "es" ? "Etiquetar en lote" : "Bulk Tag"}
                                     </button>
+                                    {/* Import flow — paste names / upload CSV and pull
+                                        in everyone not already on the staff list. */}
+                                    <button onClick={() => setShowImportStaff(true)}
+                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-blue-600 text-white border-blue-600 hover:bg-blue-700 transition">
+                                        📥 {language === "es" ? "Importar Personal" : "Import Staff"}
+                                    </button>
                                 </div>
                                 {/* Side sub-tabs — only meaningful when a specific
                                     location is selected. Hidden under "All Locations"
@@ -1516,6 +1527,44 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+
+                    {/* ── Import Staff Modal — paste names / upload CSV → diff → configure → commit ── */}
+                    {showImportStaff && (
+                        <ImportStaffModal
+                            existingStaff={staffList}
+                            defaultLocation={storeLocation || 'webster'}
+                            language={language}
+                            onCancel={() => setShowImportStaff(false)}
+                            onImport={async (newStaffArray) => {
+                                // Optimistic update + Firestore save. Functional
+                                // setState avoids stale-closure clobber if a
+                                // concurrent admin edit lands mid-import.
+                                let latest = null;
+                                setStaffList(prev => {
+                                    latest = [...(prev || []), ...newStaffArray];
+                                    return latest;
+                                });
+                                try {
+                                    if (latest) await saveStaffToFirestore(latest);
+                                    toast(language === 'es'
+                                        ? `Importados ${newStaffArray.length} miembros del personal`
+                                        : `Imported ${newStaffArray.length} staff member${newStaffArray.length === 1 ? '' : 's'}`,
+                                        { kind: 'success', duration: 4000 });
+                                    setShowImportStaff(false);
+                                } catch (err) {
+                                    console.error('Import staff save failed:', err);
+                                    toast(language === 'es'
+                                        ? 'Error al guardar la importación. Vuelve a intentarlo.'
+                                        : 'Failed to save import. Try again.',
+                                        { kind: 'error', duration: 6000 });
+                                    // Roll back the optimistic add so the UI matches Firestore.
+                                    setStaffList(prev => (prev || []).filter(s =>
+                                        !newStaffArray.find(n => n.id === s.id)
+                                    ));
+                                }
+                            }}
+                        />
+                    )}
 
                     {/* ── Bulk Tag Modal — fast scheduleSide / isMinor tagging ── */}
                     {showBulkTag && (() => {
