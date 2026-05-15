@@ -1,5 +1,4 @@
 import { initializeApp } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
@@ -14,40 +13,48 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-// ── Firebase App Check ────────────────────────────────────────────────
-// Locks Firestore + Storage so they only respond to traffic that proves
-// it's coming from THIS web app (verified via reCAPTCHA v3 token).
-// Random scripts hitting the Firebase project from elsewhere — even if
-// they have the public API key — get blocked.
+// ── Firebase App Check (DISABLED 2026-05-14) ─────────────────────────
+// App Check was previously initialized with ReCaptcha V3 to prep for
+// future enforcement of Firestore + Storage. Server-side enforcement
+// status (verified via firebaseappcheck.googleapis.com REST API):
+//   • firestore.googleapis.com    — UNENFORCED
+//   • firebasestorage.googleapis.com — UNENFORCED
+//   • identitytoolkit.googleapis.com — UNENFORCED
 //
-// Registered in the Firebase Console → App Check → Apps (2026-05-11).
-// reCAPTCHA v3 site key below is public-safe; the matching secret key
-// lives in Firebase and validates each token server-side.
+// While enforcement was off, the client-side init was a no-op for
+// security — but the ReCaptcha provider was failing on every page
+// (the site key 6LcHNuUsAAAAANWkNvePE7_dzmyWQZY5rsobSzG1 was likely
+// registered for an old domain, not app.ddmaustl.com). Combined with
+// `isTokenAutoRefreshEnabled: true`, the SDK retried token generation
+// every ~minute and dumped a stream of console errors:
+//   `FirebaseError: AppCheck: ReCAPTCHA error. (appCheck/recaptcha-error)`
+// That spam buried real errors and made debugging "Something went
+// wrong" reports much harder.
 //
-// Currently the Firestore + Storage API enforcement is UNENFORCED in
-// the console. Tokens are generated and sent but not yet rejected on
-// failure. Once we verify nothing breaks under real usage we flip the
-// console to Enforced. After that, requests without a valid token
-// (i.e. anyone who isn't actually running the deployed app) fail at
-// the API layer.
+// Re-enabling steps (Phase 2):
+//   1. In Google reCAPTCHA admin (https://www.google.com/recaptcha/admin),
+//      verify the site key has app.ddmaustl.com as an allowed domain.
+//      If not, add it.
+//   2. Restore the import + init block below.
+//   3. Verify clean init in console.
+//   4. THEN flip enforcement to ENFORCED in Firebase Console → App Check
+//      → Apps for firestore.googleapis.com + firebasestorage.googleapis.com.
+//      (Do NOT flip enforcement first — that breaks every client until
+//      tokens are flowing correctly.)
 //
-// Skip App Check on localhost dev so vite hot-reload doesn't choke on
-// reCAPTCHA failures during development. Vite sets import.meta.env.PROD
-// to true on prod builds.
-if (typeof window !== 'undefined' && import.meta.env.PROD) {
-    try {
-        initializeAppCheck(app, {
-            provider: new ReCaptchaV3Provider('6LcHNuUsAAAAANWkNvePE7_dzmyWQZY5rsobSzG1'),
-            isTokenAutoRefreshEnabled: true,
-        });
-    } catch (e) {
-        // Non-fatal: if App Check init fails (no network, blocked by an
-        // extension, etc.) we still want the app to render. Once
-        // enforcement is on, the per-request token check will surface
-        // any real init issue as a clear error.
-        console.warn('[AppCheck] init failed (will retry on next load):', e);
-    }
-}
+// Until those steps are done, the import + init stay commented out.
+//
+// import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
+// if (typeof window !== 'undefined' && import.meta.env.PROD) {
+//     try {
+//         initializeAppCheck(app, {
+//             provider: new ReCaptchaV3Provider('6LcHNuUsAAAAANWkNvePE7_dzmyWQZY5rsobSzG1'),
+//             isTokenAutoRefreshEnabled: true,
+//         });
+//     } catch (e) {
+//         console.warn('[AppCheck] init failed (will retry on next load):', e);
+//     }
+// }
 
 export const db = getFirestore(app);
 export const storage = getStorage(app);
