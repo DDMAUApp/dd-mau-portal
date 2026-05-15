@@ -4749,6 +4749,17 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 const isCollapsed = collapsedCats[catKey] && !searchLower;
                                 const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
 
+                                // FIX (review 2026-05-14, perf): build an
+                                // id→index map ONCE per category render so
+                                // the inner subGroup.items.map can do an O(1)
+                                // lookup instead of category.items.indexOf
+                                // (which was O(n²) overall and ran on every
+                                // 30s clockTick re-render).
+                                const itemIdxByIdInCat = new Map();
+                                for (let i = 0; i < category.items.length; i++) {
+                                    itemIdxByIdInCat.set(category.items[i].id, i);
+                                }
+
                                 // Group by subcategory
                                 const subcats = [];
                                 let currentSub = null;
@@ -4788,7 +4799,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     )}
 
                                                     {subGroup.items.map((item) => {
-                                                        const itemIdx = category.items.indexOf(item);
+                                                        const itemIdx = itemIdxByIdInCat.get(item.id) ?? -1;
                                                         const count = inventory[item.id] || 0;
                                                         const isEditing = invEditMode && invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
                                                         // Visual marker for items added via the "Add as new master item" flow
@@ -5033,15 +5044,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                             {/* ── VENDOR VIEW ── */}
                             {invViewMode === "vendor" && (() => {
+                                // FIX (review 2026-05-14, perf): iterate with
+                                // the array's own index instead of doing an
+                                // O(n) cat.items.indexOf(item) lookup per
+                                // item (overall O(n²) per render).
                                 const vendorGroups = {};
                                 const searchLower = (invSearch || "").toLowerCase().trim();
                                 customInventory.forEach((cat, catIdx) => {
-                                    cat.items.forEach(item => {
+                                    cat.items.forEach((item, iIdx) => {
                                         const v = item.vendor || item.supplier || "Other";
                                         if (!vendorGroups[v]) vendorGroups[v] = [];
                                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
                                         if (itemMatchesSearch(item, searchLower) && matchesCounted) {
-                                            vendorGroups[v].push({ ...item, catIdx, itemIdx: cat.items.indexOf(item), catName: cat.name, catNameEs: cat.nameEs });
+                                            vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
                                         }
                                     });
                                 });
