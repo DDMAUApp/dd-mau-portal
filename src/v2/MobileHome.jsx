@@ -29,6 +29,7 @@ import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
 import { useAppData } from './AppDataContext';
+import AppVersion from '../components/AppVersion';
 
 function todayKey() {
     const d = new Date();
@@ -291,6 +292,12 @@ export default function MobileHome({
                     {allTiles.filter(t => !hiddenPages.includes(t.tab)).map(t => (
                         <Tile key={t.tab} {...t} onTap={() => onNavigate?.(t.tab)} isEs={isEs} />
                     ))}
+                </div>
+                {/* Build version footer — tappable, opens version-info modal.
+                    Always visible at the bottom of the mobile home so users
+                    can verify which build is actually loaded. */}
+                <div className="flex justify-center pt-4 pb-2">
+                    <AppVersion language={isEs ? 'es' : 'en'} />
                 </div>
             </div>
         </div>

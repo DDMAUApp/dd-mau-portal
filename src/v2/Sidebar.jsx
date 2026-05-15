@@ -13,6 +13,7 @@
 
 import { useMemo } from 'react';
 import { useAppData } from './AppDataContext';
+import AppVersion from '../components/AppVersion';
 
 // NAV_GROUPS — every tab the v2 shell can render, with per-item access keys.
 // Items are filtered at render time based on the user's role/access flags
@@ -318,6 +319,16 @@ export default function Sidebar({
                     <span className="text-base">🔒</span>
                     {!collapsed && <span>{isEs ? 'Bloquear / Salir' : 'Lock / Log out'}</span>}
                 </button>
+                {/* Build version footer — tappable, opens version-info modal.
+                    Visible whenever the sidebar is open (which means: always on
+                    desktop, and inside the "More" drawer on mobile). Lets
+                    Andrew verify which build is actually loaded at a glance.
+                    Hidden in collapsed rail mode to keep that view dense. */}
+                {!collapsed && (
+                    <div className="flex justify-center pt-1">
+                        <AppVersion language={language} />
+                    </div>
+                )}
             </div>
         </aside>
     );
