@@ -46,6 +46,8 @@ function getOrCreateDeviceId() {
 }
 
 let messagingInstance = null;
+// Module-level flag for one-shot legacy SW cleanup (see enableFcmPush).
+let _swCleanedUp = false;
 async function getMessagingSafely() {
     if (messagingInstance) return messagingInstance;
     try {
@@ -118,18 +120,30 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
             // Find and unregister it before installing the new one at
             // the dedicated scope — otherwise the orphaned registration
             // sits there indefinitely.
-            try {
-                const all = await navigator.serviceWorker.getRegistrations();
-                for (const r of all) {
-                    const sw = r.active || r.installing || r.waiting;
-                    if (!sw || !sw.scriptURL) continue;
-                    if (!sw.scriptURL.includes("firebase-messaging-sw.js")) continue;
-                    if (r.scope === swScope) continue;  // keep the correct one
-                    await r.unregister();
-                    console.log("[FCM] unregistered legacy SW at scope", r.scope);
+            //
+            // FIX (review 2026-05-14, perf): idempotent — only walk
+            // registrations the FIRST time we successfully complete this
+            // step in a session. enableFcmPush gets re-fired on every
+            // staffList length change (App.jsx FCM init effect), and
+            // re-walking every SW registration each time was real cost
+            // on devices that haven't had a legacy registration since
+            // their last cold-launch wipe.
+            if (!_swCleanedUp) {
+                try {
+                    const all = await navigator.serviceWorker.getRegistrations();
+                    for (const r of all) {
+                        const sw = r.active || r.installing || r.waiting;
+                        if (!sw || !sw.scriptURL) continue;
+                        if (!sw.scriptURL.includes("firebase-messaging-sw.js")) continue;
+                        if (r.scope === swScope) continue;  // keep the correct one
+                        await r.unregister();
+                        console.log("[FCM] unregistered legacy SW at scope", r.scope);
+                    }
+                    _swCleanedUp = true;
+                } catch (e) {
+                    console.warn("FCM legacy SW cleanup failed (non-fatal):", e);
+                    // Don't set _swCleanedUp — we'll retry on the next call.
                 }
-            } catch (e) {
-                console.warn("FCM legacy SW cleanup failed (non-fatal):", e);
             }
             swRegistration = await navigator.serviceWorker.register(swUrl, { scope: swScope });
         } catch (e) {
