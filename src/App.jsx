@@ -38,6 +38,24 @@ const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
 
+// Pre-warmed chunk fetchers. React.lazy() above only fetches a chunk
+// when the component first renders. Calling these import() URLs
+// earlier (e.g. after Home settles) lets the browser cache the chunk
+// in the background; the next tap on Schedule / Operations / Recipes
+// then resolves instantly instead of waiting on a network round-trip.
+//
+// We don't capture the result — Vite's HMR + Rollup's chunk graph
+// dedupe so the lazy() promise hits the same cached chunk. The
+// .catch() swallows transient network errors; the lazy() call will
+// retry on real render with normal error handling.
+const prewarmChunks = () => {
+    import('./components/Schedule').catch(() => {});
+    import('./components/Operations').catch(() => {});
+    import('./components/Recipes').catch(() => {});
+    import('./components/MenuReference').catch(() => {});
+    import('./components/Eighty6Dashboard').catch(() => {});
+};
+
 // Error boundary — catches render errors in child components.
 //
 // The recurring "Something went wrong → refresh fixes it" pattern Andrew
@@ -441,6 +459,24 @@ export default function App() {
             runMigrations();
         }
     }, []);
+    // Pre-warm the most-likely-next chunks once the user signs in. Schedule,
+    // Operations, Recipes etc. are lazy-loaded, which means tapping them
+    // fires a network request mid-tap. We can fetch those chunks in the
+    // background AFTER first paint so the tap-to-render transition is
+    // instant. requestIdleCallback (or a 500ms fallback) ensures the
+    // pre-warm doesn't compete with the main-thread work of initial
+    // render.
+    useEffect(() => {
+        if (!staffName) return;
+        const idle = window.requestIdleCallback
+            ? window.requestIdleCallback(() => prewarmChunks(), { timeout: 2000 })
+            : setTimeout(prewarmChunks, 500);
+        return () => {
+            if (window.cancelIdleCallback && typeof idle === 'number') window.cancelIdleCallback(idle);
+            else clearTimeout(idle);
+        };
+    }, [staffName]);
+
     // FCM push init — wire AFTER staff is logged in AND staffList is loaded.
     // The runbook says push is deployed; before this, enableFcmPush was
     // exported from messaging.js but never called, so tokens were never saved
