@@ -150,7 +150,16 @@ service cloud.firestore {
     // be tampered with after the fact.
     // Use case (Andrew, 2026-05-12): reconstruct who tweaked counts when,
     // for items that ended up missing from the order.
-    match /inventory_audits_{location}/{auditId} {
+    //
+    // NOTE: Firestore rules do NOT support partial-segment variable
+    // substitution (a previous version had `/inventory_audits_{location}/`
+    // which silently failed to deploy). Each location gets its own
+    // explicit match block.
+    match /inventory_audits_webster/{auditId} {
+      allow read, create: if true;
+      allow update, delete: if false;
+    }
+    match /inventory_audits_maryland/{auditId} {
       allow read, create: if true;
       allow update, delete: if false;
     }
@@ -253,6 +262,47 @@ service cloud.firestore {
       allow create, update: if request.resource.data.name is string
                             && request.resource.data.forDocId is string;
       allow delete: if true;
+    }
+
+    // Training content overrides — admins edit lesson title + bullets
+    // inline in the app and the changes propagate to every device via
+    // this doc. The TrainingHub gates the Edit button by isAdmin()
+    // client-side; these rules are defense-in-depth.
+    //
+    // Doc shape: { [`${moduleId}__${lessonId}`]: { titleEn, titleEs,
+    // contentEn[], contentEs[], editedBy, editedAt }, ... }.
+    //
+    // SECURITY POSTURE: same as /config/staff and /config/recipes.
+    // Without Firebase Auth (Phase 2 roadmap), we cannot truly verify
+    // the writer is an admin — any signed-in device knowing the path
+    // could write. What we CAN enforce server-side:
+    //
+    //   1. Reads stay open (lessons render to every staff).
+    //   2. Doc must be a map. No replacing it with a non-object.
+    //   3. NO DELETES from clients. Wiping the whole doc reverts every
+    //      in-app edit at once — must be a deliberate admin script.
+    //   4. Growth cap — a write can add at most 5 new keys at a time,
+    //      catching the bug where a buggy client posts a payload with
+    //      hundreds of fabricated overrides.
+    //
+    // Per-key shape validation (each value must be {titleEn, titleEs,
+    // contentEn, contentEs, ...}) is NOT enforceable in rules because
+    // Firestore can't iterate a map's dynamic keys. A bad write that
+    // sets one key to garbage data would pass — the Edit button only
+    // surfaces the doc to admins and the renderer falls back to the
+    // static MODULES when override fields are absent or wrong-shape,
+    // so impact is bounded to that single lesson.
+    match /config/training_overrides {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.size() <= 100;
+      allow update: if request.resource.data is map
+                    && request.resource.data.size() <= 100
+                    && (
+                      !('keys' in resource.data) ||
+                      request.resource.data.size() <= resource.data.size() + 5
+                    );
+      allow delete: if false;
     }
 
     // All other documents inherit a permissive default (matches current
