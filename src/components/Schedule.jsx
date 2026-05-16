@@ -361,6 +361,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Date blocks ("restaurant closed" / "no time-off allowed"). Manager-defined.
     const [dateBlocks, setDateBlocks] = useState([]);
     const [showBlockModal, setShowBlockModal] = useState(false);
+    // 2026-05-16 — recurring weekly closure config. Lives at
+    // /config/schedule_settings.closedWeekdays = { webster: [0],
+    // maryland: [0,1], ... } where 0=Sunday … 6=Saturday. Any date
+    // whose day-of-week is in the active location's array is treated
+    // as closed (same downstream effects as a one-off date_block of
+    // type=closed — see dateClosed helper below).
+    const [scheduleSettings, setScheduleSettings] = useState(null);
     // Time-off entries (Phase 2: admin-entered on behalf of staff. Phase 3: staff self-serve).
     const [timeOff, setTimeOff] = useState([]);
     const [showTimeOffModal, setShowTimeOffModal] = useState(false);
@@ -540,6 +547,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const sixMonthsAgo = useMemo(() => {
         const d = new Date(); d.setMonth(d.getMonth() - 6);
         return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }, []);
+
+    // ── Listen for recurring weekly closure config ──
+    // Single doc that holds per-location "we are closed every X" rules.
+    // Most restaurants have one or two of these (DD Mau: Sundays).
+    // Cheap subscription — one doc, low churn.
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'config', 'schedule_settings'), (snap) => {
+            setScheduleSettings(snap.exists() ? snap.data() : {});
+        }, (err) => console.warn('schedule_settings snapshot error:', err));
+        return unsub;
     }, []);
 
     // ── Listen for date blocks (restaurant closed days, no-time-off days) ──
@@ -959,7 +977,33 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         return map;
     }, [dateBlocks, storeLocation]);
 
-    const dateClosed = (dateStr) => (blocksByDate.get(dateStr) || []).some(b => b.type === 'closed');
+    // dateClosed — single source of truth. Returns true if:
+    //   (a) the date has a one-off date_block of type='closed' applying to the current view, OR
+    //   (b) the date's day-of-week is in the closedWeekdays config for the
+    //       current location (recurring weekly closure — e.g. Sundays).
+    //
+    // 2026-05-16 — added the (b) branch so Andrew can mark Sundays closed
+    // once instead of adding 52 one-off blocks/year. closedWeekdays config
+    // lives at /config/schedule_settings and is per-location. When
+    // storeLocation === 'both' we treat a day as closed only if BOTH
+    // locations are closed that weekday — otherwise managers still need
+    // to see the open location's grid.
+    const dateClosed = (dateStr) => {
+        if ((blocksByDate.get(dateStr) || []).some(b => b.type === 'closed')) return true;
+        const cw = scheduleSettings?.closedWeekdays || {};
+        const d = parseLocalDate(dateStr);
+        if (!d) return false;
+        const dow = d.getDay();
+        if (storeLocation === 'both') {
+            // Closed in BOTH views only when every location is closed that
+            // weekday. Otherwise the open location's grid still matters.
+            const w = Array.isArray(cw.webster) ? cw.webster : [];
+            const m = Array.isArray(cw.maryland) ? cw.maryland : [];
+            return w.includes(dow) && m.includes(dow);
+        }
+        const arr = Array.isArray(cw[storeLocation]) ? cw[storeLocation] : [];
+        return arr.includes(dow);
+    };
 
     // ── Derived: which staff names have shifts on the CURRENT side this week ──
     // A FOH staff with one BOH shift this week appears in BOH view too (cross-side).
@@ -2273,6 +2317,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await deleteDoc(doc(db, 'date_blocks', blockId));
         } catch (e) {
             console.error('Remove block failed:', e);
+        }
+    };
+
+    // 2026-05-16 — toggle a single (location, dayOfWeek) on/off in the
+    // recurring closure config. Uses setDoc with merge so the doc is
+    // created on first toggle and a per-location array is updated
+    // without clobbering siblings. Optimistic via the live snapshot.
+    const handleToggleClosedWeekday = async (loc, dayOfWeek) => {
+        if (!canEdit) return;
+        const cw = scheduleSettings?.closedWeekdays || {};
+        const cur = Array.isArray(cw[loc]) ? cw[loc] : [];
+        const next = cur.includes(dayOfWeek)
+            ? cur.filter(d => d !== dayOfWeek)
+            : [...cur, dayOfWeek].sort();
+        try {
+            await setDoc(doc(db, 'config', 'schedule_settings'), {
+                closedWeekdays: { ...cw, [loc]: next },
+                updatedAt: serverTimestamp(),
+                updatedBy: staffName,
+            }, { merge: true });
+        } catch (e) {
+            console.error('Toggle weekly closure failed:', e);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -3830,6 +3897,8 @@ ${dayBlocks}
                     blocks={dateBlocks}
                     storeLocation={storeLocation}
                     isEn={isEn}
+                    closedWeekdays={scheduleSettings?.closedWeekdays || {}}
+                    onToggleClosedWeekday={handleToggleClosedWeekday}
                 />
             )}
             {/* Availability conflict acknowledgment modal — flashing red
@@ -6205,7 +6274,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 //   • CLOSED — restaurant is closed (no shifts can be scheduled, no time-off needed)
 //   • NO TIME OFF — restaurant is open, but no PTO requests will be approved
 //                   (busy season, holiday weekends, special events)
-function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn }) {
+function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn, closedWeekdays = {}, onToggleClosedWeekday }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
     const [form, setForm] = useState({
@@ -6223,15 +6292,63 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn 
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
     const canSubmit = form.date && form.type;
 
+    // Weekday day-pill data for the recurring section. 0=Sunday.
+    const DAYS = [
+        { dow: 0, labelEn: 'Sun', labelEs: 'Dom' },
+        { dow: 1, labelEn: 'Mon', labelEs: 'Lun' },
+        { dow: 2, labelEn: 'Tue', labelEs: 'Mar' },
+        { dow: 3, labelEn: 'Wed', labelEs: 'Mié' },
+        { dow: 4, labelEn: 'Thu', labelEs: 'Jue' },
+        { dow: 5, labelEn: 'Fri', labelEs: 'Vie' },
+        { dow: 6, labelEn: 'Sat', labelEs: 'Sáb' },
+    ];
+
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-gray-800">🚫 {tx('Date Blackouts', 'Bloqueos de Fechas')}</h3>
+                    <h3 className="text-lg font-bold text-gray-800">🚫 {tx('Closures & Blackouts', 'Cierres y Bloqueos')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
 
                 <div className="p-4 space-y-3">
+                    {/* RECURRING WEEKLY CLOSURE — toggle days the restaurant is
+                        always closed (e.g. Sundays). Saves immediately on tap.
+                        Per-location: Webster could be closed Sunday while
+                        Maryland is open, or vice versa. */}
+                    <div className="border border-blue-300 bg-blue-50/50 rounded-lg p-3 space-y-2">
+                        <div>
+                            <div className="text-xs font-bold text-blue-900 mb-0.5">🔁 {tx('Closed every week on…', 'Cerrado cada semana en…')}</div>
+                            <p className="text-[11px] text-blue-700">
+                                {tx('Tap a day to toggle. Set once — applies to every future week of the schedule.',
+                                    'Toca un día para alternar. Configura una vez — se aplica a todas las semanas futuras.')}
+                            </p>
+                        </div>
+                        {['webster', 'maryland'].map(loc => {
+                            const arr = Array.isArray(closedWeekdays[loc]) ? closedWeekdays[loc] : [];
+                            return (
+                                <div key={loc}>
+                                    <div className="text-[10px] font-bold text-blue-900 uppercase tracking-wider mb-1">
+                                        {LOCATION_LABELS[loc] || loc}
+                                    </div>
+                                    <div className="grid grid-cols-7 gap-1">
+                                        {DAYS.map(d => {
+                                            const on = arr.includes(d.dow);
+                                            return (
+                                                <button key={d.dow}
+                                                    onClick={() => onToggleClosedWeekday && onToggleClosedWeekday(loc, d.dow)}
+                                                    className={`py-1.5 rounded-md text-[11px] font-bold border transition ${on ? 'bg-gray-700 text-white border-gray-700' : 'bg-white border-gray-300 text-gray-600 hover:border-gray-400'}`}
+                                                    title={on ? tx('Closed every', 'Cerrado cada') + ' ' + (isEn ? d.labelEn : d.labelEs) : tx('Tap to close every', 'Toca para cerrar cada') + ' ' + (isEn ? d.labelEn : d.labelEs)}>
+                                                    {isEn ? d.labelEn : d.labelEs}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+
                     <div className="text-xs text-gray-600 leading-relaxed bg-gray-50 rounded-lg p-2 border border-gray-200">
                         <b>{tx('Closed', 'Cerrado')}</b> = {tx('restaurant is not open. No shifts can be scheduled.', 'restaurante no está abierto. No se pueden agendar turnos.')}<br/>
                         <b>{tx('No time off', 'Sin tiempo libre')}</b> = {tx('restaurant is open, but no time-off requests will be approved (busy season, holidays, special events).', 'restaurante está abierto, pero no se aprobará tiempo libre (temporada alta, días feriados, eventos especiales).')}
