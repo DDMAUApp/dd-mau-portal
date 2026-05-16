@@ -26,6 +26,21 @@ import { db } from '../firebase';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { useAppData } from './AppDataContext';
 
+// Defensive render-time resolver for legacy notification docs whose
+// title/body was written as { en, es } before the write-time fix in
+// data/notify.js (commit 2026-05-16). Bell drawer used to crash on
+// mobile when an object was passed to `{item.title}` ("Objects are
+// not valid as a React child"). Belt + suspenders — even if a future
+// write site sneaks an object through, the drawer renders.
+function toText(val, isEs) {
+    if (val == null) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') {
+        return val[isEs ? 'es' : 'en'] || val.en || val.es || '';
+    }
+    return String(val);
+}
+
 function timeAgo(ts, isEs) {
     if (!ts) return '';
     try {
@@ -156,14 +171,14 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-baseline gap-2">
                                                     <h3 className="text-sm font-bold text-dd-text truncate flex-1">
-                                                        {item.title || tx('Notification', 'Notificación')}
+                                                        {toText(item.title, isEs) || tx('Notification', 'Notificación')}
                                                     </h3>
                                                     <span className="text-[10px] text-dd-text-2 shrink-0 tabular-nums">
                                                         {timeAgo(item.createdAt, isEs)}
                                                     </span>
                                                 </div>
                                                 {item.body && (
-                                                    <p className="text-xs text-dd-text-2 mt-0.5 line-clamp-2">{item.body}</p>
+                                                    <p className="text-xs text-dd-text-2 mt-0.5 line-clamp-2">{toText(item.body, isEs)}</p>
                                                 )}
                                             </div>
                                             {!item.read && (

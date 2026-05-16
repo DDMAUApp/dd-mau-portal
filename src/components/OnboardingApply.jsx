@@ -32,6 +32,7 @@ import { useState, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { ref as sref, uploadBytes } from 'firebase/storage';
+import { notifyAdmins } from '../data/notify';
 import {
     POSITIONS, LOCATIONS, DISTANCE_OPTIONS, TRANSPORT_OPTIONS, DESIRED_HOURS,
     DAYS, SHIFT_BLOCKS,
@@ -443,29 +444,23 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
             // somehow has duplicate entries — without this, the dispatch
             // would write multiple notification docs for the same admin
             // and they'd get multiple pushes per event.
+            // 2026-05-16 — was an inline canViewOnboarding filter that
+            // duplicated notifyAdmins's logic. Refactored to use the
+            // helper for consistency + so the title-resolver fix lands
+            // here too. Same audience (admins only — owners 40/41 +
+            // anyone with canViewOnboarding === true).
             try {
-                const staffSnap = await getDoc(doc(db, 'config', 'staff'));
-                const list = (staffSnap.exists() ? staffSnap.data().list : []) || [];
-                const seenNames = new Set();
-                const recipients = list.filter(s => {
-                    if (!s || !s.name) return false;
-                    if (!(s.canViewOnboarding === true || s.id === 40 || s.id === 41)) return false;
-                    if (seenNames.has(s.name)) return false;
-                    seenNames.add(s.name);
-                    return true;
+                await notifyAdmins({
+                    type: 'onboarding_application',
+                    title: {
+                        en: '🪪 New job application',
+                        es: '🪪 Nueva aplicación de empleo',
+                    },
+                    body: `${values.legalName.trim()} · ${values.positionsAppliedFor.map(p => labelFor(POSITIONS, p, isEs)).join(', ')}`,
+                    link: '/onboarding',
+                    tag: `onboarding_application:${appRef.id}`,
+                    createdBy: 'apply_form',
                 });
-                await Promise.all(recipients.map(s =>
-                    addDoc(collection(db, 'notifications'), {
-                        forStaff: s.name,
-                        type: 'onboarding_application',
-                        title: isEs ? '🪪 Nueva aplicación de empleo' : '🪪 New job application',
-                        body: `${values.legalName.trim()} · ${values.positionsAppliedFor.map(p => labelFor(POSITIONS, p, isEs)).join(', ')}`,
-                        link: '/onboarding',
-                        createdAt: serverTimestamp(),
-                        read: false,
-                        createdBy: 'apply_form',
-                    }).catch(() => null)
-                ));
             } catch (e2) { console.warn('apply notify failed (non-fatal):', e2); }
             try {
                 localStorage.setItem(COOLDOWN_KEY, String(Date.now()));

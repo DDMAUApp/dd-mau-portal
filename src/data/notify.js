@@ -20,27 +20,48 @@
 import { db } from '../firebase';
 import { collection, addDoc, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 
+// Resolve a title/body that may be a string OR { en, es } into the
+// recipient's preferred language.
+//
+// 2026-05-16 — the notify() helper inside Schedule.jsx has always done
+// this resolution at write time. notifyAdmins didn't, so callers that
+// passed { en, es } objects (Schedule's shift-deleted / bulk-delete /
+// schedule-published events) wrote raw objects into the notifications
+// doc. NotificationsDrawer.jsx renders `{item.title}` directly — for
+// object-shaped titles, React throws "Objects are not valid as a React
+// child" which crashed the bell drawer on mobile.
+function resolveText(val, recipient) {
+    if (val == null) return '';
+    if (typeof val === 'string') return val;
+    if (typeof val === 'object') {
+        const lang = recipient?.preferredLanguage || 'en';
+        return val[lang] || val.en || val.es || '';
+    }
+    return String(val);
+}
+
 // Look up the live admin recipients (people with canViewOnboarding OR
 // the two hard-coded owner ids 40 / 41). Dedup by name so a duplicate
 // staff entry can't fan out twice.
 //
-// Returns array of staff names. Empty array on any failure — caller
-// must tolerate that (the helpers below skip silently).
+// Returns array of staff records (not just names) so per-recipient
+// language preference is available for the title/body resolver below.
+// Empty array on any failure — caller must tolerate that.
 export async function getAdminRecipients() {
     try {
         const snap = await getDoc(doc(db, 'config', 'staff'));
         if (!snap.exists()) return [];
         const list = (snap.data() || {}).list || [];
         const seen = new Set();
-        const names = [];
+        const recs = [];
         for (const s of list) {
             if (!s || !s.name) continue;
             if (!(s.canViewOnboarding === true || s.id === 40 || s.id === 41)) continue;
             if (seen.has(s.name)) continue;
             seen.add(s.name);
-            names.push(s.name);
+            recs.push(s);
         }
-        return names;
+        return recs;
     } catch (e) {
         console.warn('getAdminRecipients failed:', e);
         return [];
@@ -67,19 +88,23 @@ export async function notifyAdmins({
 }) {
     const admins = await getAdminRecipients();
     const recipients = excludeStaff
-        ? admins.filter(n => n !== excludeStaff)
+        ? admins.filter(s => s.name !== excludeStaff)
         : admins;
     if (recipients.length === 0) {
         console.info('notifyAdmins: no recipients, skipping');
         return [];
     }
-    const ids = await Promise.all(recipients.map(async (name) => {
+    const ids = await Promise.all(recipients.map(async (recipient) => {
         try {
             const ref = await addDoc(collection(db, 'notifications'), {
-                forStaff: name,
+                forStaff: recipient.name,
                 type,
-                title,
-                body,
+                // Resolve { en, es } objects to a plain string per the
+                // recipient's preferredLanguage. NotificationsDrawer
+                // renders these directly — object-shaped titles crash
+                // React. See resolveText doc block.
+                title: resolveText(title, recipient),
+                body: resolveText(body, recipient),
                 link,
                 tag: tag || `${type}:${Date.now()}`,
                 createdAt: serverTimestamp(),
@@ -88,7 +113,7 @@ export async function notifyAdmins({
             });
             return ref.id;
         } catch (e) {
-            console.warn(`notifyAdmins write failed for ${name}:`, e);
+            console.warn(`notifyAdmins write failed for ${recipient.name}:`, e);
             return null;
         }
     }));
