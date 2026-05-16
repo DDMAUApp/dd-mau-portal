@@ -259,6 +259,37 @@ const minorShiftWarnings = (shift, isEn) => {
     return warnings;
 };
 
+// ── Availability conflict helper ───────────────────────────────────────────
+// Single source of truth for "does this shift fit the staff's declared
+// availability?" Used by:
+//   • AddShiftModal — banner in the conflict warnings stack
+//   • handleUpdateShiftTimes — toast on inline drag-resize of a cube edge
+//   • handleDropShift — toast on drag-to-different-day move
+// Returns null when fine; otherwise:
+//   { type: 'off' }                        staff marked the day unavailable
+//   { type: 'outside', from, to }          shift extends past the window
+// "Constrained" means the staff narrowed from the modal default 09:00–21:00.
+// Default-wide availability shouldn't fire warnings on every early-open or
+// late-close shift.
+function checkAvailabilityConflict(staff, dateStr, startTime, endTime) {
+    if (!staff || !dateStr || !startTime || !endTime) return null;
+    const d = parseLocalDate(dateStr);
+    if (!d) return null;
+    const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+    const dayKey = dayKeys[d.getDay()];
+    const dayAvail = (staff.availability || {})[dayKey];
+    if (!dayAvail) return null;
+    if (dayAvail.available === false) return { type: 'off' };
+    const from = dayAvail.from || '09:00';
+    const to   = dayAvail.to   || '21:00';
+    const constrained = from > '09:00' || to < '21:00';
+    if (!constrained) return null;
+    if (startTime < from || endTime > to) {
+        return { type: 'outside', from, to };
+    }
+    return null;
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function Schedule({ staffName, language, storeLocation, staffList, setStaffList }) {
@@ -1377,6 +1408,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
+            // Availability conflict check — non-blocking warning toast for
+            // drag-resize. The cube was already updated visually (optimistic
+            // resize, then committed above). Toast surfaces the constraint
+            // so the manager catches "wait, Maria only works 11–4" before
+            // the staffer texts about it tomorrow.
+            const staffRecord = (staffList || []).find(x => x.name === sh.staffName);
+            const conflict = checkAvailabilityConflict(staffRecord, sh.date, startTime, endTime);
+            if (conflict?.type === 'off') {
+                toast(tx(
+                    `⏰ ${sh.staffName} marked this day unavailable. Verify with them.`,
+                    `⏰ ${sh.staffName} marcó este día como no disponible. Confirma con esta persona.`
+                ), { kind: 'warn', duration: 5000 });
+            } else if (conflict?.type === 'outside') {
+                toast(tx(
+                    `⏰ ${sh.staffName} only available ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} this day. New shift ${newDetail} extends past that.`,
+                    `⏰ ${sh.staffName} solo disponible ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} este día. Turno ${newDetail} se sale.`
+                ), { kind: 'warn', duration: 5000 });
+            }
             // Push to the assigned staffer if their PUBLISHED shift just
             // changed times. Drafts are silent (not released yet).
             if (wasPublished && sh.staffName && (sh.startTime !== startTime || sh.endTime !== endTime)) {
@@ -1418,6 +1467,22 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 date: newDate,
                 updatedAt: serverTimestamp(),
             });
+            // Availability conflict toast after the move commits. The new
+            // staff (or same staff on a new day) may have constraints on
+            // this day-of-week that don't match the shift times.
+            const newStaffRecord = (staffList || []).find(x => x.name === newStaffName);
+            const conflict = checkAvailabilityConflict(newStaffRecord, newDate, shift.startTime, shift.endTime);
+            if (conflict?.type === 'off') {
+                toast(tx(
+                    `⏰ ${newStaffName} marked this day unavailable. Verify with them.`,
+                    `⏰ ${newStaffName} marcó este día como no disponible. Confirma con esta persona.`
+                ), { kind: 'warn', duration: 5000 });
+            } else if (conflict?.type === 'outside') {
+                toast(tx(
+                    `⏰ ${newStaffName} only available ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} this day. Shift ${detail} extends past that.`,
+                    `⏰ ${newStaffName} solo disponible ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} este día. Turno ${detail} se sale.`
+                ), { kind: 'warn', duration: 5000 });
+            }
             // Push notifications when a published shift moves between
             // staff or dates. Three cases:
             //   - assignee changed: notify both old (lost shift) and new (got shift)
@@ -5732,28 +5797,12 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     // minor): the manager may know "I asked Maria and she said it's OK"
     // and should be able to save anyway. The banner is the cue, not the
     // gate.
-    const availabilityConflict = (() => {
-        if (!selectedStaff || !form.date || !form.startTime || !form.endTime) return null;
-        const d = parseLocalDate(form.date);
-        if (!d) return null;
-        const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-        const dayKey = dayKeys[d.getDay()];
-        const dayAvail = (selectedStaff.availability || {})[dayKey];
-        if (!dayAvail) return null;
-        if (dayAvail.available === false) return { type: 'off' };
-        // Only count window-mismatch as a conflict if the staff actually
-        // narrowed their window from the modal's 09:00–21:00 default —
-        // otherwise we'd warn on every shift outside business hours for
-        // anyone who toggled their day to "Available" without thinking.
-        const from = dayAvail.from || '09:00';
-        const to   = dayAvail.to   || '21:00';
-        const constrained = from > '09:00' || to < '21:00';
-        if (!constrained) return null;
-        if (form.startTime < from || form.endTime > to) {
-            return { type: 'outside', from, to };
-        }
-        return null;
-    })();
+    // Delegates to checkAvailabilityConflict — same logic now also used by
+    // handleUpdateShiftTimes (drag-resize) and handleDropShift (drag-to-
+    // different-day) so the conflict surfaces on EVERY shift mutation path,
+    // not just the modal. Kept the inline call here so React reruns it on
+    // every form change without an extra memo layer.
+    const availabilityConflict = checkAvailabilityConflict(selectedStaff, form.date, form.startTime, form.endTime);
     const weekStartStr = weekStart ? toDateStr(weekStart) : null;
     const weekEndStr   = weekStart ? toDateStr(addDays(weekStart, 7)) : null;
     const weekHoursForStaff = (existingShifts || [])
