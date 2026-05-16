@@ -852,9 +852,51 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const unreadCount = notifications.filter(n => !n.read).length;
 
-    // Helper: is a staff member off on a given date (any APPROVED time-off covers it)?
+    // ── Permission-filtered views — 2026-05-15 ─────────────────────────
+    // Andrew: "if the staff isnt a editor of schedules then they shouldnt
+    // see the shifts until its published. they should only see there own
+    // pending requests too."
+    //
+    // For NON-editors:
+    //   • Shifts where published === false (drafts) are hidden. Staff
+    //     wait for the publish moment before they know "you're on
+    //     Tuesday lunch" — no more "is this real?" anxiety on a
+    //     half-built draft. Applied in visibleShifts below.
+    //   • Time-off entries are filtered to (own entries of any status)
+    //     ∪ (others' APPROVED entries). Others' pending/denied are not
+    //     leaked. Approved PTO of others is still operationally visible
+    //     because staff need to know "Maria's off Friday" for coverage
+    //     awareness.
+    //
+    // For editors (managers/admins): no filtering — they see everything,
+    // including the manager queue + draft grid for building the week.
+    //
+    // This is a privacy + UX fix at the client layer. Phase 2 (Auth +
+    // custom claims) will mirror this in Firestore rules so a tampered
+    // client can't bypass it.
+    const viewerTimeOff = useMemo(() => {
+        if (canEdit) return timeOff;
+        return (timeOff || []).filter(t =>
+            t.staffName === staffName || // own — any status
+            t.status === 'approved'      // others' — approved only
+        );
+    }, [timeOff, canEdit, staffName]);
+
+    // Permission-filtered shifts — drafts hidden for non-editors. Used by
+    // any aggregation that renders to the viewer (hours scoreboard, staff
+    // summary, open offers). Distinct from visibleShifts which ALSO
+    // filters by side/location/personFilter for the grid; viewerShifts is
+    // the raw permission gate before any view-specific filtering.
+    const viewerShifts = useMemo(() => {
+        if (canEdit) return shifts;
+        return (shifts || []).filter(s => s.published !== false);
+    }, [shifts, canEdit]);
+
+    // Helper: is a staff member off on a given date (any non-denied time-off
+    // covers it)? Reads from viewerTimeOff so non-editors don't see others'
+    // pending PTO as a conflict in the grid.
     const isStaffOffOn = (staffName, dateStr) => {
-        return timeOff.some(t => {
+        return viewerTimeOff.some(t => {
             if (t.status === 'denied') return false;
             if (t.staffName !== staffName) return false;
             const start = t.startDate || t.date;
@@ -934,10 +976,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // (deleted staff). sideStaffNames already gates this for the
             // common case, but defensive double-check here too.
             if (!staffByName.has(s.staffName)) return false;
+            // 2026-05-15 — hide drafts from non-editors. The publish moment
+            // is the source of truth for staff; drafts are manager work-in-
+            // progress and can change. See viewerTimeOff comment above.
+            if (!canEdit && s.published === false) return false;
             const shiftSide = s.side || resolveStaffSide(staffByName.get(s.staffName));
             return shiftSide === side && sideStaffNames.has(s.staffName);
         });
-    }, [shifts, storeLocation, sideStaffNames, personFilter, side, staffByName]);
+    }, [shifts, storeLocation, sideStaffNames, personFilter, side, staffByName, canEdit]);
 
     // ── Derived: per-staff weekly hours summary for the current side view ──
     // Hours are calculated over ALL of this staffer's shifts (both sides) — OT
@@ -945,7 +991,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const staffSummary = useMemo(() => {
         return sideStaff
             .map(s => {
-                const allMyShifts = shifts.filter(sh =>
+                // viewerShifts (not raw shifts) so non-editors don't see draft
+                // hours in the right-sidebar staff summary. visibleShifts is
+                // already permission-filtered downstream so sideShiftCount is
+                // safe as-is.
+                const allMyShifts = viewerShifts.filter(sh =>
                     sh.staffName === s.name &&
                     (storeLocation === 'both' || sh.location === storeLocation));
                 // Group by date and let dayPaidHours handle the double-shift
@@ -967,7 +1017,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 if ((b.shiftCount > 0) !== (a.shiftCount > 0)) return b.shiftCount - a.shiftCount;
                 return a.name.localeCompare(b.name);
             });
-    }, [sideStaff, shifts, visibleShifts, storeLocation]);
+    }, [sideStaff, viewerShifts, visibleShifts, storeLocation]);
 
     // ── Hours scoreboard ─────────────────────────────────────────────
     // Live, both-sides-at-once roll-up of scheduled vs target hours so a
@@ -1056,7 +1106,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const weekStartStr = toDateStr(weekStart);
         const weekEndStr = toDateStr(addDays(weekStart, 7));
         const sumHoursForStaff = (staffName) => {
-            const myShifts = shifts.filter(sh =>
+            // viewerShifts so the scoreboard doesn't show draft hours to
+            // non-editors. For managers viewerShifts === shifts.
+            const myShifts = viewerShifts.filter(sh =>
                 sh.staffName === staffName &&
                 sh.date >= weekStartStr && sh.date < weekEndStr &&
                 (storeLocation === 'both' || sh.location === storeLocation));
@@ -1097,7 +1149,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             foh: computeFor('foh'),
             boh: computeFor('boh'),
         };
-    }, [staffList, shifts, weekStart, storeLocation]);
+    }, [staffList, viewerShifts, weekStart, storeLocation]);
 
     // ── Handlers ──
     // Manually-added shifts default to DRAFT (published: false). Manager taps
@@ -3256,9 +3308,11 @@ ${dayBlocks}
                 );
             })()}
 
-            {/* Open offers + pending approvals (drawn from ALL visible shifts, both sides) */}
+            {/* Open offers + pending approvals (drawn from ALL visible shifts, both sides).
+                viewerShifts (not raw shifts) so the offers list respects the
+                permission gate — non-editors don't see offers on draft shifts. */}
             <SwapPanels
-                shifts={shifts}
+                shifts={viewerShifts}
                 staffName={staffName}
                 canEdit={canEdit}
                 isEn={isEn}
@@ -3267,7 +3321,7 @@ ${dayBlocks}
                 onApprove={handleApproveSwap}
                 onDeny={handleDenySwap}
                 storeLocation={storeLocation}
-                timeOff={timeOff}
+                timeOff={viewerTimeOff}
                 onApprovePto={handleApprovePto}
                 onDenyPto={handleDenyPto}
                 onCancelOwnPto={handleCancelOwnPto}
@@ -3462,7 +3516,7 @@ ${dayBlocks}
                                 onDropShift={handleDropShift}
                                 onUpdateShiftTimes={handleUpdateShiftTimes}
                                 isStaffOffOn={isStaffOffOn}
-                                timeOff={timeOff}
+                                timeOff={viewerTimeOff}
                                 onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
                             />
                             <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
@@ -3506,7 +3560,7 @@ ${dayBlocks}
                                 {viewMode === 'pto' && (
                                     <PtoView
                                         weekStart={weekStart}
-                                        timeOff={timeOff}
+                                        timeOff={viewerTimeOff}
                                         // Use the full location-eligible staff
                                         // list, NOT sideStaffNames — PTO is
                                         // person-scoped, not side-scoped.
@@ -3583,7 +3637,7 @@ ${dayBlocks}
                     existingShifts={shifts}
                     canEditFOH={canEditFOH}
                     canEditBOH={canEditBOH}
-                    timeOff={timeOff}
+                    timeOff={viewerTimeOff}
                 />
             )}
             {showBlockModal && canEdit && (
