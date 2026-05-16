@@ -10,7 +10,8 @@
     "backup": "node scripts/backup-firestore.mjs",
     "backup-all": "node scripts/backup-all.mjs",
     "cors-setup": "node scripts/setup-storage-cors.mjs",
-    "sync-toast-employees": "node scripts/pull-toast-employees.mjs"
+    "sync-toast-employees": "node scripts/pull-toast-employees.mjs",
+    "sync-toast-86": "node scripts/sync-toast-86-attribution.mjs"
   },
   "dependencies": {
     "firebase": "^10.12.0",

@@ -22,6 +22,13 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
     const [items, setItems] = useState([]);
     const [count, setCount] = useState(0);
     const [updatedAt, setUpdatedAt] = useState(null);
+    // Attribution map written by scripts/sync-toast-86-attribution.mjs.
+    // Shape: { [itemName]: { outBy: [staffName,...], outAt: Timestamp,
+    //                        inBy: [...], inAt: Timestamp } }
+    // Items that haven't been seen transition yet (legacy / from before
+    // the sync script started running) won't have an entry — display
+    // gracefully degrades to no name shown.
+    const [attribution, setAttribution] = useState({});
     const [loading, setLoading] = useState(true);
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -34,8 +41,9 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
                 setItems(data.items || []);
                 setCount(data.count || 0);
                 setUpdatedAt(data.updatedAt || null);
+                setAttribution(data.attribution || {});
             } else {
-                setItems([]); setCount(0); setUpdatedAt(null);
+                setItems([]); setCount(0); setUpdatedAt(null); setAttribution({});
             }
             setLoading(false);
         }, () => setLoading(false));
@@ -119,6 +127,8 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
                             count={out.length}
                             tone="danger"
                             items={out}
+                            attribution={attribution}
+                            formatTime={formatTime}
                             isEs={isEs}
                         />
                     )}
@@ -128,6 +138,8 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
                             count={low.length}
                             tone="warn"
                             items={low}
+                            attribution={attribution}
+                            formatTime={formatTime}
                             isEs={isEs}
                         />
                     )}
@@ -137,12 +149,35 @@ export default function Eighty6Dashboard({ language, storeLocation }) {
     );
 }
 
-function Section({ title, count, tone, items, isEs }) {
+function Section({ title, count, tone, items, attribution = {}, formatTime, isEs }) {
     const accent = tone === 'danger' ? 'bg-red-500' : 'bg-amber-500';
     const pill   = tone === 'danger' ? 'bg-red-50 text-red-700 border-red-200'
                                      : 'bg-amber-50 text-amber-800 border-amber-200';
     const itemBg = tone === 'danger' ? 'bg-white border-red-200 hover:bg-red-50/50'
                                      : 'bg-white border-amber-200 hover:bg-amber-50/50';
+    // Render the attribution line under an item name when present.
+    // outBy may be a single name or a list (when multiple staff were
+    // clocked in at the moment of the 86 transition). Show first names
+    // for compactness when there are multiple; full name when only one.
+    const renderAttribution = (itemName) => {
+        const attr = attribution?.[itemName];
+        if (!attr) return null;
+        const list = Array.isArray(attr.outBy) ? attr.outBy : (attr.outBy ? [attr.outBy] : []);
+        if (list.length === 0 && !attr.outAt) return null;
+        const namesStr = list.length === 1
+            ? list[0]
+            : list.length > 1
+                ? list.map(n => n.split(' ')[0]).join(' or ')
+                : null;
+        const timeStr = attr.outAt ? formatTime(attr.outAt) : null;
+        return (
+            <div className="text-[10px] text-dd-text-2 mt-0.5 italic">
+                {namesStr && <>🙋 {isEs ? `Marcado por ${namesStr}` : `Marked by ${namesStr}`}</>}
+                {namesStr && timeStr && <> · </>}
+                {timeStr && <>{isEs ? 'a las' : 'at'} {timeStr}</>}
+            </div>
+        );
+    };
     return (
         <div className="bg-white rounded-2xl border border-dd-line shadow-card overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-dd-line bg-dd-bg/40">
@@ -154,10 +189,18 @@ function Section({ title, count, tone, items, isEs }) {
             </div>
             <ul className="divide-y divide-dd-line">
                 {items.map((item, idx) => (
-                    <li key={idx} className={`flex items-center justify-between gap-3 px-4 py-3 transition ${itemBg}`}>
-                        <span className="font-bold text-dd-text truncate">
-                            {item.name}
-                        </span>
+                    <li key={idx} className={`flex items-start justify-between gap-3 px-4 py-3 transition ${itemBg}`}>
+                        <div className="min-w-0 flex-1">
+                            <span className="font-bold text-dd-text truncate block">
+                                {item.name}
+                            </span>
+                            {/* Attribution from sync-toast-86-attribution.mjs.
+                                Shows who was clocked in at the moment of the
+                                transition. When multiple staff overlap, lists
+                                first names separated by "or" — manager can
+                                pin down which one verbally. */}
+                            {item.status === 'OUT_OF_STOCK' && renderAttribution(item.name)}
+                        </div>
                         <span className={`flex-shrink-0 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md border ${pill}`}>
                             {item.status === 'OUT_OF_STOCK'
                                 ? (isEs ? '86' : "86'd")
