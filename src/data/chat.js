@@ -124,11 +124,13 @@ export function canEditChat(chat, viewer, isAdminFlag) {
 //          tagged BOH (Cook, Prep, Dishwasher, Kitchen, BOH).
 export function channelMembersFor(key, staffList) {
     const list = Array.isArray(staffList) ? staffList : [];
-    const visible = list.filter(s =>
-        s &&
-        s.name &&
-        s.hideFromSchedule !== true
-    );
+    // We DON'T filter by hideFromSchedule here — that flag suppresses
+    // the staff member from the SCHEDULE GRID (owners typically toggle
+    // it on themselves since they don't work shifts), but they're still
+    // part of the team and need access to chat. 2026-05-16 bug fix:
+    // Julie (id 41) was missing from the chat picker because she has
+    // hideFromSchedule: true.
+    const visible = list.filter(s => s && s.name);
     // Resolve the AUTO_CHANNELS entry for its autoMembership rule so a
     // single switch covers every system channel kind (role / location /
     // managers / all + the announcement broadcast which always = all).

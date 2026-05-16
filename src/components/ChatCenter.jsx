@@ -616,10 +616,12 @@ function NewChatModal({
     const [busy, setBusy] = useState(false);
 
     const candidates = useMemo(() => {
+        // hideFromSchedule is a SCHEDULE-GRID flag, not a chat flag —
+        // owners use it on themselves so they don't clutter the
+        // schedule, but they still belong in chat. (2026-05-16 fix.)
         const term = filter.trim().toLowerCase();
         return (staffList || [])
             .filter(s => s.name && s.name !== staffName)
-            .filter(s => s.hideFromSchedule !== true)
             .filter(s => !term || s.name.toLowerCase().includes(term))
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [staffList, staffName, filter]);

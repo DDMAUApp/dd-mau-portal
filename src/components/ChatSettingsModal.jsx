@@ -38,9 +38,10 @@ export default function ChatSettingsModal({
     const [busy, setBusy] = useState(false);
 
     const addable = useMemo(() => {
+        // hideFromSchedule suppresses schedule-grid rendering — not
+        // chat membership. Don't filter here. (2026-05-16 fix.)
         return (staffList || [])
             .filter(s => s.name && !members.includes(s.name))
-            .filter(s => s.hideFromSchedule !== true)
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [staffList, members]);
 

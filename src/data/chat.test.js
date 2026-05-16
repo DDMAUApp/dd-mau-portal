@@ -140,19 +140,25 @@ describe('channelDocId / dmDocId', () => {
 });
 
 describe('channelMembersFor', () => {
+    // 2026-05-16 bug-fix regression: hideFromSchedule used to filter
+    // here, which silently hid owners (Andrew + Julie both toggle the
+    // flag on themselves so they don't clutter the schedule grid)
+    // from the chat picker AND from every auto-channel. Pinning the
+    // new behavior: hideFromSchedule is a SCHEDULE flag, not a chat
+    // flag. Owners belong in chat.
     const list = [
         owner,
         manager,
         lineFoh,
         lineBoh,
-        { id: 9, name: 'Ghost', role: 'FOH', hideFromSchedule: true }, // hidden
+        { id: 41, name: 'Julie Shih', role: 'Owner', hideFromSchedule: true },
     ];
-    it('"all" returns every non-hidden staff name', () => {
+    it('"all" includes everyone — hideFromSchedule does not filter chat', () => {
         const m = channelMembersFor('all', list);
         expect(m).toContain('Andrew Shih');
+        expect(m).toContain('Julie Shih');         // owner with hideFromSchedule still in chat
         expect(m).toContain('Cash Magruder');
         expect(m).toContain('Tom Lee');
-        expect(m).not.toContain('Ghost');
     });
     it('"foh" matches FOH role / scheduleSide', () => {
         const m = channelMembersFor('foh', list);

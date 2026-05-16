@@ -154,7 +154,9 @@ export default function ChatCoverageRequestModal({
             // notify role-matched peers at the same location.
             const eligible = (staffList || [])
                 .filter(s => s.name !== staffName)
-                .filter(s => s.hideFromSchedule !== true)
+                // hideFromSchedule = grid suppression, not chat
+                // suppression. Owners DO want coverage-request pings
+                // so they can approve. (2026-05-16 fix.)
                 .filter(s => {
                     const side = (s.scheduleSide || s.side || '').toLowerCase();
                     if (pickedShift.side === 'foh' && side === 'boh') return false;

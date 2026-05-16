@@ -64,9 +64,9 @@ export default function ChatTaskFromMessageModal({
         if (chat?.type === 'dm') {
             return inChat.filter(s => s.name !== staffName);
         }
-        return inChat
-            .filter(s => s.hideFromSchedule !== true)
-            .sort((a, b) => a.name.localeCompare(b.name));
+        // hideFromSchedule is a schedule-grid flag, not a chat flag.
+        // (2026-05-16 fix.)
+        return inChat.sort((a, b) => a.name.localeCompare(b.name));
     }, [chat, staffList, staffName]);
 
     async function handleCreate() {
