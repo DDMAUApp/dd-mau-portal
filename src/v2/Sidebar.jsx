@@ -30,6 +30,9 @@ const NAV_GROUPS = [
         items: [
             { tab: 'home',       icon: '🏠', en: 'Home',       es: 'Inicio' },
             { tab: 'schedule',   icon: '📅', en: 'Schedule',   es: 'Horario' },
+            // Chat is available to ALL staff — no role gate. Team messaging,
+            // FOH/BOH channels, DMs, groups. See ChatCenter.jsx.
+            { tab: 'chat',       icon: '💬', en: 'Chat',       es: 'Chat' },
             { tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', requires: 'opsAccess' },
         ],
     },
@@ -122,7 +125,7 @@ export default function Sidebar({
     // FIX (review 2026-05-14, perf): read from the shared AppDataContext
     // instead of four component-local Firestore subscriptions. Each
     // badge is now a cheap useMemo over the shared data.
-    const { shifts14, eightySixByLoc, timeOff, unreadCount: unreadNotifs } = useAppData();
+    const { shifts14, eightySixByLoc, timeOff, unreadCount: unreadNotifs, unreadChat } = useAppData();
     const draftCount = useMemo(() => {
         return shifts14.filter(sh =>
             sh.published === false &&
@@ -143,6 +146,7 @@ export default function Sidebar({
         eighty6:  eighty6Count,
         admin:    pendingPto,
         home:     unreadNotifs,
+        chat:     unreadChat,
     };
 
     // Badge tone per tab — green if positive thing (notifications), amber if
@@ -150,7 +154,7 @@ export default function Sidebar({
     const badgeTone = (tab) => {
         if (tab === 'eighty6') return 'bg-red-500 text-white';
         if (tab === 'schedule' || tab === 'admin') return 'bg-amber-400 text-amber-950';
-        if (tab === 'home') return 'bg-dd-green text-white';
+        if (tab === 'home' || tab === 'chat') return 'bg-dd-green text-white';
         return 'bg-white/20 text-white';
     };
 

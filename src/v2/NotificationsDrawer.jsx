@@ -67,6 +67,8 @@ const KIND_META = {
     pto_request:      { icon: '🌴', tone: 'bg-amber-50 text-amber-800' },
     task_assigned:    { icon: '📋', tone: 'bg-blue-50 text-blue-700' },
     task_message:     { icon: '💬', tone: 'bg-blue-50 text-blue-700' },
+    chat_message:     { icon: '💬', tone: 'bg-dd-green-50 text-dd-green-700' },
+    chat_mention:     { icon: '📣', tone: 'bg-amber-50 text-amber-800' },
     shift_reminder:   { icon: '⏰', tone: 'bg-amber-50 text-amber-800' },
     swap_pending:     { icon: '⏳', tone: 'bg-purple-50 text-purple-700' },
     default:          { icon: '🔔', tone: 'bg-dd-bg text-dd-text-2' },

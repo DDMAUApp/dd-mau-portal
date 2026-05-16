@@ -125,12 +125,19 @@ export async function notifyAdmins({
 //
 // noop if forStaff is falsy or matches excludeStaff (so "don't notify
 // myself when I do something" is one-call cheap).
+//
+// deepLink: optional tab name (e.g. 'schedule', 'chat'). The
+// NotificationsDrawer reads doc.deepLink and routes the tap to that
+// tab via onNavigate. (The older `link` field — typically a URL-like
+// '/schedule' string — is kept for legacy compatibility and any Cloud
+// Function consumer that reads it, but the in-app drawer ignores it.)
 export async function notifyStaff({
     forStaff,
     type,
     title,
     body,
     link = '/',
+    deepLink,
     tag,
     createdBy = 'system',
     excludeStaff = null,
@@ -144,6 +151,7 @@ export async function notifyStaff({
             title,
             body,
             link,
+            ...(deepLink ? { deepLink } : {}),
             tag: tag || `${type}:${forStaff}:${Date.now()}`,
             createdAt: serverTimestamp(),
             read: false,

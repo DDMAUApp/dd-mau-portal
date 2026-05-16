@@ -74,7 +74,7 @@ export default function MobileHome({
     // FIX (review 2026-05-14, perf): pull from the shared AppDataContext
     // instead of 6 component-local Firestore subscriptions. The provider
     // owns one listener per data stream.
-    const { shifts14, eightySixByLoc, laborByLoc, timeOff, unreadCount: unreadNotifs } = useAppData();
+    const { shifts14, eightySixByLoc, laborByLoc, timeOff, unreadCount: unreadNotifs, unreadChat } = useAppData();
 
     // Today's shifts for THIS staffer — derived from the shared shifts14.
     const todayShifts = useMemo(() => {
@@ -191,6 +191,11 @@ export default function MobileHome({
     // rest stay neutral so the page reads as one calm surface.
     const allTiles = [
         { tab: 'schedule',   icon: '📅', en: 'Schedule',     es: 'Horario',        primary: true,  badge: draftCount,   badgeTone: 'amber' },
+        // Chat is a PRIMARY tile because team communication runs through it
+        // constantly. Badge shows total unread chat-message notifications
+        // (drawn from the same /notifications feed as the bell — type
+        // 'chat_message' or 'chat_mention').
+        { tab: 'chat',       icon: '💬', en: 'Chat',         es: 'Chat',           primary: true,  badge: unreadChat, badgeTone: 'amber' },
         ...(hasOpsAccess     ? [{ tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', primary: true }] : []),
         ...(hasRecipesAccess ? [{ tab: 'recipes',    icon: '📖', en: 'Recipes',    es: 'Recetas',     primary: true }] : []),
         { tab: 'eighty6',    icon: '🚫', en: '86 Board',     es: 'Tablero 86',    badge: eighty6Count, badgeTone: 'danger' },
