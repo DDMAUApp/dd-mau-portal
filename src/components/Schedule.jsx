@@ -2020,6 +2020,71 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Staff cancels / withdraws / dismisses THEIR OWN PTO request ──
+    // 2026-05-15 — Andrew (testing as Cash): "i logged in as cash and tried
+    // to do a time off request. i had no way to delete my request."
+    //
+    // Three flows based on current status:
+    //   • pending  → Cancel — silent delete, manager queue cleans up
+    //   • approved → Withdraw — confirm + notify admins so they know
+    //                coverage is back (the restaurant gets a shift it
+    //                can now re-fill — operationally a win, not a loss)
+    //   • denied   → Dismiss — silent delete, just hides the row
+    //
+    // Permission gate: must be the OWNER of the request. Defensive
+    // check even though the UI only shows this on entries where
+    // staffName === current user — covers the case where someone
+    // tampers with state.
+    const handleCancelOwnPto = async (entry) => {
+        if (!entry?.id) return;
+        if (entry.staffName !== staffName) return; // not yours
+        const status = entry.status || 'pending';
+        // Status-aware confirm copy. Pending is one-tap (low stakes).
+        // Approved gets an explicit confirm because withdrawing it
+        // could leave gaps the manager needs to re-fill.
+        if (status === 'approved') {
+            if (!confirm(tx(
+                'Withdraw this approved time-off? Your manager will be notified so they can re-schedule you.',
+                '¿Retirar este tiempo libre aprobado? Tu gerente será notificado para poder volver a programarte.'
+            ))) return;
+        } else if (status === 'pending') {
+            if (!confirm(tx('Cancel this pending request?', '¿Cancelar esta solicitud pendiente?'))) return;
+        } // denied = no confirm, just dismiss
+        try {
+            await deleteDoc(doc(db, 'time_off', entry.id));
+            // Approved withdraws notify admins. Pending cancels stay
+            // silent — the original "pto_request" notification's tag
+            // (pto_request:<id>) collapses naturally when clicked since
+            // the doc is gone.
+            if (status === 'approved') {
+                try {
+                    const dates = entry.startDate === entry.endDate
+                        ? entry.startDate
+                        : `${entry.startDate} → ${entry.endDate || entry.startDate}`;
+                    await notifyAdmins({
+                        type: 'pto_withdrawn',
+                        title: `↩ PTO withdrawn: ${staffName}`,
+                        body: `${dates}${entry.reason ? ` · ${entry.reason}` : ''} · ${tx('they can now be scheduled', 'pueden ser programados')}`,
+                        link: '/schedule',
+                        tag: `pto_withdrawn:${entry.id}`,
+                        createdBy: staffName || 'staff',
+                        excludeStaff: staffName,
+                    });
+                } catch (e) { console.warn('PTO withdraw notify failed:', e); }
+                toast(tx('↩ Withdrew your time-off. Manager has been notified.',
+                          '↩ Retiraste tu tiempo libre. El gerente fue notificado.'),
+                      { kind: 'success', duration: 4000 });
+            } else if (status === 'pending') {
+                toast(tx('Request canceled', 'Solicitud cancelada'), { kind: 'success', duration: 2500 });
+            } else {
+                // denied — silent dismiss; no toast needed
+            }
+        } catch (e) {
+            console.error('Cancel own PTO failed:', e);
+            toast(tx('Could not cancel — try again.', 'No se pudo cancelar — intenta de nuevo.'), { kind: 'error' });
+        }
+    };
+
     // ── Phase 3: staff submits a PTO request (status='pending') ──
     // Validates against no-PTO blackout dates before submitting.
     const handleSubmitPtoRequest = async (entry) => {
@@ -3156,6 +3221,7 @@ ${dayBlocks}
                 timeOff={timeOff}
                 onApprovePto={handleApprovePto}
                 onDenyPto={handleDenyPto}
+                onCancelOwnPto={handleCancelOwnPto}
             />
 
             {loading ? (
@@ -5163,7 +5229,7 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
 }
 
 // ── SwapPanels: open offers + pending swap approval + pending PTO queue ────
-function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation, timeOff, onApprovePto, onDenyPto }) {
+function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation, timeOff, onApprovePto, onDenyPto, onCancelOwnPto }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
 
@@ -5257,23 +5323,48 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                 </Panel>
             )}
 
-            {/* My PTO requests (status visible to me) */}
+            {/* My PTO requests (status visible to me).
+                2026-05-15: added the Cancel/Withdraw/Dismiss button so
+                staff can manage their own pending/approved/denied entries
+                without flagging down a manager. See handleCancelOwnPto for
+                the per-status rationale (silent vs notify). */}
             {myPto.length > 0 && (
                 <Panel accent="bg-amber-500" icon="🌴" title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}>
-                    {myPto.map(t => (
-                        <div key={t.id} className="flex items-center justify-between gap-2 bg-amber-50 rounded-lg p-2 border border-amber-200 text-xs">
-                            <div className="min-w-0 text-dd-text">{renderPtoLine(t)}</div>
-                            <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap text-[10px] border ${
-                                t.status === 'approved' ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30' :
-                                t.status === 'denied'   ? 'bg-red-50 text-red-700 border-red-200' :
-                                                           'bg-amber-100 text-amber-800 border-amber-300'
-                            }`}>
-                                {t.status === 'approved' ? '✓ ' + tx('Approved', 'Aprobado') :
-                                 t.status === 'denied'   ? '✕ ' + tx('Denied', 'Negado') :
-                                                           '⏳ ' + tx('Pending', 'Pendiente')}
-                            </span>
-                        </div>
-                    ))}
+                    {myPto.map(t => {
+                        const status = t.status || 'pending';
+                        // Per-status button label + tone:
+                        //   pending  → "Cancel" (gray, low-stakes)
+                        //   approved → "Withdraw" (amber, notifies manager)
+                        //   denied   → "Dismiss" (gray)
+                        const btnLabel = status === 'approved'
+                            ? tx('Withdraw', 'Retirar')
+                            : status === 'denied'
+                                ? tx('Dismiss', 'Descartar')
+                                : tx('Cancel', 'Cancelar');
+                        const btnTone = status === 'approved'
+                            ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200'
+                            : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg';
+                        return (
+                            <div key={t.id} className="flex items-center justify-between gap-2 bg-amber-50 rounded-lg p-2 border border-amber-200 text-xs">
+                                <div className="min-w-0 text-dd-text flex-1">{renderPtoLine(t)}</div>
+                                <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap text-[10px] border ${
+                                    status === 'approved' ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30' :
+                                    status === 'denied'   ? 'bg-red-50 text-red-700 border-red-200' :
+                                                             'bg-amber-100 text-amber-800 border-amber-300'
+                                }`}>
+                                    {status === 'approved' ? '✓ ' + tx('Approved', 'Aprobado') :
+                                     status === 'denied'   ? '✕ ' + tx('Denied', 'Negado') :
+                                                              '⏳ ' + tx('Pending', 'Pendiente')}
+                                </span>
+                                {onCancelOwnPto && (
+                                    <button onClick={() => onCancelOwnPto(t)}
+                                        className={`px-2 py-0.5 rounded-md text-[10px] font-bold border whitespace-nowrap ${btnTone}`}>
+                                        {btnLabel}
+                                    </button>
+                                )}
+                            </div>
+                        );
+                    })}
                 </Panel>
             )}
 
