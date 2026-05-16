@@ -1049,14 +1049,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //   (b) the date's day-of-week is in the closedWeekdays config for the
     //       current location (recurring weekly closure — e.g. Sundays).
     //
-    // 2026-05-16 — added the (b) branch so Andrew can mark Sundays closed
-    // once instead of adding 52 one-off blocks/year. closedWeekdays config
-    // lives at /config/schedule_settings and is per-location. When
-    // storeLocation === 'both' we treat a day as closed only if BOTH
-    // locations are closed that weekday — otherwise managers still need
-    // to see the open location's grid.
+    // 2026-05-16 (later) — added a THIRD case: type='open_override'.
+    // Andrew: "toggle the sunday so sometimes if needed i can toggle it
+    // back on." When a Sunday is normally closed via the recurring rule
+    // but we WANT to open for a one-off (catering, holiday, special
+    // event), a date_block of type='open_override' for that exact date
+    // beats the recurring rule. Same opt-out structure can override a
+    // one-off type='closed' too, but we don't currently surface that —
+    // managers just delete the type='closed' block in that case.
+    //
+    // Resolution order:
+    //   1. If date has an 'open_override' → OPEN (not closed). Highest priority.
+    //   2. If date has a 'closed' one-off block → CLOSED.
+    //   3. If recurring rule applies for this weekday + location → CLOSED.
+    //   4. Otherwise → OPEN.
     const dateClosed = (dateStr) => {
-        if ((blocksByDate.get(dateStr) || []).some(b => b.type === 'closed')) return true;
+        const blocks = blocksByDate.get(dateStr) || [];
+        if (blocks.some(b => b.type === 'open_override')) return false;
+        if (blocks.some(b => b.type === 'closed')) return true;
         const cw = scheduleSettings?.closedWeekdays || {};
         const d = parseLocalDate(dateStr);
         if (!d) return false;
@@ -1070,6 +1080,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
         const arr = Array.isArray(cw[storeLocation]) ? cw[storeLocation] : [];
         return arr.includes(dow);
+    };
+    // Helpers — what's the REASON a date is closed? Used by the UI so
+    // we can offer the right action (delete the one-off vs add an
+    // override for a recurring rule).
+    const dateClosedByRecurring = (dateStr) => {
+        const blocks = blocksByDate.get(dateStr) || [];
+        if (blocks.some(b => b.type === 'open_override')) return false;
+        const cw = scheduleSettings?.closedWeekdays || {};
+        const d = parseLocalDate(dateStr);
+        if (!d) return false;
+        const dow = d.getDay();
+        if (storeLocation === 'both') {
+            const w = Array.isArray(cw.webster) ? cw.webster : [];
+            const m = Array.isArray(cw.maryland) ? cw.maryland : [];
+            return w.includes(dow) && m.includes(dow);
+        }
+        const arr = Array.isArray(cw[storeLocation]) ? cw[storeLocation] : [];
+        return arr.includes(dow);
+    };
+    const dateHasOpenOverride = (dateStr) => {
+        return (blocksByDate.get(dateStr) || []).some(b => b.type === 'open_override');
     };
 
     // ── Derived: which staff names have shifts on the CURRENT side this week ──
@@ -2384,6 +2415,50 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             await deleteDoc(doc(db, 'date_blocks', blockId));
         } catch (e) {
             console.error('Remove block failed:', e);
+        }
+    };
+
+    // 2026-05-16 — toggle a specific date open/closed, respecting the
+    // resolution order in dateClosed():
+    //   - Currently OPEN via override → remove the override (returns to
+    //     recurring closed).
+    //   - Currently CLOSED via recurring rule → add open_override block.
+    //   - Currently CLOSED via one-off block → delete that block.
+    //   - Currently OPEN normally → no-op (caller shouldn't have offered
+    //     a toggle; defensive return).
+    const handleToggleDateOpen = async (dateStr) => {
+        if (!canEdit) return;
+        const blocks = blocksByDate.get(dateStr) || [];
+        const existingOverride = blocks.find(b => b.type === 'open_override');
+        const existingClosedBlock = blocks.find(b => b.type === 'closed');
+        try {
+            if (existingOverride) {
+                // Was overridden open → remove override, falls back to
+                // recurring-closed (or fully open if no recurring rule).
+                await deleteDoc(doc(db, 'date_blocks', existingOverride.id));
+                return;
+            }
+            if (existingClosedBlock) {
+                // One-off closure → just delete the block.
+                await deleteDoc(doc(db, 'date_blocks', existingClosedBlock.id));
+                return;
+            }
+            if (dateClosedByRecurring(dateStr)) {
+                // Recurring rule closes this date → add override.
+                await addDoc(collection(db, 'date_blocks'), {
+                    date: dateStr,
+                    type: 'open_override',
+                    location: 'both',
+                    reason: tx('Open this day (one-off)', 'Abrir este día (puntual)'),
+                    createdBy: staffName,
+                    createdAt: serverTimestamp(),
+                });
+                return;
+            }
+            // Already open normally — nothing to do.
+        } catch (e) {
+            console.error('Toggle date open failed:', e);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
         }
     };
 
@@ -3858,6 +3933,9 @@ ${dayBlocks}
                                 isStaffOffOn={isStaffOffOn}
                                 timeOff={viewerTimeOff}
                                 onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
+                                onToggleDateOpen={canEdit ? handleToggleDateOpen : null}
+                                dateHasOpenOverride={dateHasOpenOverride}
+                                dateClosedByRecurring={dateClosedByRecurring}
                             />
                             <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
                         </>
@@ -4737,7 +4815,7 @@ function OpenShiftsCalendarBar({
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -4912,7 +4990,43 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             {isEn ? 'Today' : 'Hoy'}
                                         </div>
                                     )}
-                                    {closed && <div className="text-[9px] font-bold text-dd-text-2 mt-1">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>}
+                                    {closed && (
+                                        <div className="mt-1 space-y-1">
+                                            <div className="text-[9px] font-bold text-dd-text-2">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>
+                                            {/* 2026-05-16 — open-this-day toggle.
+                                                Available when canEdit AND the day is
+                                                closed (either via recurring rule or
+                                                one-off block). One tap → flip.
+                                                Stops propagation so the cell's day-
+                                                header click (Available Staff modal)
+                                                doesn't also fire. */}
+                                            {onToggleDateOpen && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onToggleDateOpen(dStr); }}
+                                                    title={isEn ? 'Open this day (one-off)' : 'Abrir este día (puntual)'}
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-green-700 hover:border-dd-green/40 transition">
+                                                    ↺ {isEn ? 'Open' : 'Abrir'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                    {/* Override-open indicator — date would be
+                                        closed by recurring rule but a manager
+                                        toggled it back on. Visible so they can
+                                        re-close if they change their mind. */}
+                                    {!closed && dateHasOpenOverride && dateHasOpenOverride(dStr) && (
+                                        <div className="mt-1 space-y-1">
+                                            <div className="text-[9px] font-bold text-amber-700">↺ {isEn ? 'Open (override)' : 'Abierto (anulado)'}</div>
+                                            {onToggleDateOpen && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); onToggleDateOpen(dStr); }}
+                                                    title={isEn ? 'Re-close this day' : 'Cerrar de nuevo'}
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 transition">
+                                                    🚫 {isEn ? 'Close' : 'Cerrar'}
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
                                     {!closed && noTimeoff && <div className="text-[9px] font-bold text-amber-700 mt-1">🛑 {isEn ? 'No PTO' : 'Sin PTO'}</div>}
                                     {/* Slot countdown — N/M filled. Color shifts as slots fill. */}
                                     {!closed && stats && stats.total > 0 && (
