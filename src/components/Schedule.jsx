@@ -31,7 +31,7 @@ import {
     setDoc, serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
-import { notifyAdmins } from '../data/notify';
+import { notifyAdmins, notifyStaff } from '../data/notify';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
 
@@ -397,6 +397,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // 2026-05-16 — staff self-serve birthday. Available to every staff
     // member regardless of role; writes to their own record only.
     const [showMyBirthdayModal, setShowMyBirthdayModal] = useState(false);
+    // 2026-05-16 — shift SWAP request flow (separate from the existing
+    // "offer to market" handleOfferShift flow). Direct trade: staff
+    // picks their own shift + another staff's shift → manager approves
+    // → both shifts swap staffNames. Documents live at /swap_requests:
+    //   { fromStaff, fromShiftId, toStaff, toShiftId, status, ... }
+    const [showSwapModal, setShowSwapModal] = useState(false);
+    const [swapRequests, setSwapRequests] = useState([]);
     // Click-a-day-header → "who's available?" picker
     const [availableForDate, setAvailableForDate] = useState(null);
     // Mobile-only: collapse the secondary action buttons behind a ⋯ menu.
@@ -580,6 +587,22 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }, (err) => console.warn('schedule_settings snapshot error:', err));
         return unsub;
     }, []);
+
+    // ── Listen for shift swap requests ──
+    // 2026-05-16. Pending + recently-decided. Cheap subscription —
+    // typically <20 active at a time, decisions auto-prune to past.
+    useEffect(() => {
+        const unsub = onSnapshot(
+            query(collection(db, 'swap_requests'), where('requestedDate', '>=', sixMonthsAgo)),
+            (snap) => {
+                const items = [];
+                snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+                setSwapRequests(items);
+            },
+            (err) => console.error('swap_requests snapshot error:', err)
+        );
+        return unsub;
+    }, [sixMonthsAgo]);
 
     // ── Listen for calendar events (holiday/national/event labels) ──
     // Same 6-month past cutoff as date_blocks so old events don't bloat
@@ -1701,6 +1724,160 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     // ── Shift offer / take / approve / deny ────────────────────────────────
+    // 2026-05-16 — direct SHIFT SWAP request flow. Distinct from the
+    // offer-to-market handleOfferShift below.
+    //   - Staff picks one of THEIR upcoming published shifts + a
+    //     specific OTHER staff's upcoming shift to swap with.
+    //   - Doc written to /swap_requests with status='pending'.
+    //   - Admins notified via notifyAdmins; the other staffer is NOT
+    //     notified yet (manager decides first to avoid drama on
+    //     unilateral requests).
+    //   - On approve: both shifts swap staffName atomically (transaction).
+    //   - On deny: requester is notified, doc marked status='denied'.
+    const handleRequestSwap = async ({ myShift, theirShift, note }) => {
+        if (!myShift || !theirShift) return;
+        if (myShift.staffName !== staffName) {
+            toast(tx('That shift isn\'t yours.', 'Ese turno no es tuyo.'), { kind: 'error' });
+            return;
+        }
+        // Block past shifts on either side.
+        const todayStr = toDateStr(new Date());
+        if (myShift.date < todayStr || theirShift.date < todayStr) {
+            toast(tx('Cannot swap past shifts.', 'No se pueden intercambiar turnos pasados.'), { kind: 'error' });
+            return;
+        }
+        // Block self-swap (same person both sides).
+        if (theirShift.staffName === staffName) {
+            toast(tx('Pick someone else\'s shift to swap with.', 'Elige el turno de otra persona.'), { kind: 'error' });
+            return;
+        }
+        // Block duplicate pending request between the same two shifts.
+        const dup = swapRequests.find(r =>
+            r.status === 'pending' &&
+            ((r.fromShiftId === myShift.id && r.toShiftId === theirShift.id) ||
+             (r.fromShiftId === theirShift.id && r.toShiftId === myShift.id))
+        );
+        if (dup) {
+            toast(tx('A swap request between these shifts is already pending.', 'Ya hay una solicitud pendiente entre estos turnos.'), { kind: 'warn' });
+            return;
+        }
+        try {
+            const ref = await addDoc(collection(db, 'swap_requests'), {
+                fromStaff: staffName,
+                fromShiftId: myShift.id,
+                toStaff: theirShift.staffName,
+                toShiftId: theirShift.id,
+                // Snapshots so the manager UI can render without re-fetching
+                // shifts every time. If the underlying shift changes between
+                // request and approve, we re-verify on approve.
+                fromShiftSnapshot: { date: myShift.date, startTime: myShift.startTime, endTime: myShift.endTime, location: myShift.location, side: myShift.side || null },
+                toShiftSnapshot:   { date: theirShift.date, startTime: theirShift.startTime, endTime: theirShift.endTime, location: theirShift.location, side: theirShift.side || null },
+                // Earliest of the two shift dates — used for the 6-month
+                // listener cutoff so old swap docs auto-fall-off.
+                requestedDate: myShift.date < theirShift.date ? myShift.date : theirShift.date,
+                note: (note || '').trim().slice(0, 200),
+                status: 'pending',
+                createdBy: staffName,
+                createdAt: serverTimestamp(),
+            });
+            const dateLine = myShift.date === theirShift.date
+                ? myShift.date
+                : `${myShift.date} ↔ ${theirShift.date}`;
+            await notifyAdmins({
+                type: 'swap_request',
+                title: { en: `🔄 Swap request: ${staffName} ↔ ${theirShift.staffName}`, es: `🔄 Solicitud de cambio: ${staffName} ↔ ${theirShift.staffName}` },
+                body: `${dateLine} · ${formatTime12h(myShift.startTime)}–${formatTime12h(myShift.endTime)} ↔ ${formatTime12h(theirShift.startTime)}–${formatTime12h(theirShift.endTime)}`,
+                link: '/schedule',
+                tag: `swap_request:${ref.id}`,
+                createdBy: staffName,
+                excludeStaff: staffName,
+            }).catch(e => console.warn('swap_request admin notify failed (non-fatal):', e));
+            setShowSwapModal(false);
+            toast(tx('✓ Swap requested — manager will review', '✓ Solicitud enviada — el gerente revisará'), { kind: 'success', duration: 4000 });
+        } catch (e) {
+            console.error('handleRequestSwap failed:', e);
+            toast(tx('Could not send request: ', 'No se pudo enviar: ') + (e.message || e), { kind: 'error' });
+        }
+    };
+
+    // Manager approves: atomically swap staffName on both shifts via a
+    // Firestore transaction so we never end up half-swapped. Marks the
+    // swap doc 'approved' + notifies both staff.
+    const handleApproveSwapRequest = async (request) => {
+        if (!canEdit) return;
+        try {
+            await runTransaction(db, async (tx) => {
+                const fromRef = doc(db, 'shifts', request.fromShiftId);
+                const toRef   = doc(db, 'shifts', request.toShiftId);
+                const reqRef  = doc(db, 'swap_requests', request.id);
+                const [fromSnap, toSnap, reqSnap] = await Promise.all([tx.get(fromRef), tx.get(toRef), tx.get(reqRef)]);
+                if (!fromSnap.exists() || !toSnap.exists()) {
+                    throw new Error(tx_msg('One of the shifts no longer exists. Request cleared.'));
+                }
+                if (!reqSnap.exists() || reqSnap.data().status !== 'pending') {
+                    throw new Error(tx_msg('Request already handled.'));
+                }
+                const fromData = fromSnap.data();
+                const toData = toSnap.data();
+                // Verify ownership hasn't drifted since the request was filed.
+                if (fromData.staffName !== request.fromStaff || toData.staffName !== request.toStaff) {
+                    throw new Error(tx_msg('Shift ownership changed since the request was filed.'));
+                }
+                tx.update(fromRef, { staffName: request.toStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
+                tx.update(toRef,   { staffName: request.fromStaff, updatedAt: serverTimestamp(), updatedBy: staffName });
+                tx.update(reqRef,  { status: 'approved', approvedBy: staffName, approvedAt: serverTimestamp() });
+            });
+            // Notify both staff (best-effort, outside the transaction).
+            const detail = `${request.fromShiftSnapshot?.date || ''} ↔ ${request.toShiftSnapshot?.date || ''}`;
+            for (const recipient of [request.fromStaff, request.toStaff]) {
+                notifyStaff({
+                    forStaff: recipient,
+                    type: 'swap_approved',
+                    title: '✓ Shift swap approved',
+                    body: `Your swap with ${recipient === request.fromStaff ? request.toStaff : request.fromStaff} is approved. ${detail}`,
+                    link: '/schedule',
+                    tag: `swap_approved:${request.id}:${recipient}`,
+                    createdBy: staffName,
+                }).catch(() => {});
+            }
+            toast(tx('✓ Swap approved', '✓ Cambio aprobado'), { kind: 'success', duration: 3000 });
+        } catch (e) {
+            console.error('handleApproveSwapRequest failed:', e);
+            toast(tx('Could not approve: ', 'No se pudo aprobar: ') + (e.message || e), { kind: 'error' });
+        }
+    };
+
+    // Manager denies: mark the doc denied + notify the requester only.
+    // No state to roll back since nothing changed on the shifts.
+    const handleDenySwapRequest = async (request) => {
+        if (!canEdit) return;
+        try {
+            await updateDoc(doc(db, 'swap_requests', request.id), {
+                status: 'denied',
+                deniedBy: staffName,
+                deniedAt: serverTimestamp(),
+            });
+            notifyStaff({
+                forStaff: request.fromStaff,
+                type: 'swap_denied',
+                title: '✕ Shift swap denied',
+                body: `Your swap request with ${request.toStaff} was denied.`,
+                link: '/schedule',
+                tag: `swap_denied:${request.id}`,
+                createdBy: staffName,
+            }).catch(() => {});
+            toast(tx('Swap denied', 'Cambio negado'), { kind: 'success', duration: 2500 });
+        } catch (e) {
+            console.error('handleDenySwapRequest failed:', e);
+            toast(tx('Could not deny: ', 'No se pudo negar: ') + (e.message || e), { kind: 'error' });
+        }
+    };
+
+    // tiny inline so the transaction's error path stays terse — these
+    // throw inside the runTransaction and surface to the caller's catch.
+    const tx_msg = (en) => en; // (kept English for transaction errors;
+                                // staff-facing toasts use tx() above.)
+
     const handleOfferShift = async (shift) => {
         const ok = confirm(tx(
             `⚠ This shift on ${shift.date} from ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} is YOUR responsibility until someone takes it. You'll be notified when a manager approves the takeover. Confirm offer?`,
@@ -3632,6 +3809,14 @@ ${dayBlocks}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
                                         <span>🎂</span>{tx('My Birthday', 'Mi Cumpleaños')}
                                     </button>
+                                    {/* Shift swap — direct trade with a teammate.
+                                        Distinct from "offer to market" (open swap)
+                                        which uses the cube's per-shift offer
+                                        menu. This is the picker-flow swap. */}
+                                    <button onClick={() => { setShowMoreActions(false); setShowSwapModal(true); }}
+                                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                        <span>🔄</span>{tx('Swap a Shift', 'Cambiar un Turno')}
+                                    </button>
                                 </div>
                                 {/* ADMIN */}
                                 {canEdit && (
@@ -3805,6 +3990,9 @@ ${dayBlocks}
                 onApprovePto={handleApprovePto}
                 onDenyPto={handleDenyPto}
                 onCancelOwnPto={handleCancelOwnPto}
+                swapRequests={swapRequests}
+                onApproveSwapRequest={handleApproveSwapRequest}
+                onDenySwapRequest={handleDenySwapRequest}
             />
 
             {loading ? (
@@ -4237,6 +4425,18 @@ ${dayBlocks}
                     staffList={staffList}
                     staffName={staffName}
                     onSave={handleSaveMyBirthday}
+                    isEn={isEn}
+                />
+            )}
+            {showSwapModal && (
+                <SwapShiftModal
+                    onClose={() => setShowSwapModal(false)}
+                    shifts={shifts}
+                    staffList={staffList}
+                    staffName={staffName}
+                    storeLocation={storeLocation}
+                    swapRequests={swapRequests}
+                    onRequest={handleRequestSwap}
                     isEn={isEn}
                 />
             )}
@@ -6082,7 +6282,7 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
 }
 
 // ── SwapPanels: open offers + pending swap approval + pending PTO queue ────
-function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation, timeOff, onApprovePto, onDenyPto, onCancelOwnPto }) {
+function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, onApprove, onDeny, storeLocation, timeOff, onApprovePto, onDenyPto, onCancelOwnPto, swapRequests = [], onApproveSwapRequest, onDenySwapRequest }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
 
@@ -6107,7 +6307,15 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     const pendingPto = (timeOff || []).filter(t => t.status === 'pending');
     const myPto = (timeOff || []).filter(t => t.staffName === staffName && (t.endDate || t.startDate) >= today);
 
-    if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0 && pendingPto.length === 0 && myPto.length === 0) return null;
+    // 2026-05-16 — direct shift-swap requests. Manager queue + own
+    // request status, parallel to the PTO pattern above.
+    const pendingSwaps = (swapRequests || []).filter(r => r.status === 'pending');
+    const mySwaps = (swapRequests || []).filter(r =>
+        (r.fromStaff === staffName || r.toStaff === staffName) &&
+        (r.requestedDate >= today || r.status === 'pending')
+    );
+
+    if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0 && pendingPto.length === 0 && myPto.length === 0 && pendingSwaps.length === 0 && mySwaps.length === 0) return null;
 
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
     const renderPtoLine = (t) => t.startDate + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '') + (t.reason ? ` · ${t.reason}` : '');
@@ -6236,6 +6444,67 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                             </div>
                         </div>
                     ))}
+                </Panel>
+            )}
+
+            {/* 2026-05-16 — pending shift-swap requests (manager queue) */}
+            {canEdit && pendingSwaps.length > 0 && (
+                <Panel accent="bg-blue-500" icon="🔄" title={tx('Pending swap requests', 'Solicitudes de cambio')} count={pendingSwaps.length}>
+                    {pendingSwaps.map(r => {
+                        const f = r.fromShiftSnapshot || {};
+                        const t = r.toShiftSnapshot || {};
+                        return (
+                            <div key={r.id} className="bg-blue-50 rounded-lg p-2 border border-blue-200 text-xs">
+                                <div className="font-bold text-dd-text">
+                                    🔄 {r.fromStaff} ↔ {r.toStaff}
+                                </div>
+                                <div className="text-dd-text-2 text-[11px] mt-1">
+                                    <div>{r.fromStaff}: {f.date} · {formatTime12h(f.startTime)}–{formatTime12h(f.endTime)}</div>
+                                    <div>{r.toStaff}: {t.date} · {formatTime12h(t.startTime)}–{formatTime12h(t.endTime)}</div>
+                                    {r.note && <div className="italic mt-0.5">"{r.note}"</div>}
+                                </div>
+                                <div className="flex gap-1.5 mt-2">
+                                    <button onClick={() => onApproveSwapRequest && onApproveSwapRequest(r)}
+                                        className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve swap', 'Aprobar')}</button>
+                                    <button onClick={() => onDenySwapRequest && onDenySwapRequest(r)}
+                                        className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </Panel>
+            )}
+
+            {/* My swap requests (status visible to requester + partner) */}
+            {mySwaps.length > 0 && (
+                <Panel accent="bg-blue-500" icon="🔄" title={tx('My swap requests', 'Mis cambios')} count={mySwaps.length}>
+                    {mySwaps.map(r => {
+                        const f = r.fromShiftSnapshot || {};
+                        const t2 = r.toShiftSnapshot || {};
+                        const youInitiated = r.fromStaff === staffName;
+                        const partner = youInitiated ? r.toStaff : r.fromStaff;
+                        return (
+                            <div key={r.id} className="flex items-center justify-between gap-2 bg-blue-50 rounded-lg p-2 border border-blue-200 text-xs">
+                                <div className="min-w-0 flex-1">
+                                    <div className="font-bold text-dd-text truncate">
+                                        🔄 {youInitiated ? tx('with', 'con') : tx('from', 'de')} {partner}
+                                    </div>
+                                    <div className="text-dd-text-2 text-[10px] mt-0.5">
+                                        {f.date} {formatTime12h(f.startTime)}–{formatTime12h(f.endTime)} ↔ {t2.date} {formatTime12h(t2.startTime)}–{formatTime12h(t2.endTime)}
+                                    </div>
+                                </div>
+                                <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap text-[10px] border ${
+                                    r.status === 'approved' ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30' :
+                                    r.status === 'denied'   ? 'bg-red-50 text-red-700 border-red-200' :
+                                                              'bg-blue-100 text-blue-800 border-blue-300'
+                                }`}>
+                                    {r.status === 'approved' ? '✓ ' + tx('Approved', 'Aprobado') :
+                                     r.status === 'denied'   ? '✕ ' + tx('Denied', 'Negado') :
+                                                                '⏳ ' + tx('Pending', 'Pendiente')}
+                                </span>
+                            </div>
+                        );
+                    })}
                 </Panel>
             )}
         </div>
@@ -7100,6 +7369,202 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
 // Storage format: 'MM-DD' (no year — birthdays are recurring annual,
 // year on the staff record would be misleading). Drives the auto-
 // derived birthday chip on the Schedule's events strip.
+// ── SwapShiftModal ───────────────────────────────────────────────────
+// 2026-05-16 — direct shift-swap request flow. Two-pane picker:
+//   Stage 1: "Your shift" — pick one of YOUR upcoming published shifts
+//   Stage 2: "Trade with" — pick a teammate + one of their upcoming shifts
+//   Stage 3: Confirm + optional note → calls onRequest → notifyAdmins
+// Doesn't write directly; just builds the payload. Parent owns Firestore.
+function SwapShiftModal({ onClose, shifts, staffList, staffName, storeLocation, swapRequests, onRequest, isEn }) {
+    const tx = (en, es) => (isEn ? en : es);
+    const today = toDateStr(new Date());
+    const [stage, setStage] = useState('mine');   // 'mine' → 'theirs' → 'confirm'
+    const [myShift, setMyShift] = useState(null);
+    const [theirShift, setTheirShift] = useState(null);
+    const [filterStaff, setFilterStaff] = useState('');
+    const [note, setNote] = useState('');
+
+    // My upcoming published shifts. Filter by location for sanity (if
+    // current store is 'both', show all).
+    const myShifts = useMemo(() => {
+        return (shifts || [])
+            .filter(s => s.staffName === staffName)
+            .filter(s => s.published !== false)
+            .filter(s => s.date >= today)
+            .filter(s => storeLocation === 'both' || s.location === storeLocation || s.location === 'both')
+            .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+    }, [shifts, staffName, today, storeLocation]);
+
+    // Everyone else's upcoming published shifts.
+    const theirShifts = useMemo(() => {
+        return (shifts || [])
+            .filter(s => s.staffName && s.staffName !== staffName)
+            .filter(s => s.published !== false)
+            .filter(s => s.date >= today)
+            .filter(s => storeLocation === 'both' || s.location === storeLocation || s.location === 'both')
+            .filter(s => !filterStaff || s.staffName === filterStaff)
+            .sort((a, b) => (a.date + a.startTime).localeCompare(b.date + b.startTime));
+    }, [shifts, staffName, today, storeLocation, filterStaff]);
+
+    // Unique staff names that have an upcoming shift, for the picker.
+    const swappableStaff = useMemo(() => {
+        const seen = new Set();
+        const out = [];
+        for (const s of (shifts || [])) {
+            if (s.staffName === staffName) continue;
+            if (s.staffName && !seen.has(s.staffName) && s.published !== false && s.date >= today) {
+                seen.add(s.staffName);
+                out.push(s.staffName);
+            }
+        }
+        return out.sort();
+    }, [shifts, staffName, today]);
+
+    const renderShiftRow = (s, onClick, selected) => (
+        <button key={s.id} onClick={() => onClick(s)}
+            className={`w-full text-left p-2.5 rounded-lg border-2 transition active:scale-[0.99] ${selected ? 'bg-blue-50 border-blue-500' : 'bg-white border-dd-line hover:border-blue-300'}`}>
+            <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                    <div className="text-xs font-bold text-dd-text">
+                        {s.date} · {formatTime12h(s.startTime)}–{formatTime12h(s.endTime)}
+                    </div>
+                    <div className="text-[10px] text-dd-text-2 mt-0.5">
+                        {LOCATION_LABELS[s.location] || s.location}
+                        {s.staffName && s.staffName !== staffName && <> · {s.staffName}</>}
+                        {s.side && <> · {s.side.toUpperCase()}</>}
+                    </div>
+                </div>
+                {selected && <span className="text-blue-600 font-bold text-base">✓</span>}
+            </div>
+        </button>
+    );
+
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+                <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0">
+                    <div>
+                        <h3 className="text-lg font-bold text-blue-700">🔄 {tx('Swap a Shift', 'Cambiar un Turno')}</h3>
+                        <div className="flex items-center gap-1.5 mt-1 text-[10px]">
+                            <span className={`px-2 py-0.5 rounded-full font-bold ${stage === 'mine' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>1. {tx('Your shift', 'Tu turno')}</span>
+                            <span className="text-gray-400">→</span>
+                            <span className={`px-2 py-0.5 rounded-full font-bold ${stage === 'theirs' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>2. {tx('Trade with', 'Cambiar con')}</span>
+                            <span className="text-gray-400">→</span>
+                            <span className={`px-2 py-0.5 rounded-full font-bold ${stage === 'confirm' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-600'}`}>3. {tx('Confirm', 'Confirmar')}</span>
+                        </div>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 text-lg flex-shrink-0">×</button>
+                </div>
+
+                {stage === 'mine' && (
+                    <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                        <p className="text-xs text-dd-text-2 leading-snug">
+                            {tx('Pick one of your upcoming published shifts to swap. Drafts aren\'t available — only released shifts.',
+                                'Elige uno de tus próximos turnos publicados para cambiar. Los borradores no están disponibles — solo turnos liberados.')}
+                        </p>
+                        {myShifts.length === 0 ? (
+                            <div className="text-center text-sm text-dd-text-2 py-8 italic">
+                                {tx('You have no upcoming published shifts to swap.', 'No tienes próximos turnos publicados para cambiar.')}
+                            </div>
+                        ) : (
+                            myShifts.map(s => renderShiftRow(s, setMyShift, myShift?.id === s.id))
+                        )}
+                    </div>
+                )}
+
+                {stage === 'theirs' && (
+                    <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                        <p className="text-xs text-dd-text-2 leading-snug">
+                            {tx('Pick a teammate\'s shift you want to swap with. The manager has to approve the trade.',
+                                'Elige el turno del compañero con quien quieres cambiar. El gerente debe aprobar el cambio.')}
+                        </p>
+                        {/* Quick staff filter */}
+                        <select value={filterStaff} onChange={e => setFilterStaff(e.target.value)}
+                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm bg-white">
+                            <option value="">{tx('All teammates', 'Todos los compañeros')}</option>
+                            {swappableStaff.map(name => <option key={name} value={name}>{name}</option>)}
+                        </select>
+                        {theirShifts.length === 0 ? (
+                            <div className="text-center text-sm text-dd-text-2 py-8 italic">
+                                {tx('No teammate shifts to swap with.', 'No hay turnos de compañeros para cambiar.')}
+                            </div>
+                        ) : (
+                            theirShifts.map(s => renderShiftRow(s, setTheirShift, theirShift?.id === s.id))
+                        )}
+                    </div>
+                )}
+
+                {stage === 'confirm' && myShift && theirShift && (
+                    <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                        <div className="rounded-xl border border-blue-200 bg-blue-50 p-3">
+                            <p className="text-xs font-bold text-blue-900 mb-2">{tx('Confirm the swap', 'Confirma el cambio')}</p>
+                            <div className="space-y-2 text-xs">
+                                <div className="p-2 rounded bg-white border border-blue-200">
+                                    <div className="text-[10px] uppercase font-bold text-blue-700">{tx('You give up', 'Tú entregas')}</div>
+                                    <div className="font-bold text-dd-text">{myShift.date} · {formatTime12h(myShift.startTime)}–{formatTime12h(myShift.endTime)}</div>
+                                    <div className="text-[11px] text-dd-text-2">{LOCATION_LABELS[myShift.location] || myShift.location}</div>
+                                </div>
+                                <div className="text-center text-blue-600 font-bold">⇅</div>
+                                <div className="p-2 rounded bg-white border border-blue-200">
+                                    <div className="text-[10px] uppercase font-bold text-blue-700">{tx('You take', 'Tú tomas')}</div>
+                                    <div className="font-bold text-dd-text">{theirShift.date} · {formatTime12h(theirShift.startTime)}–{formatTime12h(theirShift.endTime)}</div>
+                                    <div className="text-[11px] text-dd-text-2">{LOCATION_LABELS[theirShift.location] || theirShift.location} · {theirShift.staffName}</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">
+                                {tx('Note for manager (optional)', 'Nota para el gerente (opcional)')}
+                            </label>
+                            <textarea value={note} onChange={e => setNote(e.target.value.slice(0, 200))}
+                                rows={2} maxLength={200}
+                                placeholder={tx('e.g. doctor appointment, family event', 'ej. cita médica, evento familiar')}
+                                className="w-full border border-dd-line rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-blue-500" />
+                        </div>
+                    </div>
+                )}
+
+                <div className="border-t border-dd-line p-3 flex-shrink-0 flex justify-between gap-2">
+                    {stage === 'mine' ? (
+                        <>
+                            <button onClick={onClose}
+                                className="px-4 py-2 rounded-lg bg-gray-300 text-gray-700 font-bold text-sm">
+                                {tx('Cancel', 'Cancelar')}
+                            </button>
+                            <button onClick={() => myShift && setStage('theirs')} disabled={!myShift}
+                                className={`px-4 py-2 rounded-lg font-bold text-sm ${myShift ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
+                                {tx('Next →', 'Siguiente →')}
+                            </button>
+                        </>
+                    ) : stage === 'theirs' ? (
+                        <>
+                            <button onClick={() => setStage('mine')}
+                                className="px-4 py-2 rounded-lg bg-gray-300 text-gray-700 font-bold text-sm">
+                                ← {tx('Back', 'Atrás')}
+                            </button>
+                            <button onClick={() => theirShift && setStage('confirm')} disabled={!theirShift}
+                                className={`px-4 py-2 rounded-lg font-bold text-sm ${theirShift ? 'bg-blue-600 text-white hover:bg-blue-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}>
+                                {tx('Next →', 'Siguiente →')}
+                            </button>
+                        </>
+                    ) : (
+                        <>
+                            <button onClick={() => setStage('theirs')}
+                                className="px-4 py-2 rounded-lg bg-gray-300 text-gray-700 font-bold text-sm">
+                                ← {tx('Back', 'Atrás')}
+                            </button>
+                            <button onClick={() => onRequest({ myShift, theirShift, note })}
+                                className="px-4 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm hover:bg-blue-700">
+                                🔄 {tx('Request swap', 'Solicitar cambio')}
+                            </button>
+                        </>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
 function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
     const lt = (en, es) => (isEn ? en : es);
     const me = (staffList || []).find(s => s.name === staffName);
