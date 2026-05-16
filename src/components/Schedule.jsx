@@ -330,6 +330,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
     const [selectedDayIdx, setSelectedDayIdx] = useState(() => (new Date().getDay() - WEEK_START_DOW + 7) % 7);
     const [showAddModal, setShowAddModal] = useState(false);
+    // Availability conflict acknowledgment modal — 2026-05-15.
+    // Andrew: "lets it flash and show a small window warning and i can
+    // either press delete the shift or override and schedule the shift
+    // anyways." Triggered AFTER any shift mutation (add / drag-resize /
+    // drag-move) that lands the shift outside the staff's declared
+    // availability. Forces the manager to acknowledge — no more silent
+    // misses. Shape:
+    //   { shiftId, staffName, date, startTime, endTime,
+    //     conflict: { type: 'off' | 'outside', from?, to? },
+    //     kind: 'added' | 'resized' | 'moved' }
+    const [availabilityWarn, setAvailabilityWarn] = useState(null);
     const [addPrefill, setAddPrefill] = useState(null);
     // Single-person filter — when set, every view scopes to ONE staff member.
     // Cleared with the "Show all" button.
@@ -1209,7 +1220,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             return;
         }
         try {
-            await addDoc(collection(db, 'shifts'), {
+            const docRef = await addDoc(collection(db, 'shifts'), {
                 ...shiftData,
                 published: false, // draft — manager hits Publish to release
                 createdBy: staffName,
@@ -1218,6 +1229,22 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
             setShowAddModal(false);
             setAddPrefill(null);
+            // Availability acknowledgment — fires AFTER the save so it
+            // catches every path (modal, quick-add, drag, etc.). Replaces
+            // the passive in-modal banner Andrew was missing.
+            const savedStaffRecord = (staffList || []).find(s => s.name === shiftData.staffName);
+            const conflict = checkAvailabilityConflict(savedStaffRecord, shiftData.date, shiftData.startTime, shiftData.endTime);
+            if (conflict) {
+                setAvailabilityWarn({
+                    shiftId: docRef.id,
+                    staffName: shiftData.staffName,
+                    date: shiftData.date,
+                    startTime: shiftData.startTime,
+                    endTime: shiftData.endTime,
+                    conflict,
+                    kind: 'added',
+                });
+            }
 
             // After save, check whether the new shift will actually be visible
             // in the current view. If not (different week / side / location /
@@ -1408,23 +1435,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
-            // Availability conflict check — non-blocking warning toast for
-            // drag-resize. The cube was already updated visually (optimistic
-            // resize, then committed above). Toast surfaces the constraint
-            // so the manager catches "wait, Maria only works 11–4" before
-            // the staffer texts about it tomorrow.
+            // Availability acknowledgment modal on conflict (replaces the
+            // toast — toast was easy to miss while the manager kept
+            // dragging). See setAvailabilityWarn comment.
             const staffRecord = (staffList || []).find(x => x.name === sh.staffName);
             const conflict = checkAvailabilityConflict(staffRecord, sh.date, startTime, endTime);
-            if (conflict?.type === 'off') {
-                toast(tx(
-                    `⏰ ${sh.staffName} marked this day unavailable. Verify with them.`,
-                    `⏰ ${sh.staffName} marcó este día como no disponible. Confirma con esta persona.`
-                ), { kind: 'warn', duration: 5000 });
-            } else if (conflict?.type === 'outside') {
-                toast(tx(
-                    `⏰ ${sh.staffName} only available ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} this day. New shift ${newDetail} extends past that.`,
-                    `⏰ ${sh.staffName} solo disponible ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} este día. Turno ${newDetail} se sale.`
-                ), { kind: 'warn', duration: 5000 });
+            if (conflict) {
+                setAvailabilityWarn({
+                    shiftId,
+                    staffName: sh.staffName,
+                    date: sh.date,
+                    startTime,
+                    endTime,
+                    conflict,
+                    kind: 'resized',
+                });
             }
             // Push to the assigned staffer if their PUBLISHED shift just
             // changed times. Drafts are silent (not released yet).
@@ -1467,21 +1492,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 date: newDate,
                 updatedAt: serverTimestamp(),
             });
-            // Availability conflict toast after the move commits. The new
-            // staff (or same staff on a new day) may have constraints on
-            // this day-of-week that don't match the shift times.
+            // Availability acknowledgment modal — same pattern as add and
+            // drag-resize, surfaces if the move lands the shift outside
+            // the (new) staff's window for the (new) day-of-week.
             const newStaffRecord = (staffList || []).find(x => x.name === newStaffName);
             const conflict = checkAvailabilityConflict(newStaffRecord, newDate, shift.startTime, shift.endTime);
-            if (conflict?.type === 'off') {
-                toast(tx(
-                    `⏰ ${newStaffName} marked this day unavailable. Verify with them.`,
-                    `⏰ ${newStaffName} marcó este día como no disponible. Confirma con esta persona.`
-                ), { kind: 'warn', duration: 5000 });
-            } else if (conflict?.type === 'outside') {
-                toast(tx(
-                    `⏰ ${newStaffName} only available ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} this day. Shift ${detail} extends past that.`,
-                    `⏰ ${newStaffName} solo disponible ${formatTime12h(conflict.from)}–${formatTime12h(conflict.to)} este día. Turno ${detail} se sale.`
-                ), { kind: 'warn', duration: 5000 });
+            if (conflict) {
+                setAvailabilityWarn({
+                    shiftId,
+                    staffName: newStaffName,
+                    date: newDate,
+                    startTime: shift.startTime,
+                    endTime: shift.endTime,
+                    conflict,
+                    kind: 'moved',
+                });
             }
             // Push notifications when a published shift moves between
             // staff or dates. Three cases:
@@ -3765,6 +3790,70 @@ ${dayBlocks}
                     isEn={isEn}
                 />
             )}
+            {/* Availability conflict acknowledgment modal — flashing red
+                interrupt that fires after add / drag-resize / drag-move
+                if the resulting shift lands outside the staff's declared
+                availability. Forces a decision: Delete or Override. */}
+            {availabilityWarn && (() => {
+                const w = availabilityWarn;
+                const d = parseLocalDate(w.date);
+                const dayName = d ? (isEn ? DAYS_FULL_EN : DAYS_FULL_ES)[d.getDay()] : w.date;
+                const kindLabel = w.kind === 'added'
+                    ? tx('Shift you just added', 'Turno que acabas de agregar')
+                    : w.kind === 'resized'
+                        ? tx('Shift you just resized', 'Turno que acabas de cambiar')
+                        : tx('Shift you just moved', 'Turno que acabas de mover');
+                return (
+                    <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4">
+                        <div className="relative max-w-sm w-full">
+                            {/* Flashing red ring layer — pulses without
+                                fading the content. */}
+                            <div className="absolute inset-0 rounded-2xl ring-4 ring-red-500 pointer-events-none animate-pulse" />
+                            <div className="relative bg-white rounded-2xl shadow-2xl">
+                                <div className="p-5 text-center">
+                                    <div className="text-4xl mb-1">⚠️</div>
+                                    <h3 className="text-lg font-bold text-red-700 mb-1">
+                                        {tx('Availability conflict', 'Conflicto de disponibilidad')}
+                                    </h3>
+                                    <p className="text-[11px] uppercase tracking-wider text-dd-text-2 font-bold mb-3">
+                                        {kindLabel}
+                                    </p>
+                                    {w.conflict.type === 'off' ? (
+                                        <p className="text-sm text-dd-text leading-snug">
+                                            <span className="font-bold">{w.staffName}</span>{' '}
+                                            {tx(`marked ${dayName} as`, `marcó ${dayName} como`)}{' '}
+                                            <span className="font-bold text-red-700">{tx('unavailable', 'no disponible')}</span>.
+                                        </p>
+                                    ) : (
+                                        <p className="text-sm text-dd-text leading-snug">
+                                            <span className="font-bold">{w.staffName}</span>{' '}
+                                            {tx('is only available', 'solo está disponible')}{' '}
+                                            <span className="font-bold">{formatTime12h(w.conflict.from)}–{formatTime12h(w.conflict.to)}</span>{' '}
+                                            {tx(`on ${dayName}.`, `el ${dayName}.`)}
+                                            <br />
+                                            {tx('Shift is', 'El turno es')}{' '}
+                                            <span className="font-bold text-red-700">{formatTime12h(w.startTime)}–{formatTime12h(w.endTime)}</span>.
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="border-t border-dd-line p-3 flex gap-2">
+                                    <button onClick={() => {
+                                        handleDeleteShift(w.shiftId, { immediate: true });
+                                        setAvailabilityWarn(null);
+                                    }}
+                                        className="flex-1 py-3 rounded-lg bg-red-600 text-white font-bold hover:bg-red-700 shadow-sm">
+                                        🗑 {tx('Delete shift', 'Eliminar turno')}
+                                    </button>
+                                    <button onClick={() => setAvailabilityWarn(null)}
+                                        className="flex-1 py-3 rounded-lg bg-white border-2 border-dd-line text-dd-text font-bold hover:bg-dd-bg">
+                                        {tx('Override', 'Anular')}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
             {showTimeOffModal && (
                 <TimeOffModal
                     onClose={() => setShowTimeOffModal(false)}
