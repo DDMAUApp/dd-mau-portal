@@ -4694,6 +4694,53 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             {onPendingPTO && cellShifts.length === 0 && (
                                                 <div className="text-center text-yellow-700 text-[9px] font-bold py-1">⏳ {isEn ? 'Time off pending' : 'Libre pendiente'}</div>
                                             )}
+                                            {/* Availability badge — MANAGER ONLY (canEdit gate).
+                                                2026-05-15 — Andrew: "when a staff adds there
+                                                availability i want to see it on there week but
+                                                keep it small. only the schedule editors should
+                                                be able to see it."
+                                                Renders ONLY when:
+                                                  - viewer is a schedule editor (canEdit)
+                                                  - cell isn't on PTO or closed (those dominate)
+                                                  - staff has set explicit availability that's
+                                                    narrower than the all-day default OR is off
+                                                Skips entirely when staff is "available all day"
+                                                (the implicit default) so the grid doesn't get
+                                                noise on every cell. */}
+                                            {canEdit && !closed && !onPTO && !onPendingPTO && (() => {
+                                                const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+                                                const dayKey = dayKeys[d.getDay()];
+                                                const dayAvail = (s.availability || {})[dayKey];
+                                                if (!dayAvail) return null;
+                                                if (dayAvail.available === false) {
+                                                    return (
+                                                        <div className="text-[9px] text-gray-400 italic leading-tight mt-0.5" title={isEn ? "Marked unavailable" : "Marcado no disponible"}>
+                                                            🚫 {isEn ? 'off' : 'no disp.'}
+                                                        </div>
+                                                    );
+                                                }
+                                                // Narrower-than-default hours = real constraint
+                                                // worth showing. Defaults from MyAvailabilityModal
+                                                // are 09:00–21:00, so anything tighter on either
+                                                // end deserves a hint.
+                                                const fromOk = (dayAvail.from || '09:00') > '09:00';
+                                                const toOk = (dayAvail.to || '21:00') < '21:00';
+                                                if (fromOk || toOk) {
+                                                    const shortTime = (t) => {
+                                                        if (!t) return '';
+                                                        const [h, m] = t.split(':').map(Number);
+                                                        const period = h >= 12 ? 'p' : 'a';
+                                                        const h12 = ((h + 11) % 12) + 1;
+                                                        return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2,'0')}${period}`;
+                                                    };
+                                                    return (
+                                                        <div className="text-[9px] text-gray-400 italic leading-tight mt-0.5" title={isEn ? "Staff availability window" : "Ventana de disponibilidad"}>
+                                                            ⏰ {shortTime(dayAvail.from)}–{shortTime(dayAvail.to)}
+                                                        </div>
+                                                    );
+                                                }
+                                                return null;
+                                            })()}
                                             {cellShifts.map(sh => (
                                                 <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
                                                     currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer}
