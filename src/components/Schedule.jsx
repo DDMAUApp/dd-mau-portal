@@ -394,6 +394,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Phase 3: staff self-serve PTO request modal + my-availability modal
     const [showPtoRequestModal, setShowPtoRequestModal] = useState(false);
     const [showMyAvailModal, setShowMyAvailModal] = useState(false);
+    // 2026-05-16 — staff self-serve birthday. Available to every staff
+    // member regardless of role; writes to their own record only.
+    const [showMyBirthdayModal, setShowMyBirthdayModal] = useState(false);
     // Click-a-day-header → "who's available?" picker
     const [availableForDate, setAvailableForDate] = useState(null);
     // Mobile-only: collapse the secondary action buttons behind a ⋯ menu.
@@ -2734,6 +2737,48 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     // ── Phase 3: staff self-serve availability ──
     // Lifts the same pattern from AdminPanel: read-modify-write the staff list.
+    // 2026-05-16 — staff self-serve birthday save. Same PIN integrity
+    // gate as handleSaveMyAvailability. Accepts an MM-DD string OR
+    // empty (to clear). Only writes the current staff member's own
+    // record — defensive: even if someone tampered with state to
+    // target another staffName, the filter limits the write to their
+    // own row.
+    const handleSaveMyBirthday = async (birthday) => {
+        if (!staffList || !setStaffList) return;
+        // Accept MM-DD or empty string (clear). Reject anything else.
+        const clean = (typeof birthday === 'string' ? birthday.trim() : '');
+        if (clean !== '' && !/^\d{2}-\d{2}$/.test(clean)) {
+            toast(tx('Birthday must be MM-DD format (e.g. 03-15).',
+                     'El cumpleaños debe ser en formato MM-DD (ej. 03-15).'),
+                  { kind: 'error', duration: 5000 });
+            return;
+        }
+        const updated = staffList.map(s => s.name === staffName ? { ...s, birthday: clean } : s);
+        // PIN integrity gate — same defense as in AdminPanel +
+        // handleSaveMyAvailability. Refuse the save if any staff row
+        // has a missing/invalid PIN, since /config/staff is the source
+        // of truth for sign-in.
+        const bad = updated.find(s => {
+            const p = String(s.pin ?? '').trim();
+            return !p || !/^\d{4}$/.test(p);
+        });
+        if (bad) {
+            console.error('Refusing birthday save — invalid PIN on:', bad.name, 'pin=', bad.pin);
+            toast(tx(`Save blocked: invalid PIN on ${bad.name}. Reload the app and try again.`,
+                     `Guardado bloqueado: PIN inválido en ${bad.name}. Recarga la app.`),
+                  { kind: 'error', duration: 8000 });
+            return;
+        }
+        setStaffList(updated);
+        try {
+            await setDoc(doc(db, 'config', 'staff'), { list: updated });
+            toast(tx('🎂 Birthday saved', '🎂 Cumpleaños guardado'), { kind: 'success', duration: 2500 });
+        } catch (e) {
+            console.error('Save birthday failed:', e);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message, { kind: 'error' });
+        }
+    };
+
     const handleSaveMyAvailability = async (newAvailability) => {
         if (!staffList || !setStaffList) return;
         const updated = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
@@ -3580,6 +3625,13 @@ ${dayBlocks}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
                                         <span>🗓</span>{tx('My Availability', 'Mi Disponibilidad')}
                                     </button>
+                                    {/* My Birthday — self-serve. Anyone can set
+                                        their own MM-DD. Drives the auto-derived
+                                        birthday chip on the schedule events strip. */}
+                                    <button onClick={() => { setShowMoreActions(false); setShowMyBirthdayModal(true); }}
+                                        className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                        <span>🎂</span>{tx('My Birthday', 'Mi Cumpleaños')}
+                                    </button>
                                 </div>
                                 {/* ADMIN */}
                                 {canEdit && (
@@ -4176,6 +4228,15 @@ ${dayBlocks}
                     staffList={staffList}
                     staffName={staffName}
                     onSave={handleSaveMyAvailability}
+                    isEn={isEn}
+                />
+            )}
+            {showMyBirthdayModal && (
+                <MyBirthdayModal
+                    onClose={() => setShowMyBirthdayModal(false)}
+                    staffList={staffList}
+                    staffName={staffName}
+                    onSave={handleSaveMyBirthday}
                     isEn={isEn}
                 />
             )}
@@ -7025,6 +7086,92 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                     <button onClick={() => canSubmit && onSubmit(form)} disabled={!canSubmit}
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300'}`}>
                         {tx('Submit Request', 'Enviar Solicitud')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── MyBirthdayModal ──────────────────────────────────────────────────
+// 2026-05-16 — staff self-serve birthday. Mirrors MyAvailabilityModal's
+// scope (writes only the current user's record) and uses native <input
+// type="date"> for the picker, then strips the year before storing.
+// Storage format: 'MM-DD' (no year — birthdays are recurring annual,
+// year on the staff record would be misleading). Drives the auto-
+// derived birthday chip on the Schedule's events strip.
+function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
+    const lt = (en, es) => (isEn ? en : es);
+    const me = (staffList || []).find(s => s.name === staffName);
+    const initial = (me && typeof me.birthday === 'string' && /^\d{2}-\d{2}$/.test(me.birthday))
+        ? me.birthday
+        : '';
+    // The <input type="date"> requires a YEAR. Use 2000 as a stable
+    // placeholder — gets stripped at save time. If initial is empty,
+    // leave the date input empty so the user picks first.
+    const initialDateValue = initial ? `2000-${initial}` : '';
+    const [dateValue, setDateValue] = useState(initialDateValue);
+    const onPick = (v) => setDateValue(v);
+    const handleSave = async () => {
+        if (!dateValue) {
+            // Empty → clear birthday.
+            await onSave('');
+            onClose();
+            return;
+        }
+        // Extract MM-DD from the YYYY-MM-DD input value.
+        const m = dateValue.match(/^\d{4}-(\d{2}-\d{2})$/);
+        if (!m) return;
+        await onSave(m[1]);
+        onClose();
+    };
+    const handleClear = async () => {
+        await onSave('');
+        onClose();
+    };
+    return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+                    <div>
+                        <h3 className="text-lg font-bold text-pink-700">🎂 {lt('My Birthday', 'Mi Cumpleaños')}</h3>
+                        <p className="text-xs text-gray-500">{staffName}</p>
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 text-lg">×</button>
+                </div>
+                <div className="p-4 space-y-3">
+                    <p className="text-xs text-gray-600 leading-relaxed bg-pink-50 border border-pink-200 rounded-lg p-2">
+                        {lt('Pick your birthday. The year is not saved — your birthday will show up on the schedule each year on the same day.',
+                            'Elige tu cumpleaños. El año no se guarda — tu cumpleaños aparecerá en el horario cada año el mismo día.')}
+                    </p>
+                    <div>
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1">
+                            {lt('Date', 'Fecha')}
+                        </label>
+                        <input type="date" value={dateValue} onChange={e => onPick(e.target.value)}
+                            className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-pink-500" />
+                    </div>
+                    {initial && (
+                        <p className="text-[11px] text-gray-500">
+                            {lt('Currently saved as', 'Actualmente guardado como')}: <span className="font-bold font-mono">{initial}</span>
+                        </p>
+                    )}
+                </div>
+                <div className="border-t border-gray-200 p-4 flex gap-2">
+                    {initial && (
+                        <button onClick={handleClear}
+                            className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg font-bold text-sm">
+                            {lt('Clear', 'Borrar')}
+                        </button>
+                    )}
+                    <button onClick={onClose}
+                        className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold text-sm">
+                        {lt('Cancel', 'Cancelar')}
+                    </button>
+                    <button onClick={handleSave}
+                        disabled={!dateValue && !initial}
+                        className={`flex-1 py-2 rounded-lg font-bold text-sm text-white ${dateValue || initial ? 'bg-pink-600 hover:bg-pink-700' : 'bg-gray-300 cursor-not-allowed'}`}>
+                        {lt('Save', 'Guardar')}
                     </button>
                 </div>
             </div>
