@@ -1878,6 +1878,39 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //       they can't accidentally be filled twice into the same slot.
     const fillNeedWithStaff = async (need, staffMember) => {
         if (!canEditSide(need?.side)) return;
+        // 2026-05-15 — Andrew: "no you didnt fix it. when ... we have slots
+        // available i can just click assign and when i do that it doesnt
+        // show the warning. dont make me ask again."
+        //
+        // The previous post-create flashing modal pattern (still in use for
+        // add/resize/move) depends on React state firing in the right
+        // order. For the slot-fill path the chooser modal closes via
+        // setFillSlotChooser(null) at the SAME tick as fillNeedWithStaff
+        // starts running async — there's a window where the chooser is
+        // unmounting and the flashing modal isn't yet mounted, and the
+        // visual handoff can fail. Plus PWA cache aggressively serves old
+        // bundles.
+        //
+        // BULLETPROOF fix: native confirm() PRE-create. Blocks the thread
+        // until the manager decides. Cannot be hidden by any state race,
+        // any z-index issue, any cache invalidation gap. If they Cancel,
+        // we abort before addDoc — no shift is ever created. If they OK,
+        // we proceed as before. No double-prompt because the post-create
+        // flashing-modal block is removed from this path (added/resize/
+        // move still use the flashing modal — they work).
+        const preConflict = checkAvailabilityConflict(staffMember, need.date, need.startTime, need.endTime);
+        if (preConflict) {
+            const msg = preConflict.type === 'off'
+                ? tx(
+                    `⚠️ AVAILABILITY CONFLICT\n\n${staffMember.name} marked this day as UNAVAILABLE.\n\nSchedule anyway?`,
+                    `⚠️ CONFLICTO DE DISPONIBILIDAD\n\n${staffMember.name} marcó este día como NO DISPONIBLE.\n\n¿Programar de todos modos?`
+                )
+                : tx(
+                    `⚠️ AVAILABILITY CONFLICT\n\n${staffMember.name} is only available ${formatTime12h(preConflict.from)}–${formatTime12h(preConflict.to)} this day.\nShift is ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)}.\n\nSchedule anyway?`,
+                    `⚠️ CONFLICTO DE DISPONIBILIDAD\n\n${staffMember.name} solo está disponible ${formatTime12h(preConflict.from)}–${formatTime12h(preConflict.to)} este día.\nEl turno es ${formatTime12h(need.startTime)}–${formatTime12h(need.endTime)}.\n\n¿Programar de todos modos?`
+                );
+            if (!confirm(msg)) return; // bail before any write
+        }
         try {
             const shiftRef = await addDoc(collection(db, 'shifts'), {
                 staffName: staffMember.name,
@@ -1920,29 +1953,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                           `✓ ${staffMember.name.split(' ')[0]} agregado · ${remaining} más por llenar`),
                       { kind: 'success', duration: 2000 });
             }
-            // 2026-05-15 — Andrew: "if i assign a slot as the shift it
-            // doesnt warn me fix that code now."
-            // The slot-fill path used to skip the conflict check (the
-            // AvailableStaffModal already filters by availability, but
-            // it shows unavailable staff just sorted lower — the manager
-            // could still tap them). Now fires the same flashing
-            // acknowledgment modal as add/resize/move. If they Delete,
-            // pruneNeedAfterShiftDelete unfills the slot cleanly so they
-            // can pick someone else; the AvailableStaffModal stays open
-            // because fillingNeed wasn't cleared, and live data refreshes
-            // via onSnapshot.
-            const conflict = checkAvailabilityConflict(staffMember, need.date, need.startTime, need.endTime);
-            if (conflict) {
-                setAvailabilityWarn({
-                    shiftId: shiftRef.id,
-                    staffName: staffMember.name,
-                    date: need.date,
-                    startTime: need.startTime,
-                    endTime: need.endTime,
-                    conflict,
-                    kind: 'added',
-                });
-            }
+            // (No post-create flashing-modal check on this path — the
+            // pre-create confirm() above already gated the action. Adding
+            // the post-create modal would double-prompt.)
         } catch (e) {
             console.error('Fill need failed:', e);
             toast(tx('Could not fill: ', 'No se pudo asignar: ') + e.message);
