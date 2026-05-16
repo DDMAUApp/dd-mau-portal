@@ -1620,6 +1620,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Fill one slot of a need: create a real shift for that staff member, then
     // append to the need's filledStaff[] + filledShiftIds[]. Used by the
     // AvailableStaffModal flow when fillingNeed is set.
+    //
+    // 2026-05-15 — Andrew: "when the slots are there and you press it opens
+    // up the who can work. lets make it so we can add one or if there is 5
+    // slots we can go through and add all 5 staff with out closing the
+    // window." Previously this nulled out fillingNeed + availableForDate
+    // after every successful fill, closing the modal. Now we KEEP THE
+    // MODAL OPEN until the slot is fully staffed (or the manager closes
+    // it manually). State is reconciled by:
+    //   (a) updating fillingNeed locally with the new filledStaff so the
+    //       progress chip + auto-close logic see the latest count without
+    //       waiting for onSnapshot, and
+    //   (b) the newly-created shift lands in `shifts` via onSnapshot,
+    //       which makes the just-filled staffer's row in the modal flip
+    //       to status='scheduled' (or hide if hasOverlap is true), so
+    //       they can't accidentally be filled twice into the same slot.
     const fillNeedWithStaff = async (need, staffMember) => {
         if (!canEditSide(need?.side)) return;
         try {
@@ -1641,12 +1656,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 fromNeedId: need.id,
             });
+            const newFilledStaff = [...(need.filledStaff || []), staffMember.name];
+            const newFilledShiftIds = [...(need.filledShiftIds || []), shiftRef.id];
             await updateDoc(doc(db, 'staffing_needs', need.id), {
-                filledStaff: [...(need.filledStaff || []), staffMember.name],
-                filledShiftIds: [...(need.filledShiftIds || []), shiftRef.id],
+                filledStaff: newFilledStaff,
+                filledShiftIds: newFilledShiftIds,
             });
-            setFillingNeed(null);
-            setAvailableForDate(null);
+            // Auto-close when the slot reaches its target count — manager
+            // is done. Otherwise keep modal open and bump fillingNeed
+            // state so the progress chip reflects the new ratio.
+            const isFullyStaffed = newFilledStaff.length >= (need.count || 0);
+            if (isFullyStaffed) {
+                setFillingNeed(null);
+                setAvailableForDate(null);
+                toast(tx(`✓ All ${need.count} slot${need.count === 1 ? '' : 's'} filled`,
+                          `✓ ${need.count} espacio${need.count === 1 ? '' : 's'} llenado${need.count === 1 ? '' : 's'}`),
+                      { kind: 'success', duration: 3000 });
+            } else {
+                setFillingNeed({ ...need, filledStaff: newFilledStaff, filledShiftIds: newFilledShiftIds });
+                const remaining = (need.count || 0) - newFilledStaff.length;
+                toast(tx(`✓ ${staffMember.name.split(' ')[0]} added · ${remaining} more to fill`,
+                          `✓ ${staffMember.name.split(' ')[0]} agregado · ${remaining} más por llenar`),
+                      { kind: 'success', duration: 2000 });
+            }
         } catch (e) {
             console.error('Fill need failed:', e);
             toast(tx('Could not fill: ', 'No se pudo asignar: ') + e.message);
@@ -3489,6 +3521,14 @@ ${dayBlocks}
                     requiredRoleGroup={fillingNeed?.roleGroup || null}
                     slotStart={fillingNeed?.startTime || null}
                     slotEnd={fillingNeed?.endTime || null}
+                    // Progress chip + remaining-count math for the multi-fill
+                    // flow. Modal stays open until filled === count or the
+                    // manager closes manually — see fillNeedWithStaff comment.
+                    fillProgress={fillingNeed ? {
+                        filled: (fillingNeed.filledStaff || []).length,
+                        count: fillingNeed.count || 0,
+                        filledStaff: fillingNeed.filledStaff || [],
+                    } : null}
                     onSchedule={(staff) => {
                         // If we're filling a staffing need, create the shift via the
                         // need handler (so the slot is marked filled). Otherwise it's
@@ -6015,7 +6055,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
 // by current weekly hours so the manager can pick the lowest-hours person to
 // avoid pushing anyone into OT. Tap any name to jump straight into the
 // Add Shift modal pre-filled for that staff + date.
-function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup, slotStart, slotEnd }) {
+function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocation, isStaffOffOn, isEn, onSchedule, requiredRoleGroup, slotStart, slotEnd, fillProgress }) {
     const tx = (en, es) => (isEn ? en : es);
     const date = parseLocalDate(dateStr);
     const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
@@ -6089,18 +6129,38 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
-                    <div>
+                    <div className="min-w-0 flex-1">
                         <h3 className="text-lg font-bold text-dd-text">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
-                        <p className="text-xs text-gray-500">
-                            {dayName} · {dateStr}
+                        <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+                            <span>{dayName} · {dateStr}</span>
                             {requiredGroup && requiredGroup.id !== 'any' && (
-                                <span className="ml-2 inline-block px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
+                                <span className="inline-block px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
                                     {requiredGroup.emoji} {tx(requiredGroup.labelEn, requiredGroup.labelEs)} {tx('only', 'solo')}
                                 </span>
                             )}
+                            {/* Multi-fill progress chip — counts up as the manager
+                                picks staff. Modal stays open until filled/count
+                                or manager hits the X. */}
+                            {fillProgress && (
+                                <span className="inline-block px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                                    {tx(`Pick ${Math.max(0, fillProgress.count - fillProgress.filled)} more`, `Elige ${Math.max(0, fillProgress.count - fillProgress.filled)} más`)} · {fillProgress.filled}/{fillProgress.count}
+                                </span>
+                            )}
                         </p>
+                        {/* Just-filled chips so the manager sees who they've
+                            already added in this open session. Shown only when
+                            we're in fill mode AND at least one slot was filled. */}
+                        {fillProgress && fillProgress.filled > 0 && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                                {fillProgress.filledStaff.map((name, i) => (
+                                    <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-green-100 text-green-800 rounded-full text-[10px] font-bold">
+                                        ✓ {name.split(' ')[0]}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg flex-shrink-0">×</button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-3 space-y-2">
