@@ -4853,6 +4853,43 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
     const today = toDateStr(new Date());
 
+    // 2026-05-16 — Per-day metadata for the closed-overlay watermark.
+    // Andrew: "when the black out day is set lets gray out that day with
+    // the name of the reason. for days that we are closed maybe a light
+    // font almost a watermark going over up that whole day with CLOSED."
+    //
+    // Resolves the closed state CORRECTLY (recurring + one-off blocks +
+    // open overrides — same priority order as parent dateClosed()) and
+    // computes the reason string to display:
+    //   - One-off block with a non-empty reason  → that reason text
+    //     (e.g. "Memorial Day", "Christmas")
+    //   - One-off block with no reason           → "Closed"
+    //   - Recurring weekly rule                  → "Closed"
+    //
+    // Used by both the day-header rendering (big "Memorial Day" label)
+    // and the body cell watermark (light translucent text in each
+    // closed cell — stacked vertically they form a column watermark).
+    const closedByDate = useMemo(() => {
+        const map = new Map();
+        for (const d of days) {
+            const dStr = toDateStr(d);
+            const dayBlocks = (blocksByDate?.get(dStr)) || [];
+            const hasOverride = !!(dateHasOpenOverride && dateHasOpenOverride(dStr));
+            const oneOff = !hasOverride && dayBlocks.find(b => b.type === 'closed');
+            const recurringClosed = !hasOverride && !oneOff && !!(dateClosedByRecurring && dateClosedByRecurring(dStr));
+            const closed = !!oneOff || recurringClosed;
+            let reason = null;
+            if (oneOff) {
+                reason = (oneOff.reason && oneOff.reason.trim())
+                    || (isEn ? 'Closed' : 'Cerrado');
+            } else if (recurringClosed) {
+                reason = isEn ? 'Closed' : 'Cerrado';
+            }
+            map.set(dStr, { closed, reason, hasOverride, oneOff, recurringClosed });
+        }
+        return map;
+    }, [days, blocksByDate, dateHasOpenOverride, dateClosedByRecurring, isEn]);
+
     // Group shifts by staff and date for fast lookup.
     const shiftsByCell = useMemo(() => {
         const map = new Map();
@@ -4972,7 +5009,9 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                             const dStr = toDateStr(d);
                             const isToday = dStr === today;
                             const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
-                            const closed = dayBlocks.some(b => b.type === 'closed');
+                            const meta = closedByDate.get(dStr) || {};
+                            const closed = meta.closed;
+                            const closedReason = meta.reason;
                             const noTimeoff = dayBlocks.some(b => b.type === 'no_timeoff');
                             const stats = needStatsByDate.get(dStr);
                             const fullyStaffed = stats && stats.total > 0 && stats.open === 0;
@@ -4992,7 +5031,12 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                     )}
                                     {closed && (
                                         <div className="mt-1 space-y-1">
-                                            <div className="text-[9px] font-bold text-dd-text-2">🚫 {isEn ? 'Closed' : 'Cerrado'}</div>
+                                            {/* 2026-05-16 — show the reason prominently
+                                                in the header. "Memorial Day" / "Christmas"
+                                                etc. when one-off, "Closed" when recurring. */}
+                                            <div className="text-[10px] font-bold text-dd-text uppercase tracking-wider leading-tight" title={closedReason}>
+                                                🚫 {closedReason}
+                                            </div>
                                             {/* 2026-05-16 — open-this-day toggle.
                                                 Available when canEdit AND the day is
                                                 closed (either via recurring rule or
@@ -5220,7 +5264,15 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                     .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''));
                                 const isToday = dStr === today;
                                 const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
-                                const closed = dayBlocks.some(b => b.type === 'closed');
+                                // 2026-05-16 — use the shared closedByDate map
+                                // so recurring closures (Sundays) AND one-off
+                                // blocks BOTH cause the cell to display as
+                                // closed. Previously this was a one-off-only
+                                // check which let recurring-closed cells stay
+                                // editable (visual bug Andrew spotted).
+                                const cellMeta = closedByDate.get(dStr) || {};
+                                const closed = cellMeta.closed;
+                                const closedReason = cellMeta.reason;
                                 const cellKey = `${s.name}|${dStr}`;
                                 const isDragOver = dragOverCell === cellKey;
                                 const onPTO = isStaffOffOn && isStaffOffOn(s.name, dStr);
@@ -5247,8 +5299,23 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             const shiftId = e.dataTransfer.getData('text/shift-id');
                                             if (shiftId && onDropShift) onDropShift(shiftId, s.name, dStr);
                                         }}
-                                        className={`border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
-                                        <div className="space-y-1">
+                                        className={`relative border-b border-r border-dd-line align-top p-1.5 transition ${isToday ? 'border-l-2 border-l-dd-green' : ''} ${closed ? 'bg-dd-bg' : onPTO ? 'bg-amber-50' : onPendingPTO ? 'bg-yellow-50' : isDragOver ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : isToday ? 'bg-dd-sage-50/40' : ''} ${canEdit && cellShifts.length === 0 && !closed ? 'cursor-pointer hover:bg-dd-sage-50' : ''}`}>
+                                        {/* 2026-05-16 — closed-day watermark.
+                                            Translucent reason text centered on
+                                            the cell. Stacked vertically across
+                                            all staff rows it reads like a
+                                            single column-spanning watermark.
+                                            pointer-events-none so the cell can
+                                            still receive drag events (which
+                                            already no-op on closed days). */}
+                                        {closed && (
+                                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none select-none">
+                                                <span className="text-[11px] font-black uppercase tracking-widest text-dd-text/15 whitespace-nowrap">
+                                                    {closedReason}
+                                                </span>
+                                            </div>
+                                        )}
+                                        <div className="relative space-y-1">
                                             {onPTO && cellShifts.length === 0 && (
                                                 <div className="text-center text-amber-700 text-[9px] font-bold py-1">🌴 {isEn ? 'Time Off' : 'Libre'}</div>
                                             )}
