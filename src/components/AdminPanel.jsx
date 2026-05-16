@@ -147,6 +147,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editHideFromSchedule, setEditHideFromSchedule] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
             const [editTargetHours, setEditTargetHours] = useState(0);
+            // 2026-05-16 — staff birthday MM-DD. Drives the auto-derived
+            // birthday chips on the Schedule grid's events strip. Empty
+            // string = not set. Stored without year (recurring annual).
+            const [editBirthday, setEditBirthday] = useState("");
             // Preferred language for outbound notifications (push, in-app
             // banners). Defaults to English for legacy records that don't
             // carry the field. New staff form picks this up from the device's
@@ -586,7 +590,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     const finalScheduleHome = finalLocation === 'both'
                         ? (editScheduleHome || 'both')
                         : finalLocation;
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
+                    // Birthday: only persist MM-DD format. Otherwise leave the
+                    // existing value alone (don't clobber with empty if the
+                    // edit form didn't touch it).
+                    const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
+                        ? editBirthday
+                        : (editBirthday === '' ? '' : (s.birthday || ''));
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -602,6 +612,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 setEditHideFromSchedule(false);
                 setEditScheduleSide("foh");
                 setEditTargetHours(0);
+                setEditBirthday("");
                 showSaved();
             };
 
@@ -1257,6 +1268,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             value={editTargetHours} onChange={e => setEditTargetHours(e.target.value)}
                                                             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                                                     </div>
+                                                    <div className="bg-gray-50 rounded-lg p-3">
+                                                        <p className="text-sm font-bold text-gray-700 mb-1">🎂 {language === "es" ? "Cumpleaños" : "Birthday"}</p>
+                                                        <p className="text-xs text-gray-500 mb-2">{language === "es"
+                                                            ? "Aparece como una etiqueta sobre el día en la cuadrícula del horario. Solo mes y día — el año no se guarda."
+                                                            : "Shows as a chip above the day on the schedule grid. Month and day only — year is not stored."}</p>
+                                                        <input type="text" inputMode="numeric" placeholder="MM-DD"
+                                                            value={editBirthday}
+                                                            onChange={e => {
+                                                                // Accept the canonical MM-DD form; reject other characters.
+                                                                const v = e.target.value.replace(/[^\d-]/g, '').slice(0, 5);
+                                                                setEditBirthday(v);
+                                                            }}
+                                                            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                                                    </div>
                                                     {/* Designated-scheduler toggles. ONLY the people you turn on here can
                                                         edit / publish the schedule for that side. Everyone else can still
                                                         view, offer up shifts, take shifts, and request PTO. */}
@@ -1292,7 +1317,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditScheduleHome("both"); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditHideFromSchedule(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditScheduleHome("both"); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditHideFromSchedule(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditBirthday(""); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -1305,7 +1330,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"}{person.location === 'both' && person.scheduleHome && person.scheduleHome !== 'both' ? ` (${language === "es" ? "horario" : "schedule"}: ${LOCATION_LABELS[person.scheduleHome] || person.scheduleHome})` : ''} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditBirthday(typeof person.birthday === 'string' ? person.birthday : ''); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>

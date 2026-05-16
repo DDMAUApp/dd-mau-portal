@@ -368,6 +368,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // as closed (same downstream effects as a one-off date_block of
     // type=closed — see dateClosed helper below).
     const [scheduleSettings, setScheduleSettings] = useState(null);
+    // 2026-05-16 — calendar events: informational chips that render above
+    // the day-of-week headers on the schedule grid. Distinct from closures
+    // (closures gray the cell out; events just label it). Manager-added
+    // via the Closures & Calendar modal. Types:
+    //   'holiday'  — federal/observed (Christmas, Thanksgiving)
+    //   'national' — awareness/observance days (Mother's Day, Cinco de Mayo)
+    //   'event'    — local events (food festival, marathon, sporting game)
+    //   'birthday' — auto-derived from staff.birthday (NOT stored — see
+    //                birthdaysByDate computation below).
+    const [calendarEvents, setCalendarEvents] = useState([]);
     // Time-off entries (Phase 2: admin-entered on behalf of staff. Phase 3: staff self-serve).
     const [timeOff, setTimeOff] = useState([]);
     const [showTimeOffModal, setShowTimeOffModal] = useState(false);
@@ -559,6 +569,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }, (err) => console.warn('schedule_settings snapshot error:', err));
         return unsub;
     }, []);
+
+    // ── Listen for calendar events (holiday/national/event labels) ──
+    // Same 6-month past cutoff as date_blocks so old events don't bloat
+    // the in-memory list. Future entries unbounded — managers might
+    // pre-plan next year's events.
+    useEffect(() => {
+        const q = query(collection(db, 'calendar_events'), where('date', '>=', sixMonthsAgo));
+        const unsub = onSnapshot(q, (snap) => {
+            const items = [];
+            snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
+            setCalendarEvents(items);
+        }, (err) => console.error('calendar_events snapshot error:', err));
+        return unsub;
+    }, [sixMonthsAgo]);
 
     // ── Listen for date blocks (restaurant closed days, no-time-off days) ──
     useEffect(() => {
@@ -964,6 +988,49 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             return dateStr >= start && dateStr <= end;
         });
     };
+
+    // ── eventsByDate: calendar_events + auto-derived staff birthdays ──
+    // 2026-05-16. Keyed by 'YYYY-MM-DD'. Value is array of event objects:
+    //   { id?, type, label, emoji?, isBirthday? }
+    //
+    // - Manager-added events come from calendarEvents (Firestore).
+    // - Birthdays are derived on-the-fly from staffList[].birthday (a
+    //   stored 'MM-DD' string). We can't precompute a date for them —
+    //   they match ANY year — so the derivation walks the visible
+    //   window. To keep it cheap we materialize a 14-month window
+    //   (matches the future-event horizon for date filtering elsewhere).
+    const eventsByDate = useMemo(() => {
+        const map = new Map();
+        // Manager-added events first.
+        for (const e of (calendarEvents || [])) {
+            if (!e?.date) continue;
+            if (!map.has(e.date)) map.set(e.date, []);
+            map.get(e.date).push(e);
+        }
+        // Birthdays: for each staff with a birthday MM-DD, materialize
+        // an entry on this year's and next year's matching date. Cheap:
+        // ~50 staff * 2 dates = 100 ops, runs once per render.
+        const now = new Date();
+        const thisYear = now.getFullYear();
+        for (const s of (staffList || [])) {
+            const bd = s?.birthday;
+            if (typeof bd !== 'string' || !/^\d{2}-\d{2}$/.test(bd)) continue;
+            // hideFromSchedule applies — don't render owner birthdays on
+            // the grid since their row is hidden anyway.
+            if (s.hideFromSchedule === true) continue;
+            for (const y of [thisYear, thisYear + 1]) {
+                const dateStr = `${y}-${bd}`;
+                if (!map.has(dateStr)) map.set(dateStr, []);
+                map.get(dateStr).push({
+                    type: 'birthday',
+                    label: s.name.split(' ')[0],
+                    isBirthday: true,
+                    emoji: '🎂',
+                });
+            }
+        }
+        return map;
+    }, [calendarEvents, staffList]);
 
     // ── Helper: lookup blocks for a date (filtered by location). ──
     // Multiple blocks could exist for the same day — closed wins over no_timeoff.
@@ -2318,6 +2385,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Remove block failed:', e);
         }
+    };
+
+    // 2026-05-16 — calendar event CRUD. Lightweight per-date label.
+    const handleAddCalendarEvent = async (evt) => {
+        if (!canEdit) return;
+        try {
+            await addDoc(collection(db, 'calendar_events'), {
+                date: evt.date,
+                label: evt.label || '',
+                type: evt.type || 'event',
+                emoji: evt.emoji || '',
+                createdBy: staffName,
+                createdAt: serverTimestamp(),
+            });
+        } catch (e) {
+            console.error('Add event failed:', e);
+            toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
+        }
+    };
+    const handleRemoveCalendarEvent = async (id) => {
+        if (!canEdit) return;
+        try { await deleteDoc(doc(db, 'calendar_events', id)); }
+        catch (e) { console.error('Remove event failed:', e); }
     };
 
     // 2026-05-16 — toggle a single (location, dayOfWeek) on/off in the
@@ -3762,6 +3852,7 @@ ${dayBlocks}
                                 onTakeShift={handleTakeShift}
                                 onCancelOffer={handleCancelOffer}
                                 blocksByDate={blocksByDate}
+                                eventsByDate={eventsByDate}
                                 onDropShift={handleDropShift}
                                 onUpdateShiftTimes={handleUpdateShiftTimes}
                                 isStaffOffOn={isStaffOffOn}
@@ -3899,6 +3990,9 @@ ${dayBlocks}
                     isEn={isEn}
                     closedWeekdays={scheduleSettings?.closedWeekdays || {}}
                     onToggleClosedWeekday={handleToggleClosedWeekday}
+                    events={calendarEvents}
+                    onAddEvent={handleAddCalendarEvent}
+                    onRemoveEvent={handleRemoveCalendarEvent}
                 />
             )}
             {/* Availability conflict acknowledgment modal — flashing red
@@ -4643,7 +4737,7 @@ function OpenShiftsCalendarBar({
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -4754,6 +4848,44 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
             </div>
             <table className="border-collapse text-xs min-w-max w-full">
                 <thead>
+                    {/* 2026-05-16 — Events strip ABOVE the day-of-week headers.
+                        Surfaces calendar events + auto-derived birthdays per
+                        day so the manager building next week can see "Tuesday
+                        is Mother's Day" / "Friday is Carl's birthday" at a
+                        glance. Only renders when something to show — empty
+                        row hidden so the grid stays compact when there are
+                        no events. */}
+                    {eventsByDate && days.some(d => (eventsByDate.get(toDateStr(d)) || []).length > 0) && (
+                        <tr>
+                            <th className="sticky left-0 bg-white z-10 border-b border-dd-line px-3 py-1 text-left">
+                                <span className="text-[9px] uppercase text-dd-text-2 font-bold tracking-wider">{isEn ? 'Events' : 'Eventos'}</span>
+                            </th>
+                            {days.map((d, i) => {
+                                const dStr = toDateStr(d);
+                                const evts = eventsByDate.get(dStr) || [];
+                                return (
+                                    <th key={i} className="border-b border-dd-line px-1 py-1 min-w-[110px] align-top bg-white">
+                                        <div className="flex flex-wrap gap-0.5 justify-center">
+                                            {evts.map((e, j) => {
+                                                const tone =
+                                                    e.type === 'birthday' ? 'bg-pink-100 text-pink-800 border-pink-200' :
+                                                    e.type === 'holiday'  ? 'bg-red-100 text-red-800 border-red-200' :
+                                                    e.type === 'national' ? 'bg-purple-100 text-purple-800 border-purple-200' :
+                                                                            'bg-blue-100 text-blue-800 border-blue-200';
+                                                return (
+                                                    <span key={j} title={e.label}
+                                                        className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[9px] font-bold border ${tone} max-w-full`}>
+                                                        {e.emoji && <span>{e.emoji}</span>}
+                                                        <span className="truncate max-w-[80px]">{e.label}</span>
+                                                    </span>
+                                                );
+                                            })}
+                                        </div>
+                                    </th>
+                                );
+                            })}
+                        </tr>
+                    )}
                     <tr>
                         <th className="sticky left-0 bg-white z-10 border-b border-dd-line px-3 py-2.5 text-left min-w-[120px]">
                             <span className="text-[10px] uppercase text-dd-text-2 font-bold tracking-wider">{isEn ? 'Staff' : 'Personal'}</span>
@@ -6274,7 +6406,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 //   • CLOSED — restaurant is closed (no shifts can be scheduled, no time-off needed)
 //   • NO TIME OFF — restaurant is open, but no PTO requests will be approved
 //                   (busy season, holiday weekends, special events)
-function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn, closedWeekdays = {}, onToggleClosedWeekday }) {
+function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn, closedWeekdays = {}, onToggleClosedWeekday, events = [], onAddEvent, onRemoveEvent }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
     const [form, setForm] = useState({
@@ -6283,6 +6415,18 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
         location: storeLocation && storeLocation !== 'both' ? storeLocation : 'both',
         reason: '',
     });
+    // Calendar event add-form state. Separate from closure form.
+    const [evtForm, setEvtForm] = useState({
+        date: today,
+        label: '',
+        type: 'event',
+        emoji: '',
+    });
+    const updateEvt = (k, v) => setEvtForm(f => ({ ...f, [k]: v }));
+    const canAddEvent = evtForm.date && evtForm.label.trim();
+    const eventsSorted = [...(events || [])].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const upcomingEvents = eventsSorted.filter(e => e.date >= today);
+    const pastEvents = eventsSorted.filter(e => e.date < today);
 
     // Sort upcoming blocks first; past blocks at the bottom dimmed.
     const sorted = [...blocks].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
@@ -6407,6 +6551,91 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
                             </div>
                         </details>
                     )}
+
+                    {/* 2026-05-16 — Calendar events (holidays / national /
+                        local events). Show as chips above the grid's day
+                        headers. Distinct from closures: an event LABELS a
+                        day, a closure GRAYS it out. */}
+                    <div className="border-t border-gray-200 pt-3">
+                        <div className="text-xs font-bold text-gray-700 mb-1">📅 {tx('Calendar events', 'Eventos del calendario')}</div>
+                        <p className="text-[11px] text-gray-500 mb-2">
+                            {tx('Holidays, national days, local events. Shows as a chip above the day on the grid. Birthdays are auto-derived from each staff record.',
+                                'Días festivos, observancias, eventos locales. Aparecen como una etiqueta sobre el día en la cuadrícula. Los cumpleaños se derivan del perfil del personal.')}
+                        </p>
+                        <div className="border border-purple-200 bg-purple-50/50 rounded-lg p-3 space-y-2">
+                            <div className="grid grid-cols-3 gap-1">
+                                {[
+                                    { id: 'holiday',  emoji: '🎄', en: 'Holiday',  es: 'Festivo' },
+                                    { id: 'national', emoji: '🇺🇸', en: 'National', es: 'Nacional' },
+                                    { id: 'event',    emoji: '🎉', en: 'Event',    es: 'Evento' },
+                                ].map(t => (
+                                    <button key={t.id} onClick={() => updateEvt('type', t.id)}
+                                        className={`py-1.5 rounded-md text-[11px] font-bold border ${evtForm.type === t.id ? 'bg-purple-600 text-white border-purple-600' : 'bg-white border-gray-300 text-gray-600'}`}>
+                                        {t.emoji} {tx(t.en, t.es)}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                                <input type="date" value={evtForm.date} onChange={e => updateEvt('date', e.target.value)}
+                                    className="col-span-2 border border-dd-line rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-purple-500" />
+                                <input type="text" value={evtForm.emoji} maxLength={3}
+                                    onChange={e => updateEvt('emoji', e.target.value)}
+                                    placeholder="🎄"
+                                    className="text-center border border-dd-line rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <input type="text" value={evtForm.label}
+                                onChange={e => updateEvt('label', e.target.value)}
+                                placeholder={tx('Label (e.g. Mother\'s Day)', 'Etiqueta (ej. Día de la Madre)')}
+                                className="w-full border border-dd-line rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-purple-500" />
+                            <button onClick={() => {
+                                if (!canAddEvent || !onAddEvent) return;
+                                onAddEvent({ ...evtForm, label: evtForm.label.trim() });
+                                setEvtForm({ date: today, label: '', type: 'event', emoji: '' });
+                            }}
+                                disabled={!canAddEvent}
+                                className={`w-full py-2 rounded-lg font-bold text-white text-sm ${canAddEvent ? 'bg-purple-600 hover:bg-purple-700' : 'bg-gray-300 cursor-not-allowed'}`}>
+                                + {tx('Add event', 'Agregar evento')}
+                            </button>
+                        </div>
+                        {upcomingEvents.length > 0 && (
+                            <div className="mt-2">
+                                <div className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">
+                                    {tx('Upcoming', 'Próximos')} ({upcomingEvents.length})
+                                </div>
+                                <div className="space-y-1">
+                                    {upcomingEvents.map(e => (
+                                        <div key={e.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-white border border-purple-100 text-xs">
+                                            <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                                <span>{e.emoji || (e.type === 'holiday' ? '🎄' : e.type === 'national' ? '🇺🇸' : '🎉')}</span>
+                                                <span className="font-bold text-dd-text truncate">{e.label}</span>
+                                                <span className="text-[10px] text-dd-text-2 flex-shrink-0">· {e.date}</span>
+                                            </div>
+                                            <button onClick={() => onRemoveEvent && onRemoveEvent(e.id)}
+                                                className="text-[10px] text-red-600 hover:text-red-800 font-bold flex-shrink-0">×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                        {pastEvents.length > 0 && (
+                            <details className="mt-2">
+                                <summary className="text-xs font-bold text-gray-500 cursor-pointer">{tx('Past', 'Pasados')} ({pastEvents.length})</summary>
+                                <div className="space-y-1 mt-1 opacity-60">
+                                    {pastEvents.map(e => (
+                                        <div key={e.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded bg-white border border-gray-200 text-xs">
+                                            <div className="min-w-0 flex-1 flex items-center gap-1.5">
+                                                <span>{e.emoji || '🎉'}</span>
+                                                <span className="font-bold text-dd-text truncate">{e.label}</span>
+                                                <span className="text-[10px] text-dd-text-2 flex-shrink-0">· {e.date}</span>
+                                            </div>
+                                            <button onClick={() => onRemoveEvent && onRemoveEvent(e.id)}
+                                                className="text-[10px] text-red-600 hover:text-red-800 font-bold flex-shrink-0">×</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </details>
+                        )}
+                    </div>
                 </div>
 
                 <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
