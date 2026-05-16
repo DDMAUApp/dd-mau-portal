@@ -3026,14 +3026,30 @@ ${dayBlocks}
                     (n.side === side)
                 ).sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
                 if (weekNeeds.length === 0) return null;
+                // 2026-05-15 — Andrew: "the open staffing slots is too big.
+                // lets make the lines shorter no need for all that."
+                // Compacted from a 4-line-per-row card (title + stats + filled
+                // chips + 3 stacked buttons) to a single-line row with icon
+                // action buttons. Drops the location string (always matches
+                // the current page anyway), drops the "of"/"filled" words
+                // (the X/Y ratio reads fine on its own), and stacks filled-
+                // staff chips below only when present. Times shortened too
+                // (9:00 AM → 9a, 9:30 AM → 9:30a).
+                const shortTime = (t) => {
+                    if (!t) return '';
+                    const [h, m] = t.split(':').map(Number);
+                    const period = h >= 12 ? 'p' : 'a';
+                    const h12 = ((h + 11) % 12) + 1;
+                    return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+                };
                 return (
-                    <div className="mb-3 rounded-xl p-3 bg-white border border-dd-line shadow-card">
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className="w-1 h-5 bg-blue-500 rounded-full" />
-                            <h3 className="text-sm font-bold text-dd-text">👥 {tx('Open staffing slots', 'Espacios abiertos')}</h3>
-                            <span className="text-[10px] font-bold text-dd-text-2 uppercase tracking-wider">{side === 'foh' ? 'FOH' : 'BOH'} · {weekNeeds.length}</span>
+                    <div className="mb-3 rounded-xl p-2 bg-white border border-dd-line shadow-card">
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <span className="w-1 h-4 bg-blue-500 rounded-full" />
+                            <h3 className="text-xs font-bold text-dd-text">👥 {tx('Open slots', 'Abiertos')}</h3>
+                            <span className="text-[10px] font-bold text-dd-text-2">{side === 'foh' ? 'FOH' : 'BOH'} · {weekNeeds.length}</span>
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-1">
                             {weekNeeds.map(n => {
                                 const filled = (n.filledStaff || []).length;
                                 const open = Math.max(0, (n.count || 0) - filled);
@@ -3041,54 +3057,51 @@ ${dayBlocks}
                                 const fullyStaffed = open === 0 && !overFilled;
                                 const date = parseLocalDate(n.date);
                                 const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
+                                const dayShort = date ? `${date.getMonth() + 1}/${date.getDate()}` : '';
                                 const roleGroup = n.roleGroup ? SLOT_ROLE_BY_ID[n.roleGroup] : null;
                                 return (
-                                    <div key={n.id} className={`p-2.5 rounded-lg border ${overFilled ? 'bg-red-50 border-red-200' : fullyStaffed ? 'bg-dd-green-50 border-dd-green/30' : 'bg-dd-bg border-dd-line'}`}>
-                                        <div className="flex items-center justify-between gap-2">
-                                            <div className="min-w-0 flex-1">
-                                                <div className="font-bold text-gray-800 flex items-center gap-1.5 flex-wrap">
-                                                    {overFilled ? '⚠️ ' : fullyStaffed ? '✅ ' : ''}{dayLabel} {n.date} · {formatTime12h(n.startTime)}–{formatTime12h(n.endTime)}
-                                                    {roleGroup && roleGroup.id !== 'any' && (
-                                                        <span className="inline-block px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-800 text-[10px] font-bold">
-                                                            {roleGroup.emoji} {tx(roleGroup.labelEn, roleGroup.labelEs)}
-                                                        </span>
-                                                    )}
-                                                    {n.notes && <span className="italic text-gray-500 font-normal text-xs">({n.notes})</span>}
-                                                </div>
-                                                <div className={`text-[10px] ${overFilled ? 'text-red-700 font-bold' : 'text-gray-600'}`}>
-                                                    {filled} {tx('of', 'de')} {n.count} {tx('filled', 'asignados')}
-                                                    {overFilled && ` · ${tx('OVER by', 'EXCESO de')} ${filled - n.count}`}
-                                                    · {LOCATION_LABELS[n.location] || n.location}
-                                                </div>
-                                                {filled > 0 && (
-                                                    <div className="flex flex-wrap gap-1 mt-1">
-                                                        {(n.filledStaff || []).map((name, i) => (
-                                                            <span key={i} className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-green-100 text-green-800 rounded-full text-[10px] font-bold">
-                                                                ✓ {name.split(' ')[0]}
-                                                                <button onClick={() => unfillNeedSlot(n, name)}
-                                                                    className="text-green-600 hover:text-red-600 ml-0.5">×</button>
-                                                            </span>
-                                                        ))}
-                                                    </div>
+                                    <div key={n.id} className={`px-2 py-1 rounded-md border text-xs ${overFilled ? 'bg-red-50 border-red-200' : fullyStaffed ? 'bg-dd-green-50 border-dd-green/30' : 'bg-dd-bg border-dd-line'}`}>
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-bold text-gray-800 truncate flex-1 min-w-0">
+                                                {overFilled ? '⚠️' : fullyStaffed ? '✅' : ''}
+                                                {' '}{dayLabel} {dayShort} · {shortTime(n.startTime)}–{shortTime(n.endTime)}
+                                                {roleGroup && roleGroup.id !== 'any' && (
+                                                    <span className="ml-1 text-blue-700 font-bold">{roleGroup.emoji}</span>
                                                 )}
-                                            </div>
-                                            <div className="flex flex-col gap-1 flex-shrink-0">
+                                            </span>
+                                            <span className={`font-mono text-[11px] flex-shrink-0 ${overFilled ? 'text-red-700 font-bold' : 'text-gray-600'}`}>
+                                                {filled}/{n.count}{overFilled && '!'}
+                                            </span>
+                                            {n.notes && (
+                                                <span className="italic text-gray-500 text-[10px] truncate max-w-[80px]" title={n.notes}>({n.notes})</span>
+                                            )}
+                                            <div className="flex gap-0.5 flex-shrink-0">
                                                 {!fullyStaffed && (
                                                     <button onClick={() => { setFillingNeed(n); setAvailableForDate(n.date); }}
-                                                        className="px-2.5 py-1 rounded-md bg-dd-green text-white text-[10px] font-bold hover:bg-dd-green-700 shadow-sm">
+                                                        title={tx('Fill', 'Llenar')}
+                                                        className="px-2 py-0.5 rounded bg-dd-green text-white text-[10px] font-bold hover:bg-dd-green-700">
                                                         {tx('Fill', 'Llenar')}
                                                     </button>
                                                 )}
                                                 <button onClick={() => setEditingNeed(n)}
                                                     title={tx('Edit slot times / count', 'Editar horario / cantidad')}
-                                                    className="px-2.5 py-1 rounded-md bg-white border border-dd-line text-dd-text text-[10px] font-semibold hover:bg-dd-bg">
-                                                    ✏ {tx('Edit', 'Editar')}
-                                                </button>
+                                                    className="px-1.5 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 text-[10px] hover:bg-dd-bg">✏</button>
                                                 <button onClick={() => handleRemoveNeed(n.id)}
                                                     title={tx('Remove slot', 'Eliminar')}
-                                                    className="px-2.5 py-1 rounded-md bg-white border border-red-200 text-red-700 text-[10px] font-semibold hover:bg-red-50">×</button>
+                                                    className="px-1.5 py-0.5 rounded bg-white border border-red-200 text-red-700 text-[10px] font-bold hover:bg-red-50">×</button>
                                             </div>
                                         </div>
+                                        {filled > 0 && (
+                                            <div className="flex flex-wrap gap-0.5 mt-0.5">
+                                                {(n.filledStaff || []).map((name, i) => (
+                                                    <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0 bg-green-100 text-green-800 rounded-full text-[10px] font-bold">
+                                                        ✓ {name.split(' ')[0]}
+                                                        <button onClick={() => unfillNeedSlot(n, name)}
+                                                            className="text-green-600 hover:text-red-600 ml-0.5">×</button>
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
