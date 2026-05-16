@@ -40,6 +40,45 @@ function resolveText(val, recipient) {
     return String(val);
 }
 
+// Look up the live MANAGEMENT recipients (owners by id + anyone with
+// "manager" or "owner" in their role title). Independent of the
+// canViewOnboarding flag, which is scoped to PII access — using it as
+// a "who's in charge" filter (as notifyAdmins does) silently misses
+// any manager who isn't a PII viewer.
+//
+// 2026-05-16 — added for schedule events. Andrew (id 40) reported he
+// wasn't getting a publish notification because:
+//   1. He has no shifts, so the per-staff "your schedule is published"
+//      message doesn't fire for him, and
+//   2. The admin summary excluded him as the publisher (`excludeStaff`).
+// notifyManagement defaults to INCLUDING the actor — managers want a
+// bell record of their own actions so they can confirm the publish/
+// approve/deny went through. Pass excludeStaff explicitly if a caller
+// wants to skip themselves (e.g., a self-action where the toast is
+// enough).
+export async function getManagementRecipients() {
+    try {
+        const snap = await getDoc(doc(db, 'config', 'staff'));
+        if (!snap.exists()) return [];
+        const list = (snap.data() || {}).list || [];
+        const seen = new Set();
+        const recs = [];
+        for (const s of list) {
+            if (!s || !s.name) continue;
+            const isOwner = s.id === 40 || s.id === 41;
+            const roleManager = s.role && /manager|owner/i.test(s.role);
+            if (!isOwner && !roleManager) continue;
+            if (seen.has(s.name)) continue;
+            seen.add(s.name);
+            recs.push(s);
+        }
+        return recs;
+    } catch (e) {
+        console.warn('getManagementRecipients failed:', e);
+        return [];
+    }
+}
+
 // Look up the live admin recipients (people with canViewOnboarding OR
 // the two hard-coded owner ids 40 / 41). Dedup by name so a duplicate
 // staff entry can't fan out twice.
@@ -114,6 +153,55 @@ export async function notifyAdmins({
             return ref.id;
         } catch (e) {
             console.warn(`notifyAdmins write failed for ${recipient.name}:`, e);
+            return null;
+        }
+    }));
+    return ids;
+}
+
+// Fan-out to every owner + manager (regardless of canViewOnboarding).
+// Same call signature as notifyAdmins. Defaults to INCLUDING the
+// actor so they get a bell-drawer record of their own action — pass
+// excludeStaff explicitly to opt out per-call.
+//
+// Used by Schedule.jsx for: publish, swap approve/deny, PTO request/
+// approve/deny/withdraw, shift delete. Anything where the management
+// team needs visibility on the action.
+export async function notifyManagement({
+    type,
+    title,
+    body,
+    link = '/',
+    deepLink,
+    tag,
+    createdBy = 'system',
+    excludeStaff = null,
+}) {
+    const recipients = await getManagementRecipients();
+    const filtered = excludeStaff
+        ? recipients.filter(s => s.name !== excludeStaff)
+        : recipients;
+    if (filtered.length === 0) {
+        console.info('notifyManagement: no recipients, skipping');
+        return [];
+    }
+    const ids = await Promise.all(filtered.map(async (recipient) => {
+        try {
+            const ref = await addDoc(collection(db, 'notifications'), {
+                forStaff: recipient.name,
+                type,
+                title: resolveText(title, recipient),
+                body: resolveText(body, recipient),
+                link,
+                ...(deepLink ? { deepLink } : {}),
+                tag: tag || `${type}:${Date.now()}`,
+                createdAt: serverTimestamp(),
+                read: false,
+                createdBy,
+            });
+            return ref.id;
+        } catch (e) {
+            console.warn(`notifyManagement write failed for ${recipient.name}:`, e);
             return null;
         }
     }));

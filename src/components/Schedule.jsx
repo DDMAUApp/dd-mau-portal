@@ -31,7 +31,7 @@ import {
     setDoc, serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
-import { notifyAdmins, notifyStaff } from '../data/notify';
+import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
 
@@ -1532,15 +1532,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // schedule scratch work.
         const fanoutAdmins = () => {
             if (!wasPublished) return;
-            notifyAdmins({
+            notifyManagement({
                 type: 'shift_deleted_admin',
                 title: { en: '🗑 Shift deleted', es: '🗑 Turno eliminado' },
                 body: { en: `${sh.staffName || 'Unassigned'} • ${detail} • by ${staffName}`,
                         es: `${sh.staffName || 'Sin asignar'} • ${detail} • por ${staffName}` },
                 link: '/schedule',
+                deepLink: 'schedule',
                 tag: `shift_deleted:${shiftId}`,
                 createdBy: staffName,
-                excludeStaff: staffName,
             }).catch(() => {});
         };
         if (opts.immediate) {
@@ -1783,15 +1783,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             const dateLine = myShift.date === theirShift.date
                 ? myShift.date
                 : `${myShift.date} ↔ ${theirShift.date}`;
-            await notifyAdmins({
+            await notifyManagement({
                 type: 'swap_request',
                 title: { en: `🔄 Swap request: ${staffName} ↔ ${theirShift.staffName}`, es: `🔄 Solicitud de cambio: ${staffName} ↔ ${theirShift.staffName}` },
                 body: `${dateLine} · ${formatTime12h(myShift.startTime)}–${formatTime12h(myShift.endTime)} ↔ ${formatTime12h(theirShift.startTime)}–${formatTime12h(theirShift.endTime)}`,
                 link: '/schedule',
+                deepLink: 'schedule',
                 tag: `swap_request:${ref.id}`,
                 createdBy: staffName,
-                excludeStaff: staffName,
-            }).catch(e => console.warn('swap_request admin notify failed (non-fatal):', e));
+                excludeStaff: staffName,  // requester is the actor, no bell needed
+            }).catch(e => console.warn('swap_request management notify failed (non-fatal):', e));
             setShowSwapModal(false);
             toast(tx('✓ Swap requested — manager will review', '✓ Solicitud enviada — el gerente revisará'), { kind: 'success', duration: 4000 });
         } catch (e) {
@@ -1836,10 +1837,25 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     title: '✓ Shift swap approved',
                     body: `Your swap with ${recipient === request.fromStaff ? request.toStaff : request.fromStaff} is approved. ${detail}`,
                     link: '/schedule',
+                    deepLink: 'schedule',
                     tag: `swap_approved:${request.id}:${recipient}`,
                     createdBy: staffName,
                 }).catch(() => {});
             }
+            // Roll-up to management so co-managers see the swap landed.
+            // Skip the two swap participants here (they got the per-staff
+            // ping above) but include the approver so they keep a record.
+            notifyManagement({
+                type: 'swap_approved_admin',
+                title: { en: `✓ Swap approved: ${request.fromStaff} ↔ ${request.toStaff}`,
+                         es: `✓ Cambio aprobado: ${request.fromStaff} ↔ ${request.toStaff}` },
+                body: { en: `${detail} · by ${staffName}`,
+                        es: `${detail} · por ${staffName}` },
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `swap_approved_admin:${request.id}`,
+                createdBy: staffName,
+            }).catch(() => {});
             toast(tx('✓ Swap approved', '✓ Cambio aprobado'), { kind: 'success', duration: 3000 });
         } catch (e) {
             console.error('handleApproveSwapRequest failed:', e);
@@ -1863,7 +1879,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 title: '✕ Shift swap denied',
                 body: `Your swap request with ${request.toStaff} was denied.`,
                 link: '/schedule',
+                deepLink: 'schedule',
                 tag: `swap_denied:${request.id}`,
+                createdBy: staffName,
+            }).catch(() => {});
+            // Roll-up so co-managers see denials too.
+            notifyManagement({
+                type: 'swap_denied_admin',
+                title: { en: `✕ Swap denied: ${request.fromStaff} ↔ ${request.toStaff}`,
+                         es: `✕ Cambio negado: ${request.fromStaff} ↔ ${request.toStaff}` },
+                body: { en: `by ${staffName}`,
+                        es: `por ${staffName}` },
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `swap_denied_admin:${request.id}`,
                 createdBy: staffName,
             }).catch(() => {});
             toast(tx('Swap denied', 'Cambio negado'), { kind: 'success', duration: 2500 });
@@ -1958,16 +1987,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 // need a ping.
                 const pubCount = snapshot.filter(s => s.published !== false).length;
                 if (pubCount > 0) {
-                    notifyAdmins({
+                    notifyManagement({
                         type: 'shift_deleted_admin',
                         title: { en: `🗑 Bulk delete: ${pubCount} shift${pubCount === 1 ? '' : 's'}`,
                                  es: `🗑 Eliminación masiva: ${pubCount} turno${pubCount === 1 ? '' : 's'}` },
                         body: { en: `Published shifts removed • by ${staffName}`,
                                 es: `Turnos publicados eliminados • por ${staffName}` },
                         link: '/schedule',
+                        deepLink: 'schedule',
                         tag: `bulk_delete:${Date.now()}`,
                         createdBy: staffName,
-                        excludeStaff: staffName,
                     }).catch(() => {});
                 }
             },
@@ -2764,14 +2793,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     const dates = entry.startDate === entry.endDate
                         ? entry.startDate
                         : `${entry.startDate} → ${entry.endDate || entry.startDate}`;
-                    await notifyAdmins({
+                    await notifyManagement({
                         type: 'pto_withdrawn',
                         title: `↩ PTO withdrawn: ${staffName}`,
                         body: `${dates}${entry.reason ? ` · ${entry.reason}` : ''} · ${tx('they can now be scheduled', 'pueden ser programados')}`,
                         link: '/schedule',
+                        deepLink: 'schedule',
                         tag: `pto_withdrawn:${entry.id}`,
                         createdBy: staffName || 'staff',
-                        excludeStaff: staffName,
+                        excludeStaff: staffName,  // withdrawer doesn't need a bell for their own action
                     });
                 } catch (e) { console.warn('PTO withdraw notify failed:', e); }
                 toast(tx('↩ Withdrew your time-off. Manager has been notified.',
@@ -2843,14 +2873,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 const dates = entry.startDate === entry.endDate
                     ? entry.startDate
                     : `${entry.startDate} → ${entry.endDate}`;
-                await notifyAdmins({
+                await notifyManagement({
                     type: 'pto_request',
                     title: `🌴 PTO request: ${staffName}`,
                     body: `${dates}${entry.reason ? ` · ${entry.reason}` : ''}`,
                     link: '/schedule',
+                    deepLink: 'schedule',
                     tag: `pto_request:${ref.id}`,
                     createdBy: staffName || 'staff',
-                    excludeStaff: staffName,
+                    excludeStaff: staffName,  // requester doesn't need a bell for their own request
                 });
             } catch (e) { console.warn('PTO admin notify failed:', e); }
         } catch (e) {
@@ -2890,6 +2921,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 { en: 'Time-off approved', es: 'Tiempo libre aprobado' },
                 { en: `Your time-off for ${range} was approved.`,
                   es: `Tu tiempo libre del ${range} fue aprobado.` });
+            // Ping the rest of management so they all see PTO decisions
+            // in one place. Includes the approver so they get a bell
+            // record of what they just decided (no excludeStaff).
+            notifyManagement({
+                type: 'pto_approved',
+                title: { en: `✅ PTO approved: ${entry.staffName}`,
+                         es: `✅ PTO aprobado: ${entry.staffName}` },
+                body: { en: `${range} · by ${staffName}`,
+                        es: `${range} · por ${staffName}` },
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `pto_approved_mgmt:${entry.id}`,
+                createdBy: staffName,
+            }).catch(() => {});
         } catch (e) {
             console.error('Approve PTO failed:', e);
         }
@@ -2907,6 +2952,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 { en: 'Time-off denied', es: 'Tiempo libre negado' },
                 { en: `Your time-off for ${range} was denied.`,
                   es: `Tu tiempo libre del ${range} fue negado.` });
+            notifyManagement({
+                type: 'pto_denied',
+                title: { en: `✕ PTO denied: ${entry.staffName}`,
+                         es: `✕ PTO negado: ${entry.staffName}` },
+                body: { en: `${range} · by ${staffName}`,
+                        es: `${range} · por ${staffName}` },
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `pto_denied_mgmt:${entry.id}`,
+                createdBy: staffName,
+            }).catch(() => {});
         } catch (e) {
             console.error('Deny PTO failed:', e);
         }
@@ -3402,20 +3458,23 @@ ${dayBlocks}
                     // recipient's device.
                     { allowSelf: true, tagSuffix: `week:${toDateStr(weekStart)}` });
             }
-            // Admin summary — one roll-up so co-managers see the publish
-            // even if it was tiny (e.g. one shift). excludeStaff skips the
-            // publisher (they already got the toast).
+            // Management summary — every owner + manager gets one roll-up
+            // bell entry so the publish is visible to the whole leadership
+            // team. INCLUDES the publisher (no excludeStaff) — Andrew
+            // explicitly asked for the bell-drawer record of his own
+            // publishes since he doesn't get a per-staff notification
+            // (he has no shifts assigned).
             const weekStartStr = toDateStr(weekStart);
-            notifyAdmins({
+            notifyManagement({
                 type: 'week_published_admin',
                 title: { en: `📢 Schedule published (week of ${weekStartStr})`,
                          es: `📢 Horario publicado (semana del ${weekStartStr})` },
                 body: { en: `${drafts.length} shift${drafts.length === 1 ? '' : 's'} • ${byStaff.size} staff • by ${staffName}`,
                         es: `${drafts.length} turno${drafts.length === 1 ? '' : 's'} • ${byStaff.size} persona(s) • por ${staffName}` },
                 link: '/schedule',
+                deepLink: 'schedule',
                 tag: `week_published_admin:${weekStartStr}`,
                 createdBy: staffName,
-                excludeStaff: staffName,
             }).catch(() => {});
         } catch (e) {
             console.error('Publish failed:', e);
