@@ -4711,10 +4711,25 @@ function HoursScoreboard({ scoreboard, side, isEn }) {
     );
 }
 
-// Coverage heatmap config — service window the strip covers (10 AM → 10 PM).
-// 12 blocks per day. Color by headcount in that hour:
-//   0 = red gap, 1 = yellow thin, 2 = teal ok, 3+ = green well-staffed.
-// Tweak HEATMAP_THIN / HEATMAP_OK if a location wants different thresholds.
+// Meal-window staffing counter config (2026-05-16 — replaced the hourly
+// red/green coverage heatmap with a single lunch/dinner headcount per day).
+//
+// Operationally, the question Andrew asks while building the schedule is
+// NOT "is hour 14 covered?" — it's "how many bodies do I have on lunch
+// vs dinner?" So the per-day cell shows two compact pills:
+//
+//     🥗 L: 3   🍜 D: 5
+//
+// A staff member is counted in the lunch tally if their shift overlaps
+// at any point with the lunch window (12:00–13:00). Dinner = 17:00–19:00.
+// Examples:
+//   • 10am–3pm  → lunch ✓     (covers 12-1)
+//   • 12pm–4pm  → lunch ✓     (covers 12-1)
+//   • 12pm–4pm  → dinner ✗   (ends before 5pm)
+//   • 4pm–10pm  → dinner ✓   (covers 5-7)
+//   • 9am–11am  → neither
+// A shift can count for both meals (e.g. 11am–8pm hits lunch AND dinner).
+// One person on multiple shifts the same day counts once per meal.
 // SPLH Advisor — sits above the weekly grid. Compares scheduled hours
 // per (day-of-week, daypart) against historical typical hours from Toast.
 // Surfaces under-/over-staffed slots with a one-line "+1 / -1" hint plus
@@ -4883,10 +4898,13 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
     );
 }
 
-const HEATMAP_FIRST_HOUR = 10;
-const HEATMAP_LAST_HOUR = 22; // exclusive upper bound (block-of-22:00 = 9-10pm)
-const HEATMAP_THIN = 1;       // <= this is "thin" (yellow)
-const HEATMAP_OK = 2;         // <= this is "ok" (teal); above is "well-staffed" (green)
+// Meal windows in minutes-since-midnight. A shift "hits" the window if
+// its half-open interval [start, end) overlaps the window's half-open
+// interval [winStart, winEnd) — i.e. start < winEnd AND end > winStart.
+const LUNCH_WIN_START = 12 * 60;  // 12:00 pm
+const LUNCH_WIN_END   = 13 * 60;  // 1:00  pm
+const DINNER_WIN_START = 17 * 60; // 5:00  pm
+const DINNER_WIN_END   = 19 * 60; // 7:00  pm
 
 // ── OpenShiftsCalendarBar ──────────────────────────────────────────────────
 // Sling-style horizontal week strip pinned above the schedule grid.
@@ -5176,14 +5194,16 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
         return map;
     }, [shifts]);
 
-    // Coverage heatmap data — for each day, how many distinct people are
-    // on the floor at each hour of the service window. A shift covers an
-    // hour H when startTime <= H:00 AND endTime > H:00. Counts unique
-    // staff names so two shifts by the same person on the same day still
-    // count as one body in the building during overlap (which can't
-    // physically happen anyway, but the de-dupe protects against shift
-    // overlap data bugs).
-    const coverageByDate = useMemo(() => {
+    // Meal-window staff counts — for each day, how many distinct people
+    // have shifts that overlap the lunch window (12-1) and the dinner
+    // window (5-7). De-dupes by staffName so one person on two shifts
+    // the same day counts once per meal.
+    //
+    // Half-open interval overlap: [sm, em) overlaps [ws, we) iff
+    //   sm < we && em > ws.
+    // (em == ws means "ends exactly at window start" — no overlap, the
+    // person clocks out as the window begins.)
+    const mealCountsByDate = useMemo(() => {
         const out = new Map();
         const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
         const toMin = (t) => {
@@ -5194,31 +5214,19 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
         for (const d of days) {
             const dStr = toDateStr(d);
             const dayShifts = shifts.filter(sh => sh.date === dStr);
-            const hours = [];
-            for (let h = HEATMAP_FIRST_HOUR; h < HEATMAP_LAST_HOUR; h++) {
-                const hourMin = h * 60;
-                const namesOn = new Set();
-                for (const sh of dayShifts) {
-                    const sm = toMin(sh.startTime);
-                    const em = toMin(sh.endTime);
-                    if (sm == null || em == null) continue;
-                    if (sm <= hourMin && em > hourMin) {
-                        namesOn.add(sh.staffName);
-                    }
-                }
-                hours.push(namesOn.size);
+            const lunch = new Set();
+            const dinner = new Set();
+            for (const sh of dayShifts) {
+                const sm = toMin(sh.startTime);
+                const em = toMin(sh.endTime);
+                if (sm == null || em == null) continue;
+                if (sm < LUNCH_WIN_END  && em > LUNCH_WIN_START)  lunch.add(sh.staffName);
+                if (sm < DINNER_WIN_END && em > DINNER_WIN_START) dinner.add(sh.staffName);
             }
-            out.set(dStr, hours);
+            out.set(dStr, { lunch: lunch.size, dinner: dinner.size });
         }
         return out;
     }, [shifts, weekStart]);
-
-    const heatmapColor = (count) => {
-        if (count === 0) return 'bg-red-400';
-        if (count <= HEATMAP_THIN) return 'bg-yellow-300';
-        if (count <= HEATMAP_OK) return 'bg-teal-300';
-        return 'bg-emerald-500';
-    };
 
     if (staffSummary.length === 0) {
         return <p className="text-center text-gray-400 mt-6 text-sm">{isEn ? 'No staff for this location.' : 'Sin personal para esta ubicación.'}</p>;
@@ -5359,27 +5367,32 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         </div>
                                     )}
                                     {onDayHeaderClick && !closed && <div className="text-[8px] text-dd-text-2/60 mt-1 print:hidden font-semibold">👥 {isEn ? 'tap' : 'tocar'}</div>}
-                                    {/* Coverage heatmap — one block per service hour
-                                        (10am→10pm). Color shows headcount on the floor.
-                                        Hover any block to see exact count + hour. */}
+                                    {/* Meal-window staff counter — replaces the
+                                        old hourly red/green coverage heatmap
+                                        (2026-05-16). Two compact pills: lunch
+                                        (12-1) + dinner (5-7) headcounts. Zero
+                                        renders dim so a missing-staff day
+                                        still reads as a gap. */}
                                     {!closed && (() => {
-                                        const hours = coverageByDate.get(dStr) || [];
-                                        const minHere = Math.min(...hours);
-                                        const hasGap = minHere === 0;
+                                        const meals = mealCountsByDate.get(dStr) || { lunch: 0, dinner: 0 };
+                                        const pillBase = 'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-black border tabular-nums';
+                                        const lunchTone = meals.lunch === 0
+                                            ? 'bg-red-50 text-red-700 border-red-200'
+                                            : 'bg-amber-50 text-amber-800 border-amber-200';
+                                        const dinnerTone = meals.dinner === 0
+                                            ? 'bg-red-50 text-red-700 border-red-200'
+                                            : 'bg-indigo-50 text-indigo-800 border-indigo-200';
                                         return (
-                                            <div className={`mt-1 flex gap-px rounded overflow-hidden border ${hasGap ? 'border-red-300' : 'border-gray-200'} print:hidden`}
+                                            <div className="mt-1 flex gap-1 justify-center print:hidden"
                                                 title={isEn
-                                                    ? `${hours.join(', ')} (${HEATMAP_FIRST_HOUR}am–${HEATMAP_LAST_HOUR === 24 ? '12am' : HEATMAP_LAST_HOUR > 12 ? `${HEATMAP_LAST_HOUR - 12}pm` : `${HEATMAP_LAST_HOUR}am`})`
-                                                    : `Personal por hora: ${hours.join(', ')}`}>
-                                                {hours.map((cnt, hi) => {
-                                                    const hour = HEATMAP_FIRST_HOUR + hi;
-                                                    const hourLabel = hour === 12 ? '12pm' : hour > 12 ? `${hour - 12}pm` : `${hour}am`;
-                                                    return (
-                                                        <div key={hi}
-                                                            className={`flex-1 h-2 ${heatmapColor(cnt)}`}
-                                                            title={`${hourLabel}: ${cnt} ${cnt === 1 ? (isEn ? 'person' : 'persona') : (isEn ? 'people' : 'personas')}`} />
-                                                    );
-                                                })}
+                                                    ? `Lunch (12-1pm): ${meals.lunch} · Dinner (5-7pm): ${meals.dinner}`
+                                                    : `Almuerzo (12-1pm): ${meals.lunch} · Cena (5-7pm): ${meals.dinner}`}>
+                                                <span className={`${pillBase} ${lunchTone}`}>
+                                                    🥗 <span>{isEn ? 'L' : 'A'}</span>:<span>{meals.lunch}</span>
+                                                </span>
+                                                <span className={`${pillBase} ${dinnerTone}`}>
+                                                    🍜 <span>{isEn ? 'D' : 'C'}</span>:<span>{meals.dinner}</span>
+                                                </span>
                                             </div>
                                         );
                                     })()}
