@@ -138,6 +138,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [editViewLabor, setEditViewLabor] = useState(false);
             const [editShiftLead, setEditShiftLead] = useState(false);
             const [editIsMinor, setEditIsMinor] = useState(false);
+            // 2026-05-16 — owners / silent admins who exist in the staff
+            // list (for PIN + permissions + admin access) but should NOT
+            // appear as a row on the schedule grid by default. When true,
+            // the staff record is hidden from sideStaff in Schedule.jsx
+            // UNLESS they actually have a shift this week (safety net so
+            // a real assignment can't be invisible).
+            const [editHideFromSchedule, setEditHideFromSchedule] = useState(false);
             const [editScheduleSide, setEditScheduleSide] = useState("foh");
             const [editTargetHours, setEditTargetHours] = useState(0);
             // Preferred language for outbound notifications (push, in-app
@@ -579,7 +586,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     const finalScheduleHome = finalLocation === 'both'
                         ? (editScheduleHome || 'both')
                         : finalLocation;
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
+                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);
@@ -592,6 +599,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 setEditRecipesAccess(false);
                 setEditShiftLead(false);
                 setEditIsMinor(false);
+                setEditHideFromSchedule(false);
                 setEditScheduleSide("foh");
                 setEditTargetHours(0);
                 showSaved();
@@ -1110,6 +1118,21 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editIsMinor ? "translate-x-7" : "translate-x-1"}`} />
                                                         </button>
                                                     </div>
+                                                    {/* 2026-05-16 — Andrew: owners (he + Julie) don't need
+                                                        a row on the schedule grid. Hides them from sideStaff
+                                                        in Schedule.jsx. Safety net: if a hidden person
+                                                        actually has a shift this week, the row still
+                                                        appears so it can't silently disappear. */}
+                                                    <div className="flex items-center justify-between bg-gray-50 rounded-lg p-3">
+                                                        <div>
+                                                            <p className="text-sm font-bold text-gray-700">{language === "es" ? "Ocultar del horario" : "Hide from schedule"}</p>
+                                                            <p className="text-xs text-gray-500">{language === "es" ? "Para dueños / admins que no necesitan una fila en la cuadrícula" : "For owners / admins who don't need a row on the grid"}</p>
+                                                        </div>
+                                                        <button onClick={() => setEditHideFromSchedule(!editHideFromSchedule)}
+                                                            className={`w-14 h-8 rounded-full transition-colors duration-200 relative ${editHideFromSchedule ? "bg-gray-700" : "bg-gray-300"}`}>
+                                                            <div className={`w-6 h-6 bg-white rounded-full shadow absolute top-1 transition-transform duration-200 ${editHideFromSchedule ? "translate-x-7" : "translate-x-1"}`} />
+                                                        </button>
+                                                    </div>
                                                     <div className="bg-gray-50 rounded-lg p-3">
                                                         <p className="text-sm font-bold text-gray-700 mb-1">{language === "es" ? "Horario" : "Schedule Side"}</p>
                                                         <p className="text-xs text-gray-500 mb-2">{language === "es" ? "En cuál horario aparece esta persona" : "Which schedule this person appears on"}</p>
@@ -1269,7 +1292,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             className={`flex-1 py-2 rounded-lg font-bold text-white transition ${editPin.length === 4 ? "bg-green-700 hover:bg-green-800" : "bg-gray-300 cursor-not-allowed"}`}>
                                                             {t("save", language)}
                                                         </button>
-                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditScheduleHome("both"); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
+                                                        <button onClick={() => { setEditingId(null); setEditPin(""); setEditRole(""); setEditLocation(""); setEditScheduleHome("both"); setEditOpsAccess(false); setEditRecipesAccess(false); setEditShiftLead(false); setEditIsMinor(false); setEditHideFromSchedule(false); setEditScheduleSide("foh"); setEditTargetHours(0); setEditCanEditScheduleFOH(false); setEditCanEditScheduleBOH(false); setEditHiddenPages([]); }}
                                                             className="flex-1 py-2 rounded-lg font-bold bg-gray-500 text-white hover:bg-gray-600 transition">
                                                             {t("cancel", language)}
                                                         </button>
@@ -1282,7 +1305,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         <p className="text-xs text-gray-500">{person.role} • {LOCATION_LABELS[person.location] || "Webster"}{person.location === 'both' && person.scheduleHome && person.scheduleHome !== 'both' ? ` (${language === "es" ? "horario" : "schedule"}: ${LOCATION_LABELS[person.scheduleHome] || person.scheduleHome})` : ''} • PIN: {person.pin}{person.opsAccess ? " • \u{1F4CB} Ops" : ""}{person.recipesAccess ? " • \u{1F9D1}\u{200D}\u{1F373} Recipes" : ""}{person.shiftLead ? " • \u{1F6E1}\u{FE0F} Lead" : ""}{person.isMinor ? " • \u{1F511} Minor" : ""} • {(person.scheduleSide || "foh").toUpperCase()}{person.targetHours ? ` • ${person.targetHours}h` : ""}</p>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
+                                                        <button onClick={() => { setEditingId(person.id); setEditPin(person.pin); setEditRole(person.role); setEditLocation(person.location || "webster"); setEditScheduleHome(person.scheduleHome || person.location || "both"); setEditOpsAccess(!!person.opsAccess); setEditRecipesAccess(person.recipesAccess !== false); setEditViewLabor(person.viewLabor === true || (person.viewLabor !== false && /manager|owner/i.test(person.role || ''))); setEditShiftLead(!!person.shiftLead); setEditIsMinor(!!person.isMinor); setEditHideFromSchedule(!!person.hideFromSchedule); setEditScheduleSide(person.scheduleSide || "foh"); setEditTargetHours(person.targetHours || 0); setEditCanEditScheduleFOH(!!person.canEditScheduleFOH); setEditCanEditScheduleBOH(!!person.canEditScheduleBOH); setEditPreferredLanguage(person.preferredLanguage || "en"); setEditHomeView(person.homeView || "auto"); setEditHiddenPages(Array.isArray(person.hiddenPages) ? [...person.hiddenPages] : []); }}
                                                             className="px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-xs font-bold hover:bg-blue-200 transition">
                                                             ✏️ {t("changePIN", language)}
                                                         </button>
@@ -1935,6 +1958,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                             <AccessToggle
                                                                 on={!!s.canReceive86Alerts} label={language === "es" ? "Alertas 86" : "86 alerts"} icon="🚫"
                                                                 onClick={() => handleBulkUpdate(s.id, { canReceive86Alerts: !s.canReceive86Alerts })} />
+                                                            {/* Hide-from-schedule — owners/admins who shouldn't
+                                                                have a row on the grid. 2026-05-16. */}
+                                                            <AccessToggle
+                                                                on={!!s.hideFromSchedule}
+                                                                label={language === "es" ? "Sin horario" : "Off grid"}
+                                                                icon="👻"
+                                                                onClick={() => handleBulkUpdate(s.id, { hideFromSchedule: !s.hideFromSchedule })} />
                                                         </div>
                                                     </div>
 

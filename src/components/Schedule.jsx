@@ -999,6 +999,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // still uses raw `location` so they remain pickable as a
             // fill-in at Maryland. See getScheduleHome() in data/staff.js.
             if (!isOnScheduleAt(s, storeLocation)) return false;
+            // 2026-05-16 — hideFromSchedule: owners/admins who don't
+            // need a grid row by default. Safety net: if they actually
+            // have a shift this week, crossSideNames includes them and
+            // the row appears so a real assignment can't be invisible.
+            // Toggled per-staff in AdminPanel + Bulk Tag modal.
+            if (s.hideFromSchedule === true && !crossSideNames.has(s.name)) return false;
             // Home side OR has any cross-side shift on the current side this week.
             return isOnSide(s, side) || crossSideNames.has(s.name);
         });
