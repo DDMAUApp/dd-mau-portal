@@ -327,6 +327,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const canEditBOH = canEditSchedule(staffName, staffList, 'boh');
     const canEdit = canEditFOH || canEditBOH;
     const canEditSide = (s) => s === 'foh' ? canEditFOH : s === 'boh' ? canEditBOH : canEdit;
+    // 2026-05-16 — Andrew: "only the admins are able to make blackout
+    // date edits." canEdit is broad (shift leads + designated schedulers
+    // can edit shifts) — closures + holidays + events + recurring
+    // closure config need a TIGHTER gate. staffIsAdmin = ID 40/41
+    // (owners) per data/staff.js. The day-header per-date toggle
+    // ("↺ Open") and the Closures & Calendar modal open button +
+    // every block/event/recurring write handler is gated on this.
+    const staffIsAdmin = isAdmin(staffName, staffList);
     const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
     const [selectedDayIdx, setSelectedDayIdx] = useState(() => (new Date().getDay() - WEEK_START_DOW + 7) % 7);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -2394,7 +2402,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     // ── Date blocks (closed days / no-time-off days) ───────────────────────
     const handleAddBlock = async (block) => {
-        if (!canEdit) return;
+        if (!staffIsAdmin) return; // admin-only — see staffIsAdmin comment
         try {
             await addDoc(collection(db, 'date_blocks'), {
                 ...block,
@@ -2409,7 +2417,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     const handleRemoveBlock = async (blockId) => {
-        if (!canEdit) return;
+        if (!staffIsAdmin) return; // admin-only
         if (!confirm(tx('Remove this date block?', '¿Quitar este bloqueo?'))) return;
         try {
             await deleteDoc(doc(db, 'date_blocks', blockId));
@@ -2427,7 +2435,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     //   - Currently OPEN normally → no-op (caller shouldn't have offered
     //     a toggle; defensive return).
     const handleToggleDateOpen = async (dateStr) => {
-        if (!canEdit) return;
+        if (!staffIsAdmin) return; // admin-only
         const blocks = blocksByDate.get(dateStr) || [];
         const existingOverride = blocks.find(b => b.type === 'open_override');
         const existingClosedBlock = blocks.find(b => b.type === 'closed');
@@ -2464,7 +2472,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     // 2026-05-16 — calendar event CRUD. Lightweight per-date label.
     const handleAddCalendarEvent = async (evt) => {
-        if (!canEdit) return;
+        if (!staffIsAdmin) return; // admin-only
         try {
             await addDoc(collection(db, 'calendar_events'), {
                 date: evt.date,
@@ -2480,7 +2488,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
     const handleRemoveCalendarEvent = async (id) => {
-        if (!canEdit) return;
+        if (!staffIsAdmin) return; // admin-only
         try { await deleteDoc(doc(db, 'calendar_events', id)); }
         catch (e) { console.error('Remove event failed:', e); }
     };
@@ -2490,7 +2498,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // created on first toggle and a per-location array is updated
     // without clobbering siblings. Optimistic via the live snapshot.
     const handleToggleClosedWeekday = async (loc, dayOfWeek) => {
-        if (!canEdit) return;
+        if (!staffIsAdmin) return; // admin-only
         const cw = scheduleSettings?.closedWeekdays || {};
         const cur = Array.isArray(cw[loc]) ? cw[loc] : [];
         const next = cur.includes(dayOfWeek)
@@ -3601,10 +3609,16 @@ ${dayBlocks}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
                                             <span>🔁</span>{tx('Recurring shifts', 'Turnos recurrentes')}
                                         </button>
-                                        <button onClick={() => { setShowMoreActions(false); setShowBlockModal(true); }}
-                                            className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>🚫</span>{tx('Blackout dates', 'Bloqueos de fechas')}
-                                        </button>
+                                        {/* Closures & Calendar entry — admin-only.
+                                            Hides the button entirely for non-admin
+                                            schedule editors so they don't see a
+                                            no-op tap target. */}
+                                        {staffIsAdmin && (
+                                            <button onClick={() => { setShowMoreActions(false); setShowBlockModal(true); }}
+                                                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
+                                                <span>🚫</span>{tx('Closures & Calendar', 'Cierres y Calendario')}
+                                            </button>
+                                        )}
                                     </div>
                                 )}
                             </div>
@@ -3933,7 +3947,7 @@ ${dayBlocks}
                                 isStaffOffOn={isStaffOffOn}
                                 timeOff={viewerTimeOff}
                                 onDayHeaderClick={canEdit ? (dStr) => setAvailableForDate(dStr) : null}
-                                onToggleDateOpen={canEdit ? handleToggleDateOpen : null}
+                                onToggleDateOpen={staffIsAdmin ? handleToggleDateOpen : null}
                                 dateHasOpenOverride={dateHasOpenOverride}
                                 dateClosedByRecurring={dateClosedByRecurring}
                             />
@@ -4058,7 +4072,7 @@ ${dayBlocks}
                     timeOff={viewerTimeOff}
                 />
             )}
-            {showBlockModal && canEdit && (
+            {showBlockModal && staffIsAdmin && (
                 <BlackoutsModal
                     onClose={() => setShowBlockModal(false)}
                     onAdd={handleAddBlock}
