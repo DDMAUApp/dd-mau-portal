@@ -776,22 +776,57 @@ const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
     }
 };
 
-// Cron strings below are interpreted in America/Chicago — Cloud
-// Scheduler honors the timeZone option so daylight savings flips are
-// handled for us. Write the schedule as the wall-clock time we want.
-exports.eightySixAlertsMorning = onSchedule(
-    { schedule: "0 10 * * *", timeZone: "America/Chicago", region: "us-central1" },
-    () => eightySixSchedule("morning", "10am", "10am"),
-);
-
-exports.eightySixAlertsAfternoon = onSchedule(
-    { schedule: "0 14 * * *", timeZone: "America/Chicago", region: "us-central1" },
-    () => eightySixSchedule("afternoon", "2pm", "2pm"),
-);
-
-exports.eightySixAlertsEvening = onSchedule(
-    { schedule: "0 20 * * *", timeZone: "America/Chicago", region: "us-central1" },
-    () => eightySixSchedule("evening", "8pm", "8pm"),
+// 2026-05-16 — replaced the three fixed crons with a SINGLE hourly
+// trigger that reads /config/eighty_six_alerts to decide whether to fire
+// at this hour. Andrew configures times via the in-app gear modal
+// (Eighty6Dashboard → ⚙️). Default times when the config doc doesn't
+// exist: 10am / 2pm / 8pm Central — same as the previous hardcoded set,
+// so behavior is identical out-of-the-box.
+//
+// Why hourly instead of every-15-min: alerts only make sense on the
+// hour. 24 invocations/day per function is well under Firebase's free
+// tier (2M/month). Cron string "0 * * * *" runs at minute :00 of every
+// hour. The function then resolves the current America/Chicago hour
+// and checks the enabledHours array.
+//
+// Per-slot label uses a simple hour-of-day formatter rather than the
+// old morning/afternoon/evening tags — the tag now includes the hour
+// (e.g. "eighty_six_alert:10:2026-05-16") so different hour pings on
+// the same day don't collapse on each other.
+exports.eightySixAlertsHourly = onSchedule(
+    { schedule: "0 * * * *", timeZone: "America/Chicago", region: "us-central1" },
+    async () => {
+        try {
+            const cfgSnap = await db.doc("config/eighty_six_alerts").get();
+            const cfg = cfgSnap.exists() ? (cfgSnap.data() || {}) : {};
+            if (cfg.enabled === false) {
+                logger.info("86 hourly: alerts disabled by config, skipping");
+                return;
+            }
+            const enabledHours = Array.isArray(cfg.enabledHours) ? cfg.enabledHours : [10, 14, 20];
+            // Resolve current Chicago hour. Use Intl rather than offset
+            // math so DST is handled correctly.
+            const fmt = new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/Chicago",
+                hour: "numeric",
+                hour12: false,
+            });
+            const parts = fmt.formatToParts(new Date());
+            const hourPart = parts.find(p => p.type === "hour");
+            const hour = hourPart ? Number(hourPart.value) : null;
+            if (hour == null || !enabledHours.includes(hour)) {
+                // Not a scheduled hour — silent skip.
+                return;
+            }
+            const period = hour >= 12 ? "PM" : "AM";
+            const h12 = ((hour + 11) % 12) + 1;
+            const label = `${h12}${period}`;
+            await eightySixSchedule(`hour_${hour}`, label, label);
+        } catch (err) {
+            logger.error("eightySixAlertsHourly failed", err);
+            throw err;
+        }
+    },
 );
 
 // ── 8b. Real-time 86 alert ─────────────────────────────────────────────────
