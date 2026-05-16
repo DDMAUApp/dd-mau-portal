@@ -59,6 +59,29 @@ function buildAllergenSection() {
     return lines.join("\n");
 }
 
+// ── DRINK ALLERGEN NUANCE (high-stakes; AI must answer correctly) ────────
+//
+// 2026-05-16 — Andrew: "i dont want the answer to always be yes that milk
+// tea has milk because we use a non dairy creamer."
+//
+// The allergen matrix marks milk teas with milk='●' (contains) which is
+// the right tag for ALLERGY purposes — but a literal-minded AI will
+// answer a guest's "does milk tea have milk?" with "yes" and miss the
+// operational nuance staff need to convey. This block explicitly
+// instructs the AI to never collapse milk-tea milk content into a
+// binary answer.
+const DRINK_ALLERGEN_NUANCE = `## DRINK ALLERGEN NUANCE — read carefully
+- **Boba milk teas** are made with a powder base that includes a creamer LABELED "non-dairy." The recipe contains NO actual cow's milk. BUT the creamer contains **sodium caseinate + lactose** — both are milk derivatives.
+- So "does milk tea contain milk?" has TWO correct answers depending on the question behind the question:
+  1. **Recipe-wise / dietary preference / lactose-intolerant guest**: No actual milk is added. We don't pour dairy milk into the drink. Most lactose-intolerant guests tolerate it fine (digestion only, no allergy risk).
+  2. **Milk-allergy guest (immune reaction)**: TREAT IT AS IF IT CONTAINS MILK. The caseinate + lactose in the creamer are real milk proteins and CAN trigger a milk-allergy reaction. The ONLY safe boba-menu path for a milk allergy is a **fruit tea** (never touches the milk-powder base).
+- **Never give a simple "yes milk tea has milk" or "no it's dairy-free."** Both are wrong without context. Always ask or infer: is this person allergic (medical), intolerant (digestion), or just avoiding dairy as a preference? Tailor the answer.
+- "Sub oat milk in my milk tea" is NOT a workaround — the milk-derivative-containing creamer is in the BASE POWDER. You can't remove it. For a milk-allergy guest, the only redirect is a fruit tea.
+- For lactose-intolerant guests: milk teas usually fine. The allergen-trigger amount of lactose in the creamer is small.
+- Almond milk is a tree-nut allergen. Soy milk is a soy allergen. Oat milk is the safest sub for guests AVOIDING dairy who don't have milk-allergy concerns AND who don't have a tree-nut allergy.
+- Tapioca pearls (boba) are typically allergen-free.
+- Cashier MUST give the boba disclosure on every milk-tea order — this is in M6 (Cashier) and M17 L4 (Drink Allergens). If staff asks "what do I say?", point them there.`;
+
 // ── Service frameworks (M1 L4 + RESTORE) ──────────────────────────────────
 
 const SERVICE_FRAMEWORKS = `## SERVICE FRAMEWORKS
@@ -134,6 +157,7 @@ export function buildKnowledgeContext({ language = "en", staffName = "team membe
     const tone = `## TONE
 - Be concise, warm, and direct — like a Shift Lead who has seen it all.
 - For allergens, food safety, or anything that could hurt a guest: be precise, refer to the matrix, and ALWAYS remind staff to confirm with the Shift Lead and kitchen.
+- **Milk-tea milk question is a TRAP.** Never answer "does milk tea have milk?" with a binary yes/no. ALWAYS distinguish the recipe (no cow's milk added) from the allergy reality (creamer contains caseinate + lactose, treat as milk for allergy purposes). See the DRINK ALLERGEN NUANCE block above for the exact phrasing.
 - For menu questions: cite the exact item from the chart. Don't invent.
 - For training questions: tell them which module to open (e.g., "That's covered in M3 Food Safety, Lesson 2 — open the Training tab").
 - For recipes: titles are listed below, but the full recipe lives in the Recipes tab. Don't invent ingredient quantities.
@@ -151,6 +175,12 @@ export function buildKnowledgeContext({ language = "en", staffName = "team membe
         OPERATIONAL_RULES,
         "",
         buildAllergenSection(),
+        "",
+        // Drink-allergen nuance is high-stakes (anaphylaxis risk) so it
+        // sits OUTSIDE the bulk allergen matrix to make sure the AI
+        // weights it heavily. Placed AFTER the matrix so it overrides
+        // any literal "milk=contains" reading.
+        DRINK_ALLERGEN_NUANCE,
         "",
         buildTrainingIndex(),
         "",
