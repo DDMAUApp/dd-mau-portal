@@ -1920,6 +1920,29 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                           `✓ ${staffMember.name.split(' ')[0]} agregado · ${remaining} más por llenar`),
                       { kind: 'success', duration: 2000 });
             }
+            // 2026-05-15 — Andrew: "if i assign a slot as the shift it
+            // doesnt warn me fix that code now."
+            // The slot-fill path used to skip the conflict check (the
+            // AvailableStaffModal already filters by availability, but
+            // it shows unavailable staff just sorted lower — the manager
+            // could still tap them). Now fires the same flashing
+            // acknowledgment modal as add/resize/move. If they Delete,
+            // pruneNeedAfterShiftDelete unfills the slot cleanly so they
+            // can pick someone else; the AvailableStaffModal stays open
+            // because fillingNeed wasn't cleared, and live data refreshes
+            // via onSnapshot.
+            const conflict = checkAvailabilityConflict(staffMember, need.date, need.startTime, need.endTime);
+            if (conflict) {
+                setAvailabilityWarn({
+                    shiftId: shiftRef.id,
+                    staffName: staffMember.name,
+                    date: need.date,
+                    startTime: need.startTime,
+                    endTime: need.endTime,
+                    conflict,
+                    kind: 'added',
+                });
+            }
         } catch (e) {
             console.error('Fill need failed:', e);
             toast(tx('Could not fill: ', 'No se pudo asignar: ') + e.message);
