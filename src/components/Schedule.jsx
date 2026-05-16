@@ -5716,6 +5716,44 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
         (t.endDate || t.startDate || t.date) >= form.date &&
         (t.status === 'approved' || t.status === 'pending')
     );
+    // AVAILABILITY CONFLICT — 2026-05-15. Andrew: "when i added a shift
+    // out side of there available hours it should say something but it
+    // didnt."
+    //
+    // Two flavors:
+    //   • OFF day — staff marked this day-of-week as unavailable
+    //     (dayAvail.available === false). Surfaced as red banner.
+    //   • OUTSIDE HOURS — staff set a narrower-than-default window and
+    //     the shift starts before / ends after that window. Surfaced as
+    //     amber banner with the specific window so the manager can
+    //     compare against the shift they're saving.
+    //
+    // Non-blocking like the other conflict warnings (PTO / over-hours /
+    // minor): the manager may know "I asked Maria and she said it's OK"
+    // and should be able to save anyway. The banner is the cue, not the
+    // gate.
+    const availabilityConflict = (() => {
+        if (!selectedStaff || !form.date || !form.startTime || !form.endTime) return null;
+        const d = parseLocalDate(form.date);
+        if (!d) return null;
+        const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+        const dayKey = dayKeys[d.getDay()];
+        const dayAvail = (selectedStaff.availability || {})[dayKey];
+        if (!dayAvail) return null;
+        if (dayAvail.available === false) return { type: 'off' };
+        // Only count window-mismatch as a conflict if the staff actually
+        // narrowed their window from the modal's 09:00–21:00 default —
+        // otherwise we'd warn on every shift outside business hours for
+        // anyone who toggled their day to "Available" without thinking.
+        const from = dayAvail.from || '09:00';
+        const to   = dayAvail.to   || '21:00';
+        const constrained = from > '09:00' || to < '21:00';
+        if (!constrained) return null;
+        if (form.startTime < from || form.endTime > to) {
+            return { type: 'outside', from, to };
+        }
+        return null;
+    })();
     const weekStartStr = weekStart ? toDateStr(weekStart) : null;
     const weekEndStr   = weekStart ? toDateStr(addDays(weekStart, 7)) : null;
     const weekHoursForStaff = (existingShifts || [])
@@ -5934,6 +5972,23 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                             {tx(`This shift brings ${form.staffName} to ${formatHours(projectedTotal)} this week`, `Este turno lleva a ${form.staffName} a ${formatHours(projectedTotal)} esta semana`)}
                             {targetHours > 0 && ` (target ${formatHours(targetHours)})`}
                             {overOT && tx(' — over the 40h OT line.', ' — sobre las 40h de OT.')}
+                        </div>
+                    )}
+                    {availabilityConflict?.type === 'off' && (
+                        <div className="p-2.5 rounded-lg bg-red-50 border border-red-300 text-xs text-red-900">
+                            <b>🚫 {tx('Availability conflict:', 'Conflicto de disponibilidad:')}</b>{' '}
+                            {tx(`${form.staffName} marked this day as unavailable.`, `${form.staffName} marcó este día como no disponible.`)}
+                            {tx(' You can still save, but verify with them first.', ' Puedes guardar, pero confirma con esta persona primero.')}
+                        </div>
+                    )}
+                    {availabilityConflict?.type === 'outside' && (
+                        <div className="p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-xs text-amber-900">
+                            <b>⏰ {tx('Outside availability:', 'Fuera del horario disponible:')}</b>{' '}
+                            {tx(
+                                `${form.staffName} is only available ${formatTime12h(availabilityConflict.from)}–${formatTime12h(availabilityConflict.to)} on this day.`,
+                                `${form.staffName} solo está disponible ${formatTime12h(availabilityConflict.from)}–${formatTime12h(availabilityConflict.to)} este día.`
+                            )}
+                            {tx(' Shift', ' Turno')} {formatTime12h(form.startTime)}–{formatTime12h(form.endTime)} {tx('falls outside.', 'queda fuera.')}
                         </div>
                     )}
 
