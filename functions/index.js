@@ -726,19 +726,44 @@ const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
             logger.info(`86 alert (${slot}): nothing out at either location, skipping`);
             return;
         }
+        // 2026-05-16 — Andrew: "lets make the 86 notifications have the
+        // same geofence so if the staff is off they dont get a bunch of
+        // 86 notifications on days off."
+        //
+        // Geofence-by-schedule: a staff member only receives a 86 push
+        // if EITHER (a) they're an owner/admin (always get pings — they're
+        // oversight, not on-the-line workers), OR (b) they have at least
+        // one published shift today at any location. "Today" = America/
+        // Chicago calendar date. Draft shifts don't count — they haven't
+        // been released to the staffer yet.
+        const todayCentral = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        const todayShiftsSnap = await db.collection("shifts").where("date", "==", todayCentral).get();
+        const onShiftToday = new Set();
+        todayShiftsSnap.forEach(d => {
+            const data = d.data() || {};
+            if (data.staffName && data.published !== false) onShiftToday.add(data.staffName);
+        });
         // Pull recipients.
         const staffDoc = await db.doc("config/staff").get();
         const list = (staffDoc.data() || {}).list || [];
         const seenNames = new Set();
+        let skippedOffDuty = 0;
         const recipients = list.filter((s) => {
             if (!s || !s.name) return false;
             if (s.canReceive86Alerts !== true) return false;
             if (seenNames.has(s.name)) return false;
             seenNames.add(s.name);
+            // Owners always get pings (oversight). All others: must be
+            // on shift today.
+            const isOwner = s.id === 40 || s.id === 41;
+            if (!isOwner && !onShiftToday.has(s.name)) {
+                skippedOffDuty += 1;
+                return false;
+            }
             return true;
         });
         if (recipients.length === 0) {
-            logger.info(`86 alert (${slot}): ${totalOut} item(s) out but no opted-in recipients`);
+            logger.info(`86 alert (${slot}): ${totalOut} item(s) out but no on-duty recipients (${skippedOffDuty} skipped off-duty)`);
             return;
         }
         // Compose body. Format per-location with item lists so the push
@@ -869,18 +894,34 @@ const realtime86Handler = (location) => async (event) => {
         // Recipients = opted-in staff. Same gate as the scheduled
         // pings so admin only manages one toggle ("🚫 86 alerts") on
         // the staff card.
+        // 2026-05-16 — same on-duty filter as the scheduled hourly alert.
+        // Off-duty staff don't need a real-time 86 ping. Owners (id
+        // 40/41) bypass — they get pings regardless of schedule.
+        const todayCentral = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+        const todayShiftsSnap = await db.collection("shifts").where("date", "==", todayCentral).get();
+        const onShiftToday = new Set();
+        todayShiftsSnap.forEach(d => {
+            const data = d.data() || {};
+            if (data.staffName && data.published !== false) onShiftToday.add(data.staffName);
+        });
         const staffDoc = await db.doc("config/staff").get();
         const list = (staffDoc.data() || {}).list || [];
         const seenNames = new Set();
+        let skippedOffDuty = 0;
         const recipients = list.filter((s) => {
             if (!s || !s.name) return false;
             if (s.canReceive86Alerts !== true) return false;
             if (seenNames.has(s.name)) return false;
             seenNames.add(s.name);
+            const isOwner = s.id === 40 || s.id === 41;
+            if (!isOwner && !onShiftToday.has(s.name)) {
+                skippedOffDuty += 1;
+                return false;
+            }
             return true;
         });
         if (recipients.length === 0) {
-            logger.info(`real-time 86 (${location}): ${newlyOut.length} new + ${backInStock.length} back, no opted-in recipients`);
+            logger.info(`real-time 86 (${location}): ${newlyOut.length} new + ${backInStock.length} back, no on-duty recipients (${skippedOffDuty} skipped off-duty)`);
             return;
         }
         const locLabel = location === "webster" ? "Webster" : "Maryland Heights";

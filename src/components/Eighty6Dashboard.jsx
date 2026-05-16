@@ -393,9 +393,14 @@ function Eighty6SettingsModal({ settings, recipients, isEs, sending, onClose, on
                     {/* Recipients (read-only) */}
                     <div className="rounded-xl border border-dd-line p-3">
                         <p className="text-sm font-bold text-dd-text mb-1">👥 {tx('Recipients', 'Destinatarios')}</p>
-                        <p className="text-[11px] text-dd-text-2 mb-2 leading-snug">
+                        <p className="text-[11px] text-dd-text-2 mb-1 leading-snug">
                             {tx('Anyone with "86 alerts" toggled on in their staff profile. Toggle per-staff in Admin → Staff (✏️ or Bulk Tag).',
                                 'Cualquier persona con "Alertas 86" activado en su perfil. Cámbialo por persona en Admin → Personal.')}
+                        </p>
+                        {/* 2026-05-16 — explain the on-duty filter. */}
+                        <p className="text-[11px] text-dd-text-2 mb-2 leading-snug italic">
+                            {tx('Scheduled + real-time pings are filtered to staff on the schedule today (owners always receive). Test send below ignores this filter and goes to everyone — useful for verifying recipient config.',
+                                'Las alertas programadas y en tiempo real se filtran al personal en el horario de hoy (los dueños siempre reciben). La prueba ignora este filtro y va a todos — útil para verificar la configuración.')}
                         </p>
                         {recipients.length === 0 ? (
                             <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 rounded p-2">
