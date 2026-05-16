@@ -1227,6 +1227,44 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // 2026-05-15 — Andrew: "if i added a staff to the slot but then take
+    // them off they didnt come off completely the open slots above still
+    // showed the staff."
+    //
+    // Real bug: when a shift came from a staffing_need (sh.fromNeedId
+    // set by fillNeedWithStaff), the need's filledStaff/filledShiftIds
+    // arrays tracked it. The unfill path (× on the green chip in the
+    // Open Slots panel) used unfillNeedSlot which deletes both the shift
+    // AND prunes the need. But the GRID delete path (× on the shift cube,
+    // drag-to-delete, bulk delete, ListView delete) just did
+    // deleteDoc(shifts/{id}) — the need still thought it was filled. So
+    // the green chip stayed and the X/Y ratio stayed wrong.
+    //
+    // Helper called after every shift delete. No-op for shifts that
+    // weren't created from a staffing_need.
+    const pruneNeedAfterShiftDelete = async (shift) => {
+        if (!shift?.fromNeedId) return;
+        const need = staffingNeeds.find(n => n.id === shift.fromNeedId);
+        if (!need) return;
+        const filledStaff = Array.isArray(need.filledStaff) ? need.filledStaff : [];
+        const filledShiftIds = Array.isArray(need.filledShiftIds) ? need.filledShiftIds : [];
+        // Prefer matching by shift ID — precise even when the same person
+        // fills multiple slots in one need (e.g. they're tagged twice).
+        // Fall back to staffName match for legacy slots where
+        // filledShiftIds wasn't tracked (old data pre-2026-04).
+        let idx = filledShiftIds.indexOf(shift.id);
+        if (idx < 0) idx = filledStaff.indexOf(shift.staffName);
+        if (idx < 0) return;
+        try {
+            await updateDoc(doc(db, 'staffing_needs', shift.fromNeedId), {
+                filledStaff: filledStaff.filter((_, i) => i !== idx),
+                filledShiftIds: filledShiftIds.filter((_, i) => i !== idx),
+            });
+        } catch (e) {
+            console.warn('Need prune after shift delete failed (non-fatal):', e);
+        }
+    };
+
     const handleDeleteShift = async (shiftId, opts = {}) => {
         // Capture the shift's pre-delete details so we can notify the
         // affected staffer AFTER the delete commits — only if it was
@@ -1268,6 +1306,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (opts.immediate) {
             try {
                 await deleteDoc(doc(db, 'shifts', shiftId));
+                // Prune the linked staffing_need so the Open Slots panel
+                // reflects this delete (no-op when sh.fromNeedId is absent).
+                await pruneNeedAfterShiftDelete(sh);
                 if (wasPublished && sh.staffName) {
                     notify(sh.staffName, 'shift_deleted',
                         { en: `🗑 Shift removed: ${detail}`, es: `🗑 Turno eliminado: ${detail}` },
@@ -1290,6 +1331,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             async () => {
                 try {
                     await deleteDoc(doc(db, 'shifts', shiftId));
+                    // Same need-prune as the immediate path. If the user hits
+                    // Undo, this callback never runs, so the need stays filled.
+                    await pruneNeedAfterShiftDelete(sh);
                     if (wasPublished && sh.staffName) {
                         await notify(sh.staffName, 'shift_deleted',
                             { en: 'Shift removed', es: 'Turno eliminado' },
@@ -1447,7 +1491,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             tx(`🗑 Deleted ${snapshot.length} shifts`, `🗑 Eliminados ${snapshot.length} turnos`),
             async () => {
                 for (const sh of snapshot) {
-                    try { await deleteDoc(doc(db, 'shifts', sh.id)); }
+                    try {
+                        await deleteDoc(doc(db, 'shifts', sh.id));
+                        // Same need-prune as single-delete. No-op for shifts
+                        // without fromNeedId. Per-shift to keep the operation
+                        // resilient to partial failures.
+                        await pruneNeedAfterShiftDelete(sh);
+                    }
                     catch (e) { console.warn('bulk-delete failed for', sh.id, e); }
                 }
                 // Per-staff push: one rolled-up notification per affected
