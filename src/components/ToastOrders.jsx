@@ -11,6 +11,13 @@ export default function ToastOrders({ language }) {
     const [expandedOrder, setExpandedOrder] = useState(null);
     const [refreshing, setRefreshing] = useState(false);
     const [lastSync, setLastSync] = useState(null);
+    // /ops/orders_trigger.triggeredAt — written every minute by the
+    // triggerOrdersSync Cloud Function. Lets us distinguish "cron is
+    // firing but scraper isn't responding" from "cron itself stopped."
+    const [triggerLastAt, setTriggerLastAt] = useState(null);
+    // Re-render every 15s so the "N min ago" labels stay fresh
+    // without having to wait for a Firestore snapshot.
+    const [, forceTick] = useState(0);
 
     const isEn = language !== "es";
 
@@ -49,6 +56,27 @@ export default function ToastOrders({ language }) {
         };
     }, []);
 
+    // Subscribe to /ops/orders_trigger so the stale banner can show
+    // whether the minute-cron is still firing.
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, "ops", "orders_trigger"), (snap) => {
+            if (!snap.exists()) return;
+            const data = snap.data() || {};
+            const t = data.triggeredAt;
+            const ms = t?.toMillis ? t.toMillis()
+                : (t?.seconds ? t.seconds * 1000 : 0);
+            if (ms) setTriggerLastAt(ms);
+        }, (err) => console.warn("orders_trigger snapshot failed:", err));
+        return () => unsub();
+    }, []);
+
+    // Tick every 15s so the "N min ago" displays update without
+    // needing a Firestore event.
+    useEffect(() => {
+        const id = setInterval(() => forceTick(t => t + 1), 15000);
+        return () => clearInterval(id);
+    }, []);
+
     useEffect(() => {
         setLoading(true);
         setExpandedOrder(null);
@@ -80,6 +108,43 @@ export default function ToastOrders({ language }) {
         });
         return () => unsub();
     }, [location]);
+
+    // ── Sync-health computation ──────────────────────────────────
+    // Two age measures power the banner:
+    //   • syncAgeMin: how long since the most recent order landed.
+    //     Sourced from docs[0].syncedAt, i.e. the latest doc the
+    //     Toast scraper wrote.
+    //   • triggerAgeMin: how long since the Cloud Function cron
+    //     wrote ops/orders_trigger. Tells us whether the cron itself
+    //     is alive even when no orders are landing.
+    //
+    // Banner only shows during business hours (10am–10pm Central)
+    // and only when there's been at least one order today —
+    // otherwise the "no syncing in 4h" alert would fire every
+    // morning at open and every night after close.
+    const now = Date.now();
+    const lastSyncMs = lastSync
+        ? (typeof lastSync === 'string' ? Date.parse(lastSync) : 0)
+        : 0;
+    const syncAgeMin = lastSyncMs ? Math.floor((now - lastSyncMs) / 60000) : null;
+    const triggerAgeMin = triggerLastAt ? Math.floor((now - triggerLastAt) / 60000) : null;
+    const cstHour = parseInt(
+        new Date(now).toLocaleString("en-US", { timeZone: "America/Chicago", hour: "2-digit", hour12: false }),
+        10
+    );
+    const inBusinessHours = cstHour >= 10 && cstHour < 22;
+    const health = (syncAgeMin == null || !inBusinessHours)
+        ? 'silent'
+        : syncAgeMin <= 3 ? 'live'
+        : syncAgeMin <= 10 ? 'slow'
+        : 'stale';
+    const fmtAge = (m) => {
+        if (m == null) return '—';
+        if (m < 1) return isEn ? 'just now' : 'ahora';
+        if (m < 60) return isEn ? `${m} min ago` : `hace ${m} min`;
+        const h = Math.floor(m / 60);
+        return isEn ? `${h}h ago` : `hace ${h}h`;
+    };
 
     const statusColor = (status) => {
         if (!status) return "bg-gray-100 text-gray-600";
@@ -224,6 +289,41 @@ export default function ToastOrders({ language }) {
                 </button>
             </div>
 
+            {/* Stale-orders banner — only fires in business hours
+                when the freshest order in /toast_orders is older
+                than 3 min. Amber 3-10 min (probably catching up),
+                red >10 min (scraper down). */}
+            {health === 'slow' && (
+                <div className="mb-3 rounded-lg border-2 border-amber-300 bg-amber-50 p-3 flex items-start gap-3">
+                    <span className="text-2xl">⚠️</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="font-black text-amber-900 text-sm">
+                            {isEn ? 'Orders syncing slow' : 'Sincronización lenta'}
+                        </div>
+                        <div className="text-xs text-amber-800 mt-0.5">
+                            {isEn
+                                ? `Last new order ${fmtAge(syncAgeMin)}. Trigger cron ${fmtAge(triggerAgeMin)}. Try "Sync Now"; if no orders land in a minute, restart the Toast scraper on Railway.`
+                                : `Último pedido ${fmtAge(syncAgeMin)}. Cron ${fmtAge(triggerAgeMin)}. Toca "Sincronizar"; si no entra nada, reinicia el scraper en Railway.`}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {health === 'stale' && (
+                <div className="mb-3 rounded-lg border-2 border-red-400 bg-red-50 p-3 flex items-start gap-3">
+                    <span className="text-2xl">🚨</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="font-black text-red-900 text-sm">
+                            {isEn ? 'Toast scraper looks down' : 'El scraper de Toast no responde'}
+                        </div>
+                        <div className="text-xs text-red-800 mt-0.5">
+                            {isEn
+                                ? `No new orders in ${fmtAge(syncAgeMin)}. Cron is ${triggerAgeMin != null && triggerAgeMin < 3 ? 'still firing every minute' : `quiet for ${fmtAge(triggerAgeMin)} — also broken`}. Restart the Toast orders service on Railway (most common: OAuth token expired).`
+                                : `Sin pedidos nuevos en ${fmtAge(syncAgeMin)}. El cron ${triggerAgeMin != null && triggerAgeMin < 3 ? 'sigue activo' : `también está callado (${fmtAge(triggerAgeMin)})`}. Reinicia el servicio de Toast en Railway.`}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* Summary bar */}
             {!loading && orders.length > 0 && (
                 <div className="bg-mint-50 border-2 border-mint-200 rounded-lg p-3 mb-4">
@@ -233,7 +333,14 @@ export default function ToastOrders({ language }) {
                             <p className="text-xs text-mint-600">{isEn ? "Takeout, delivery & online" : "Para llevar, entrega y en línea"}</p>
                         </div>
                         {lastSync && (
-                            <p className="text-xs text-mint-500">{isEn ? "Synced" : "Sincronizado"} {new Date(lastSync).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}</p>
+                            <div className="text-right">
+                                <p className={`text-xs font-bold ${health === 'live' ? 'text-mint-700' : health === 'slow' ? 'text-amber-700' : health === 'stale' ? 'text-red-700' : 'text-mint-500'}`}>
+                                    {health === 'live' ? '🟢' : health === 'slow' ? '🟡' : health === 'stale' ? '🔴' : '⚪'} {isEn ? "Last sync" : "Última"} {new Date(lastSync).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                                </p>
+                                {syncAgeMin != null && (
+                                    <p className="text-[10px] text-mint-500">{fmtAge(syncAgeMin)}</p>
+                                )}
+                            </div>
                         )}
                     </div>
                 </div>
