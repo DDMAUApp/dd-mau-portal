@@ -2262,8 +2262,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     read: false,
                                     createdBy: staffName,
                                 });
+                                // Confirm the write — before this, the button was
+                                // silently writing and the user had no way to
+                                // know if the click registered. Toast lasts a
+                                // bit long so they can read it and then go
+                                // close the app to verify the closed-app push.
+                                toast(language === 'es'
+                                    ? '🧪 Push de prueba enviado — cierra la app y espera unos segundos.'
+                                    : '🧪 Test push sent — close the app and wait a few seconds.',
+                                    { kind: 'success', duration: 6000 });
                             } catch (e) {
                                 console.error('test push failed:', e);
+                                toast((language === 'es' ? '❌ Falló el envío: ' : '❌ Send failed: ') + (e.message || e),
+                                    { kind: 'error', duration: 6000 });
                             }
                         };
                         return (
