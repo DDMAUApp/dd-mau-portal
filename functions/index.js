@@ -983,3 +983,43 @@ exports.realtime86Maryland = onDocumentWritten(
     { document: "ops/86_maryland", region: "us-central1" },
     realtime86Handler("maryland"),
 );
+
+// ── Toast Orders sync trigger ──────────────────────────────────────────────
+// The Toast orders scraper on Railway watches `ops/orders_trigger` for
+// timestamp changes and fetches fresh orders whenever the field updates.
+//
+// Previously the trigger was only written by ToastOrders.jsx every 60s
+// while that tab was open. The moment no client had the tab open
+// (closing time, all staff signed out, phones locked), the trigger
+// stopped firing and orders stopped syncing — which is exactly what
+// Andrew hit at 5pm on 2026-05-16: last order showed at 5, scraper
+// went idle the moment the orders tab closed.
+//
+// This cron writes the trigger every minute regardless of clients so
+// the scraper keeps a steady drumbeat all day. If the scraper itself
+// is also down (Railway service stopped / OAuth expired) this
+// function still runs but no orders show up — symptom that says
+// "go restart the Railway service / refresh the Toast token."
+//
+// Cost: ~43,200 invocations/month. Firebase Cloud Functions free tier
+// is 2M invocations/month so this stays free.
+//
+// Scheduler region must be us-central1 (App Engine default) — the
+// scheduler v2 only runs in regions with App Engine app configured.
+exports.triggerOrdersSync = onSchedule(
+    {
+        schedule: "every 1 minutes",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+    },
+    async () => {
+        try {
+            await db.doc("ops/orders_trigger").set({
+                triggeredAt: FieldValue.serverTimestamp(),
+                triggeredBy: "cloud_function_cron",
+            }, { merge: true });
+        } catch (err) {
+            logger.error("triggerOrdersSync failed", err);
+        }
+    },
+);
