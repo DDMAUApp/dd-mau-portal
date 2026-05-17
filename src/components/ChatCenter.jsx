@@ -1048,8 +1048,11 @@ function ChatListActionSheet({ chat, viewer, isAdmin, staffName, isEs, onClose, 
                     onClick={onOpenSettings}
                     className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
                 >
-                    <span className="text-xl">⚙️</span>
-                    <span className="font-bold text-dd-text">{tx('Open settings', 'Abrir configuración')}</span>
+                    <span className="text-xl">👥</span>
+                    <span className="flex-1">
+                        <span className="block font-bold text-dd-text">{tx('Manage members', 'Gestionar miembros')}</span>
+                        <span className="block text-[11px] text-dd-text-2">{tx('Add or remove staff, rename, etc.', 'Añadir/quitar, renombrar, etc.')}</span>
+                    </span>
                 </button>
                 {candelete && (
                     <button

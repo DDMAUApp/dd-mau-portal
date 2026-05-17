@@ -473,7 +473,11 @@ export default function ChatThread({
     return (
         <div className="flex flex-col h-full bg-dd-bg">
             {/* ── Header ──────────────────────────────────────── */}
-            <header className="px-3 py-2.5 border-b border-dd-line bg-white flex items-center gap-3 shrink-0">
+            {/* The whole avatar+name+subtitle block is tappable so
+                opening "members + settings" is unmissable. The trailing
+                Members chip is an extra-obvious entry point for the
+                manage-membership flow Andrew kept missing. */}
+            <header className="px-3 py-2.5 border-b border-dd-line bg-white flex items-center gap-2 shrink-0">
                 <button
                     onClick={onBack}
                     className="md:hidden w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center text-dd-text text-xl"
@@ -481,28 +485,46 @@ export default function ChatThread({
                 >
                     ←
                 </button>
-                <ChatAvatar chat={chat} viewerName={staffName} size={36} />
-                <div className="min-w-0 flex-1">
-                    <div className="text-[15px] font-black text-dd-text truncate">
-                        {chatDisplayName(chat, staffName)}
-                    </div>
-                    <div className="text-[11px] text-dd-text-2 truncate">
-                        {chat.type === 'dm'
-                            ? (typingNames.length > 0 ? tx('typing…', 'escribiendo…') : tx('Direct message', 'Mensaje directo'))
-                            : (typingNames.length > 0
-                                ? `${typingNames[0]} ${tx('is typing…', 'está escribiendo…')}`
-                                : `${(chat.members || []).length} ${tx('members', 'miembros')}`)}
-                    </div>
-                </div>
-                {/* Settings gear — always visible. For DMs/channels and
-                    for non-editors it's a view + delete affordance. The
-                    modal hides edit fields when canEdit is false but
-                    keeps the Delete option for admins / DM participants
-                    / group creators. (2026-05-16 — needed so admins can
-                    delete DMs and channels.) */}
                 <button
                     onClick={onOpenSettings}
-                    className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg"
+                    className="flex items-center gap-3 min-w-0 flex-1 -mx-1 px-1 py-0.5 rounded-lg hover:bg-dd-bg active:bg-dd-bg text-left"
+                    title={tx('Open chat info', 'Abrir info del chat')}
+                >
+                    <ChatAvatar chat={chat} viewerName={staffName} size={36} />
+                    <div className="min-w-0 flex-1">
+                        <div className="text-[15px] font-black text-dd-text truncate">
+                            {chatDisplayName(chat, staffName)}
+                        </div>
+                        <div className="text-[11px] text-dd-text-2 truncate">
+                            {chat.type === 'dm'
+                                ? (typingNames.length > 0 ? tx('typing…', 'escribiendo…') : tx('Direct message · tap for info', 'Mensaje directo · tap info'))
+                                : (typingNames.length > 0
+                                    ? `${typingNames[0]} ${tx('is typing…', 'está escribiendo…')}`
+                                    : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`)}
+                        </div>
+                    </div>
+                </button>
+                {/* Members button — labeled, large, unmissable. Only
+                    shown on group/channel chats (DMs don't have
+                    addable members). On groups it's the primary
+                    add/remove path; on channels it opens the info
+                    modal showing auto-managed membership. */}
+                {chat.type !== 'dm' && (
+                    <button
+                        onClick={onOpenSettings}
+                        className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-dd-sage-50 border border-dd-green/30 hover:bg-dd-green/10 text-[11px] font-black text-dd-green-700 active:scale-95 transition shrink-0"
+                    >
+                        <span>👥</span>
+                        <span>{tx('Members', 'Miembros')}</span>
+                        <span className="tabular-nums opacity-70">({(chat.members || []).length})</span>
+                    </button>
+                )}
+                {/* Settings gear — always visible. Same destination as
+                    the header-name tap above; kept for users who learn
+                    the iconography. */}
+                <button
+                    onClick={onOpenSettings}
+                    className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg shrink-0"
                     aria-label={tx('Settings', 'Configuración')}
                     title={canEdit ? tx('Edit', 'Editar') : tx('Info', 'Info')}
                 >

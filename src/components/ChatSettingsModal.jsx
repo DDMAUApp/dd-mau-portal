@@ -406,8 +406,14 @@ export default function ChatSettingsModal({
                         </div>
                         {isChannel && (
                             <div className="text-[11px] text-dd-text-2 mt-1.5 px-1">
-                                {tx('Channels stay in sync with the staff list automatically.',
-                                    'Los canales se sincronizan automáticamente con la lista del personal.')}
+                                {tx('Channels stay in sync with the staff list automatically. To curate membership, start a group instead.',
+                                    'Los canales se sincronizan automáticamente. Para gestionar miembros, crea un grupo.')}
+                            </div>
+                        )}
+                        {isDm && (
+                            <div className="text-[11px] text-dd-text-2 mt-1.5 px-1">
+                                {tx('Direct messages are 1-on-1. To bring in a third person, start a new group from the + button on the chat list.',
+                                    'Los DM son 1-a-1. Para incluir a una tercera persona, crea un grupo nuevo con el botón + en la lista.')}
                             </div>
                         )}
                     </div>
