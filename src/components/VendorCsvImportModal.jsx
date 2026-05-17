@@ -289,19 +289,44 @@ export default function VendorCsvImportModal({
         return items;
     }, [customInventory]);
 
+    // Token-set similarity. Two scoring lanes so vendor-prefix bloat
+    // (e.g. "Kirkland Signature Soybean Oil, 35 lbs" vs master
+    // "Soybean Oil") doesn't get penalized by the long-side denominator:
+    //
+    //   • Standard: overlap / max(querySize, itemSize). Symmetric.
+    //   • Subset bonus: if the SMALLER token set is fully contained
+    //     in the larger AND has ≥2 tokens, score floors at 0.85.
+    //     Catches "<vendor prefix> <core name> <pack>" patterns
+    //     that all dump tokens onto one side.
+    //
+    // The size>=2 guard prevents single-word masters ("Apple") from
+    // wildly over-matching ("Pineapple Juice Apple Concentrate").
+    // STOPWORDS drops conjunctions that vendors love to put in their
+    // marketing-grade descriptions ("And", "With", "For").
+    const NAME_STOPWORDS = new Set(['and', 'the', 'for', 'with']);
     function fuzzyMatchByName(query) {
         if (!query) return null;
-        const q = String(query).toLowerCase();
-        const qTokens = new Set(q.split(/[^a-z0-9]+/).filter(t => t.length > 2));
+        const tok = (s) => new Set(
+            String(s).toLowerCase().split(/[^a-z0-9]+/)
+                .filter(t => t.length > 2 && !NAME_STOPWORDS.has(t))
+        );
+        const qTokens = tok(query);
         if (qTokens.size === 0) return null;
         let best = null;
         let bestScore = 0;
         for (const it of flatInventory) {
-            const itTokens = new Set(it.nameLower.split(/[^a-z0-9]+/).filter(t => t.length > 2));
+            const itTokens = tok(it.nameLower);
             if (itTokens.size === 0) continue;
             let overlap = 0;
             for (const t of qTokens) if (itTokens.has(t)) overlap++;
-            const score = overlap / Math.max(qTokens.size, itTokens.size);
+            let score = overlap / Math.max(qTokens.size, itTokens.size);
+            const smaller = qTokens.size <= itTokens.size ? qTokens : itTokens;
+            const larger  = qTokens.size <= itTokens.size ? itTokens : qTokens;
+            if (smaller.size >= 2) {
+                let isSubset = true;
+                for (const t of smaller) { if (!larger.has(t)) { isSubset = false; break; } }
+                if (isSubset) score = Math.max(score, 0.85);
+            }
             if (score > bestScore && score >= 0.5) {
                 bestScore = score;
                 best = { id: it.id, name: it.name, score };
