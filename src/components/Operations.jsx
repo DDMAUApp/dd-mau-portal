@@ -4700,38 +4700,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 </div>
                             </div>
 
-                            {/* ── LIVE PRICES INDICATOR ── */}
-                            {(() => {
-                                const ss = syscoScrapeStatus || {};
-                                const lastScrapedMs = livePrices.sysco?.lastScraped ? new Date(livePrices.sysco.lastScraped).getTime() : 0;
-                                const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000);
-                                const hasFailed = ss.status && ss.status !== "success" && ss.status !== "running";
-                                const hasData = livePrices.sysco && lastScrapedMs > 0;
-                                const matchedInvCount = Object.keys(invToSyscoPrice).length;
-                                const totalSyscoItems = livePrices.sysco?.totalItems || 0;
-
-                                if (hasFailed) return (
-                                    <div className="flex items-center gap-2 px-2 py-1 bg-red-50 rounded-lg border border-red-300">
-                                        <span className="text-xs text-red-700 font-medium">{"\u{1F6A8}"} {ss.status === "login_failed" ? (language === "es" ? "Sysco login fallido" : "Sysco login failed") : (language === "es" ? "Error del scraper Sysco" : "Sysco scraper error")}</span>
-                                        <span className="text-xs text-red-500 ml-auto">{ss.updatedAt ? new Date(ss.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : ""}</span>
-                                    </div>
-                                );
-                                if (isStale && hasData) return (
-                                    <div className="flex items-center gap-2 px-2 py-1 bg-yellow-50 rounded-lg border border-yellow-300">
-                                        <span className="text-xs text-yellow-700 font-medium">{"\u{23F0}"} {language === "es" ? "Precios Sysco desactualizados" : "Sysco prices stale"}</span>
-                                        <span className="text-xs text-yellow-500">{matchedInvCount} {language === "es" ? "vinculados" : "matched"} / {totalSyscoItems} total</span>
-                                        <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                                    </div>
-                                );
-                                if (hasData) return (
-                                    <div className="flex items-center gap-2 px-2 py-1 bg-green-50 rounded-lg border border-green-200">
-                                        <span className="text-xs text-green-700 font-medium">{"\u{1F4E1}"} {language === "es" ? "Precios Sysco en vivo" : "Sysco live prices"}</span>
-                                        <span className="text-xs text-green-500">{matchedInvCount} {language === "es" ? "vinculados" : "matched"} / {totalSyscoItems} total</span>
-                                        <span className="text-xs text-gray-400 ml-auto">{language === "es" ? "Actualizado" : "Updated"}: {new Date(livePrices.sysco.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
-                                    </div>
-                                );
-                                return null;
-                            })()}
+                            {/* Multi-vendor freshness banner — replaces the
+                                old "Sysco login failed / scraper stale / live
+                                prices" indicator (2026-05-16). Same banner
+                                component used on the Pricing tab so the
+                                Inventory view and Pricing view stay
+                                consistent. One row per vendor; most-recent
+                                of (scraper, CSV/PDF import) per vendor wins. */}
+                            <PricesFreshnessBanner
+                                livePrices={livePrices}
+                                lastVendorImport={lastVendorImport}
+                                language={language}
+                            />
 
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
