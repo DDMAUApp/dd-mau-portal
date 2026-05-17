@@ -663,6 +663,31 @@ function EmptyState({ isEs, onStart }) {
     );
 }
 
+// Audience-filter predicate — pure helper used by NewChatModal's
+// chip strip. Kept inline (not exported from chat.js) so the picker
+// can mix role + location combinations without round-tripping through
+// channelMembersFor's rule strings. Mirrors the same regex matches.
+function matchesAudienceFilter(s, key) {
+    if (!s || !key || key === 'all') return true;
+    const role = s.role || '';
+    const isFoh = s.scheduleSide === 'foh' || s.side === 'foh' || /foh|front|server|cashier|host|bartender/i.test(role);
+    const isBoh = s.scheduleSide === 'boh' || s.side === 'boh' || /boh|kitchen|cook|prep|dish/i.test(role);
+    const isMgr = s.id === 40 || s.id === 41 || /manager|owner/i.test(role);
+    const atLoc = (loc) => s.location === loc || s.location === 'both';
+    switch (key) {
+        case 'foh':           return isFoh;
+        case 'boh':           return isBoh;
+        case 'managers':      return isMgr;
+        case 'webster':       return atLoc('webster');
+        case 'maryland':      return atLoc('maryland');
+        case 'foh-webster':   return isFoh && atLoc('webster');
+        case 'foh-maryland':  return isFoh && atLoc('maryland');
+        case 'boh-webster':   return isBoh && atLoc('webster');
+        case 'boh-maryland':  return isBoh && atLoc('maryland');
+        default:              return true;
+    }
+}
+
 // ── New chat modal ──────────────────────────────────────────────
 // Three modes: DM (pick 1) / Group (pick 2+) / Cancel.
 // Group mode reveals a name + emoji input AFTER picking members.
@@ -670,10 +695,15 @@ function NewChatModal({
     isEs, staffName, staffList, viewer, viewerTier, isAdmin,
     existingChats, onClose, onCreated,
 }) {
+    const tx = (en, es) => isEs ? es : en;
     const [picked, setPicked] = useState([]); // staff names
     const [groupName, setGroupName] = useState('');
     const [groupEmoji, setGroupEmoji] = useState('💬');
     const [filter, setFilter] = useState('');
+    // Role / location quick-filter pills shown above the candidate
+    // list. Default 'all' = no narrowing. Andrew asked for these so
+    // building a group chat is one tap to "just FOH-Webster please".
+    const [audienceFilter, setAudienceFilter] = useState('all');
     const [busy, setBusy] = useState(false);
 
     const candidates = useMemo(() => {
@@ -692,9 +722,34 @@ function NewChatModal({
         return (staffList || [])
             .filter(s => s.name && s.name !== staffName)
             .filter(sameLocation)
+            .filter(s => matchesAudienceFilter(s, audienceFilter))
             .filter(s => !term || s.name.toLowerCase().includes(term))
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [staffList, staffName, filter, viewer, isAdmin]);
+    }, [staffList, staffName, filter, viewer, isAdmin, audienceFilter]);
+
+    // Filter pills available to this viewer. Cross-location pills only
+    // surface for admins (or floaters with location 'both') since
+    // non-admin Webster staff never see Maryland candidates and a
+    // "Maryland" pill would render an empty list.
+    const filterChips = useMemo(() => {
+        const myLoc = viewer?.location;
+        const showCross = isAdmin || myLoc === 'both' || !myLoc;
+        const base = [
+            { key: 'all',       label: tx('All', 'Todos'),       emoji: '👥' },
+            { key: 'foh',       label: 'FOH',                    emoji: '🪑' },
+            { key: 'boh',       label: 'BOH',                    emoji: '👩‍🍳' },
+            { key: 'managers',  label: tx('Mgrs', 'Gerentes'),   emoji: '🧑‍💼' },
+        ];
+        const cross = [
+            { key: 'webster',      label: 'Webster',      emoji: '🏠' },
+            { key: 'maryland',     label: 'Maryland',     emoji: '🏠' },
+            { key: 'foh-webster',  label: 'FOH · Webster',  emoji: '🪑' },
+            { key: 'foh-maryland', label: 'FOH · Maryland', emoji: '🪑' },
+            { key: 'boh-webster',  label: 'BOH · Webster',  emoji: '👩‍🍳' },
+            { key: 'boh-maryland', label: 'BOH · Maryland', emoji: '👩‍🍳' },
+        ];
+        return showCross ? [...base, ...cross] : base;
+    }, [isEs, isAdmin, viewer]);
 
     const mode = picked.length <= 1 ? 'dm' : 'group';
 
@@ -807,7 +862,28 @@ function NewChatModal({
                     </div>
                 )}
 
-                {/* Filter */}
+                {/* Audience filter pills — horizontal scrollable strip
+                    so "FOH Webster only" / "BOH Maryland only" / etc.
+                    is one tap. Cross-location pills hidden for
+                    non-admin staff at a single location. */}
+                <div className="px-3 pt-2 pb-1 border-b border-dd-line/60 shrink-0 overflow-x-auto scrollbar-thin">
+                    <div className="flex gap-1.5 w-max">
+                        {filterChips.map(c => (
+                            <button
+                                key={c.key}
+                                onClick={() => setAudienceFilter(c.key)}
+                                className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-bold border transition active:scale-95 ${audienceFilter === c.key
+                                    ? 'bg-dd-green text-white border-dd-green shadow-sm'
+                                    : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}
+                            >
+                                <span>{c.emoji}</span>
+                                <span>{c.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Search */}
                 <div className="px-3 py-2 border-b border-dd-line shrink-0">
                     <input
                         type="search"
