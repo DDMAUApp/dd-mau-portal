@@ -298,14 +298,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const [shifts, setShifts] = useState([]);
     const [loading, setLoading] = useState(true);
-    // Default view mode: 'day' on mobile (the week-grid is too wide to read
-    // comfortably on a phone — staff end up pinch-zooming and scrolling
-    // horizontally), 'grid' on tablet/desktop where there's room. Detected
-    // once at mount; the user can switch via the segmented control any time.
-    const [viewMode, setViewMode] = useState(() => {
-        if (typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches) return 'day';
-        return 'grid';
-    });
+    // Default view mode: week-grid on every device (Andrew 2026-05-17 —
+    // "when you start the schedule page lets start it in the week view
+    // not day view"). The previous default flipped to 'day' on mobile
+    // because the week-grid is wider than the viewport on a phone, but
+    // the day view's narrower context made it less useful as a landing
+    // screen — most staff open Schedule to scan the week, not to drill
+    // into one day. The user can still switch to 'day' via the segmented
+    // control any time; we just don't make that the entry point. The
+    // grid handles its own horizontal scroll on narrow screens.
+    const [viewMode, setViewMode] = useState('grid');
     const [side, setSide] = useState('foh'); // 'foh' | 'boh'
     // Side-aware edit gates. MUST be declared AFTER `side` — used to be one
     // line before the `useState`, which threw a TDZ ReferenceError on first
