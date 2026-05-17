@@ -309,12 +309,31 @@ export default function ChatCenter({
     // user to scroll the whole page to reach the input. dvh recomputes
     // as the visible viewport changes, so the composer stays anchored
     // at the bottom of whatever's actually visible. (Andrew 2026-05-17.)
+    //
+    // Mobile height math (Andrew 2026-05-17 follow-up): the previous
+    // `100dvh - 160px` left the composer behind the bottom nav on
+    // iPhones with a notch because it didn't subtract env(safe-area-
+    // inset-top) — header is h-14 (56px) PLUS the notch (44–50px on
+    // iPhone X+), and the bottom nav is ~60px PLUS the home-indicator
+    // safe area (~34px). The new calc:
+    //
+    //   100dvh  − 146px  − env(top)  − env(bottom)
+    //
+    // = (header 56) + (bottom nav 60) + (30px breathing room)
+    //   + variable notch / home-indicator
+    //
+    // gives ~30px of empty space above the bottom nav on every device,
+    // notch or no notch. The vh fallback uses a static 220px (worst-
+    // case iPhone) so older browsers that don't grok dvh still keep
+    // the composer above the nav — just with slightly more empty space
+    // on devices without a notch (acceptable trade).
+    //
     // dvh: Safari 15.4+ / Chrome 108+ / Firefox 101+. The vh class is
     // listed FIRST so older browsers parsing the dvh declaration as
     // invalid fall back to the previous vh value — keeps the old
     // pre-fix behavior intact rather than collapsing to auto-height.
     return (
-        <div className="flex h-[calc(100vh-160px)] h-[calc(100dvh-160px)] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -my-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
+        <div className="flex h-[calc(100vh-220px)] h-[calc(100dvh_-_146px_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
             {/* ── LEFT PANE: chat list ──────────────────────────── */}
             <aside className={`${mobileShowList ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-[340px] md:border-r border-dd-line bg-white shrink-0`}>
                 {/* Header */}
