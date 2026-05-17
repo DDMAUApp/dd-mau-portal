@@ -66,8 +66,119 @@ const COLUMN_ALIASES = {
 const VENDORS = [
     { key: 'sysco',    label: 'Sysco' },
     { key: 'usfoods',  label: 'US Foods' },
+    { key: 'costco',   label: 'Costco' },
     { key: 'other',    label: 'Other vendor' },
 ];
+
+// Costco Business' "Lists" page doesn't export a CSV — only a PDF.
+// loadPdfJs is the same pattern OnboardingEmployerFill uses so the
+// worker resolves correctly under Vite. Lazy-imported here so the
+// Operations chunk doesn't carry pdfjs unless someone imports.
+async function loadPdfJs() {
+    const pdfjs = await import('pdfjs-dist');
+    if (!pdfjs.GlobalWorkerOptions.workerSrc) {
+        const workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+        pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+    }
+    return pdfjs;
+}
+
+// Costco "Lists" PDF parser. The exported list is a series of item
+// blocks; each block has the structure:
+//   <product name lines>
+//   Item <SKU>
+//   $<price>      [per pound]?
+//   Add to Cart
+//   <saved qty>
+//   Remove
+//
+// We extract text per page (lines = items whose y-coords differ by
+// more than 2pt), then walk linearly through every line of every
+// page collecting blocks delimited by the "Item <digits>" line.
+// One item ends when we see "Remove" (the last line of the block);
+// the next line starts a new product.
+async function parseCostcoPdf(file) {
+    const pdfjs = await loadPdfJs();
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjs.getDocument({ data: new Uint8Array(buf) }).promise;
+    const allLines = [];
+    for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const tc = await page.getTextContent();
+        let cur = '';
+        let lastY = null;
+        for (const it of tc.items) {
+            if (lastY !== null && Math.abs(it.transform[5] - lastY) > 2) {
+                if (cur.trim()) allLines.push(cur.trim());
+                cur = '';
+            }
+            cur += it.str + ' ';
+            lastY = it.transform[5];
+        }
+        if (cur.trim()) allLines.push(cur.trim());
+    }
+
+    // Walk lines, accumulating an item when we see "Item <digits>".
+    // The product name is whatever appeared on the lines BEFORE the
+    // Item line (but after the previous "Remove" or start). Qty is
+    // the line BETWEEN "Add to Cart" and "Remove".
+    const rows = [];
+    let nameBuf = [];
+    let pendingItem = null; // { sku, name, price, qty }
+    let mode = 'name';      // 'name' -> 'sku-seen' -> 'price-seen' -> 'cart-seen' -> qty -> 'remove'
+    const skuRe = /^Item\s+([0-9]{4,12})$/i;
+    const priceRe = /^\$([0-9]+(?:\.[0-9]{1,2})?)/;
+    for (const line of allLines) {
+        const skuMatch = line.match(skuRe);
+        if (skuMatch) {
+            // Close any half-finished prior block.
+            pendingItem = {
+                sku: skuMatch[1],
+                name: nameBuf.join(' ').replace(/\s+/g, ' ').trim(),
+                price: null,
+                qty: 0,
+            };
+            nameBuf = [];
+            mode = 'sku-seen';
+            continue;
+        }
+        if (pendingItem && mode === 'sku-seen' && priceRe.test(line)) {
+            pendingItem.price = parseFloat(line.match(priceRe)[1]);
+            mode = 'price-seen';
+            continue;
+        }
+        if (pendingItem && /^Add to Cart$/i.test(line)) {
+            mode = 'cart-seen';
+            continue;
+        }
+        if (pendingItem && mode === 'cart-seen') {
+            // The line right after "Add to Cart" is the saved qty.
+            const n = parseFloat(line);
+            if (!isNaN(n)) pendingItem.qty = n;
+            mode = 'qty-seen';
+            continue;
+        }
+        if (pendingItem && /^Remove\b/i.test(line)) {
+            // Block ends — emit row, start collecting next name.
+            rows.push(pendingItem);
+            pendingItem = null;
+            nameBuf = [];
+            mode = 'name';
+            continue;
+        }
+        if (mode === 'name' || mode === 'qty-seen' /* "per pound" suffix etc */) {
+            // Skip the header chrome / navigation lines that appear on
+            // every page. Heuristic: drop short lines that look like
+            // page chrome.
+            if (/^(Current Order|Add \$|Delivery|Maryland Heights|Lists|All|View Savings|Shop|Enter Keyword|Warehouses|Account|Cart|US|page|of)$/i.test(line.trim())) continue;
+            if (/^\d+$/.test(line.trim())) continue; // bare page numbers
+            if (line.length > 200) continue;
+            if (mode === 'name') nameBuf.push(line);
+        }
+    }
+    if (pendingItem) rows.push(pendingItem);
+    return rows;
+}
 
 export default function VendorCsvImportModal({
     language = 'en',
@@ -235,8 +346,48 @@ export default function VendorCsvImportModal({
         const f = e.target.files?.[0];
         e.target.value = '';
         if (!f) return;
-        if (!/\.csv$/i.test(f.name)) {
-            setError(tx('Please upload a .csv file.', 'Por favor sube un archivo .csv.'));
+        const isPdf = /\.pdf$/i.test(f.name);
+        const isCsv = /\.csv$/i.test(f.name);
+        if (!isCsv && !isPdf) {
+            setError(tx('Please upload a .csv or .pdf file.', 'Por favor sube un archivo .csv o .pdf.'));
+            return;
+        }
+        // Costco branch — PDF "Lists" export. We synthesize a
+        // pseudo-CSV shape (headers + body) so the same preview UI
+        // works without conditionals downstream.
+        if (isPdf || vendor === 'costco') {
+            if (!isPdf) {
+                setError(tx('Costco exports as PDF. Re-upload as .pdf.', 'Costco exporta PDF. Sube .pdf.'));
+                return;
+            }
+            try {
+                setBusy(true);
+                const items = await parseCostcoPdf(f);
+                if (items.length === 0) {
+                    setError(tx('No items found in this PDF.', 'No se encontraron artículos en el PDF.'));
+                    return;
+                }
+                const headers = ['Item', 'Description', 'Price', 'Qty'];
+                const body = items.map(it => [it.sku, it.name, it.price != null ? `$${it.price.toFixed(2)}` : '', String(it.qty)]);
+                const mapping = { sku: 0, name: 1, price: 2, qty: 3 };
+                setParsed({
+                    headers, body, mapping, fileName: f.name,
+                    formatNote: tx(
+                        `Detected Costco Lists PDF — ${items.length} items parsed.`,
+                        `PDF de Costco — ${items.length} artículos.`
+                    ),
+                });
+                setOverrideMap({});
+                setManualQty({});
+                setStage('preview');
+                // Auto-switch to Costco if user picked a different vendor first.
+                if (vendor !== 'costco') setVendor('costco');
+            } catch (err) {
+                console.error('Costco PDF parse failed:', err);
+                setError(tx('Could not read the PDF.', 'No se pudo leer el PDF.'));
+            } finally {
+                setBusy(false);
+            }
             return;
         }
         try {
@@ -539,12 +690,20 @@ export default function VendorCsvImportModal({
                         </div>
                         <div>
                             <label className="block w-full px-4 py-8 rounded-lg border-2 border-dashed border-gray-300 text-center cursor-pointer hover:border-mint-500 hover:bg-mint-50">
-                                <div className="text-4xl mb-1">📄</div>
-                                <div className="text-sm font-bold text-gray-700">{tx('Tap to choose CSV', 'Tap para elegir CSV')}</div>
-                                <div className="text-[11px] text-gray-500 mt-1">
-                                    {tx('Sysco / US Foods order-guide export, or any CSV with description + qty columns', 'Exportación del proveedor o cualquier CSV con descripción + cantidad')}
+                                <div className="text-4xl mb-1">{vendor === 'costco' ? '📑' : '📄'}</div>
+                                <div className="text-sm font-bold text-gray-700">
+                                    {vendor === 'costco'
+                                        ? tx('Tap to choose PDF', 'Tap para elegir PDF')
+                                        : tx('Tap to choose CSV', 'Tap para elegir CSV')}
                                 </div>
-                                <input ref={fileRef} type="file" accept=".csv,text/csv" onChange={handleFile} className="hidden" />
+                                <div className="text-[11px] text-gray-500 mt-1">
+                                    {vendor === 'costco'
+                                        ? tx('Costco Business "Lists" page > Print > Save as PDF', 'Costco Business "Listas" > Imprimir > Guardar PDF')
+                                        : tx('Sysco / US Foods order-guide export, or any CSV with description + qty columns', 'Exportación del proveedor o cualquier CSV con descripción + cantidad')}
+                                </div>
+                                <input ref={fileRef} type="file"
+                                    accept={vendor === 'costco' ? '.pdf,application/pdf' : '.csv,text/csv,.pdf,application/pdf'}
+                                    onChange={handleFile} className="hidden" />
                             </label>
                         </div>
                         <div className="px-3 py-2 rounded-lg bg-gray-50 text-[11px] text-gray-600">
@@ -552,6 +711,7 @@ export default function VendorCsvImportModal({
                             <ul className="list-disc pl-4 mt-1 space-y-0.5">
                                 <li><b>Sysco</b>: {tx('Shop > Order Guide > Actions > Download CSV', 'Shop > Order Guide > Acciones > Descargar CSV')}</li>
                                 <li><b>US Foods</b>: {tx('MOXē > Reporting > Detail Data > Export', 'MOXē > Reportes > Detail Data > Exportar')}</li>
+                                <li><b>Costco</b>: {tx('Business Center > Lists > Print > Save as PDF (the saved-list qty is what we import as "ordered qty")', 'Business Center > Listas > Imprimir > Guardar PDF (la cantidad guardada se importa como cantidad pedida)')}</li>
                                 <li><b>{tx('Other', 'Otro')}</b>: {tx('any CSV with item description + qty columns works', 'cualquier CSV con descripción + cantidad funciona')}</li>
                             </ul>
                         </div>
