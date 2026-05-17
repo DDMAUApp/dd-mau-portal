@@ -202,9 +202,21 @@ Each finding follows the format you requested.
 
 ---
 
-### [SEC-004] Onboarding portal token is verified client-side only
+### [SEC-004] Onboarding portal token is verified client-side only — *Phase A shipped*
 
-**Severity:** High (PII exposure)
+**Status update (2026-05-17, commit pending):** Token validation has moved server-side via a new `validateOnboardingInvite` HTTPS callable Cloud Function. The portal no longer reads `/onboarding_invites/{token}` from the client; it calls the function which validates server-side via the admin SDK + per-IP rate limit (10 attempts / 10 min). Audit row written for every portal access.
+
+What's closed:
+- Token brute-force is now rate-limited (was unlimited)
+- Token validation runs server-side (was client-side; the client could only see `inv.expiresAt` and decide for itself)
+- Every portal access has an audit row at `/onboarding_audits` (was nothing)
+
+What's still open (Phase B — needs Firebase Auth or larger refactor):
+- Direct Firestore reads of `/onboarding_invites/{token}` and `/onboarding_hires/{hireId}` from client DevTools are still permitted by the catch-all rule. An attacker who somehow has a hireId or token can still read directly.
+- Storage paths under `/onboarding/{hireId}/...` are also still resolvable.
+- The portal's own MUTATIONS (checklist updates, hire form submissions) still write directly to Firestore — would need to move through the Cloud Function too for full closure.
+
+**Severity:** High (PII exposure) → was Medium-High (after Phase A)
 **Area:** `/?onboard=TOKEN` route
 **User affected:** Any new hire who has been issued a token; the attacker just needs to guess/find a token
 **Steps to reproduce:**

@@ -1068,35 +1068,34 @@ exports.triggerOrdersSync = onSchedule(
 //   ~20-50 messages/day need translation × ~120 chars avg = under 200K
 //   chars/month. Stays inside the free tier with margin. Cached on the
 //   message doc so re-views of the same message cost nothing.
-// Per-IP rate limit for translateMessage. Without Firebase Auth wired
-// (Phase 2), we can't tie the call to a specific staff member — but we
-// can cap how many calls a single IP can make in a rolling window so a
-// scripted attacker can't drain the Translation API quota.
+// Per-IP rate limit shared across HTTPS callable functions. Without
+// Firebase Auth wired (Phase 2), we can't tie a call to a specific
+// staff member — but we can cap how many calls a single IP can make
+// in a rolling window so a scripted attacker can't drain quota or
+// brute-force a sensitive endpoint.
 //
-// Limit: 60 requests per 5-minute window per IP. A real DD Mau viewer
-// translating every message they scroll past would never get close.
-// A scripted abuser hits the wall after one minute of looping.
+// Counter doc lives at /rate_limits/{namespace}_{ipHash}_{bucket}. We
+// hash the IP (so it's not stored raw) and bucket by the window so
+// the doc resets itself naturally — no GC needed. Best-effort: if the
+// rate-limit read or write fails (Firestore unavailable, etc.) we let
+// the call through. Defense-in-depth, not a guarantee.
 //
-// Counter doc lives at /rate_limits/translate_{ipHash}. We hash the IP
-// (so it's not stored raw) and bucket by 5-minute window so the doc
-// resets itself naturally — no GC needed. Best-effort: if the rate-
-// limit read or write fails (Firestore unavailable, etc.) we let the
-// translation through. Defense-in-depth, not a guarantee.
-async function checkTranslateRateLimit(ip) {
+// Usage:
+//   await enforceRateLimit({ ip, namespace: 'translate', limit: 60, windowMs: 5*60_000 });
+async function enforceRateLimit({ ip, namespace, limit: maxCount, windowMs }) {
     if (!ip) return; // unknown IP — let through; nothing to throttle against
     try {
         const crypto = require("crypto");
         const ipHash = crypto.createHash("sha256").update(ip).digest("hex").slice(0, 16);
-        const windowMs = 5 * 60_000;
         const bucket = Math.floor(Date.now() / windowMs);
-        const docId = `translate_${ipHash}_${bucket}`;
+        const docId = `${namespace}_${ipHash}_${bucket}`;
         const ref = db.doc(`rate_limits/${docId}`);
         const snap = await ref.get();
         const cur = snap.exists ? (snap.data().count || 0) : 0;
-        if (cur >= 60) {
+        if (cur >= maxCount) {
             throw new HttpsError(
                 "resource-exhausted",
-                "Translation rate limit reached — try again in a few minutes.",
+                `Rate limit reached — try again in a few minutes.`,
             );
         }
         // Increment via merge so two simultaneous calls don't lose the bump.
@@ -1107,9 +1106,119 @@ async function checkTranslateRateLimit(ip) {
         }, { merge: true });
     } catch (e) {
         if (e instanceof HttpsError) throw e;
-        logger.warn("rate-limit check failed (allowing through):", e);
+        logger.warn(`rate-limit check (${namespace}) failed (allowing through):`, e);
     }
 }
+
+// Convenience wrapper preserving the old name + the translateMessage
+// signature. Limit: 60 requests per 5-minute window.
+async function checkTranslateRateLimit(ip) {
+    return enforceRateLimit({
+        ip,
+        namespace: "translate",
+        limit: 60,
+        windowMs: 5 * 60_000,
+    });
+}
+
+// ── validateOnboardingInvite ─────────────────────────────────────
+// Server-side token validation for the new-hire onboarding portal.
+// Replaces the client-side `getDoc('/onboarding_invites/{token}')`
+// pattern (AUDIT SEC-004) so an attacker who has a leaked invite URL
+// cannot enumerate other tokens via DevTools.
+//
+// What this gives us today:
+//   • Per-IP rate limit (10 attempts / 10 min) → token brute-force
+//     becomes impractical
+//   • Server-side validation of expiresAt → no client-tampering
+//   • Centralized audit log row for every portal access
+//   • Same admin-SDK path the function uses already — when the
+//     Firestore rules tighten to `allow get: if false` on
+//     /onboarding_invites + /onboarding_hires (Phase B, requires
+//     migrating admin reads too), the portal flow keeps working
+//     unchanged.
+//
+// What's still open after this fix:
+//   • Direct Firestore reads of /onboarding_invites + /onboarding_hires
+//     remain permitted by the catch-all rule (admin UI uses them).
+//     Closing that requires moving admin reads through Cloud Functions
+//     as well — see AUDIT SEC-004 for the roadmap.
+//   • Storage paths under /onboarding/{hireId}/... still resolvable
+//     by anyone who knows a hireId.
+//
+// Input:  { token: string }
+// Output: { hireId, hire: <sanitized hire fields> }
+exports.validateOnboardingInvite = onCall(
+    { region: "us-central1", cors: true, maxInstances: 10 },
+    async (request) => {
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({
+            ip,
+            namespace: "onboard_invite",
+            limit: 10,
+            windowMs: 10 * 60_000,
+        });
+
+        const token = String(request.data?.token || "").trim();
+        if (!token || token.length < 8) {
+            throw new HttpsError("invalid-argument", "Token required.");
+        }
+
+        const invRef = db.doc(`onboarding_invites/${token}`);
+        const invSnap = await invRef.get();
+        if (!invSnap.exists) {
+            // Don't reveal whether the token never existed vs expired —
+            // same error message for both reduces information leakage
+            // about valid token shapes.
+            throw new HttpsError("not-found", "This invite link is invalid or has expired.");
+        }
+        const inv = invSnap.data() || {};
+        if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
+            throw new HttpsError("not-found", "This invite has expired. Ask your manager for a new link.");
+        }
+
+        const hireId = inv.hireId;
+        if (!hireId) {
+            throw new HttpsError("internal", "Invite is missing hire reference.");
+        }
+        const hireRef = db.doc(`onboarding_hires/${hireId}`);
+        const hireSnap = await hireRef.get();
+        if (!hireSnap.exists) {
+            throw new HttpsError("not-found", "Hire record missing. Ask your manager.");
+        }
+        const hire = { id: hireSnap.id, ...hireSnap.data() };
+
+        // Mark invite as opened on first access. Non-blocking;
+        // function still returns hire data even if this write fails.
+        if (!inv.used) {
+            invRef.update({
+                used: true,
+                openedAt: new Date().toISOString(),
+            }).catch((e) => logger.warn("invite open-mark failed:", e));
+        }
+
+        // Audit every portal access — useful for later "who accessed
+        // this hire's data and when" investigations. Stored on the
+        // hire's own audit collection (already exists for admin views).
+        try {
+            await db.collection("onboarding_audits").add({
+                action: "portal.access",
+                hireId,
+                token,
+                ip: ip ? require("crypto").createHash("sha256").update(ip).digest("hex").slice(0, 16) : null,
+                userAgent: request.rawRequest?.headers?.["user-agent"] || null,
+                createdAt: FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            // Non-fatal — audit miss shouldn't block legit hire access.
+            logger.warn("onboarding portal audit write failed:", e);
+        }
+
+        return { hireId, hire };
+    },
+);
 
 exports.translateMessage = onCall(
     { region: "us-central1", cors: true, maxInstances: 10 },

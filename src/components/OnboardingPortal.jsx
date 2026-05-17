@@ -21,8 +21,9 @@
 // switches to AWAITING_REVIEW (derived) — admin reviews + approves.
 
 import { useState, useEffect, useRef } from 'react';
-import { db, storage } from '../firebase';
+import { db, storage, functions } from '../firebase';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
     DOC_STATUS, DOC_STATUS_META, ONBOARDING_DOCS,
@@ -97,18 +98,28 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         (async () => {
             try {
                 if (!token || token.length < 8) throw new Error('Invalid invite link.');
-                const invSnap = await getDoc(doc(db, 'onboarding_invites', token));
-                if (!invSnap.exists()) throw new Error('This invite link is invalid or has expired.');
-                const inv = invSnap.data();
-                if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
-                    throw new Error('This invite has expired. Ask your manager for a new link.');
+                // Server-side validation via Cloud Function. Was
+                // previously a pair of client-side getDoc() reads —
+                // moved here so token brute-force is rate-limited and
+                // every portal access lands in the audit log. See
+                // AUDIT SEC-004 for the broader roadmap on closing
+                // the direct-Firestore-read path.
+                //
+                // Function returns { hireId, hire } or throws an
+                // HttpsError (functions/permission-denied,
+                // functions/not-found, etc.). We surface the .message
+                // as-is — the function already formats user-friendly
+                // strings for the obvious failure modes ("invalid or
+                // expired", "ask your manager for a new link").
+                const callable = httpsCallable(functions, 'validateOnboardingInvite');
+                const res = await callable({ token });
+                const { hireId: gotHireId, hire: hireData } = res?.data || {};
+                if (!gotHireId || !hireData) {
+                    throw new Error('This invite link is invalid or has expired.');
                 }
-                const hSnap = await getDoc(doc(db, 'onboarding_hires', inv.hireId));
-                if (!hSnap.exists()) throw new Error('Hire record missing. Ask your manager.');
                 if (!alive) return;
-                const hireData = { id: hSnap.id, ...hSnap.data() };
                 setHire(hireData);
-                setHireId(inv.hireId);
+                setHireId(gotHireId);
                 // Flip the portal to ES if the hire was converted from a
                 // Spanish-filled application. URL/parent ?lang= still
                 // overrides this if explicitly set.
@@ -116,17 +127,17 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                     setResolvedLang(hireData.preferredLanguage);
                 }
                 setStatus('ready');
-                // Mark invite as opened (non-blocking).
-                if (!inv.used) {
-                    updateDoc(doc(db, 'onboarding_invites', token), {
-                        used: true,
-                        openedAt: new Date().toISOString(),
-                    }).catch(() => {});
-                }
             } catch (e) {
                 if (!alive) return;
                 setStatus('error');
-                setErrorMsg(e.message || String(e));
+                // HttpsError messages come back as `e.message` already
+                // user-friendly ("This invite has expired…" etc.).
+                // Falls back to a generic message if something went
+                // wrong unexpectedly.
+                const msg = e?.message
+                    || (typeof e === 'string' ? e : '')
+                    || 'Could not load your invite. Please try again or ask your manager.';
+                setErrorMsg(msg);
             }
         })();
         return () => { alive = false; };
