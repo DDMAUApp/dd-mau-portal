@@ -348,7 +348,7 @@ exports.onboardingReminderScan = onSchedule(
  * Cost: each export reads every doc once (~$0.06 per million reads).
  * DD Mau has ~40K docs. Cost per backup: ~$0.0024. Per month: ~$0.07.
  */
-const { GoogleAuth } = require("google-auth-library");
+// GoogleAuth is required at the top of the file (line 28).
 const PROJECT_ID = "dd-mau-staff-app";
 const BACKUP_BUCKET = "dd-mau-staff-app-backups";
 
@@ -1124,13 +1124,21 @@ exports.translateMessage = onCall(
                 scopes: ["https://www.googleapis.com/auth/cloud-translation"],
             });
             const client = await auth.getClient();
-            const token = await client.getAccessToken();
+            // Match the pattern scheduledFirestoreBackup uses — extract
+            // .token directly off the GetAccessTokenResponse. The earlier
+            // `token.token || token` fallback would smuggle an object
+            // into the Authorization header on failure, masking the real
+            // "couldn't get token" error.
+            const accessToken = (await client.getAccessToken()).token;
+            if (!accessToken) {
+                throw new HttpsError("internal", "could not obtain access token");
+            }
             const projectId = await auth.getProjectId();
             const url = "https://translation.googleapis.com/language/translate/v2";
             const resp = await fetch(url, {
                 method: "POST",
                 headers: {
-                    "Authorization": `Bearer ${token.token || token}`,
+                    "Authorization": `Bearer ${accessToken}`,
                     "Content-Type": "application/json",
                     "x-goog-user-project": projectId,
                 },
