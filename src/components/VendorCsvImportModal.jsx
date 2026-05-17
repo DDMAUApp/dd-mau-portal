@@ -423,7 +423,12 @@ export default function VendorCsvImportModal({
                     ),
                 });
                 setOverrideMap({});
-                setManualQty({});
+                // Costco PDF usually carries the saved-list qty per row,
+                // but any rows where the parser came back with 0 get
+                // defaulted to 1 so the user doesn't have to type.
+                const initialQty = {};
+                items.forEach((it, idx) => { if (!it.qty || it.qty <= 0) initialQty[idx] = '1'; });
+                setManualQty(initialQty);
                 setStage('preview');
                 // Auto-switch to Costco if user picked a different vendor first.
                 if (vendor !== 'costco') setVendor('costco');
@@ -476,9 +481,21 @@ export default function VendorCsvImportModal({
             }
 
             const mapping = detectColumns(headers);
+            // Auto-default qty=1 for every row whose CSV qty is missing
+            // or zero. Sysco purchase-history and US Foods order-guide
+            // exports don't carry order quantities at all, so the
+            // common "I ordered one case of each" case becomes a
+            // one-tap import. Admin can still bulk-set or edit per row.
+            const initialQty = {};
+            const qtyCol = mapping.qty;
+            body.forEach((row, idx) => {
+                const raw = qtyCol != null ? row[qtyCol] : '';
+                const n = parseFloat(String(raw).replace(/[^0-9.\-]/g, ''));
+                if (isNaN(n) || n <= 0) initialQty[idx] = '1';
+            });
             setParsed({ headers, body, mapping, fileName: f.name, formatNote });
             setOverrideMap({});
-            setManualQty({});
+            setManualQty(initialQty);
             setStage('preview');
         } catch (err) {
             console.error('CSV parse failed:', err);
@@ -805,21 +822,21 @@ export default function VendorCsvImportModal({
                             1 case of each" case. */}
                         <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2 text-[11px]">
                             <span className="font-bold text-gray-600">
-                                {tx('Bulk qty for matched rows:', 'Cantidad masiva:')}
+                                {tx('Qty defaulted to 1 — change all to:', 'Cantidad por defecto = 1 — cambiar todas a:')}
                             </span>
                             {[1, 2, 3, 5].map(n => (
                                 <button key={n} onClick={() => setQtyForAllMatched(n)}
                                     className="px-2 py-0.5 rounded-full bg-white border border-gray-300 font-bold hover:bg-mint-50 hover:border-mint-300">
-                                    {tx(`set ${n}`, `pon ${n}`)}
+                                    {n}
                                 </button>
                             ))}
                             <button onClick={() => setManualQty({})}
                                 className="px-2 py-0.5 rounded-full bg-white border border-gray-300 font-bold text-gray-500 hover:bg-gray-100">
-                                {tx('reset', 'reiniciar')}
+                                {tx('use CSV values', 'usar valores CSV')}
                             </button>
                             {stats.noQty > 0 && (
                                 <span className="ml-auto text-amber-700 font-bold">
-                                    ⚠ {stats.noQty} {tx('matched rows have qty 0 — set qty to include them', 'filas con cantidad 0')}
+                                    ⚠ {stats.noQty} {tx('matched rows have qty 0', 'filas con cantidad 0')}
                                 </span>
                             )}
                         </div>
