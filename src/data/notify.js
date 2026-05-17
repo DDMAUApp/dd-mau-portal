@@ -227,6 +227,7 @@ export async function notifyStaff({
     link = '/',
     deepLink,
     tag,
+    priority,        // 'high' | 'normal' (default). 'high' bypasses quiet hours + digests.
     createdBy = 'system',
     excludeStaff = null,
 }) {
@@ -240,6 +241,7 @@ export async function notifyStaff({
             body,
             link,
             ...(deepLink ? { deepLink } : {}),
+            ...(priority ? { priority } : {}),
             tag: tag || `${type}:${forStaff}:${Date.now()}`,
             createdAt: serverTimestamp(),
             read: false,

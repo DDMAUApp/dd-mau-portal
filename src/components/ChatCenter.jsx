@@ -165,6 +165,60 @@ export default function ChatCenter({
         return () => { cancelled = true; };
     }, [staffList]);
 
+    // ── One-shot admin migration: purge all auto-created channels ───
+    // 2026-05-16 — Andrew asked us to nuke the system channels we
+    // created so he can build his own groups from scratch. Runs once
+    // per admin device (idempotent + localStorage-gated). Each
+    // channel gets a soft-delete (members: [], deletedAt) PLUS a
+    // tombstone in /chats_purged so the auto-sync can never resurrect
+    // them. Custom groups (type=group) and DMs are untouched.
+    useEffect(() => {
+        if (!isAdmin || !staffName) return;
+        const FLAG_KEY = 'ddmau:chat_autochannels_purged_v1';
+        try { if (localStorage.getItem(FLAG_KEY)) return; } catch {}
+        let cancelled = false;
+        (async () => {
+            try {
+                const q = query(collection(db, 'chats'), where('type', '==', 'channel'));
+                const snap = await getDocs(q);
+                if (cancelled || snap.empty) {
+                    try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
+                    return;
+                }
+                let count = 0;
+                // Two batched writes per channel — chat doc + tombstone.
+                // Firestore batch cap is 500 ops; we play safe with 50
+                // channels per batch (DD Mau has ~10).
+                const batch = writeBatch(db);
+                for (const d of snap.docs) {
+                    const data = d.data() || {};
+                    batch.update(d.ref, {
+                        members: [],
+                        deletedAt: serverTimestamp(),
+                        deletedBy: staffName,
+                        deletedReason: 'admin_clear_autochannels',
+                    });
+                    batch.set(doc(db, 'chats_purged', d.id), {
+                        purgedAt: serverTimestamp(),
+                        purgedBy: staffName,
+                        chatType: 'channel',
+                        channelKey: data.channelKey || null,
+                        chatName: data.name || null,
+                        reason: 'admin_clear_autochannels',
+                    });
+                    count++;
+                }
+                await batch.commit();
+                try { localStorage.setItem(FLAG_KEY, String(Date.now())); } catch {}
+                console.log(`[chat] purged ${count} auto-channels`);
+            } catch (e) {
+                console.warn('one-shot autochannel purge failed:', e);
+                // Don't set the flag on failure so the next mount can retry.
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [isAdmin, staffName]);
+
     // ── Mark chat notifications read on entering this tab ───────
     // The /notifications docs of type chat_message + chat_mention
     // drive the unread badge on the Chat tile + sidebar entry. We

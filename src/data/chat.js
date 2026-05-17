@@ -131,11 +131,14 @@ export function channelMembersFor(key, staffList) {
     // Julie (id 41) was missing from the chat picker because she has
     // hideFromSchedule: true.
     const visible = list.filter(s => s && s.name);
-    // Resolve the AUTO_CHANNELS entry for its autoMembership rule so a
-    // single switch covers every system channel kind (role / location /
-    // managers / all + the announcement broadcast which always = all).
-    const def = AUTO_CHANNELS.find(c => c.key === key);
-    const rule = def?.autoMembership || key; // back-compat: callers passing 'foh' directly still work
+    // Resolve the autoMembership rule from either the live AUTO_CHANNELS
+    // (currently empty for DD Mau — Andrew opted out) OR the archived
+    // definitions so legacy channelKey docs still resolve. Falls back
+    // to the raw key for short-form callers that pass 'foh' / 'boh' /
+    // 'managers' / 'loc:webster' / 'foh:maryland' directly.
+    const def = AUTO_CHANNELS.find(c => c.key === key)
+             || _ARCHIVED_AUTO_CHANNELS.find(c => c.key === key);
+    const rule = def?.autoMembership || key;
     if (rule === 'all') return visible.map(s => s.name);
     if (rule === 'foh') return visible.filter(isFohRole).map(s => s.name);
     if (rule === 'boh') return visible.filter(isBohRole).map(s => s.name);
@@ -280,17 +283,32 @@ export function formatChatTime(ts) {
 // The `autoMembership` key tells channelMembersFor() how to compute
 // the members[] array from staffList. See that helper for the rule set.
 //
-// Location separation (2026-05-16): #foh and #boh are now split by
-// location so a Webster line cook doesn't see Maryland's BOH chatter
-// and vice versa. The owners (location: 'both') auto-join both pairs.
-// The old non-split #foh and #boh remain in Firestore as legacy docs
-// until manually deleted via the new delete-chat UI; auto-sync no
-// longer touches them.
+// 2026-05-16 — Andrew asked us to stop auto-creating system channels.
+// He prefers building his own groups via the +New chat picker so he
+// has explicit control over membership + naming. The infrastructure
+// (channelMembersFor + the auto-sync loop in ChatCenter) is left
+// intact so a future multi-tenant org can opt back in by repopulating
+// this array. For DD Mau today, the array stays empty.
 //
-// #all-team becomes admin-post-only so non-admins can't broadcast
-// across locations. Day-to-day cross-team chatter routes through the
-// location channels (#webster, #maryland) instead.
-export const AUTO_CHANNELS = [
+// Existing system channels (created before this change) are purged
+// by the one-shot admin migration in ChatCenter on next mount and
+// stay gone via the /chats_purged tombstone collection.
+export const AUTO_CHANNELS = [];
+
+// Documentation: the channel keys that USED to auto-create. The
+// purge migration walks all chats with type 'channel' (regardless
+// of key), so this list is reference only.
+export const LEGACY_AUTO_CHANNEL_KEYS = [
+    'announcements', 'all',
+    'foh', 'boh',                                        // pre-split cross-location
+    'foh-webster', 'foh-maryland', 'boh-webster', 'boh-maryland',
+    'managers', 'webster', 'maryland',
+];
+
+// Kept for reference + future re-enable — the original channel
+// definitions the auto-sync used. Not exported because the live
+// AUTO_CHANNELS is the source of truth for the sync loop.
+const _ARCHIVED_AUTO_CHANNELS = [
     { key: 'announcements',  kind: 'announcement',   name: 'Announcements',     emoji: '📣', autoMembership: 'all',                en: 'Announcements',      es: 'Anuncios',           restrictPosting: true },
     { key: 'all',            kind: 'system_role',    name: 'All Team',          emoji: '🍜', autoMembership: 'all',                en: 'All Team',           es: 'Todo el Equipo',     restrictPosting: true },
     { key: 'foh-webster',    kind: 'system_role',    name: 'FOH · Webster',     emoji: '🪑', autoMembership: 'foh:webster',        en: 'FOH · Webster',      es: 'FOH · Webster' },
@@ -301,6 +319,9 @@ export const AUTO_CHANNELS = [
     { key: 'webster',        kind: 'system_location',name: 'Webster',           emoji: '🏠', autoMembership: 'loc:webster',        en: 'Webster',            es: 'Webster' },
     { key: 'maryland',       kind: 'system_location',name: 'Maryland Hts',      emoji: '🏠', autoMembership: 'loc:maryland',       en: 'Maryland Hts',       es: 'Maryland' },
 ];
+// Keep _ARCHIVED_AUTO_CHANNELS reachable from tests / future restore
+// without tripping the unused-export lint.
+export { _ARCHIVED_AUTO_CHANNELS as ARCHIVED_AUTO_CHANNELS };
 
 // Message-type registry. Single polymorphic table; type drives renderer
 // + permission gates + notification priority.

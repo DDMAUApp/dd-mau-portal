@@ -143,8 +143,8 @@ export default function ChatNotifSettings({
                             </div>
                         )}
                         <p className="mt-2 text-[10px] text-dd-text-2 italic">
-                            {tx('Emergency 86 alerts and ack-required announcements still pierce quiet hours.',
-                                'Las alertas de 86 de emergencia y los anuncios con acuse requerido aún suenan.')}
+                            {tx('Chat messages, emergency 86 alerts, and ack-required announcements still pierce quiet hours — the team needs to reach you in real time.',
+                                'Los mensajes de chat, alertas 86 y anuncios con acuse aún suenan — el equipo necesita alcanzarte en tiempo real.')}
                         </p>
                     </div>
 
@@ -165,7 +165,11 @@ export default function ChatNotifSettings({
 
                     {/* Per-channel prefs */}
                     <div>
-                        <div className="text-sm font-black text-dd-text mb-2">📍 {tx('Per-channel', 'Por canal')}</div>
+                        <div className="text-sm font-black text-dd-text mb-1">📍 {tx('Per-channel', 'Por canal')}</div>
+                        <p className="text-[11px] text-dd-text-2 mb-2 italic">
+                            {tx('"Mute" silences the OS-level push but every chat message still lands in your bell drawer. Critical for ops.',
+                                '"Silenciar" calla el push del sistema pero los mensajes siguen llegando a tu campana.')}
+                        </p>
                         <div className="border border-dd-line rounded-lg divide-y divide-dd-line/60">
                             {(chats || []).filter(c => c.type !== 'dm').slice(0, 30).map(c => (
                                 <div key={c.id} className="flex items-center gap-3 px-3 py-2">

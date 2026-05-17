@@ -1228,11 +1228,15 @@ async function sendMessage({
                 // The NotificationsDrawer routes deepLink='chat' to
                 // the chat tab. ChatCenter sorts unread chats to the
                 // top so the user lands next to their new message.
-                // (TODO: also pass chatId so the drawer scrolls
-                // directly to that thread.)
                 deepLink: 'chat',
                 link: '/chat',
                 tag: `chat:${chat.id}:${to}`,
+                // 2026-05-16 — Andrew: every chat message must reach
+                // every member ASAP. Flagging chat notifications as
+                // high-priority signals to the FCM dispatcher (and any
+                // future quiet-hours enforcement) that this delivery
+                // can't be silenced or batched into a digest.
+                priority: 'high',
                 createdBy: staffName,
             });
         } catch (e) {
