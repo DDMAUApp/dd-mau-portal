@@ -342,6 +342,25 @@ export const MESSAGE_TYPES = {
 // thumb-sized on mobile. Order = priority (👍 first).
 export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '✅'];
 
+// Display name format inside chat threads: full first name + last
+// initial. Used for sender labels in group / channel chats and
+// inside specialty cards (coverage requests, photo issues, etc.)
+// where a name accompanies an action.
+//
+// Examples:
+//   "Andrew Shih"        -> "Andrew S."
+//   "Cash Magruder"      -> "Cash M."
+//   "Maria José Lopez"   -> "Maria L."  (last word is the last name)
+//   "Andrew"             -> "Andrew"    (no last name, leave as-is)
+//   ""                   -> ""
+export function formatChatName(fullName) {
+    if (!fullName) return '';
+    const parts = String(fullName).trim().split(/\s+/);
+    if (parts.length < 2) return parts[0] || '';
+    const lastInitial = (parts[parts.length - 1][0] || '').toUpperCase();
+    return lastInitial ? `${parts[0]} ${lastInitial}.` : parts[0];
+}
+
 // Photo-issue categories. Restaurant-specific — these become the dropdown
 // in ChatPhotoIssueModal AND drive routing (e.g., safety auto-pings the
 // manager channel even if posted to a location channel).

@@ -21,6 +21,7 @@ import {
     parseMentions,
     isChatUnread,
     previewOf,
+    formatChatName,
 } from './chat';
 
 const owner    = { id: 40, name: 'Andrew Shih', role: 'Owner' };
@@ -260,6 +261,30 @@ describe('previewOf', () => {
     });
     it('soft-deleted message reads as "(deleted)"', () => {
         expect(previewOf({ deleted: true })).toBe('(deleted)');
+    });
+});
+
+describe('formatChatName', () => {
+    it('full first + last initial for two-word name', () => {
+        expect(formatChatName('Andrew Shih')).toBe('Andrew S.');
+        expect(formatChatName('Cash Magruder')).toBe('Cash M.');
+    });
+    it('three-word name uses LAST word as last name', () => {
+        expect(formatChatName('Maria José Lopez')).toBe('Maria L.');
+    });
+    it('single-word name returns as-is (no initial available)', () => {
+        expect(formatChatName('Andrew')).toBe('Andrew');
+    });
+    it('empty / null returns empty string', () => {
+        expect(formatChatName('')).toBe('');
+        expect(formatChatName(null)).toBe('');
+        expect(formatChatName(undefined)).toBe('');
+    });
+    it('extra whitespace handled', () => {
+        expect(formatChatName('  Cash   Magruder  ')).toBe('Cash M.');
+    });
+    it('lowercase last initial is uppercased', () => {
+        expect(formatChatName('andrew shih')).toBe('andrew S.');
     });
 });
 

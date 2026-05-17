@@ -27,7 +27,7 @@ import {
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
-import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES } from '../data/chat';
+import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName } from '../data/chat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
@@ -499,7 +499,7 @@ export default function ChatThread({
                             {chat.type === 'dm'
                                 ? (typingNames.length > 0 ? tx('typing…', 'escribiendo…') : tx('Direct message · tap for info', 'Mensaje directo · tap info'))
                                 : (typingNames.length > 0
-                                    ? `${typingNames[0]} ${tx('is typing…', 'está escribiendo…')}`
+                                    ? `${formatChatName(typingNames[0])} ${tx('is typing…', 'está escribiendo…')}`
                                     : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`)}
                         </div>
                     </div>
@@ -835,7 +835,7 @@ function MessageBubble({
             <div className={`max-w-[78%] sm:max-w-[60%] min-w-0 ${isMine ? 'items-end' : 'items-start'} flex flex-col`}>
                 {showSender && !isMine && (
                     <span className="text-[11px] font-bold text-dd-text-2 mb-0.5 px-2">
-                        {message.senderName}
+                        {formatChatName(message.senderName)}
                     </span>
                 )}
                 <div className="relative">
@@ -1320,7 +1320,7 @@ function AnnouncementCard({
                     {tx('Announcement', 'Anuncio')}
                 </span>
                 <span className="text-[11px] font-bold text-amber-800">
-                    {message.senderName}
+                    {formatChatName(message.senderName)}
                 </span>
             </div>
             <div className="px-4 py-3">
@@ -1402,7 +1402,7 @@ function CoverageCard({
             </div>
             <div className="px-4 py-3">
                 <div className="text-sm font-bold text-dd-text">
-                    {message.senderName} — {shift.date && new Date(shift.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
+                    {formatChatName(message.senderName)} — {shift.date && new Date(shift.date + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
                 </div>
                 <div className="text-xs text-dd-text-2 mt-0.5">
                     {shift.startTime}–{shift.endTime} · {(shift.side || '').toUpperCase()} · {shift.location === 'maryland' ? 'Maryland' : shift.location === 'webster' ? 'Webster' : shift.location}
@@ -1412,12 +1412,12 @@ function CoverageCard({
                 )}
                 {message.claimedBy && (
                     <div className="mt-2 text-xs text-blue-700 font-bold">
-                        ✋ {tx('Claimed by', 'Reclamado por')} <b>{message.claimedBy}</b>
+                        ✋ {tx('Claimed by', 'Reclamado por')} <b>{formatChatName(message.claimedBy)}</b>
                     </div>
                 )}
                 {message.approvedBy && (
                     <div className="mt-1 text-xs text-dd-green-700 font-bold">
-                        ✓ {tx('Approved by', 'Aprobado por')} <b>{message.approvedBy}</b>
+                        ✓ {tx('Approved by', 'Aprobado por')} <b>{formatChatName(message.approvedBy)}</b>
                     </div>
                 )}
 
@@ -1513,7 +1513,7 @@ function PhotoIssueCard({ message, isEs, isManager, staffName, viewer, onLongPre
             )}
             <div className="px-4 py-3">
                 <div className="text-xs font-bold text-dd-text-2 mb-1">
-                    {message.senderName} · {data.location === 'maryland' ? 'Maryland' : 'Webster'}
+                    {formatChatName(message.senderName)} · {data.location === 'maryland' ? 'Maryland' : 'Webster'}
                 </div>
                 {data.note && <p className="text-sm text-dd-text mt-1">{data.note}</p>}
                 <div className="mt-2 flex items-center gap-2">
