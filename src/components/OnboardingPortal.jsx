@@ -98,22 +98,110 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         (async () => {
             try {
                 if (!token || token.length < 8) throw new Error('Invalid invite link.');
-                // Server-side validation via Cloud Function. Was
-                // previously a pair of client-side getDoc() reads —
-                // moved here so token brute-force is rate-limited and
-                // every portal access lands in the audit log. See
-                // AUDIT SEC-004 for the broader roadmap on closing
-                // the direct-Firestore-read path.
+
+                // Two-path validation:
                 //
-                // Function returns { hireId, hire } or throws an
-                // HttpsError (functions/permission-denied,
-                // functions/not-found, etc.). We surface the .message
-                // as-is — the function already formats user-friendly
-                // strings for the obvious failure modes ("invalid or
-                // expired", "ask your manager for a new link").
-                const callable = httpsCallable(functions, 'validateOnboardingInvite');
-                const res = await callable({ token });
-                const { hireId: gotHireId, hire: hireData } = res?.data || {};
+                // PREFERRED — server-side via the `validateOnboardingInvite`
+                // Cloud Function (AUDIT SEC-004 Phase A). Rate-limited per
+                // IP, writes audit log, validates expiresAt server-side.
+                //
+                // FALLBACK — direct Firestore reads of /onboarding_invites
+                // + /onboarding_hires. Same shape as the pre-SEC-004
+                // implementation. Triggered when the Cloud Function call
+                // fails with a "not-found / unavailable" error code,
+                // which is what `httpsCallable` throws when the function
+                // isn't deployed yet OR is mid-redeploy. This keeps
+                // existing invite links working even if the function
+                // deploy step hasn't been run (Andrew 2026-05-17 —
+                // "i resent a onboarding link and when they clicked
+                // on it doesnt work"). Direct reads stay open under the
+                // current Firestore rules; closing them is Phase B.
+                //
+                // When the function returns a USER-FACING error
+                // ("invalid or expired" — HttpsError code 'not-found'
+                // from inv.expiresAt validation), we surface it
+                // as-is — don't fall back, because the token really is
+                // bad and the fallback would re-validate it the same way
+                // and reach the same conclusion.
+                let gotHireId = null;
+                let hireData = null;
+
+                async function tryCloudFunction() {
+                    const callable = httpsCallable(functions, 'validateOnboardingInvite');
+                    const res = await callable({ token });
+                    return res?.data || {};
+                }
+
+                async function tryDirectReads() {
+                    // Read the invite doc by token id.
+                    const invSnap = await getDoc(doc(db, 'onboarding_invites', token));
+                    if (!invSnap.exists()) {
+                        throw new Error('This invite link is invalid or has expired.');
+                    }
+                    const inv = invSnap.data() || {};
+                    if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
+                        throw new Error('This invite has expired. Ask your manager for a new link.');
+                    }
+                    if (!inv.hireId) {
+                        throw new Error('Invite is missing hire reference.');
+                    }
+                    const hireSnap = await getDoc(doc(db, 'onboarding_hires', inv.hireId));
+                    if (!hireSnap.exists()) {
+                        throw new Error('Hire record missing. Ask your manager.');
+                    }
+                    const hire = { id: hireSnap.id, ...hireSnap.data() };
+                    // Best-effort mark invite as opened (non-blocking).
+                    if (!inv.used) {
+                        updateDoc(doc(db, 'onboarding_invites', token), {
+                            used: true,
+                            openedAt: new Date().toISOString(),
+                        }).catch(() => {});
+                    }
+                    return { hireId: inv.hireId, hire };
+                }
+
+                try {
+                    const out = await tryCloudFunction();
+                    gotHireId = out.hireId;
+                    hireData = out.hire;
+                } catch (cfErr) {
+                    // Distinguish "function isn't deployed / unreachable"
+                    // (fall back is safe) from "function ran and said this
+                    // token is bad" (don't fall back — same answer).
+                    //
+                    // httpsCallable wraps errors as FunctionsError with a
+                    // .code string. Codes that mean "service issue, try
+                    // direct reads": internal, unavailable, deadline-
+                    // exceeded, unauthenticated, cancelled. The code
+                    // "functions/not-found" specifically means the
+                    // server function doesn't exist (httpsCallable returns
+                    // 404 when the function isn't deployed) — also a
+                    // fallback case.
+                    const code = String(cfErr?.code || '').toLowerCase();
+                    const msg  = String(cfErr?.message || '').toLowerCase();
+                    const isDeployIssue =
+                        code.endsWith('not-found') && /function|service|deployed/.test(msg)
+                        || code.endsWith('internal')
+                        || code.endsWith('unavailable')
+                        || code.endsWith('deadline-exceeded')
+                        || code.endsWith('unauthenticated')
+                        || code.endsWith('cancelled')
+                        // httpsCallable surfaces 404 from a missing function
+                        // as just "internal" with status 404. Also catch the
+                        // generic "Could not reach" string.
+                        || /404|not found|cors|network/.test(msg);
+                    if (isDeployIssue) {
+                        console.warn('validateOnboardingInvite unreachable — falling back to direct reads:', cfErr);
+                        const out = await tryDirectReads();
+                        gotHireId = out.hireId;
+                        hireData = out.hire;
+                    } else {
+                        // Real token failure — rethrow so the outer
+                        // catch surfaces the user-friendly message.
+                        throw cfErr;
+                    }
+                }
+
                 if (!gotHireId || !hireData) {
                     throw new Error('This invite link is invalid or has expired.');
                 }
