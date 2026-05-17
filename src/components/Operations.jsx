@@ -5736,19 +5736,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                                 return (
                                     <div className="space-y-2">
-                                        {/* ── Prices-freshness banner ──
-                                            One row per vendor. Each row shows the
-                                            most recent timestamp from either the
-                                            live scraper (vendor_prices/{vendor}
-                                            .lastScraped) OR the most recent CSV/PDF
-                                            import for that vendor (importedFrom
-                                            tag in inventoryHistory). Whichever is
-                                            newer wins. Color-coded by age. */}
-                                        <PricesFreshnessBanner
-                                            livePrices={livePrices}
-                                            lastVendorImport={lastVendorImport}
-                                            language={language}
-                                        />
+                                        {/* Prices-freshness banner already rendered
+                                            above the sub-view selector — see the
+                                            <PricesFreshnessBanner/> at the
+                                            inventory section top. Rendering it
+                                            here too produced a duplicate banner
+                                            on the Pricing tab (Andrew 2026-05-17).
+                                            The outer banner already covers this
+                                            view so no second render needed. */}
 
                                         {/* Vendor toggle */}
                                         <div className="flex gap-2">

@@ -108,13 +108,18 @@ export default function AppShellV2({
             </div>
 
             {/* Cross-app notifications drawer — opens via the header bell.
-                Subscribes to /notifications where forStaff == staffName. */}
+                Subscribes to /notifications where forStaff == staffName.
+                staffList + setStaffList passed through so the drawer's
+                "🔄 Refresh" button can call enableFcmPush to mint a
+                fresh FCM token directly from the bell menu. */}
             <NotificationsDrawer
                 open={notifOpen}
                 onClose={() => setNotifOpen(false)}
                 staffName={staffName}
                 language={language}
                 onNavigate={(tab) => onNavigate?.(tab)}
+                staffList={staffList}
+                setStaffList={setStaffList}
             />
 
             {/* Mobile bottom nav — fixed, hidden on md+ */}

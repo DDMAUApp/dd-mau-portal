@@ -29,6 +29,8 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { useAppData } from './AppDataContext';
+import { enableFcmPush } from '../messaging';
+import { toast } from '../toast';
 
 // Defensive render-time resolver for legacy notification docs whose
 // title/body was written as { en, es } before the write-time fix in
@@ -143,7 +145,7 @@ function deepLinkFor(item) {
     return null;
 }
 
-export default function NotificationsDrawer({ open, onClose, staffName, language = 'en', onNavigate }) {
+export default function NotificationsDrawer({ open, onClose, staffName, language = 'en', onNavigate, staffList = [], setStaffList }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     // FIX (review 2026-05-14, perf): read notifications from the shared
@@ -167,6 +169,40 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
             unread.forEach(i => batch.update(doc(db, 'notifications', i.id), { read: true }));
             await batch.commit();
         } catch (e) { console.warn('markAllRead failed:', e); }
+    };
+
+    // Manual re-register affordance — lives in the bell drawer so staff
+    // who wonder "are my notifications working?" can find it where they
+    // naturally look (the bell itself). The header pill only renders
+    // when there's a known problem (permission default/denied or no
+    // token for this device); this button is always available, even on
+    // the happy path, so staff can force a fresh token if pushes feel
+    // stale. (Andrew 2026-05-17 — "i dont see the notification refresh
+    // next to the bell where is it?")
+    const [refreshing, setRefreshing] = useState(false);
+    const handleRefreshTokens = async () => {
+        if (refreshing || !staffName) return;
+        setRefreshing(true);
+        try {
+            const result = await enableFcmPush(staffName, staffList, setStaffList);
+            if (result?.ok) {
+                toast(tx('🔔 Notifications refreshed.', '🔔 Notificaciones actualizadas.'),
+                    { kind: 'success', duration: 4000 });
+            } else if (result?.reason === 'permission-denied') {
+                toast(tx('Permission denied. Open iPhone Settings → Notifications → DD Mau.',
+                          'Permiso denegado. Abre Ajustes → Notificaciones → DD Mau.'),
+                    { kind: 'warn', duration: 6000 });
+            } else if (result?.reason) {
+                toast(tx('Could not register: ', 'No se pudo registrar: ') + result.reason,
+                    { kind: 'error', duration: 6000 });
+            }
+        } catch (e) {
+            console.warn('drawer refresh tokens failed:', e);
+            toast(tx('Refresh failed. Try again.', 'Error al actualizar. Intenta de nuevo.'),
+                { kind: 'error' });
+        } finally {
+            setRefreshing(false);
+        }
     };
 
     const handleItemClick = (item) => {
@@ -245,6 +281,24 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
                                 {tx('Mark all read', 'Marcar todo')}
                             </button>
                         )}
+                        {/* Manual re-register button — always visible so
+                            staff can fix stuck pushes without hunting
+                            through Admin → Push diagnostic. Tap fires
+                            enableFcmPush() which re-mints the token
+                            (acts as a no-op if everything's already
+                            fine). Icon-only on narrow drawers to leave
+                            room for "Mark all read" alongside; full
+                            label sits in `title` for hover/longpress.  */}
+                        <button onClick={handleRefreshTokens}
+                            disabled={refreshing || !staffName}
+                            className="px-2 py-1 rounded-md text-[11px] font-bold text-dd-green-700 hover:bg-dd-sage-50 active:scale-95 disabled:opacity-50 transition flex items-center gap-1"
+                            aria-label={tx('Refresh notifications', 'Actualizar notificaciones')}
+                            title={tx('Re-register this device for push notifications', 'Volver a registrar este dispositivo para notificaciones push')}>
+                            <span className={refreshing ? 'inline-block animate-spin' : ''}>🔄</span>
+                            <span className="hidden xs:inline sm:inline">
+                                {refreshing ? tx('…', '…') : tx('Refresh', 'Actualizar')}
+                            </span>
+                        </button>
                         <button onClick={onClose}
                             className="w-9 h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:scale-95 text-lg transition"
                             aria-label={tx('Close', 'Cerrar')}>
