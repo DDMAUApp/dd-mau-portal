@@ -308,6 +308,195 @@ exports.onboardingReminderScan = onSchedule(
 );
 
 /* ──────────────────────────────────────────────────────────────────────
+ * sendDueReminders — daily check for catering orders + Toast invoices
+ * with an upcoming due/promised date. Fires reminders 2 days OUT and
+ * 1 day OUT to managers + owners.
+ *
+ * Andrew (2026-05-17): "lets also add a invoice notification where it
+ * reminds us 2 days before the due time and 1 day before due time.
+ * also if there is a new catering that was taken send a notification.
+ * these are all for manager and admin".
+ *
+ * Two sources scanned:
+ *   1. /cateringOrders — customer.date + customer.time is the due
+ *      moment (when food needs to be ready for pickup / delivery).
+ *      Status filter: ignore 'cancelled' / 'declined'. Everything else
+ *      ('new', 'confirmed', 'in-progress') is in flight and
+ *      worth reminding about.
+ *   2. /toast_invoices — promisedDate is the equivalent "due" field
+ *      (when the customer expects to pick up / receive).
+ *
+ * Idempotency: each (docId, kind, day) gets at most one push per day.
+ * We stamp a small map onto the doc:
+ *   remindersSent: { d2: 'YYYY-MM-DD', d1: 'YYYY-MM-DD' }
+ * Re-running the function on the same day is a no-op for already-
+ * stamped entries. A doc whose due date shifts gets re-evaluated
+ * naturally on the next pass.
+ *
+ * Runs at 8am Central — early enough that managers see the reminders
+ * before service starts but late enough not to ping mid-night.
+ */
+exports.sendDueReminders = onSchedule(
+    {
+        schedule: "0 8 * * *",
+        timeZone: "America/Chicago",
+        retryCount: 1,
+        memory: "256MiB",
+    },
+    async () => {
+        // Compute target dates (2 days out, 1 day out) in YYYY-MM-DD
+        // anchored to Central — restaurant operates on CT.
+        const tzFmt = new Intl.DateTimeFormat("en-CA", {
+            timeZone: "America/Chicago",
+            year: "numeric", month: "2-digit", day: "2-digit",
+        });
+        const today = new Date();
+        const day = (offsetDays) => {
+            const d = new Date(today.getTime() + offsetDays * 86400_000);
+            return tzFmt.format(d); // en-CA → YYYY-MM-DD
+        };
+        const todayKey = day(0);
+        const in1 = day(1);
+        const in2 = day(2);
+        const targets = new Map([[in2, 'd2'], [in1, 'd1']]);
+
+        // Resolve recipient list ONCE (owners + anyone with "manager"
+        // or "owner" in their role). Mirror of getManagementRecipients
+        // from src/data/notify.js — duplicated here so the function
+        // doesn't need to pull the client module.
+        const staffDoc = await db.doc('config/staff').get();
+        const staffList = (staffDoc.exists ? staffDoc.data().list : []) || [];
+        const managementNames = [];
+        const seen = new Set();
+        for (const s of staffList) {
+            if (!s || !s.name || seen.has(s.name)) continue;
+            const isOwner = s.id === 40 || s.id === 41;
+            const roleManager = s.role && /manager|owner/i.test(s.role);
+            if (isOwner || roleManager) {
+                seen.add(s.name);
+                managementNames.push(s.name);
+            }
+        }
+        if (managementNames.length === 0) {
+            logger.info("sendDueReminders: no management recipients, skipping");
+            return;
+        }
+
+        let pinged = 0;
+        let skipped = 0;
+
+        // Helper — write notification docs for ALL management recipients
+        // for a single source doc. Tag includes day key so retries
+        // collapse but successive days don't.
+        const fanOut = async ({ sourceColl, sourceId, type, title, body, deepLink, dayKey }) => {
+            const tag = `${type}:${sourceId}:${dayKey}`;
+            await Promise.all(managementNames.map(name =>
+                db.collection('notifications').add({
+                    forStaff: name,
+                    type,
+                    title,
+                    body,
+                    link: `/${deepLink || ''}`,
+                    deepLink: deepLink || null,
+                    tag,
+                    createdAt: FieldValue.serverTimestamp(),
+                    read: false,
+                    createdBy: 'system:dueReminders',
+                }).catch(e => logger.warn(`fanOut(${tag}) write failed for ${name}:`, e))
+            ));
+        };
+
+        // ── Source #1: catering orders ────────────────────────────
+        // Pull only orders whose customer.date is today + {0..3} days
+        // — narrows the scan dramatically. customer.date is the
+        // YYYY-MM-DD string used by the in-app form.
+        try {
+            const cateringSnap = await db.collection('cateringOrders')
+                .where('customer.date', 'in', [todayKey, in1, in2, day(3)])
+                .get();
+            for (const oDoc of cateringSnap.docs) {
+                const data = oDoc.data() || {};
+                const status = (data.status || '').toLowerCase();
+                if (status === 'cancelled' || status === 'declined') {
+                    skipped++; continue;
+                }
+                const dueDate = data?.customer?.date;
+                const kind = targets.get(dueDate);
+                if (!kind) { skipped++; continue; }
+                // Idempotency: skip if we already reminded for this
+                // (kind, day) pair.
+                const sent = (data.remindersSent || {})[kind];
+                if (sent === todayKey) { skipped++; continue; }
+
+                const cust = data.customer || {};
+                const whenLabel = `${cust.date || ''} @ ${cust.time || ''}`.trim();
+                const locLabel = cust.pickupLocation === 'maryland' ? 'Maryland' : 'Webster';
+                const guests = cust.guests || '?';
+                const kindLabel = kind === 'd2' ? '2 days' : 'tomorrow';
+                await fanOut({
+                    sourceColl: 'cateringOrders',
+                    sourceId: oDoc.id,
+                    type: kind === 'd2' ? 'catering_due_2d' : 'catering_due_1d',
+                    title: `🥡 Catering ${kindLabel}: ${cust.name || ''}`.trim(),
+                    body: `${guests} guests · ${whenLabel} · ${locLabel}`,
+                    deepLink: 'catering',
+                    dayKey: todayKey,
+                });
+                // Stamp the doc so we don't re-ping on the next run.
+                await oDoc.ref.update({
+                    [`remindersSent.${kind}`]: todayKey,
+                });
+                pinged++;
+            }
+        } catch (e) {
+            logger.warn('sendDueReminders catering scan failed:', e);
+        }
+
+        // ── Source #2: Toast invoices ──────────────────────────────
+        // promisedDate is the equivalent of "due" — when the customer
+        // expects pickup/delivery. Toast writes ISO strings; we slice
+        // to YYYY-MM-DD for the comparison.
+        try {
+            const invSnap = await db.collection('toast_invoices')
+                .limit(500)
+                .get();
+            for (const iDoc of invSnap.docs) {
+                const data = iDoc.data() || {};
+                if (!data.promisedDate) { skipped++; continue; }
+                const promisedKey = String(data.promisedDate).slice(0, 10);
+                const kind = targets.get(promisedKey);
+                if (!kind) { skipped++; continue; }
+                const sent = (data.remindersSent || {})[kind];
+                if (sent === todayKey) { skipped++; continue; }
+                const kindLabel = kind === 'd2' ? '2 days' : 'tomorrow';
+                const customerName = data.customer?.firstName
+                    ? `${data.customer.firstName} ${data.customer.lastName || ''}`.trim()
+                    : (data.customerName || `#${data.invoiceNumber || ''}`);
+                const total = data.total != null ? `$${Number(data.total).toFixed(2)}` : '';
+                const loc = data.location === 'maryland' ? 'Maryland' : 'Webster';
+                await fanOut({
+                    sourceColl: 'toast_invoices',
+                    sourceId: iDoc.id,
+                    type: kind === 'd2' ? 'invoice_due_2d' : 'invoice_due_1d',
+                    title: `🧾 Invoice ${kindLabel}: ${customerName}`,
+                    body: `${total ? total + ' · ' : ''}${promisedKey} · ${loc}`,
+                    deepLink: 'catering',  // ToastInvoices lives inside the Catering tab
+                    dayKey: todayKey,
+                });
+                await iDoc.ref.update({
+                    [`remindersSent.${kind}`]: todayKey,
+                });
+                pinged++;
+            }
+        } catch (e) {
+            logger.warn('sendDueReminders toast invoice scan failed:', e);
+        }
+
+        logger.info(`sendDueReminders: ${pinged} reminder(s) sent, ${skipped} skipped`);
+    }
+);
+
+/* ──────────────────────────────────────────────────────────────────────
  * scheduledFirestoreBackup — daily managed export to Cloud Storage.
  *
  * Uses Firestore's official MANAGED EXPORT API (REST). Output lands in

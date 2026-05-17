@@ -103,6 +103,12 @@ const KIND_META = {
     chat_mention:           { icon: '📣', tone: 'bg-amber-50 text-amber-800' },
     // 86 board
     eighty_six_alert:       { icon: '🚫', tone: 'bg-red-50 text-red-700' },
+    // Catering + invoice
+    catering_new:           { icon: '🥡', tone: 'bg-amber-50 text-amber-800' },
+    catering_due_2d:        { icon: '🥡', tone: 'bg-blue-50 text-blue-700' },
+    catering_due_1d:        { icon: '🥡', tone: 'bg-amber-50 text-amber-800' },
+    invoice_due_2d:         { icon: '🧾', tone: 'bg-blue-50 text-blue-700' },
+    invoice_due_1d:         { icon: '🧾', tone: 'bg-amber-50 text-amber-800' },
     // Handoff / Tardies / Sauce
     handoff_acknowledged:   { icon: '✓',  tone: 'bg-dd-green-50 text-dd-green-700' },
     handoff_submitted:      { icon: '🤝', tone: 'bg-purple-50 text-purple-700' },
@@ -142,6 +148,7 @@ function deepLinkFor(item) {
     if (t === 'tardy_logged')       return 'tardies';
     if (t.startsWith('sauce_'))     return 'operations';
     if (t === 'eighty_six_alert' || t.startsWith('eighty')) return 'eighty6';
+    if (t.startsWith('catering_') || t.startsWith('invoice_')) return 'catering';
     return null;
 }
 

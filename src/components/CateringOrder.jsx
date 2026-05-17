@@ -4,6 +4,7 @@ import { doc, onSnapshot, setDoc, collection, query, orderBy, limit, addDoc } fr
 import { t } from '../data/translations';
 import { CATERING_MENU, ALL_SAUCES, ALL_SAUCES_ES, ALL_PROTEINS, ALL_PROTEINS_ES, BASE_OPTIONS, BASE_OPTIONS_ES } from '../data/catering';
 import { escapeHtml as esc } from '../data/htmlEscape';
+import { notifyManagement } from '../data/notify';
 import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
 import { toast } from '../toast';
@@ -600,13 +601,48 @@ export default function CateringOrder({ language, staffName }) {
                     status: "new"
                 };
                 try {
+                    let savedId = editingOrderId;
                     if (editingOrderId) {
                         delete order.createdAt;
                         await setDoc(doc(db, "cateringOrders", editingOrderId), order, { merge: true });
                     } else {
-                        await addDoc(collection(db, "cateringOrders"), order);
+                        const ref = await addDoc(collection(db, "cateringOrders"), order);
+                        savedId = ref.id;
                     }
                     setSubmitted(true);
+
+                    // Fan out a notification to managers + owners on a
+                    // NEW catering order (not on edits — re-pinging every
+                    // touch would spam during a long-running edit
+                    // session). Andrew (2026-05-17): "if there is a new
+                    // catering that was taken send a notification — for
+                    // manager and admin". Fire-and-forget; failure does
+                    // NOT roll back the saved order. Stable tag so the
+                    // dispatcher dedupes if a retry fires.
+                    if (!editingOrderId) {
+                        const guests = customer.guests || '?';
+                        const whenLabel = `${customer.date || ''} @ ${customer.time || ''}`.trim();
+                        const locLabel = customer.pickupLocation === 'maryland' ? 'Maryland' : 'Webster';
+                        const takenBy = staffName || 'staff';
+                        notifyManagement({
+                            type: 'catering_new',
+                            title: {
+                                en: `🥡 New catering — ${customer.name || 'order'}`,
+                                es: `🥡 Nuevo catering — ${customer.name || 'pedido'}`,
+                            },
+                            body: {
+                                en: `${guests} guests · ${whenLabel} · ${locLabel} · taken by ${takenBy}`,
+                                es: `${guests} personas · ${whenLabel} · ${locLabel} · tomado por ${takenBy}`,
+                            },
+                            link: '/catering',
+                            deepLink: 'catering',
+                            tag: `catering_new:${savedId || Date.now()}`,
+                            createdBy: takenBy,
+                            // includeStaff defaults to the actor — managers
+                            // who take their own catering still see a bell
+                            // record so they can confirm it landed.
+                        }).catch(e => console.warn('catering create notify failed (non-fatal):', e));
+                    }
                 } catch (err) {
                     // Surface the failure — previously this just logged and
                     // left `submitted` false, so the UI silently rolled
