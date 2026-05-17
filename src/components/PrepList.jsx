@@ -47,7 +47,14 @@ export default function PrepList({ language, staffName, storeLocation, staffList
     const [newPrepSlowPar, setNewPrepSlowPar] = useState("");
     const [newPrepBusyPar, setNewPrepBusyPar] = useState("");
 
-    const currentIsManager = isAdmin(staffName, staffList) || (staffList || []).some(s => s.name === staffName && (s.role === "manager" || s.role === "admin"));
+    // Case-insensitive role check — staff records in DEFAULT_STAFF use
+    // capitalized role strings ("Manager", "Kitchen Manager", "Asst
+    // Manager", "Owner") so the previous `=== "manager" || === "admin"`
+    // string equality silently matched nothing, and only the two
+    // hardcoded ADMIN_IDS (40 = Andrew, 41 = Julie) could ever edit
+    // prep items / days. Restaurant managers were locked out of their
+    // own prep editor. (Andrew autonomous polish pass 2026-05-17.)
+    const currentIsManager = isAdmin(staffName, staffList) || (staffList || []).some(s => s.name === staffName && /manager|admin|owner/i.test(s.role || ''));
 
     // Load from Firestore
     useEffect(() => {
@@ -78,7 +85,7 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                     setStations(merged);
                 }
             }
-        });
+        }, (err) => console.warn('prepList snapshot error:', err));
         return () => unsub();
     }, [storeLocation]);
 

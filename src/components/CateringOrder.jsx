@@ -474,9 +474,18 @@ export default function CateringOrder({ language, staffName }) {
             const [editingCartItem, setEditingCartItem] = useState(null); // cart item being edited
             const [pageTab, setPageTab] = useState("orders");
             useEffect(() => {
-                const unsubscribe = onSnapshot(query(collection(db, "cateringOrders"), orderBy("createdAt", "desc"), limit(30)), snap => {
-                    setOrderHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-                });
+                const unsubscribe = onSnapshot(
+                    query(collection(db, "cateringOrders"), orderBy("createdAt", "desc"), limit(30)),
+                    snap => {
+                        setOrderHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                    },
+                    // Log subscription errors instead of swallowing silently.
+                    // Common cause: brief offline / token-refresh races, both
+                    // of which the SDK auto-recovers from — but without a
+                    // handler the user would see an empty order list with no
+                    // explanation if it stayed broken.
+                    err => console.warn('cateringOrders snapshot error:', err)
+                );
                 return () => unsubscribe();
             }, []);
             const validateCustomer = () => {

@@ -523,11 +523,18 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
 
     // Load recipes from Firestore
     useEffect(() => {
-        const unsubscribe = onSnapshot(doc(db, "config", "recipes"), (docSnapshot) => {
-            if (docSnapshot.exists() && docSnapshot.data().list && docSnapshot.data().list.length > 0) {
-                setRecipes(docSnapshot.data().list);
-            }
-        });
+        const unsubscribe = onSnapshot(
+            doc(db, "config", "recipes"),
+            (docSnapshot) => {
+                if (docSnapshot.exists() && docSnapshot.data().list && docSnapshot.data().list.length > 0) {
+                    setRecipes(docSnapshot.data().list);
+                }
+            },
+            // Without an error handler, an offline blip / permission-denied
+            // race would silently fail and leave the recipes list empty
+            // with no console signal. Log so support can diagnose.
+            (err) => console.warn('recipes snapshot error:', err)
+        );
         return () => unsubscribe();
     }, []);
 

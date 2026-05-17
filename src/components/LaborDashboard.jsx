@@ -33,7 +33,7 @@ export default function LaborDashboard({ language, storeLocation }) {
                 setLaborTarget(docSnap.data().target);
                 setTempTarget(docSnap.data().target);
             }
-        });
+        }, (err) => console.warn('laborTarget snapshot error:', err));
         return () => unsubTarget();
     }, []);
 
@@ -45,7 +45,7 @@ export default function LaborDashboard({ language, storeLocation }) {
             } else {
                 setLaborData(null);
             }
-        });
+        }, (err) => console.warn('labor data snapshot error:', err));
         return () => unsubLabor();
     }, [storeLocation]);
 

@@ -732,7 +732,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (docSnap.exists() && docSnap.data().matrix) {
                         setSkillsMatrix(docSnap.data().matrix);
                     }
-                });
+                }, (err) => console.warn('skillsMatrix snapshot error:', err));
                 return () => unsubMatrix();
             }, []);
 
@@ -742,7 +742,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (docSnap.exists() && docSnap.data().stations && docSnap.data().stations.length > 0) {
                         setCustomStations(docSnap.data().stations);
                     }
-                });
+                }, (err) => console.warn('stations snapshot error:', err));
                 return () => unsubStations();
             }, []);
 
@@ -1552,31 +1552,38 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     else if (!data.trigger) setter(null);
                 };
 
+                // Vendor-price subscriptions — log subscription errors
+                // instead of swallowing silently. A perm-denied / offline
+                // blip would leave the price block empty without any
+                // signal otherwise; the SDK auto-retries, but a log line
+                // makes diagnosis a non-event when staff ask why "live
+                // prices" is empty.
+                const onVpErr = (tag) => (err) => console.warn(`vendor_prices/${tag} snapshot error:`, err);
                 const unsubSyscoPrices = onSnapshot(doc(db, "vendor_prices", "sysco"), (docSnap) => {
                     if (docSnap.exists()) setLivePrices(prev => ({ ...prev, sysco: docSnap.data() }));
-                });
+                }, onVpErr('sysco'));
                 const unsubSyscoTrigger = onSnapshot(doc(db, "vendor_prices", "sysco_trigger"), (docSnap) => {
                     if (docSnap.exists()) applyTriggerSnapshot(docSnap.data(), setSyscoTriggerStatus);
-                });
+                }, onVpErr('sysco_trigger'));
                 const unsubSyscoStatus = onSnapshot(doc(db, "vendor_prices", "sysco_status"), (docSnap) => {
                     if (docSnap.exists()) setSyscoScrapeStatus(docSnap.data());
-                });
+                }, onVpErr('sysco_status'));
                 const unsubUsfoodsPrices = onSnapshot(doc(db, "vendor_prices", "usfoods"), (docSnap) => {
                     if (docSnap.exists()) setLivePrices(prev => ({ ...prev, usfoods: docSnap.data() }));
-                });
+                }, onVpErr('usfoods'));
                 const unsubUsfoodsTrigger = onSnapshot(doc(db, "vendor_prices", "usfoods_trigger"), (docSnap) => {
                     if (docSnap.exists()) applyTriggerSnapshot(docSnap.data(), setUsfoodsTriggerStatus);
-                });
+                }, onVpErr('usfoods_trigger'));
                 const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
                     if (docSnap.exists()) setUsfoodsScrapeStatus(docSnap.data());
-                });
+                }, onVpErr('usfoods_status'));
                 // Costco — populated only by manual CSV/PDF imports
                 // (no scraper). Lives in the same vendor_prices doc
                 // shape so the Pricing tab can render it identically
                 // to Sysco / US Foods.
                 const unsubCostcoPrices = onSnapshot(doc(db, "vendor_prices", "costco"), (docSnap) => {
                     if (docSnap.exists()) setLivePrices(prev => ({ ...prev, costco: docSnap.data() }));
-                });
+                }, onVpErr('costco'));
 
                 return () => {
                     unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus();
