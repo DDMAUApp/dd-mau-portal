@@ -199,6 +199,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Nothing references these any more; commit history preserves them.
             const [inventory, setInventory] = useState({});
             const [invCountMeta, setInvCountMeta] = useState({}); // { itemId: { by, at } }
+            // Manual "last ordered" log per item. Schema:
+            //   { [itemId]: { date: 'YYYY-MM-DD', qty: number, unit?: string, vendor?: string, by: string, at: ISO } }
+            // Scraper data (data.lastOrdered date string from vendor pricing)
+            // is used as a fallback when no manual entry exists. The manual
+            // override always wins so admin can record what they actually
+            // ordered (date + quantity) even if it disagrees with the
+            // vendor's last-purchase timestamp.
+            const [lastOrderedManual, setLastOrderedManual] = useState({});
+            // Modal state — { item } when picking, null otherwise.
+            const [editingLastOrdered, setEditingLastOrdered] = useState(null);
             // Counts for vendor-only items that aren't matched to a master inventory item.
             // Keyed as `${vendor}:${vendorId}` (e.g. "sysco:5106402") so it can't collide with
             // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
@@ -1307,6 +1317,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         setInventory(data.counts || {});
                         setInvCountMeta(data.countMeta || {});
                         setVendorCounts(data.vendorCounts || {});
+                        setLastOrderedManual(data.lastOrderedManual || {});
                         if (data.customInventory) {
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
                             // so new items from inventory.js always appear.
@@ -2398,6 +2409,72 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         console.error("Error updating inventory:", err);
                     }
                 }
+            };
+
+            // Save / clear the "last ordered" manual entry for an item.
+            // Persists under inventory_<location>.lastOrderedManual.<itemId>.
+            // Pass entry=null to clear (admin can revert to scraper data).
+            const saveLastOrderedManual = async (itemId, entry) => {
+                const ref = doc(db, "ops", "inventory_" + storeLocation);
+                const newLocal = { ...lastOrderedManual };
+                if (entry == null) {
+                    delete newLocal[itemId];
+                } else {
+                    newLocal[itemId] = {
+                        date: entry.date || '',
+                        qty: typeof entry.qty === 'number' ? entry.qty : (entry.qty ? Number(entry.qty) : null),
+                        unit: entry.unit || '',
+                        vendor: entry.vendor || '',
+                        by: staffName,
+                        at: new Date().toISOString(),
+                    };
+                }
+                setLastOrderedManual(newLocal);
+                try {
+                    await updateDoc(ref, {
+                        [`lastOrderedManual.${itemId}`]: entry == null ? deleteField() : newLocal[itemId],
+                    });
+                } catch (err) {
+                    if (err?.code === "not-found") {
+                        try {
+                            await setDoc(ref, { lastOrderedManual: newLocal, date: new Date().toISOString() }, { merge: true });
+                        } catch (e) {
+                            console.error("Error creating inventory doc for lastOrderedManual:", e);
+                        }
+                    } else {
+                        console.error("Error saving lastOrderedManual:", err);
+                        setLastOrderedManual(lastOrderedManual); // rollback
+                    }
+                }
+            };
+
+            // Resolve display data for an item's "last ordered" line.
+            // Priority: manual entry > most-recent scraper date across all
+            // vendor matches. Returns null if neither exists.
+            const resolveLastOrdered = (itemId) => {
+                const manual = lastOrderedManual[itemId];
+                if (manual && manual.date) {
+                    return {
+                        source: 'manual',
+                        date: manual.date,
+                        qty: manual.qty,
+                        unit: manual.unit,
+                        vendor: manual.vendor,
+                        by: manual.by,
+                    };
+                }
+                const prices = invToVendorPrices[itemId] || [];
+                const dated = prices.filter(p => p.lastOrdered);
+                if (dated.length === 0) return null;
+                dated.sort((a, b) => Date.parse(b.lastOrdered) - Date.parse(a.lastOrdered));
+                return {
+                    source: 'scraper',
+                    date: dated[0].lastOrdered,
+                    qty: null,
+                    unit: null,
+                    vendor: dated[0].vendor,
+                    by: null,
+                };
             };
 
             // Count tracker for vendor-only items (those not matched to a master inventory item).
@@ -4504,6 +4581,30 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         );
                     })()}
 
+                    {/* Last-ordered editor modal — fixed-position, mounts
+                        whenever editingLastOrdered.item is set. Lets admin
+                        log "I just ordered 3 cs from Sysco on 5/16" so
+                        the inventory list carries a date + qty per item.
+                        Manual entries override the scraper's lastOrdered
+                        date because they encode the actual physical order,
+                        not just what the vendor portal last shows. */}
+                    {editingLastOrdered && (
+                        <LastOrderedEditor
+                            item={editingLastOrdered.item}
+                            current={lastOrderedManual[editingLastOrdered.item.id]}
+                            language={language}
+                            onClose={() => setEditingLastOrdered(null)}
+                            onSave={(entry) => {
+                                saveLastOrderedManual(editingLastOrdered.item.id, entry);
+                                setEditingLastOrdered(null);
+                            }}
+                            onClear={() => {
+                                saveLastOrderedManual(editingLastOrdered.item.id, null);
+                                setEditingLastOrdered(null);
+                            }}
+                        />
+                    )}
+
                     {activeTab === "inventory" && (
                         <div className="space-y-3">
                             {/* ── TOP TOOLBAR ── */}
@@ -5002,6 +5103,36 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             {invCountMeta[item.id] && count > 0 && (
                                                                                 <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
                                                                             )}
+                                                                            {/* Last ordered badge — clickable to open editor.
+                                                                                Shows either manual entry (date + qty + vendor)
+                                                                                or scraper data (date + vendor only). Faded
+                                                                                when no data yet but still tappable so admin
+                                                                                can log a fresh order. */}
+                                                                            {(() => {
+                                                                                const lo = resolveLastOrdered(item.id);
+                                                                                if (!lo) {
+                                                                                    return (
+                                                                                        <button onClick={() => setEditingLastOrdered({ item })}
+                                                                                            className="text-[11px] text-gray-400 mt-0.5 hover:text-mint-700 underline-offset-2 hover:underline">
+                                                                                            {language === "es" ? "📦 Registrar último pedido" : "📦 Log last ordered"}
+                                                                                        </button>
+                                                                                    );
+                                                                                }
+                                                                                const qtyLabel = (lo.qty != null && lo.qty !== '')
+                                                                                    ? ` · ${lo.qty}${lo.unit ? lo.unit : ''}`
+                                                                                    : '';
+                                                                                const vendorLabel = lo.vendor ? ` · ${lo.vendor}` : '';
+                                                                                const tone = lo.source === 'manual'
+                                                                                    ? 'text-blue-700 hover:bg-blue-50 border-blue-200'
+                                                                                    : 'text-gray-500 hover:bg-gray-50 border-gray-200';
+                                                                                return (
+                                                                                    <button onClick={() => setEditingLastOrdered({ item })}
+                                                                                        className={`text-[11px] mt-0.5 px-1.5 py-0.5 rounded border transition ${tone}`}
+                                                                                        title={lo.by ? `${language === "es" ? "Por" : "By"} ${lo.by}` : undefined}>
+                                                                                        📦 {language === "es" ? "Último pedido" : "Last ordered"}: {lo.date}{qtyLabel}{vendorLabel}
+                                                                                    </button>
+                                                                                );
+                                                                            })()}
                                                                         </div>
                                                                         <div className="flex items-center gap-1 flex-shrink-0">
                                                                             <>
@@ -6505,4 +6636,152 @@ function SkipOtherInput({ onSubmit, isEs }) {
 
         // NOTE: MenuReference, Schedule, useGeofence, RecipeForm live in their own files
         // (imported by App.jsx). Duplicate definitions removed to save ~490 lines.
+
+// ─────────────────────────────────────────────────────────────────
+// LastOrderedEditor — modal for recording the date + qty + vendor
+// of the most recent order for an inventory item. Sits next to the
+// inventory list; opened by tapping the "📦 Last ordered: …" badge.
+//
+// Why manual entry: the vendor scrapers capture a date but not the
+// quantity. Andrew specifically asked for date + amount, so the
+// manual log fills in qty (plus a vendor override) on top of the
+// scraper-supplied date.
+//
+// Schema written to /ops/inventory_{loc}.lastOrderedManual.{itemId}:
+//   { date: 'YYYY-MM-DD', qty: number, unit: string, vendor: string,
+//     by: staffName, at: ISO timestamp }
+// ─────────────────────────────────────────────────────────────────
+function LastOrderedEditor({ item, current, language, onClose, onSave, onClear }) {
+    const isEs = language === 'es';
+    const tx = (en, es) => isEs ? es : en;
+    const [date, setDate] = useState(() => {
+        if (current?.date) return current.date;
+        const d = new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    });
+    const [qty, setQty] = useState(current?.qty != null ? String(current.qty) : '');
+    const [unit, setUnit] = useState(current?.unit || (item.pack ? '' : 'cs'));
+    const [vendor, setVendor] = useState(current?.vendor || item.preferredVendor || item.vendor || '');
+
+    const vendorOptions = (item.vendorOptions || [])
+        .map(v => v.vendor)
+        .filter((v, i, arr) => v && arr.indexOf(v) === i);
+    if (vendor && !vendorOptions.includes(vendor)) vendorOptions.unshift(vendor);
+
+    const canSave = !!date && qty.trim() !== '';
+
+    function handleSave() {
+        if (!canSave) return;
+        onSave({
+            date,
+            qty: Number(qty),
+            unit: unit.trim(),
+            vendor: vendor.trim(),
+        });
+    }
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
+            <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl shadow-xl flex flex-col max-h-[90vh]"
+                onClick={(e) => e.stopPropagation()}>
+                <div className="md:hidden flex justify-center pt-2 pb-1">
+                    <div className="w-10 h-1 bg-gray-300 rounded-full" />
+                </div>
+                <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between">
+                    <div className="min-w-0">
+                        <div className="text-[11px] uppercase font-bold tracking-widest text-gray-500">
+                            📦 {tx('Last ordered', 'Último pedido')}
+                        </div>
+                        <div className="text-base font-black text-gray-900 truncate">{item.name}</div>
+                        {item.pack && <div className="text-[11px] text-gray-500">{tx('Pack', 'Pack')}: {item.pack}</div>}
+                    </div>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-gray-100 flex items-center justify-center">✕</button>
+                </div>
+                <div className="p-4 space-y-3">
+                    <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
+                            {tx('Date ordered', 'Fecha del pedido')}
+                        </label>
+                        <input
+                            type="date"
+                            value={date}
+                            onChange={(e) => setDate(e.target.value)}
+                            className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500/30 focus:border-mint-500"
+                        />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                        <div className="col-span-2">
+                            <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
+                                {tx('Quantity', 'Cantidad')}
+                            </label>
+                            <input
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="any"
+                                value={qty}
+                                onChange={(e) => setQty(e.target.value)}
+                                placeholder={tx('e.g. 3', 'p.ej. 3')}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500/30 focus:border-mint-500"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
+                                {tx('Unit', 'Unidad')}
+                            </label>
+                            <input
+                                type="text"
+                                value={unit}
+                                onChange={(e) => setUnit(e.target.value)}
+                                placeholder={tx('cs/lb/ea', 'cs/lb/un')}
+                                className="w-full px-2 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500/30 focus:border-mint-500"
+                            />
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-500 mb-1">
+                            {tx('Vendor', 'Proveedor')}
+                        </label>
+                        {vendorOptions.length > 0 ? (
+                            <select
+                                value={vendor}
+                                onChange={(e) => setVendor(e.target.value)}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-mint-500/30 focus:border-mint-500"
+                            >
+                                <option value="">{tx('— none —', '— ninguno —')}</option>
+                                {vendorOptions.map(v => (
+                                    <option key={v} value={v}>{v}</option>
+                                ))}
+                            </select>
+                        ) : (
+                            <input
+                                type="text"
+                                value={vendor}
+                                onChange={(e) => setVendor(e.target.value)}
+                                placeholder={tx('Optional', 'Opcional')}
+                                className="w-full px-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-mint-500/30 focus:border-mint-500"
+                            />
+                        )}
+                    </div>
+                </div>
+                <div className="px-4 py-3 border-t border-gray-200 flex items-center justify-between gap-2">
+                    {current ? (
+                        <button onClick={onClear} className="text-xs font-bold text-red-600 hover:text-red-700 px-2 py-2">
+                            🗑 {tx('Clear entry', 'Borrar')}
+                        </button>
+                    ) : <div />}
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="px-3 py-2 rounded-full text-sm font-bold text-gray-600 hover:bg-gray-100">
+                            {tx('Cancel', 'Cancelar')}
+                        </button>
+                        <button onClick={handleSave} disabled={!canSave}
+                            className="px-4 py-2 rounded-full bg-mint-600 text-white font-bold text-sm shadow-sm disabled:opacity-40 hover:bg-mint-700">
+                            {tx('Save', 'Guardar')}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
 
