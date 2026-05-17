@@ -11,6 +11,11 @@ import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
 import AppToast from './components/AppToast';
+// Eager-loaded — the off-site prompt has to fire as soon as the staff
+// signs in so we don't gate it behind a tab-chunk download. The
+// component is tiny (~3KB gzipped) and unrendered (returns null) when
+// the staff has no pending/active off-site shift.
+import OffsiteClockPrompt from './components/OffsiteClockPrompt';
 // v2 design preview — gated by ?v2=1 query param.
 const AppShellV2 = lazy(() => import('./v2/AppShellV2'));
 const HomeV2 = lazy(() => import('./v2/HomeV2'));
@@ -841,6 +846,15 @@ export default function App() {
                         </ErrorBoundary>
                     </Suspense>
                 </AppShellV2>
+                {/* Off-site clock prompt — top-level overlay so it fires
+                    regardless of active tab. Renders null when there's
+                    nothing pending/active for this staff member, so the
+                    cost of mounting it everywhere is zero. */}
+                <OffsiteClockPrompt
+                    language={language}
+                    staffName={staffName}
+                    viewer={currentStaffRecord}
+                />
             </Suspense>
         );
 }

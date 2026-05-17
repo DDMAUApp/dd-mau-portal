@@ -7,6 +7,7 @@ import { getPositionTemplate, hasPositionTemplate } from '../data/positionTempla
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
 import ImportStaffModal from './ImportStaffModal';
+import OffsiteClockSection from './OffsiteClockSection';
 import { toast, undoToast } from '../toast';
 import { enableFcmPush } from '../messaging';
 
@@ -878,6 +879,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         )}
                     </div>
+
+                    {/* ── OFF-SITE CLOCK-IN ──
+                        Rare-occurrence labor tracking for staff working
+                        away from a DD Mau store (catering, supply runs,
+                        etc.). Admin schedules an assignment here; the
+                        staff app prompts the staff member to clock in /
+                        out on next login. See src/data/offsiteClock.js
+                        for the state machine + schema. */}
+                    <OffsiteClockSection
+                        language={language}
+                        staffName={staffName}
+                        staffList={staffList}
+                        viewer={(staffList || []).find(s => s.name === staffName)}
+                    />
 
                     {/* ── STAFF LIST (collapsible) ── */}
                     <div className="mb-6">
