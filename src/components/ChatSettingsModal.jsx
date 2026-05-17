@@ -56,6 +56,10 @@ export default function ChatSettingsModal({
             .sort((a, b) => a.name.localeCompare(b.name));
     }, [staffList, members, viewer, isAdmin]);
 
+    // Save name + emoji + co-admins. Member adds/removes auto-save
+    // via addMemberNow / removeMemberNow below so the user doesn't
+    // have to remember to tap Save before closing — a common
+    // failure mode Andrew flagged where changes were getting lost.
     async function handleSave() {
         if (!canEdit || isDm || busy) return;
         setBusy(true);
@@ -65,8 +69,7 @@ export default function ChatSettingsModal({
             if (emoji && emoji !== chat.emoji) patch.emoji = emoji;
             // Channels: never overwrite members from this modal.
             if (!isChannel) {
-                patch.members = Array.from(new Set([chat.createdBy, ...members].filter(Boolean)));
-                patch.admins = coAdmins.filter(n => patch.members.includes(n));
+                patch.admins = coAdmins.filter(n => members.includes(n));
             }
             if (Object.keys(patch).length > 0) {
                 await updateDoc(doc(db, 'chats', chat.id), patch);
@@ -77,6 +80,75 @@ export default function ChatSettingsModal({
             alert(tx('Save failed', 'Error al guardar'));
         } finally {
             setBusy(false);
+        }
+    }
+
+    // ── Auto-save member changes ────────────────────────────────
+    // Each Add or Remove writes to Firestore immediately so the
+    // change is durable the moment the user taps. No "save before
+    // closing" gotcha. Optimistic local update so the UI moves
+    // instantly; we rollback if the write fails.
+    const [memberBusy, setMemberBusy] = useState(false);
+    async function addMemberNow(name) {
+        if (!canEdit || isDm || memberBusy) return;
+        const prev = members;
+        const next = Array.from(new Set([...prev, name]));
+        setMembers(next);
+        setMemberBusy(true);
+        try {
+            await updateDoc(doc(db, 'chats', chat.id), {
+                members: Array.from(new Set([chat.createdBy, ...next].filter(Boolean))),
+            });
+            recordAudit({
+                action: 'chat.member.add',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'chat',
+                targetId: chat.id,
+                details: { added: name, chatType: chat.type, channelKey: chat.channelKey || null },
+            });
+        } catch (e) {
+            console.warn('add member failed:', e);
+            setMembers(prev); // rollback
+            alert(tx('Could not add — try again', 'No se pudo añadir — intenta de nuevo'));
+        } finally {
+            setMemberBusy(false);
+        }
+    }
+    async function removeMemberNow(name) {
+        if (!canEdit || isDm || memberBusy) return;
+        if (chat.createdBy === name) {
+            alert(tx('Cannot remove the creator. They can leave on their own.',
+                     'No se puede quitar al creador. Solo ellos pueden salir.'));
+            return;
+        }
+        const prev = members;
+        const next = prev.filter(n => n !== name);
+        setMembers(next);
+        const prevCo = coAdmins;
+        const nextCo = prevCo.filter(n => n !== name);
+        setCoAdmins(nextCo);
+        setMemberBusy(true);
+        try {
+            await updateDoc(doc(db, 'chats', chat.id), {
+                members: Array.from(new Set([chat.createdBy, ...next].filter(Boolean))),
+                admins: nextCo.filter(n => next.includes(n)),
+            });
+            recordAudit({
+                action: 'chat.member.remove',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'chat',
+                targetId: chat.id,
+                details: { removed: name, chatType: chat.type, channelKey: chat.channelKey || null },
+            });
+        } catch (e) {
+            console.warn('remove member failed:', e);
+            setMembers(prev);
+            setCoAdmins(prevCo);
+            alert(tx('Could not remove — try again', 'No se pudo quitar — intenta de nuevo'));
+        } finally {
+            setMemberBusy(false);
         }
     }
 
@@ -322,17 +394,19 @@ export default function ChatSettingsModal({
                         </div>
                     )}
 
-                    {/* Members section — add/remove staff. The +Add button
-                        on top opens the picker; each member row has an ✕
-                        on the right to remove. Andrew flagged this UI as
-                        not obvious in v1; bumped to a pill button + a
-                        tap-target ✕ on every row to make it unmissable. */}
+                    {/* Members section — explicit Add Staff button +
+                        labeled Remove on each row. All changes are
+                        AUTO-SAVED the moment you tap — no "save before
+                        closing" footgun.
+                        Channels: admin can override auto-membership
+                        with a warning that re-sync may revert the
+                        change unless the source data also changes. */}
                     <div>
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center justify-between mb-1">
                             <label className="block text-[11px] font-bold uppercase tracking-widest text-dd-text-2">
                                 {tx('Members', 'Miembros')} · {members.length}
                             </label>
-                            {canEdit && !isChannel && !isDm && (
+                            {!isDm && (canEdit || (isChannel && isAdmin)) && (
                                 <button
                                     onClick={() => setShowAdd(s => !s)}
                                     className={`px-3 py-1.5 rounded-full font-bold text-xs shadow-sm transition active:scale-95 ${showAdd
@@ -343,25 +417,45 @@ export default function ChatSettingsModal({
                                 </button>
                             )}
                         </div>
+                        {!isDm && (canEdit || (isChannel && isAdmin)) && (
+                            <p className="text-[10px] text-dd-text-2 mb-2 italic">
+                                {tx('Add or remove saves instantly — the chat keeps its messages.',
+                                    'Añadir o quitar se guarda al instante — el chat conserva sus mensajes.')}
+                            </p>
+                        )}
 
-                        {showAdd && canEdit && !isChannel && !isDm && (
-                            <div className="border border-dd-green/30 rounded-lg max-h-[200px] overflow-y-auto mb-2">
+                        {isChannel && showAdd && isAdmin && (
+                            <div className="mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[11px] text-amber-900">
+                                ⚠ {tx(
+                                    'Channels auto-sync from the staff list. Manual adds here may revert on next load unless the staff member also matches the channel rule (location / side).',
+                                    'Los canales se sincronizan automáticamente. Adiciones manuales pueden revertirse al recargar si el staff no coincide con la regla del canal.'
+                                )}
+                            </div>
+                        )}
+
+                        {showAdd && !isDm && (canEdit || (isChannel && isAdmin)) && (
+                            <div className="border border-dd-green/30 rounded-lg max-h-[220px] overflow-y-auto mb-2">
                                 {addable.length === 0 ? (
                                     <div className="px-3 py-4 text-center text-xs text-dd-text-2">
-                                        {tx('Everyone is already in this group.', 'Todos ya están en este grupo.')}
+                                        {tx('Everyone is already in this chat.', 'Todos ya están en este chat.')}
                                     </div>
                                 ) : addable.map(s => (
                                     <button
                                         key={s.name}
-                                        onClick={() => { setMembers(prev => [...prev, s.name]); }}
-                                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-dd-bg text-left border-b border-dd-line/40 last:border-b-0"
+                                        onClick={() => addMemberNow(s.name)}
+                                        disabled={memberBusy}
+                                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-dd-sage-50 text-left border-b border-dd-line/40 last:border-b-0 disabled:opacity-50"
                                     >
                                         <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-dd-green text-white text-[10px] font-black">
                                             {s.name.split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}
                                         </span>
-                                        <span className="text-sm font-bold text-dd-text">{s.name}</span>
-                                        {s.role && <span className="text-[11px] text-dd-text-2">{s.role}</span>}
-                                        <span className="ml-auto text-dd-green text-lg">+</span>
+                                        <span className="flex-1 min-w-0">
+                                            <span className="block text-sm font-bold text-dd-text truncate">{s.name}</span>
+                                            {s.role && <span className="block text-[10px] text-dd-text-2">{s.role} · {s.location || '—'}</span>}
+                                        </span>
+                                        <span className="px-2 py-1 rounded-full bg-dd-green text-white text-[10px] font-black shrink-0">
+                                            + {tx('Add', 'Añadir')}
+                                        </span>
                                     </button>
                                 ))}
                             </div>
@@ -394,7 +488,7 @@ export default function ChatSettingsModal({
                                                     : tx('Member', 'Miembro')}
                                             </div>
                                         </div>
-                                        {canEdit && !isChannel && !isDm && (
+                                        {!isDm && (canEdit || (isChannel && isAdmin)) && (
                                             <>
                                                 {chat.editTier === 'staff' && !isCreator && (
                                                     <button
@@ -407,10 +501,11 @@ export default function ChatSettingsModal({
                                                 )}
                                                 {!isCreator && (
                                                     <button
-                                                        onClick={() => toggleMember(n)}
-                                                        className="px-2.5 py-1.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 active:scale-95 transition flex items-center gap-1"
+                                                        onClick={() => removeMemberNow(n)}
+                                                        disabled={memberBusy}
+                                                        className="px-2.5 py-1.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 active:scale-95 transition flex items-center gap-1 disabled:opacity-50"
                                                         aria-label={tx('Remove', 'Quitar')}
-                                                        title={tx('Remove from group', 'Quitar del grupo')}
+                                                        title={tx('Remove from chat', 'Quitar del chat')}
                                                     >
                                                         <span>✕</span><span>{tx('Remove', 'Quitar')}</span>
                                                     </button>
