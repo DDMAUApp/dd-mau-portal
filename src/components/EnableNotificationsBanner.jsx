@@ -14,12 +14,35 @@
 // appears. Same component reused for the "denied" fallback message
 // (which links to Settings since you can't re-prompt once denied).
 //
-// Visible only when Notification.permission ∈ { 'default', 'denied' }.
-// Once granted, the banner returns null and the rest of the page
-// reflows seamlessly.
+// Visible when Notification.permission ∈ { 'default', 'denied' } OR
+// when permission is 'granted' but THIS DEVICE has no FCM token
+// registered on the staff record (e.g. token rotation broke the
+// device, cross-staff sweep removed it, FCM expiry). The 'granted-
+// but-broken' case shows a blue "Refresh" card. (Andrew 2026-05-17.)
+// Hidden on the happy path (granted + token present) and on browsers
+// without the Notification API.
 
 import { useState, useEffect } from 'react';
 import { enableFcmPush } from '../messaging';
+
+const DEVICE_ID_KEY = 'ddmau:fcmDeviceId';
+
+// Mirror of the helper in EnableNotificationsHeaderButton — kept inline
+// here so the banner is self-contained.
+function deviceHasToken(staffName, staffList) {
+    if (!staffName || !Array.isArray(staffList) || staffList.length === 0) {
+        // Optimistic: while staff list is still loading, assume happy
+        // path so the page doesn't briefly flash the refresh banner.
+        return true;
+    }
+    let deviceId = null;
+    try { deviceId = localStorage.getItem(DEVICE_ID_KEY); } catch {}
+    if (!deviceId) return false; // localStorage cleared / never registered
+    const me = staffList.find(s => s.name === staffName);
+    if (!me) return true;
+    const tokens = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
+    return tokens.some(t => t && t.deviceId === deviceId);
+}
 
 export default function EnableNotificationsBanner({
     staffName, staffList, setStaffList, language = 'en',
@@ -49,10 +72,13 @@ export default function EnableNotificationsBanner({
         setPermission(Notification.permission);
     }, [staffName]);
 
-    // Hide entirely on:
-    //   • already-granted devices (the happy path — no banner needed)
+    // Hide on:
     //   • browsers / WebView wrappers without the Notification API
-    if (permission === 'granted' || permission === 'unsupported') return null;
+    //   • granted-AND-token-registered (the happy path — no banner needed)
+    if (permission === 'unsupported') return null;
+    const hasToken = deviceHasToken(staffName, staffList);
+    const needsRefresh = permission === 'granted' && !hasToken;
+    if (permission === 'granted' && hasToken) return null;
 
     async function handleEnable() {
         if (busy || !staffName) return;
@@ -89,6 +115,44 @@ export default function EnableNotificationsBanner({
         } finally {
             setBusy(false);
         }
+    }
+
+    // "granted-but-no-token" branch — permission is fine but the FCM
+    // token isn't registered for this device, so pushes silently never
+    // arrive. A user-gesture re-register is the deterministic fix.
+    if (needsRefresh) {
+        return (
+            <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-3 shadow-sm">
+                <div className="flex items-start gap-3">
+                    <span className="text-2xl shrink-0">🔄</span>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-sm font-black text-blue-900">
+                            {tx('Refresh notifications', 'Actualizar notificaciones')}
+                        </div>
+                        <p className="text-[12px] text-blue-900/85 leading-snug mt-0.5">
+                            {tx(
+                                "Push isn't registered on this device. Tap to re-register so chats, shift updates, and 86 alerts come through.",
+                                'Push no está registrado en este dispositivo. Toca para volver a registrar y recibir avisos.',
+                            )}
+                        </p>
+                        {err && (
+                            <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1 mt-1.5">
+                                {err}
+                            </p>
+                        )}
+                    </div>
+                    <button
+                        onClick={handleEnable}
+                        disabled={busy}
+                        className="shrink-0 px-3 py-2 rounded-full bg-blue-600 text-white font-black text-xs shadow-sm hover:bg-blue-700 active:scale-95 transition disabled:opacity-50"
+                    >
+                        {busy
+                            ? tx('Refreshing…', 'Actualizando…')
+                            : tx('Refresh', 'Actualizar')}
+                    </button>
+                </div>
+            </div>
+        );
     }
 
     // "denied" branch — we can't re-prompt; only iOS Settings can flip it.

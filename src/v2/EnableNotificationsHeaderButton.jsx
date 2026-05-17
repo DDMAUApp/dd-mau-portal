@@ -7,8 +7,16 @@
 // would never see it. The header bell is visible on EVERY page, so a
 // permission indicator there is impossible to miss.
 //
-// Behavior:
-//   • Notification.permission === 'granted'  → renders null (no UI)
+// Behavior (four states):
+//   • Notification.permission === 'granted' AND device token registered
+//                                                → renders null (happy path)
+//   • Notification.permission === 'granted' BUT no token for this device
+//                                                → BLUE "🔄" refresh pill —
+//     tap fires enableFcmPush to register fresh. (Andrew 2026-05-17:
+//     when push delivery silently breaks — token rotation, cross-staff
+//     sweep, FCM expiry — staff had no visible way to fix it without
+//     digging into Admin → Push diagnostic. The header pill now
+//     surfaces it.)
 //   • Notification.permission === 'default'  → small green "🔔!" pill
 //     that pulses gently. Tap fires Notification.requestPermission()
 //     directly (the click counts as a user gesture for iOS Safari)
@@ -22,6 +30,29 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { enableFcmPush } from '../messaging';
+import { toast } from '../toast';
+
+const DEVICE_ID_KEY = 'ddmau:fcmDeviceId';
+
+// Resolve whether THIS device has an FCM token already registered on
+// the current staff member's record. Returns true if the staff record
+// has any fcmTokens entry whose deviceId matches the localStorage
+// device identifier. False otherwise (including when localStorage
+// is empty — fresh devices haven't run enableFcmPush yet).
+function deviceHasToken(staffName, staffList) {
+    if (!staffName || !Array.isArray(staffList) || staffList.length === 0) {
+        // Optimistic: while staff list is still loading, assume happy
+        // path so we don't briefly flash the refresh pill at sign-in.
+        return true;
+    }
+    let deviceId = null;
+    try { deviceId = localStorage.getItem(DEVICE_ID_KEY); } catch {}
+    if (!deviceId) return false; // localStorage cleared / never registered
+    const me = staffList.find(s => s.name === staffName);
+    if (!me) return true; // not in list → don't surface the pill
+    const tokens = Array.isArray(me.fcmTokens) ? me.fcmTokens : [];
+    return tokens.some(t => t && t.deviceId === deviceId);
+}
 
 export default function EnableNotificationsHeaderButton({
     staffName, staffList = [], setStaffList, language = 'en',
@@ -63,8 +94,44 @@ export default function EnableNotificationsHeaderButton({
         };
     }, [popoverOpen]);
 
-    // Hide entirely on the happy path + on browsers without the API.
-    if (permission === 'granted' || permission === 'unsupported') return null;
+    // Resolve the four-state status. `needsRefresh` is the new state
+    // for the "permission granted, but FCM token is missing" gap.
+    if (permission === 'unsupported') return null;
+    const hasToken = deviceHasToken(staffName, staffList);
+    const needsRefresh = permission === 'granted' && !hasToken;
+    // Happy path — granted AND token registered. No UI.
+    if (permission === 'granted' && hasToken) return null;
+
+    async function doRegister(successKey) {
+        if (busy || !staffName) return;
+        setBusy(true);
+        try {
+            const result = await enableFcmPush(staffName, staffList, setStaffList);
+            setPermission(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
+            if (result?.ok) {
+                toast(
+                    successKey === 'refresh'
+                        ? tx('🔔 Notifications refreshed.', '🔔 Notificaciones actualizadas.')
+                        : tx('🔔 Notifications enabled.', '🔔 Notificaciones activadas.'),
+                    { kind: 'success', duration: 4000 }
+                );
+            } else if (result?.reason === 'permission-denied') {
+                toast(tx('Permission denied. Open iPhone Settings → Notifications → DD Mau.',
+                          'Permiso denegado. Abre Ajustes → Notificaciones → DD Mau.'),
+                    { kind: 'warn', duration: 6000 });
+            } else if (result?.reason) {
+                toast(tx('Could not register: ', 'No se pudo registrar: ') + result.reason,
+                    { kind: 'error', duration: 6000 });
+            }
+        } catch (e) {
+            console.warn('header enable-notifications failed:', e);
+            setPermission(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
+            toast(tx('Something went wrong. Try again.', 'Algo salió mal. Intenta de nuevo.'),
+                { kind: 'error' });
+        } finally {
+            setBusy(false);
+        }
+    }
 
     async function handleClick() {
         if (permission === 'denied') {
@@ -72,23 +139,26 @@ export default function EnableNotificationsHeaderButton({
             setPopoverOpen(o => !o);
             return;
         }
-        // 'default' — fire the OS prompt + token registration.
-        if (busy || !staffName) return;
-        setBusy(true);
-        try {
-            await enableFcmPush(staffName, staffList, setStaffList);
-            setPermission(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
-        } catch (e) {
-            console.warn('header enable-notifications failed:', e);
-            setPermission(typeof Notification !== 'undefined' ? Notification.permission : 'unsupported');
-        } finally {
-            setBusy(false);
+        if (needsRefresh) {
+            // Granted but no token — fire enableFcmPush to refresh.
+            await doRegister('refresh');
+            return;
         }
+        // 'default' — fire the OS prompt + token registration.
+        await doRegister('enable');
     }
 
     const isDenied = permission === 'denied';
-    const labelEn = isDenied ? 'Notifications off' : 'Enable notifications';
-    const labelEs = isDenied ? 'Notificaciones apagadas' : 'Activar notificaciones';
+    const labelEn = isDenied
+        ? 'Notifications off'
+        : needsRefresh
+            ? 'Refresh notifications'
+            : 'Enable notifications';
+    const labelEs = isDenied
+        ? 'Notificaciones apagadas'
+        : needsRefresh
+            ? 'Actualizar notificaciones'
+            : 'Activar notificaciones';
 
     return (
         <div className="relative">
@@ -100,11 +170,24 @@ export default function EnableNotificationsHeaderButton({
                 className={`min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center transition active:scale-95 disabled:opacity-60 ${
                     isDenied
                         ? 'bg-amber-50 text-amber-700 hover:bg-amber-100 border border-amber-200'
-                        : 'bg-dd-green/10 text-dd-green-700 hover:bg-dd-green/20 border border-dd-green/30 animate-pulse'
+                        : needsRefresh
+                            // Blue refresh state — distinct from the green
+                            // "Enable" state so a user who's been seeing
+                            // green for a while notices when the icon
+                            // changes shape/color (= "your token broke,
+                            // tap to fix"). Same animate-pulse so it still
+                            // catches the eye.
+                            ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 animate-pulse'
+                            : 'bg-dd-green/10 text-dd-green-700 hover:bg-dd-green/20 border border-dd-green/30 animate-pulse'
                 }`}
             >
                 {isDenied ? (
                     <span className="text-base">🔕</span>
+                ) : needsRefresh ? (
+                    <span className="relative inline-flex items-center justify-center">
+                        <span className="text-base">🔔</span>
+                        <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] px-1 rounded-full bg-blue-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white">↻</span>
+                    </span>
                 ) : (
                     <span className="relative inline-flex items-center justify-center">
                         <span className="text-base">🔔</span>
