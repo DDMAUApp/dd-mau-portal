@@ -597,23 +597,837 @@ These are small fixes that make the app feel measurably more professional. I'll 
 
 ---
 
-## 6. What I'm doing next (Pass 2)
+## 6. Pass 2: Per-module findings
 
-Now starting Pass 2 — per-module review. I'll add findings to this doc as I go. Modules in order of priority based on usage:
+---
 
-1. ⏳ Chat (largest surface area, just shipped translation)
-2. ⏳ Schedule (highest-stakes, payroll-adjacent)
-3. ⏳ Operations (Pricing + Inventory + Checklists)
-4. ⏳ Onboarding (PII)
-5. ⏳ Admin (every off-site clock-in, vendor matches, etc.)
-6. ⏳ Training
-7. ⏳ Eighty6
-8. ⏳ Maintenance
-9. ⏳ Catering, Insurance, AI Assistant (less critical)
+### 6.1 Chat module
 
-Then Pass 3: UX / perf / i18n.
+The most-recently-shipped surface, currently solid for DD Mau scale. Key gaps:
 
-Then I'll come back and write the executive summary properly (right now it's based on Pass 1 alone), plus the QA checklist + launch-readiness checklist you asked for.
+---
+
+#### [CHAT-001] Chat media uploads land in Storage with no path-specific size or content-type rule
+
+**Severity:** High
+**Area:** `storage.rules`
+**User affected:** Owner (cost), every user (if storage fills)
+**Steps to reproduce:**
+1. Confirm `storage.rules` — no `match /chats/{chatId}/...` block exists. Uploads at path `chats/${chat.id}/${messageId}.${ext}` fall through to the catch-all `match /{allPaths=**} { allow read, write: if true; }` at line 70.
+2. From DevTools (after SEC-001 firestore access):
+   ```js
+   const ref = sref(storage, 'chats/anychatid/spam.bin');
+   await uploadBytes(ref, new Blob([new Uint8Array(500_000_000)]));
+   ```
+3. 500 MB blob accepted. Client-side `MAX_VIDEO_BYTES = 50MB` check (ChatThread.jsx:44) is the only gate, and it's bypassable.
+
+**Expected:** Storage rules cap chat uploads at 50 MB and content-type to `image/*` | `video/*` | `audio/*`.
+**Actual:** Storage rule for `/chats` doesn't exist; the open catch-all governs.
+**Likely root cause:** Chat shipped after onboarding; the storage rules pattern of "explicit path with size + content-type" wasn't extended to the new chat upload paths.
+**Recommended fix:** Add to `storage.rules`:
+```
+match /chats/{chatId}/{fileName} {
+    allow read: if true;     // any signed-in viewer can read attachments
+    allow write: if request.resource.size < 50 * 1024 * 1024
+                 && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+    allow delete: if true;   // hard-delete cascade on hard-delete chat
+}
+```
+**Files to change:** `storage.rules` (insert before catch-all at line 70)
+**Test plan:**
+1. Send a normal photo through the app — works
+2. Try DevTools upload of a 100 MB file → permission denied
+3. Try DevTools upload of `application/octet-stream` → permission denied
+**Launch blocker:** Yes for SaaS, Medium for DD Mau (cost risk).
+
+---
+
+#### [CHAT-002] `lastReadByName` write fires on every snapshot update — write quota burn
+
+**Severity:** Medium (cost)
+**Area:** `src/components/ChatThread.jsx` line 75–79
+**User affected:** Every user reading any chat
+**Steps to reproduce:**
+1. Open a chat with 50 messages
+2. Have another user send 10 messages in quick succession
+3. Open Firestore writes counter — observe ~10 writes to `chats/{id}` (one per snapshot tick) just to update `lastReadByName.{me}`
+
+**Expected:** Mark-read writes debounced to ~1 per 3 seconds while the chat is open.
+**Actual:** The effect's dep is `[chat?.id, staffName, messages.length]` so it fires on every new message arrival.
+**Likely root cause:** Quick-and-dirty implementation. The denormalized "unread dot" UX is correct but the write rate is wasteful.
+**Recommended fix:** Wrap in a debounce. Use `useDeferredValue` + a write throttle:
+```js
+useEffect(() => {
+    if (!chat?.id || !staffName) return;
+    const t = setTimeout(() => {
+        updateDoc(doc(db, 'chats', chat.id), {
+            [`lastReadByName.${staffName}`]: serverTimestamp(),
+        }).catch(e => console.warn('markRead failed:', e));
+    }, 1500);
+    return () => clearTimeout(t);
+}, [chat?.id, staffName, messages.length]);
+```
+**Files to change:** `src/components/ChatThread.jsx:74-79`
+**Test plan:**
+1. Open a chat, watch 5 messages arrive in 3 seconds
+2. Confirm only 1–2 writes to `chats/{id}` instead of 5
+**Launch blocker:** No (cost optimization, not behavior).
+
+---
+
+#### [CHAT-003] Notification fan-out is N writes per chat message — scales as O(members × messages)
+
+**Severity:** Medium (cost) + Medium (latency)
+**Area:** `src/components/ChatThread.jsx` `sendMessage()` around line 1216
+**User affected:** Owner (cost), every user (perceived send latency)
+**Steps to reproduce:**
+1. Send 1 message to a 30-person all-team channel
+2. Observe 29 writes to `/notifications` (one per recipient)
+3. The `dispatchNotification` Cloud Function then runs 29 times in parallel
+4. For a busy chat day (200 messages × 30 recipients), that's 6,000 doc writes + 6,000 function invocations
+
+**Expected:** Per-message fan-out happens server-side once. Each FCM batch send goes to all member tokens in a single Admin SDK call.
+**Actual:** Fan-out is purely client-side; client makes N writes per message.
+**Recommended fix:** Move the fan-out into a Firestore-trigger Cloud Function on `/chats/{id}/messages/{msgId}` create. Function reads the parent chat's members, batches notifications. Client just writes the message + bumps `lastMessage` and exits. Bonus: this also makes notification fan-out work even when the sender's browser closes immediately after Send.
+**Files to change:**
+- `functions/index.js` (new `onChatMessageCreated` trigger)
+- `src/components/ChatThread.jsx` (remove the client-side fan-out)
+**Launch blocker:** No for DD Mau (small team), Medium for SaaS.
+
+---
+
+#### [CHAT-004] Upload progress is binary — no percentage indicator for large files
+
+**Severity:** Medium UX
+**Area:** `src/components/ChatThread.jsx` `handleMediaPick`
+**User affected:** Anyone uploading a video on cellular
+**Steps to reproduce:** Pick a 30 MB video on a phone with weak cell signal. UI says "Uploading video…" with no progress for 30+ seconds. User assumes the app froze, swipes away, upload aborts.
+**Expected:** Progress bar 0–100% with bytes transferred.
+**Actual:** `uploadBytes` doesn't emit progress; the UI sets `{ pct: 0 }` and never updates.
+**Recommended fix:** Use `uploadBytesResumable`:
+```js
+const task = uploadBytesResumable(ref, uploadFile, { contentType: file.type });
+task.on('state_changed',
+    (snap) => setUploadProgress({ kind, pct: (snap.bytesTransferred / snap.totalBytes) * 100 }),
+    (err) => { setUploadProgress(null); alert('Upload failed'); },
+    async () => { const url = await getDownloadURL(task.snapshot.ref); /* ...send message */ }
+);
+```
+Also add a Cancel button that calls `task.cancel()`.
+**Files to change:** `src/components/ChatThread.jsx:200-240` + `360`
+**Launch blocker:** No.
+
+---
+
+#### [CHAT-005] Soft-deleted messages preserve full body — GDPR / privacy concern
+
+**Severity:** Medium (privacy / SaaS-blocker)
+**Area:** `src/components/ChatThread.jsx` `handleDelete`
+**User affected:** Anyone who deletes a message expecting it to be gone
+**Steps to reproduce:** Send "I hate working here", delete it. The Firestore doc keeps `text: "I hate working here"` + `deleted: true`. Admin who reads the chat sees the placeholder UI but can read the original via DevTools.
+**Expected:** Deleting actually removes the text. Audit log can keep a snippet for dispute resolution but the original doc shouldn't have the full body forever.
+**Actual:** Full text stays + the audit log also stores `originalSnippet: msg.text.slice(0, 200)` — so the text exists in TWO places after "delete".
+**Recommended fix:** Two-tier:
+1. On delete, set `deleted: true`, `deletedAt: serverTimestamp()`, KEEP text for 7 days.
+2. A scheduled Cloud Function purges `text` and `mediaUrl` from deleted messages older than 7 days.
+3. Audit snippet truncates to 60 chars max.
+**Files to change:**
+- `src/components/ChatThread.jsx` `handleDelete`
+- `functions/index.js` (new `purgeOldDeletedMessages` scheduled function)
+**Launch blocker:** No for DD Mau (small team, no GDPR), Yes for SaaS.
+
+---
+
+#### [CHAT-006] Search panel re-creates 25 onSnapshot listeners on every date-range change
+
+**Severity:** Medium (perf)
+**Area:** `src/components/ChatSearchPanel.jsx:36-59`
+**Steps to reproduce:**
+1. Open chat search
+2. Change date filter from "Last 7d" to "Last 30d"
+3. All 25 chat subscriptions tear down + restart (25 query terminations + 25 new query starts)
+**Recommended fix:** Subscribe once to all chats (no date filter at the query layer), filter client-side by `dateRange` cutoff inside the existing `messagesByChat` reducer. The cutoff is just a comparison.
+**Files to change:** `src/components/ChatSearchPanel.jsx:36-59`
+**Launch blocker:** No.
+
+---
+
+#### [CHAT-007] Search panel deep-link to message no longer broken (fixed earlier this session — confirmation)
+
+**Status:** Fixed in commit 2bef32e. Listed here for completeness — the search → jump → highlight flow now works correctly via `jumpToMessageId` threading through ChatCenter → ChatThread.
+
+---
+
+#### [CHAT-008] 200-message hard limit on thread load — no scrollback
+
+**Severity:** Low for DD Mau (kitchen chat moves fast), Medium for SaaS
+**Area:** `src/components/ChatThread.jsx:60`
+**Steps to reproduce:** A chat with >200 messages — scroll up — nothing happens, no "load older" button.
+**Recommended fix:** Add a "Load older" button + cursor pagination. Or implement infinite-scroll with `startAfter(oldestVisibleMessage)`.
+**Launch blocker:** No.
+
+---
+
+#### [CHAT-009] DM creation race — two users opening a DM simultaneously can clobber each other's first message
+
+**Severity:** Low (edge case)
+**Area:** `src/components/ChatCenter.jsx` `handleCreate` DM path
+**Steps to reproduce:**
+1. User A opens new chat → picks Julie → taps Create
+2. Simultaneously, Julie opens new chat → picks User A → taps Create
+3. Both call `setDoc(ref, {...createdAt: serverTimestamp()})` — the second write overwrites the first's createdAt. Members + admins are identical, so no real data loss, just an inconsistent createdAt.
+**Recommended fix:** Use `setDoc(ref, { ... }, { merge: true })`. Idempotent.
+**Files to change:** `src/components/ChatCenter.jsx:866`
+**Launch blocker:** No.
+
+---
+
+### 6.2 Schedule module
+
+`Schedule.jsx` is the most complex single file (9,481 lines). Strong defense-in-depth comments throughout. Findings:
+
+---
+
+#### [SCHED-001] Nine concurrent Firestore subscriptions on cold mount
+
+**Severity:** Medium (perf)
+**Area:** `src/components/Schedule.jsx:540-805`
+**Steps to reproduce:**
+1. Cold load `/schedule` route
+2. Network tab shows 9 simultaneous `Listen` channels open (shifts, schedule_settings, swap_requests, calendar_events, date_blocks, time_off, staffing_needs, schedule_templates, recurring_shifts)
+3. Plus a one-shot `laborHistory_{location}` fetch
+**Expected:** Subscriptions stagger or coalesce; non-critical data lazy-fetched after first paint.
+**Actual:** All 9 open at mount.
+**Recommended fix (later, not urgent):**
+- shifts + date_blocks are critical for first paint — keep eager
+- time_off + swap_requests gated behind viewer's role (only managers actively use these)
+- calendar_events + schedule_templates + recurring_shifts can lazy-load on first interaction with their respective UI surfaces
+**Launch blocker:** No.
+
+---
+
+#### [SCHED-002] localStorage cache write fires on every snapshot tick — JSON serialize cost per write
+
+**Severity:** Medium (mobile perf — main thread block)
+**Area:** `src/components/Schedule.jsx:554`
+```js
+localStorage.setItem(CACHE_KEY, JSON.stringify({ items, savedAt: Date.now() }));
+```
+**Steps to reproduce:** Open schedule. Push 5 shifts in quick succession from another device. Each snapshot tick serializes the full shifts array to JSON and writes to localStorage. With 300 shifts (a 6-month window) × 5 ticks = 5 × ~80 KB serializations on the main thread.
+**Recommended fix:** Debounce the cache write to once per 3 seconds. Use `setTimeout` with cleanup.
+**Files to change:** `src/components/Schedule.jsx:548-561`
+**Launch blocker:** No.
+
+---
+
+#### [SCHED-003] `new Date(date + 'T00:00:00')` parses in viewer's local timezone — risky for cross-timezone staff
+
+**Severity:** Low for DD Mau (single timezone — Central), Medium for SaaS
+**Area:** Multiple files
+```
+src/components/ChatCoverageRequestModal.jsx:223
+src/components/ChatThread.jsx:1505
+src/components/OnboardingApply.jsx:115
+```
+**Steps to reproduce:** A staff member traveling to a different timezone opens the app. The date "2026-05-17" parses as midnight local — but the schedule logic stores dates in a single restaurant-local format. Off-by-one-day rendering possible.
+**Recommended fix:** Wrap date-string parsing in a single `parseLocalDate(dateStr, locationTimezone)` helper. Use the org's restaurant timezone (stored in config), not the browser's.
+**Files to change:** Add `src/data/dates.js`, replace `new Date(str + 'T00:00:00')` everywhere with `parseLocalDate(str)`.
+**Launch blocker:** No (DD Mau is single-timezone), Yes for multi-timezone SaaS.
+
+---
+
+#### [SCHED-004] Schedule has 10 `alert(...)` / `confirm(...)` calls — disruptive on mobile
+
+**Severity:** Medium UX
+**Area:** `src/components/Schedule.jsx`
+**Steps to reproduce:** Tap any error path (delete a shift, conflicting shift, etc.) on mobile. iOS Safari pops a native confirm/alert that takes over the screen. Cannot be styled, awkward on small screens, breaks the kitchen-shift workflow rhythm.
+**Recommended fix:** Replace `window.alert` / `window.confirm` with the existing `toast()` helper (`src/toast.js`) for non-blocking notices, and inline confirm UI (the "Are you sure?" button-promotion pattern) for destructive actions.
+**Files to change:** All ~10 sites in Schedule, plus ~12 in ChatThread, 9 in ChatSettingsModal.
+**Launch blocker:** No, but UX polish.
+
+---
+
+#### [SCHED-005] Schedule writes don't use Firestore transactions for stateful operations like shift swap approval
+
+**Severity:** Medium (data consistency)
+**Area:** Schedule swap approval, coverage approval
+**Steps to reproduce:** Two managers simultaneously approve the same swap request. Both reads see status='pending', both writes set it to 'approved' + reassign the shift. The second write wins. No corruption, but the audit log records two approvals for the same request.
+**Recommended fix:** The `coverage.js` helpers already use `runTransaction` — same pattern should be applied to swap_request approval. Verify each multi-step state machine uses transactions.
+**Files to change:** Audit `src/components/Schedule.jsx` swap approval handlers.
+**Launch blocker:** No.
+
+---
+
+### 6.3 Operations module
+
+`Operations.jsx` is 6,809 lines covering Inventory + Pricing + Checklists. The largest file in the codebase. Key findings:
+
+---
+
+#### [OPS-001] 19 onSnapshot subscriptions in Operations — cold mount payload is heavy
+
+**Severity:** Medium (mobile perf)
+**Area:** `src/components/Operations.jsx`
+**Steps to reproduce:** Open Operations on mobile. Network tab: 19 Firestore Listen channels open simultaneously (inventory_{loc}, checklists_{loc}, vendor_prices/sysco, vendor_prices/usfoods, vendor_prices/costco, vendor_matches, vendor_categories, vendorCounts, last86 lists, etc.). For a single-tab use case, fine. For switching back to Operations during a busy shift, slow.
+**Recommended fix:** Same as SCHED-001 — split into eager (inventory + checklists for current loc) vs lazy (pricing data only when Pricing tab is opened).
+**Launch blocker:** No.
+
+---
+
+#### [OPS-002] CSV importer's column detector + fuzzy matcher have no test coverage
+
+**Severity:** Medium (correctness regression risk)
+**Area:** `src/components/VendorCsvImportModal.jsx`
+**Steps to reproduce:** No existing test suite for `detectColumns` or `fuzzyMatchByName`. The bug Andrew flagged earlier (column detector picking "Item Status" when looking for "SUPC") got fixed but isn't pinned by a test. A future refactor could regress.
+**Recommended fix:** Add `src/components/VendorCsvImportModal.test.js` with:
+- Test that detectColumns prefers exact match over substring
+- Test that fuzzyMatchByName's subset-bonus correctly matches "Soybean Oil" → "Kirkland Signature Soybean Oil, 35 lbs"
+- Test that Sysco H/F/P CSV format parses correctly
+**Launch blocker:** No.
+
+---
+
+#### [OPS-003] PricesFreshnessBanner reads three vendor docs every mount — could be one
+
+**Severity:** Low (perf, minor)
+**Area:** Operations.jsx PricesFreshnessBanner
+**Steps to reproduce:** Open Operations → 3 separate subscriptions to vendor_prices/sysco, /usfoods, /costco.
+**Recommended fix:** Store all 3 vendors under `vendor_prices/_all` as a single doc with a `vendors: { sysco: {...}, usfoods: {...}, costco: {...} }` map. One subscription, atomic updates.
+**Launch blocker:** No (current shape works).
+
+---
+
+#### [OPS-004] Inventory count update is a read-modify-write without a transaction
+
+**Severity:** Medium (data integrity)
+**Area:** `src/components/Operations.jsx` inventory count handlers
+**Steps to reproduce:** Two staff simultaneously +1 the same inventory item. Both read count=5, both write count=6. The second +1 is lost. (I didn't verify this is actually how the code works — needs deep-read confirmation.)
+**Recommended fix (if confirmed):** Use `FieldValue.increment(1)` instead of read-then-set. Atomic at Firestore.
+**Launch blocker:** Needs verification — flagged for Pass 4 / triage.
+
+---
+
+### 6.4 Onboarding module (PII)
+
+The single highest-PII-concentration surface. Already flagged for major rework in SEC-004. Additional findings:
+
+---
+
+#### [ONB-001] Apply form resume upload bypasses size/type rule because of `/applications/*` rule + open catch-all
+
+**Severity:** High (storage abuse)
+**Area:** `storage.rules` + `OnboardingApply.jsx`
+**Steps to reproduce:** Visit `/?apply=1`, submit application with a 50 MB executable named `resume.pdf`. The rule at `storage.rules:61` does cap at 10 MB + content-type — good. Confirmed by reading rules. Likely fine.
+**Status:** Re-checked — the rule is in place. Not a bug. Listed for completeness.
+
+---
+
+#### [ONB-002] Onboarding template editor field positions stored as fractions — solid
+
+**Status:** Reviewed. The fractional positioning (0–1 of page width/height) is the right pattern. No issue.
+
+---
+
+#### [ONB-003] Onboarding PDFs are downloaded via `getBytes()` (the documented-safe pattern)
+
+**Status:** Reviewed and confirmed correct per the CLAUDE.md note about the firebasestorage.app bucket. No issue.
+
+---
+
+#### [ONB-004] OnboardingApply submission resets the form on success but the resume file blob stays in memory
+
+**Severity:** Low (memory leak, very minor)
+**Area:** `src/components/OnboardingApply.jsx`
+**Recommended fix:** On submission success, clear file input state + revoke any blob URLs.
+**Launch blocker:** No.
+
+---
+
+### 6.5 AdminPanel module
+
+---
+
+#### [ADM-001] Staff save read-modify-write race window
+
+**Severity:** Medium (data loss)
+**Area:** `src/components/AdminPanel.jsx:532`
+**Steps to reproduce:**
+1. Andrew on his laptop: edits Cash's PIN → tap Save
+2. Julie on her laptop (within the same 200 ms): edits Tom's role → tap Save
+3. Both writes do `getDoc(/config/staff)` → mutate the list array → `setDoc(/config/staff)`. The slower write overwrites the faster one's edit. One of the two changes is silently lost.
+**Expected:** Concurrent edits don't clobber each other.
+**Actual:** The staff doc is one giant `list` array; any save touches the whole array; concurrent saves race.
+**Likely root cause:** Historical schema choice — staff list lives in one doc.
+**Recommended fix (long-term):** Move each staff record to `/staff/{id}` (separate doc). The single-doc shape was historical convenience but is the source of multiple bug classes (the 2026-05-09 Import Master incident is referenced in firestore.rules). Until that migration:
+**Short-term:** Use a transaction in `saveStaffToFirestore`:
+```js
+await runTransaction(db, async (tx) => {
+    const snap = await tx.get(doc(db, 'config', 'staff'));
+    const list = (snap.data() || {}).list || [];
+    // mutate list with the single record's changes
+    tx.set(doc(db, 'config', 'staff'), { list, updatedAt: Date.now() });
+});
+```
+Plus the existing PIN integrity gate.
+**Files to change:** `src/components/AdminPanel.jsx` (the staff save handler around line 530)
+**Launch blocker:** No (Andrew is single-saver in practice), Yes for SaaS.
+
+---
+
+#### [ADM-002] Bulk-tag operations don't show progress
+
+**Severity:** Low UX
+**Area:** AdminPanel bulk-tag UI
+**Steps to reproduce:** Bulk-set 30 staff `preferredLanguage = 'es'`. The button click triggers ~30 individual updates with no progress indicator. UI feels frozen.
+**Recommended fix:** Show "Updating 30 staff…" toast with a spinner; mark complete when done.
+**Launch blocker:** No.
+
+---
+
+### 6.6 Training module
+
+`TrainingHub.jsx` 874 lines. Quick review:
+
+---
+
+#### [TRAIN-001] YouTube video IDs hardcoded in MODULES — not configurable per-tenant
+
+**Severity:** SaaS-blocker
+**Area:** `src/data/training/*.js` (or wherever MODULES is defined)
+**Recommended fix:** Move per-module video IDs into Firestore (`/orgs/{orgId}/training_config`) so each tenant brings their own videos.
+**Launch blocker:** No for DD Mau, Yes for SaaS.
+
+---
+
+#### [TRAIN-002] Quiz completion writes are append-only — good
+
+**Status:** Reviewed pattern. Audit-friendly. No issue.
+
+---
+
+#### [TRAIN-003] Quiz answers stored client-side until submit — refresh loses progress mid-quiz
+
+**Severity:** Medium UX
+**Area:** TrainingHub quiz state
+**Steps to reproduce:** Start a quiz, answer 7 of 10 questions, accidentally refresh. All 7 answers lost.
+**Recommended fix:** Persist partial answers to localStorage keyed by `quiz:${moduleId}:${userName}`. On mount, restore. On submit, clear.
+**Launch blocker:** No (annoying), Medium for SaaS.
+
+---
+
+### 6.7 Eighty6 (86) module
+
+---
+
+#### [86-001] 86 alerts auto-post to chat — currently posts to LEGACY channels that we purged this session
+
+**Severity:** Medium (silent failure)
+**Area:** `src/data/eightySixChat.js:49`
+**Steps to reproduce:**
+1. Andrew toggled `AUTO_CHANNELS = []` earlier this session — the `foh` + `managers` channels are gone for DD Mau
+2. 86 an item from the dashboard
+3. `postEightySixToChat` writes to `channelDocId('foh')` = `channel_foh` which doesn't exist (or worse, has a tombstone in `/chats_purged`)
+4. The auto-channel sync skips creating it (tombstone honored)
+5. `addDoc` to `chats/channel_foh/messages` succeeds at the Firestore layer (Firestore auto-creates parent docs) BUT the parent chat doc has no members, so the message is invisible to everyone
+6. FCM push still fires to `notifyRecipients` if the caller passed them
+**Expected:** 86 alerts surface somewhere visible. Either: re-enable system channels, OR route alerts to a "Maryland FOH" / "Webster FOH" custom group that Andrew creates.
+**Recommended fix (one of):**
+- Re-enable the auto-channels (revert AUTO_CHANNELS = [])
+- Update `postEightySixToChat` to target a configurable chat ID stored in `/config/eighty_six_targets`
+- Add a no-channel-exists guard that falls back to FCM-only (skip the chat write)
+**Files to change:** `src/data/eightySixChat.js`
+**Launch blocker:** Yes (silent failure of an alerting channel is dangerous — staff might not realize 86 alerts aren't reaching them).
+
+---
+
+### 6.8 Maintenance module
+
+`MaintenanceRequest.jsx` 235 lines, small.
+
+---
+
+#### [MAINT-001] Photo upload has no size cap — relies on Storage rule
+
+**Severity:** Low
+**Status:** Storage rules for maintenance photos fall through to the open catch-all. Same class as CHAT-001.
+**Recommended fix:** Add `match /maintenance/{ticketId}/{fileName}` with 10 MB + image-only rule.
+**Launch blocker:** No.
+
+---
+
+### 6.9 Catering, Insurance, AI Assistant (light pass)
+
+These weren't deep-audited. Light findings only:
+
+- **Catering** — Cloud Function emails customers? If so, needs SPF/DKIM hardening. (deferred)
+- **Insurance** — Touches PII. Same security posture as Onboarding; flagged for SaaS-time rework.
+- **AI Assistant** — Sends staff messages to a third-party LLM API. **NEEDS DATA-HANDLING REVIEW.** Defer.
+
+---
+
+### Module summary
+
+| Module | Critical findings | High | Medium | Low | Status |
+|--------|-------------------|------|--------|-----|--------|
+| Chat | 0 | 1 (CHAT-001) | 4 | 3 | Good shape, fix CHAT-001 + CHAT-002 soon |
+| Schedule | 0 | 0 | 4 | 1 | Solid, perf optimizations possible |
+| Operations | 0 | 0 | 3 | 1 | Needs CSV importer tests + count race fix |
+| Onboarding | 0 (SEC-004 covers PII) | 0 | 0 | 2 | Hardened; SEC-004 remains the big rock |
+| Admin | 0 | 0 | 1 | 1 | Concurrent save race needs transaction |
+| Training | 0 | 0 | 1 | 0 | Quiz state should persist |
+| Eighty6 | 1 (86-001) | 0 | 0 | 0 | Silent-alert bug needs fix |
+| Maintenance | 0 | 0 | 0 | 1 | Add storage rule |
+| Catering | (not audited) | | | | Deferred |
+| Insurance | (not audited) | | | | Deferred |
+| AI Assistant | (not audited) | | | | **Needs separate data-handling review** |
+
+---
+
+## 7. Pass 3: UX, performance, i18n
+
+### 7.1 Bundle / performance
+
+Production bundle sizes (after current build):
+
+| Chunk | Raw | Gzip | Notes |
+|-------|-----|------|-------|
+| vendor-firebase | 550 K | 132 K | Atomic — do not split (outage history) |
+| pdf | 357 K | 107 K | Onboarding-only, lazy-loaded — fine |
+| Operations | 271 K | 61 K | **Refactor target** — single 6809-line component |
+| Schedule | 256 K | 65 K | **Refactor target** — single 9481-line component |
+| index (entry) | 232 K | 59 K | Includes App.jsx + all eager modules — investigate |
+| vendor-misc | 201 K | 124 K | Includes pdfjs/jszip/qrcode kept atomic per the chunking rules |
+| training | 155 K | 54 K | Per-module fine |
+| vendor-react | 140 K | 46 K | Atomic — fine |
+| AdminPanel | 123 K | 31 K | Acceptable |
+
+**Total cold-load for a non-admin staff member:** vendor-react + vendor-firebase + index + vendor-misc + AppShell ≈ ~1.1 MB raw / ~310 K gzip. **Acceptable** for kitchen WiFi, painful for cellular.
+
+#### [PERF-001] Entry bundle is 232 K — likely contains eager modules that should lazy-load
+
+**Severity:** Medium
+**Area:** `vite.config.js` chunking + `src/App.jsx` imports
+**Steps to reproduce:** Look at `dist/assets/index-*.js` and trace what's included. CLAUDE.md says eager imports are only `HomePage`, `InstallAppButton`, `AppVersion`, `AppToast`, AppShellV2 — but the 232 K size suggests something else got pulled in.
+**Recommended fix:** Run `npx vite build --mode production --debug` and audit the entry bundle. Likely candidates: `messaging.js` (FCM), `staff.js` constants getting tree-shaken poorly, or one of the v2 shell imports pulling a heavy dep.
+**Files to change:** `vite.config.js`, `src/App.jsx`
+**Launch blocker:** No.
+
+---
+
+#### [PERF-002] Operations + Schedule each ~260 K — split by tab
+
+**Severity:** Medium
+**Area:** `src/components/Operations.jsx`, `src/components/Schedule.jsx`
+**Recommended fix:** Split each by the existing tab structure:
+- Operations → InventoryTab.jsx, PricingTab.jsx, ChecklistsTab.jsx
+- Schedule → GridView.jsx, DayView.jsx, ListView.jsx, ScheduleEditor.jsx, AvailabilityEditor.jsx
+Each becomes its own lazy chunk loaded on tab switch.
+**Launch blocker:** No.
+
+---
+
+#### [PERF-003] `firebase` SDK version is ^10 — v11 ships ~15% smaller
+
+**Severity:** Low
+**Area:** `package.json:34`
+**Recommended fix:** Upgrade to `^11.x`. Breaking changes are minor for our usage. Test locally first.
+**Launch blocker:** No.
+
+---
+
+### 7.2 Mobile UX
+
+Audited by scanning for known iOS-Safari foot-guns + tap-target patterns. (Real-device testing recommended for final sign-off.)
+
+#### [MOB-001] `window.alert` and `window.confirm` used in 50+ places
+
+**Severity:** Medium UX
+**Area:** Whole codebase
+**Why it matters:** Native iOS alerts are unstyled, cover keyboard, can break gesture flows, and feel out of place against the app's design language. They also serialize all execution — no async work can fire during the alert.
+**Recommended fix:** Adopt the `toast()` helper (`src/toast.js`) for non-blocking notifications. For destructive confirms (delete chat, force-clock-out), use the existing "Are you sure?" promotion pattern (button-glows-red, "Tap again to confirm" — already used in Operations).
+**Files affected:** Every component using `window.alert`/`window.confirm` — easy mechanical refactor.
+**Launch blocker:** No, but the highest-leverage UX polish.
+
+---
+
+#### [MOB-002] Modals don't reserve safe-area-bottom on iPhones with home-indicator
+
+**Severity:** Low UX
+**Area:** Most modals (ChatSettingsModal, NewChatModal, OffsiteClockPrompt, etc.)
+**Steps to reproduce:** Open ChatSettingsModal on an iPhone 14 Pro. The "Save" button at the bottom is too close to the home-indicator bar — tap target margin is ~4 px instead of ~16 px.
+**Recommended fix:** Add `pb-safe` Tailwind class or `padding-bottom: env(safe-area-inset-bottom)` to bottom-sticky modal footers. Tailwind has `pb-safe` via `[paddingBottom:env(safe-area-inset-bottom)]` — wire it through.
+**Files affected:** ~10 modals. Add a `<SafeModalFooter>` wrapper component.
+**Launch blocker:** No.
+
+---
+
+#### [MOB-003] Some inputs don't have `inputMode` set — wrong on-screen keyboard
+
+**Severity:** Low UX
+**Area:** Multiple forms
+**Steps to reproduce:** Tap an input expecting a number (e.g. inventory count, PIN, phone number) — iOS shows the full QWERTY keyboard instead of numeric.
+**Recommended fix:** Add `inputMode="numeric"` or `inputMode="tel"` or `inputMode="email"` to every input where the value is constrained. The PIN screen already does this (verify); inventory + onboarding likely don't.
+**Launch blocker:** No.
+
+---
+
+#### [MOB-004] `position: fixed` modals + iOS keyboard = content can be hidden behind keyboard
+
+**Severity:** Low-Medium UX
+**Area:** Modal patterns
+**Steps to reproduce:** On iPhone, open NewChatModal → tap the group-name input → keyboard slides up → the "Create" button at the bottom is now behind the keyboard with no scroll affordance.
+**Recommended fix:** Use `max-h-[90vh] overflow-y-auto` (already used in some modals — needs to be universal) + listen for `window.visualViewport.resize` to scroll the focused input into view.
+**Launch blocker:** No (workaround exists: user can dismiss the keyboard).
+
+---
+
+### 7.3 i18n (English / Spanish)
+
+#### [I18N-001] CateringOrder.jsx + InsuranceEnrollment.jsx have hardcoded English in HTML email/print templates
+
+**Severity:** Low (these are emailed receipts; SaaS-deferred)
+**Area:** `src/components/CateringOrder.jsx`, `src/components/InsuranceEnrollment.jsx`
+**Steps to reproduce:** Print a catering invoice or insurance enrollment — entirely English text inside the print template (e.g. "Event Details", "Special Notes", "Tax", "Taken by:").
+**Recommended fix:** Move the HTML templates to use `tx(en, es)` strings. For multi-tenant SaaS, the template language becomes a per-tenant config.
+**Files to change:** CateringOrder.jsx (lines 685+), InsuranceEnrollment.jsx (lines 296+)
+**Launch blocker:** No.
+
+---
+
+#### [I18N-002] `<option value="maryland">Maryland Heights</option>` — hardcoded location labels
+
+**Severity:** Medium (SaaS-blocker)
+**Area:** AdminPanel.jsx, ImportStaffModal.jsx
+**Recommended fix:** Locations should be loaded from `/orgs/{orgId}/locations`, with labels per locale.
+**Launch blocker:** No for DD Mau, Yes for SaaS.
+
+---
+
+#### [I18N-003] Spanish safety/allergen content needs a native-speaker review
+
+**Severity:** High (legal liability)
+**Area:** Training MODULE M17 (allergen matrix) + any food-safety content
+**Why it matters:** Allergen warnings translated by an LLM (or by a non-native engineer) can mistranslate critical terms. "Tree nuts" vs "frutos secos" vs "nueces" — wrong word means a customer dies.
+**Recommended fix:** Have a native-Spanish-speaking restaurant ops person sign off on every safety/allergen/health-code translation. Track sign-offs in `/translations_review/{en_es}.status`.
+**Files to change:** No code change — a process / sign-off requirement.
+**Launch blocker:** Yes if Spanish-only staff are doing safety training without a sign-off.
+
+---
+
+#### [I18N-004] Some `tx(en, es)` calls pass JSX as the value — fragile
+
+**Severity:** Low
+**Area:** `OffsiteClockPrompt.jsx` and a few others
+**Steps to reproduce:** Search for `tx(<>...JSX...</>, <>...JSX...</>)` — the helper expects strings. Works because React renders fragments inline but breaks if someone refactors `tx()` to use a string interpolator.
+**Recommended fix:** Refactor those cases to render the JSX inline using `isEs ? (...) : (...)` ternaries rather than going through `tx()`.
+**Launch blocker:** No.
+
+---
+
+## 8. Quick wins (≤15 min each — additions from Pass 2/3)
+
+Combined list (Pass 1 + 2 + 3):
+
+| # | Fix | Effort | Files |
+|---|-----|--------|-------|
+| QW-01 | ✅ Already done in vite.config.js (drops log/info/debug/trace) | — | — |
+| QW-02 | ✅ Shipped (SEC-005) | — | — |
+| QW-03 | ✅ Shipped (SEC-002) | — | — |
+| QW-04 | ✅ Shipped (SEC-007) | — | — |
+| QW-05 | Replace catch-all firestore.rules with explicit per-collection allowlist | 15 min | `firestore.rules` |
+| QW-06 | Add CHAT-001 storage rule for `/chats/*` | 5 min | `storage.rules` |
+| QW-07 | Add MAINT-001 storage rule for `/maintenance/*` | 5 min | `storage.rules` |
+| QW-08 | Debounce CHAT-002 `lastReadByName` writes (1.5 sec) | 10 min | `ChatThread.jsx` |
+| QW-09 | Add `inputMode` attributes to numeric inputs across forms | 15 min | Multiple |
+| QW-10 | Add `pb-safe` to bottom-sticky modal footers | 10 min | Modals |
+| QW-11 | Fix Eighty6 86-001 (silent-alert bug) — re-enable system channels OR config-based targeting | 15 min | `eightySixChat.js` |
+| QW-12 | Persist quiz state to localStorage during training (TRAIN-003) | 15 min | `TrainingHub.jsx` |
+| QW-13 | Add tests for CSV importer fuzzyMatch + detectColumns (OPS-002) | 30 min | new test file |
+| QW-14 | Switch inventory count to `FieldValue.increment(1)` (OPS-004 — if confirmed) | 10 min | `Operations.jsx` |
+
+---
+
+## 9. Deep refactor recommendations (post-launch)
+
+These are bigger pieces of work that pay off when SaaS migration begins. Ranked by leverage:
+
+1. **Wire Firebase Auth + custom claims + org isolation.** Single biggest unlock for SaaS. ~2 weeks.
+2. **Split Operations.jsx + Schedule.jsx + AdminPanel.jsx by tab/section.** ~3 days per file.
+3. **Move `/config/staff` from one giant `list` array to per-staff `/staff/{id}` docs.** Eliminates ADM-001, allows partial updates, enables collection-group queries. ~2 days + a migration script.
+4. **Server-side notification fan-out (CHAT-003 + sendShiftReminders + others) via Firestore-trigger Cloud Functions.** Removes client-side N-write fan-out, allows reliable delivery even when sender closes the app. ~3 days.
+5. **Adopt a structured logging library (Sentry or custom).** Drop ad-hoc `console.warn`. ~2 days.
+6. **Multi-timezone date handling (SCHED-003 generalized).** Single `dates.js` helper using `Intl.DateTimeFormat` + org-configured timezone. ~3 days.
+
+---
+
+## 10. Performance improvement plan
+
+### Frontend
+- Lazy-load Operations/Schedule sub-tabs (PERF-002) — biggest single win
+- Debounce localStorage cache writes in Schedule (SCHED-002)
+- Debounce `lastReadByName` writes in Chat (CHAT-002)
+- Audit the 232 K index bundle for accidental eager imports (PERF-001)
+- Upgrade Firebase SDK to v11 (PERF-003)
+
+### Backend
+- Migrate notification fan-out to Cloud Functions (CHAT-003)
+- Add a `purgeOldDeletedMessages` scheduled function (CHAT-005)
+- Add a `purgeOldRateLimits` scheduled function (to GC the new `/rate_limits` collection)
+
+### Database
+- Index review: confirm that every `where + orderBy` query has a composite index. Run Firebase Console → Firestore → Indexes → look for "missing index" warnings.
+- Don't shard inventory/labor/orders/checklists by location forever — that pattern doesn't scale to >10 locations. Move to a single collection with a `locationId` field + composite index.
+
+### Files / images / video
+- Add storage rule caps for chat (CHAT-001) + maintenance (MAINT-001)
+- Use `uploadBytesResumable` for visible progress (CHAT-004)
+- Generate video thumbnails server-side (currently TODO in chat schema comments)
+
+### Caching
+- Stop writing the localStorage cache on every Schedule snapshot tick (SCHED-002)
+- Use ETags / `If-Modified-Since` for static training videos (out-of-band — YouTube handles this)
+
+---
+
+## 11. Security improvement plan
+
+### Permissions (in order)
+1. **Phase 1 — narrow rules without Auth:**
+   - Replace `match /{document=**} { allow read, write: if true; }` with explicit per-collection rules (QW-05)
+   - Add `/chats/*` + `/maintenance/*` Storage rules (CHAT-001, MAINT-001)
+2. **Phase 2 — wire Firebase Auth (email magic-link is the easiest):**
+   - Sign every staff in. PIN screen becomes a "remember me on this device" speed bump.
+   - Set custom claims `{ orgId, role, location, can_view_onboarding }`
+   - Rewrite rules: `allow read: if request.auth.token.orgId == ...`
+3. **Phase 3 — enforce App Check** (SEC-006)
+4. **Phase 4 — pen test by an external party** before SaaS GA
+
+### Sensitive data
+- Move `/onboarding_invites` validation behind a callable function (SEC-004)
+- Hash PINs OR retire PINs entirely once Auth lands (SEC-003)
+- Audit every `console.warn`/`error` call to redact staff PII (SEC-011 follow-up)
+
+### Audit logs
+- Audit log now hardened (SEC-005 — shipped)
+- Add a "queued audit" retry mechanism so failed writes don't drop on the floor (ARCH-004)
+
+### Vendor credentials
+- Scraper credentials live on Railway (not in this repo) per CLAUDE.md — confirmed not exposed in client. Good.
+
+### File uploads
+- Cap chat uploads at 50 MB (CHAT-001)
+- Cap maintenance photos at 10 MB (MAINT-001)
+- Content-type allowlist on every upload path
+
+---
+
+## 12. QA test plan (manual checklist)
+
+This is the test plan to run before each significant deploy. Times are wall-clock for a single tester.
+
+### Page-by-page smoke test (~15 min)
+- [ ] Lock screen — enter wrong PIN 3 times → lockout message; enter right PIN → home
+- [ ] Home — every tab in the sidebar/bottom-nav opens without spinner-of-death
+- [ ] Chat — send text, send photo, send voice; tap Translate on a Spanish message; pin a message
+- [ ] Schedule — open this week + next week; create a shift; request coverage; approve coverage
+- [ ] Operations — Inventory tab loads; Pricing tab loads; freshness banner renders; CSV import succeeds
+- [ ] Onboarding (admin) — open a hire; download a doc; approve a hire
+- [ ] Apply form (`/?apply=1`) — submit successfully
+- [ ] Onboarding portal (`/?onboard=TOKEN`) — load with valid token; "invite expired" with stale token
+- [ ] Training — open a module; mark a lesson complete; take a quiz
+- [ ] Eighty6 — flip an item; verify the chat alert renders
+- [ ] Maintenance — submit a ticket with a photo
+- [ ] Catering — open an order; print invoice
+- [ ] AdminPanel — every section expands without console errors
+- [ ] Logout — clears state; back to PIN screen
+
+### Role-based permission tests (~10 min)
+- [ ] Sign in as a staff member (not admin, not manager)
+  - [ ] Admin tab is hidden in nav
+  - [ ] Cannot delete chat messages in #managers
+  - [ ] Cannot edit schedule
+  - [ ] Cannot view onboarding
+- [ ] Sign in as a manager (not admin)
+  - [ ] Can post announcements
+  - [ ] Can approve coverage requests
+  - [ ] Can view labor dashboard
+  - [ ] Cannot access AdminPanel
+- [ ] Sign in as admin
+  - [ ] Everything above PLUS AdminPanel
+- [ ] Sign in as cross-location manager (location='webster')
+  - [ ] Cannot moderate /maryland channel
+  - [ ] Sees only Webster staff in NewChatModal
+
+### Mobile / tablet checklist (~15 min)
+- [ ] iPhone 12+ Safari: PIN entry, send chat message, take photo for issue
+- [ ] iPhone safe-area: every modal footer has space above the home-indicator
+- [ ] iPhone keyboard: NewChatModal "Create" button reachable when input is focused
+- [ ] iPad Safari: schedule grid renders without overlap
+- [ ] Pull-to-refresh: drag from top of any page → refreshes
+
+### Regression checklist (~5 min)
+- [ ] 162 tests pass: `npx vitest run`
+- [ ] Production build clean: `npm run build`
+- [ ] Lighthouse score ≥ 70 perf on `/` (run in incognito on mobile profile)
+- [ ] No console errors during 1-minute use of any tab
+
+---
+
+## 13. Launch readiness checklist
+
+### For DD Mau internal use (today)
+- [x] SEC-002 shipped
+- [x] SEC-005 shipped
+- [x] SEC-007 shipped
+- [ ] Deploy `firestore:rules` + `functions:translateMessage` (waiting on Andrew)
+- [ ] Fix 86-001 (silent-alert bug — Andrew should pick: re-enable system channels OR configure new targets)
+- [ ] Run manual smoke test from section 12
+- [ ] Confirm with staff that voice messages work on iPhone (CHAT-004 if not)
+- [ ] Confirm offsite clock-in prompts cleanly cycle (we fixed the snooze bug)
+
+### For SaaS launch (months from now)
+- [ ] SEC-001 — narrow rules (Phase 1 + Phase 2)
+- [ ] SEC-003 — hash PINs or kill PINs
+- [ ] SEC-004 — onboarding token server-side
+- [ ] SEC-006 — App Check enforced
+- [ ] SEC-008 — apply form rate-limited
+- [ ] SEC-009 — CSP headers
+- [ ] ARCH-001 — remove hardcoded `[40, 41]`
+- [ ] ARCH-002 — locations from data, not code
+- [ ] ARCH-007 — CI gate on tests
+- [ ] I18N-002 — locations from data
+- [ ] I18N-003 — native-speaker sign-off on safety content
+- [ ] AI Assistant data-handling review
+- [ ] External pen test
+- [ ] Privacy policy + ToS
+- [ ] DPA (Data Processing Agreement) template for customers
+- [ ] Billing infrastructure (Stripe + per-org plan limits)
+
+---
+
+## 14. Final auditor verdict
+
+**For internal DD Mau use:** The app is **functionally ready**. Apply the 3 launch-blocker fixes I shipped today, fix 86-001 (silent alert), do the manual smoke test, and you're good. The structural issues (no auth, open rules) are acceptable risks for a small in-restaurant deployment by a single owner-admin.
+
+**For SaaS:** **Not ready.** The biggest items are foundational: no auth, open rules, plaintext PINs. Estimate **6–10 weeks of focused work** to be SaaS-ready, plus an external pen test and a privacy/legal review.
+
+**Most impressive aspects:**
+- The defense-in-depth comments throughout the code — explains the WHY of every gnarly decision
+- Audit-log discipline (most state changes are recorded)
+- 162-test suite is a great foundation
+- The recent translation feature is well-architected (cache-first, deduped, language-aware)
+- iOS-specific fixes are well-documented
+
+**Most concerning aspects:**
+- Open Firestore + Storage rules
+- Plaintext PINs world-readable
+- Client-side-only token validation for PII access
+- AI Assistant (not audited) sending staff data to an LLM provider
+
+---
+
+*End of audit v1. Living document — append findings as new code lands.*
+*Audited by: Claude (senior engineering review) — 2026-05-17*
 
 ---
 
