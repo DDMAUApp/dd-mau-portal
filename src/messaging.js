@@ -218,13 +218,62 @@ export async function enableFcmPush(staffName, staffList, setStaffList) {
                     { token, lastSeen: Date.now(), deviceId },
                     ...dedup,
                 ].slice(0, MAX_TOKENS_PER_STAFF);
-                // No-op if nothing meaningful changed.
-                if (existing.length === nextTokens.length &&
-                    existing.every((t, i) => t.token === nextTokens[i].token)) {
+
+                // Sweep cross-staff contamination — remove the same
+                // deviceId (and the same token string) from every
+                // OTHER staff's fcmTokens. (2026-05-17 — Andrew
+                // reported Julie's phone getting pushes for messages
+                // she just sent, which only happens when her device's
+                // token is also registered to Andrew's record. Symptom
+                // class: someone signed in on the wrong phone briefly,
+                // both records hold the same device entry, dispatch
+                // pushes to both staff for every chat.)
+                //
+                // After this sweep + this commit, the next time each
+                // staff opens their own PWA, their record sweeps the
+                // foreign entries out of all other staff. Self-healing.
+                //
+                // tokenDeviceSweepCount is tracked so we know whether
+                // we actually mutated the list (avoids a no-op write
+                // that triggers a pointless snapshot fan-out to every
+                // other listener).
+                let tokenDeviceSweepCount = 0;
+                const nextList = liveList.map((s, i) => {
+                    if (i === meIdx) return { ...s, fcmTokens: nextTokens };
+                    if (!Array.isArray(s.fcmTokens) || s.fcmTokens.length === 0) return s;
+                    const cleaned = s.fcmTokens.filter(t => {
+                        if (!t || !t.token) return false;
+                        // Drop any entry whose device matches the device
+                        // we're now claiming for the current staff.
+                        if (t.deviceId && t.deviceId === deviceId) return false;
+                        // Drop entries whose token string equals our
+                        // new token (defensive — same physical browser
+                        // can register the same token under different
+                        // staff if the deviceId was generated post-
+                        // facto, e.g. after the localStorage clear).
+                        if (t.token === token) return false;
+                        return true;
+                    });
+                    if (cleaned.length !== s.fcmTokens.length) {
+                        tokenDeviceSweepCount += (s.fcmTokens.length - cleaned.length);
+                        return { ...s, fcmTokens: cleaned };
+                    }
+                    return s;
+                });
+
+                // No-op if nothing meaningful changed (avoids a
+                // pointless snapshot fan-out). The new check also
+                // accounts for the cross-staff sweep — even if my own
+                // tokens are unchanged, if we swept somebody else's
+                // contamination we still need to write.
+                const myOwnSame = existing.length === nextTokens.length &&
+                    existing.every((t, i) => t.token === nextTokens[i].token);
+                if (myOwnSame && tokenDeviceSweepCount === 0) {
                     return;
                 }
-                const nextList = liveList.slice();
-                nextList[meIdx] = { ...me, fcmTokens: nextTokens };
+                if (tokenDeviceSweepCount > 0) {
+                    console.log(`[FCM] swept ${tokenDeviceSweepCount} cross-staff token entries for device ${deviceId.slice(0, 8)}…`);
+                }
                 tx.set(ref, { list: nextList });
             });
             // Mirror the live data into local React state so the app sees
