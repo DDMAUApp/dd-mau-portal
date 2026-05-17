@@ -5704,21 +5704,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             </div>
                                         )}
 
-                                        {/* Scrape health alert */}
-                                        {(hasFailed || isStale) && (
-                                            <div className={`rounded-xl p-3 border text-sm ${hasFailed ? "bg-red-50 border-red-300" : "bg-yellow-50 border-yellow-300"}`}>
-                                                <div className="font-bold text-sm">
-                                                    {hasFailed ? (scrapeStatus.status === "login_failed"
-                                                        ? (language === "es" ? `\u{1F6A8} Fallo de inicio de sesion en ${vendorName}` : `\u{1F6A8} ${vendorName} Login Failed`)
-                                                        : scrapeStatus.status === "no_prices"
-                                                            ? (language === "es" ? "\u{26A0}\u{FE0F} No se encontraron precios" : "\u{26A0}\u{FE0F} No Prices Found")
-                                                            : (language === "es" ? "\u{274C} Error del scraper" : "\u{274C} Scraper Error")
-                                                    ) : (language === "es" ? "\u{23F0} Datos desactualizados (>48h)" : "\u{23F0} Stale Data (>48h old)")}
-                                                </div>
-                                                {scrapeStatus.detail && <div className="text-xs text-gray-600 mt-1">{scrapeStatus.detail}</div>}
-                                                {scrapeStatus.updatedAt && <div className="text-xs text-gray-400 mt-1">{language === "es" ? "Ultimo intento" : "Last attempt"}: {new Date(scrapeStatus.updatedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</div>}
-                                            </div>
-                                        )}
+                                        {/* Scrape health alert REMOVED 2026-05-16 —
+                                            Andrew opted for the CSV-import workflow
+                                            (📥 Import CSV button on the inventory
+                                            toolbar) instead of relying on the live
+                                            scraper. The status doc is still
+                                            subscribed (used internally by the spinner
+                                            on the manual Refresh button) but the
+                                            inline banner was noisy and not actionable. */}
 
                                         {/* Header */}
                                         <div className={`bg-gradient-to-r ${isSysco ? "from-blue-700 to-blue-600" : "from-orange-600 to-orange-500"} text-white rounded-xl p-3 flex items-center justify-between`}>

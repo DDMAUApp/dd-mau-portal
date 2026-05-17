@@ -29,24 +29,37 @@ import { recordAudit } from '../data/audit';
 
 // Common column-header aliases for the three fields the parser
 // needs. Lowercase + non-alphanumeric stripped before lookup.
+// Coverage validated against:
+//   • US Foods order-guide export (Product Number / Product
+//     Description / Product Price / Product UOM / Product Package Size)
+//   • Sysco "Shop Purchase History" export with H/F/P record-type
+//     prefix (SUPC / Desc / Case Qty / Split Qty / Pack / Size)
+//   • Generic CSVs from Excel/Sheets with common header names.
 const COLUMN_ALIASES = {
     sku: [
         'itemnumber', 'itemno', 'itemid', 'item', 'productnumber', 'productid', 'productcode',
         'sku', 'materialnumber', 'material', 'mfgno', 'mfgnumber',
+        'supc',                                         // Sysco
+        'customerproductnumber',                        // US Foods alt
     ],
     name: [
         'description', 'itemdescription', 'productdescription', 'product', 'productname', 'name',
         'item', 'commodity',
+        'desc',                                         // Sysco short header
     ],
     qty: [
-        'qty', 'quantity', 'qtyordered', 'orderqty', 'casesordered', 'caseqty',
-        'qtyshipped', 'shippedqty', 'cases',
+        'qty', 'quantity', 'qtyordered', 'orderqty', 'casesordered', 'caseqty', 'cases',
+        'qtyshipped', 'shippedqty',
+        'caseqty', 'splitqty',                          // Sysco purchase history (often empty)
     ],
     price: [
         'price', 'unitprice', 'caseprice', 'yourprice', 'listprice',
+        'productprice', 'case$', 'split$',              // US Foods / Sysco
     ],
     unit: [
         'unit', 'uom', 'pack', 'packsize', 'casepack',
+        'productuom', 'productpackagesize',             // US Foods
+        'size',                                         // Sysco
     ],
 };
 
@@ -78,6 +91,11 @@ export default function VendorCsvImportModal({
     const [rawText, setRawText] = useState('');
     const [parsed, setParsed] = useState(null);   // { headers, rows, mapping }
     const [overrideMap, setOverrideMap] = useState({});   // rowIdx -> inventory item id (or '__skip__')
+    // Per-row qty override. Many vendor CSVs (US Foods order guide,
+    // Sysco purchase history) don't carry order quantities — the
+    // admin types them in here. Empty string means "use parsed qty
+    // from CSV (or 0 if missing)". Numeric string means override.
+    const [manualQty, setManualQty] = useState({});
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState(null);
     const fileRef = useRef(null);
@@ -184,6 +202,33 @@ export default function VendorCsvImportModal({
         return { matchType: 'none', itemId: null, name: null, confidence: 0 };
     }
 
+    // ── Sysco H/F/P record-type format ─────────────────────────
+    // Some Sysco exports (Shop > Purchase History) prefix every row
+    // with a record-type marker: H = header, F = field/column names,
+    // P = product/data row, T = trailer. We strip that first column
+    // and use the F row as headers, P rows as data.
+    function detectFpFormat(rows) {
+        let hasF = false, hasP = false;
+        for (const r of rows.slice(0, 50)) {
+            const t = String(r[0] || '').trim().toUpperCase();
+            if (t === 'F') hasF = true;
+            else if (t === 'P') hasP = true;
+            if (hasF && hasP) return true;
+        }
+        return false;
+    }
+    function parseFpFormat(rows) {
+        let headers = null;
+        const body = [];
+        for (const r of rows) {
+            const t = String(r[0] || '').trim().toUpperCase();
+            if (t === 'F') headers = r.slice(1);
+            else if (t === 'P') body.push(r.slice(1));
+            // ignore H (file header), T (trailer), S (summary), etc.
+        }
+        return { headers: headers || [], body };
+    }
+
     // ── File picked ────────────────────────────────────────────
     async function handleFile(e) {
         setError(null);
@@ -197,24 +242,47 @@ export default function VendorCsvImportModal({
         try {
             const text = await f.text();
             setRawText(text);
-            const rows = parseCsv(text);
-            if (rows.length < 2) {
-                setError(tx('CSV looks empty or has no header row.', 'El CSV está vacío o sin encabezado.'));
+            const allRows = parseCsv(text);
+            if (allRows.length < 2) {
+                setError(tx('CSV looks empty.', 'El CSV está vacío.'));
                 return;
             }
-            // Find the header row — Sysco CSVs sometimes have a few title rows
-            // before the actual column header. We pick the first row that has
-            // both a "description"-like AND a "qty"-like column detected.
-            let headerIdx = 0;
-            for (let i = 0; i < Math.min(rows.length, 10); i++) {
-                const map = detectColumns(rows[i]);
-                if (map.name != null && map.qty != null) { headerIdx = i; break; }
+
+            // Branch 1: Sysco H/F/P record-type CSV (detected by an "F"
+            // row + at least one "P" row in the first 50 lines).
+            let headers, body, formatNote = null;
+            if (detectFpFormat(allRows)) {
+                const fp = parseFpFormat(allRows);
+                headers = fp.headers;
+                body = fp.body;
+                formatNote = tx(
+                    'Detected Sysco purchase-history format (H/F/P records).',
+                    'Detectado formato Sysco H/F/P.'
+                );
+            } else {
+                // Branch 2: Standard CSV. Header row = first row where
+                // we can detect EITHER name+qty OR name alone (qty
+                // missing entirely is OK; admin will fill qty per row).
+                let headerIdx = -1;
+                for (let i = 0; i < Math.min(allRows.length, 10); i++) {
+                    const map = detectColumns(allRows[i]);
+                    if (map.name != null && map.qty != null) { headerIdx = i; break; }
+                }
+                if (headerIdx === -1) {
+                    for (let i = 0; i < Math.min(allRows.length, 10); i++) {
+                        const map = detectColumns(allRows[i]);
+                        if (map.name != null) { headerIdx = i; break; }
+                    }
+                }
+                if (headerIdx === -1) headerIdx = 0;
+                headers = allRows[headerIdx];
+                body = allRows.slice(headerIdx + 1);
             }
-            const headers = rows[headerIdx];
-            const body = rows.slice(headerIdx + 1);
+
             const mapping = detectColumns(headers);
-            setParsed({ headers, body, mapping, fileName: f.name });
+            setParsed({ headers, body, mapping, fileName: f.name, formatNote });
             setOverrideMap({});
+            setManualQty({});
             setStage('preview');
         } catch (err) {
             console.error('CSV parse failed:', err);
@@ -243,36 +311,61 @@ export default function VendorCsvImportModal({
     }, [parsed, vendor, vendorMatches, flatInventory]);
 
     // ── Final resolved mapping (matched ∪ overrides) ───────────
+    // Per-row qty resolution: if admin typed a manualQty override
+    // for this row, use that; otherwise the qty parsed out of the
+    // CSV (which is 0 for files without a qty column). Rows are
+    // INCLUDED for import iff finalItemId exists AND finalQty > 0.
     const resolved = useMemo(() => {
         return matched.map(r => {
-            if (overrideMap[r.rowIdx] === '__skip__') return { ...r, finalItemId: null, skipped: true };
+            const manual = manualQty[r.rowIdx];
+            const finalQty = (manual !== undefined && manual !== '')
+                ? Number(manual)
+                : r.qty;
+            const isSkipped = overrideMap[r.rowIdx] === '__skip__';
             const override = overrideMap[r.rowIdx];
-            if (override) {
-                const it = flatInventory.find(x => x.id === override);
-                return { ...r, finalItemId: override, finalName: it?.name || r.name, skipped: false };
+            let finalItemId = null;
+            if (isSkipped) {
+                finalItemId = null;
+            } else if (override && override !== '__skip__') {
+                finalItemId = override;
+            } else if (r.matchType !== 'none') {
+                finalItemId = r.itemId;
             }
             return {
                 ...r,
-                finalItemId: r.itemId,
-                finalName: r.name || r.matchType === 'none' ? r.name : (r.name || ''),
-                skipped: r.matchType === 'none',
+                finalItemId,
+                finalQty: isNaN(finalQty) ? 0 : finalQty,
+                skipped: isSkipped,
             };
         });
-    }, [matched, overrideMap, flatInventory]);
+    }, [matched, overrideMap, manualQty, flatInventory]);
 
     // Counts for the preview header.
     const stats = useMemo(() => {
-        let auto = 0, ambig = 0, none = 0, included = 0;
+        let auto = 0, ambig = 0, none = 0, included = 0, noQty = 0;
         for (const r of resolved) {
-            if (r.skipped) none++;
-            else if (r.matchType === 'sku' || r.matchType === 'fuzzy_high' || overrideMap[r.rowIdx]) {
-                auto++;
-                if (r.qty > 0) included++;
-            } else if (r.matchType === 'fuzzy_low') ambig++;
-            else none++;
+            if (r.skipped) { /* counted as skipped */ }
+            else if (r.matchType === 'sku' || r.matchType === 'fuzzy_high' || overrideMap[r.rowIdx]) auto++;
+            else if (r.matchType === 'fuzzy_low') ambig++;
+            else if (r.matchType === 'none') none++;
+            if (!r.skipped && r.finalItemId && r.finalQty > 0) included++;
+            else if (!r.skipped && r.finalItemId && r.finalQty === 0) noQty++;
         }
-        return { auto, ambig, none, included, total: resolved.length };
+        return { auto, ambig, none, noQty, included, total: resolved.length };
     }, [resolved, overrideMap]);
+
+    // Bulk qty controls — "set qty to N for every matched row" is a
+    // huge time-saver when admin is using an order guide CSV (no qty
+    // column) and they actually ordered the same case count for most
+    // items. Only applies to matched-non-skipped rows.
+    function setQtyForAllMatched(qty) {
+        const next = { ...manualQty };
+        for (const r of resolved) {
+            if (r.skipped || !r.finalItemId) continue;
+            next[r.rowIdx] = String(qty);
+        }
+        setManualQty(next);
+    }
 
     // ── Import: write the inventoryHistory snapshot ────────────
     async function handleImport() {
@@ -291,8 +384,8 @@ export default function VendorCsvImportModal({
             const meta = {};
             const newSkuMappings = {};
             for (const r of resolved) {
-                if (r.skipped || !r.finalItemId || r.qty <= 0) continue;
-                counts[r.finalItemId] = (counts[r.finalItemId] || 0) + r.qty;
+                if (r.skipped || !r.finalItemId || r.finalQty <= 0) continue;
+                counts[r.finalItemId] = (counts[r.finalItemId] || 0) + r.finalQty;
                 meta[r.finalItemId] = { by: `${vendor}_csv_import`, at: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) };
                 // If admin overrode a row (or fuzzy-high matched), persist
                 // the SKU → master mapping so the next import auto-resolves.
@@ -493,6 +586,39 @@ export default function VendorCsvImportModal({
                             </div>
                         )}
 
+                        {/* Format note (when applicable) */}
+                        {parsed.formatNote && (
+                            <div className="px-4 py-1.5 bg-blue-50 border-b border-blue-200 text-[11px] text-blue-800">
+                                ℹ️ {parsed.formatNote}
+                            </div>
+                        )}
+
+                        {/* Bulk-qty toolbar — when the CSV has no qty
+                            column (order guide, purchase history), the
+                            admin types qty inline. These shortcuts skip
+                            the per-row typing for the common "I ordered
+                            1 case of each" case. */}
+                        <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 flex flex-wrap items-center gap-2 text-[11px]">
+                            <span className="font-bold text-gray-600">
+                                {tx('Bulk qty for matched rows:', 'Cantidad masiva:')}
+                            </span>
+                            {[1, 2, 3, 5].map(n => (
+                                <button key={n} onClick={() => setQtyForAllMatched(n)}
+                                    className="px-2 py-0.5 rounded-full bg-white border border-gray-300 font-bold hover:bg-mint-50 hover:border-mint-300">
+                                    {tx(`set ${n}`, `pon ${n}`)}
+                                </button>
+                            ))}
+                            <button onClick={() => setManualQty({})}
+                                className="px-2 py-0.5 rounded-full bg-white border border-gray-300 font-bold text-gray-500 hover:bg-gray-100">
+                                {tx('reset', 'reiniciar')}
+                            </button>
+                            {stats.noQty > 0 && (
+                                <span className="ml-auto text-amber-700 font-bold">
+                                    ⚠ {stats.noQty} {tx('matched rows have qty 0 — set qty to include them', 'filas con cantidad 0')}
+                                </span>
+                            )}
+                        </div>
+
                         {/* Rows */}
                         <div className="flex-1 overflow-y-auto divide-y divide-gray-100">
                             {resolved.map(r => (
@@ -501,6 +627,8 @@ export default function VendorCsvImportModal({
                                     row={r}
                                     flatInventory={flatInventory}
                                     isEs={isEs}
+                                    qtyOverride={manualQty[r.rowIdx]}
+                                    onQtyChange={(v) => setManualQty(m => ({ ...m, [r.rowIdx]: v }))}
                                     onOverride={(itemId) => setOverrideMap(m => ({ ...m, [r.rowIdx]: itemId }))}
                                     onSkip={() => setOverrideMap(m => ({ ...m, [r.rowIdx]: '__skip__' }))}
                                 />
@@ -559,7 +687,7 @@ export default function VendorCsvImportModal({
 // ── Single row in the preview list ─────────────────────────────
 // Color-coded by match confidence + lets admin override the
 // auto-match by picking from the master inventory.
-function RowPreview({ row, flatInventory, isEs, onOverride, onSkip }) {
+function RowPreview({ row, flatInventory, isEs, qtyOverride, onQtyChange, onOverride, onSkip }) {
     const tx = (en, es) => isEs ? es : en;
     const [search, setSearch] = useState('');
     const [showPicker, setShowPicker] = useState(false);
@@ -598,10 +726,24 @@ function RowPreview({ row, flatInventory, isEs, onOverride, onSkip }) {
                         <span className={`text-[9px] font-black uppercase tracking-widest px-1.5 py-0.5 rounded ${badge.cls}`}>
                             {isEs ? badge.es : badge.en}
                         </span>
-                        {row.qty > 0 && (
-                            <span className="text-[11px] font-black text-gray-800 tabular-nums">
-                                {tx('Qty', 'Cant.')}: {row.qty}
-                            </span>
+                        {/* Editable qty input — defaults to whatever the
+                            CSV parsed, falls back to '' (empty = use
+                            bulk default). Wider when CSV had no qty
+                            so the empty field is obvious. */}
+                        {!row.skipped && (
+                            <div className="flex items-center gap-1">
+                                <span className="text-[10px] uppercase font-bold text-gray-500">{tx('qty', 'cant')}:</span>
+                                <input
+                                    type="number"
+                                    inputMode="decimal"
+                                    min="0"
+                                    step="any"
+                                    value={qtyOverride !== undefined ? qtyOverride : (row.qty || '')}
+                                    onChange={(e) => onQtyChange(e.target.value)}
+                                    placeholder="0"
+                                    className="w-16 px-1.5 py-0.5 rounded border border-gray-300 text-[11px] font-bold tabular-nums text-center focus:outline-none focus:border-mint-500 focus:ring-1 focus:ring-mint-500/30"
+                                />
+                            </div>
                         )}
                         {row.sku && (
                             <span className="text-[10px] text-gray-500 font-mono">{row.sku}</span>
