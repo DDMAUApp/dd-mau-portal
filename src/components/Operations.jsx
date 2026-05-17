@@ -18,6 +18,9 @@ const SauceLog           = lazy(() => import('./SauceLog'));
 // inline as a banner above the Tasks list, not behind a sub-tab.
 import SauceLogBohBanner from './SauceLogBohBanner';
 import { toast, undoToast } from '../toast';
+// CSV importer — lazy so the parser doesn't bloat the Operations chunk
+// for the common case where nobody clicks Import.
+const VendorCsvImportModal = lazy(() => import('./VendorCsvImportModal'));
 
 // Constants
 // Time-period concept (morning/afternoon/night) was tried and abandoned — only
@@ -211,6 +214,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             //
             // Map shape: { itemId: { date: 'Mon May 12', qty: 3, dateIso: '2026-05-12T...' } }
             const [lastEnteredByItem, setLastEnteredByItem] = useState({});
+            // CSV-import modal — replaces the broken Sysco/USF live scraper
+            // for any week where the scraper is down. Admin exports the
+            // order guide from the vendor portal (one click) and uploads
+            // here. Parser writes the rows as a new inventoryHistory
+            // snapshot so the "Last ordered" badge updates downstream.
+            const [showCsvImport, setShowCsvImport] = useState(false);
             // Counts for vendor-only items that aren't matched to a master inventory item.
             // Keyed as `${vendor}:${vendorId}` (e.g. "sysco:5106402") so it can't collide with
             // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
@@ -4563,6 +4572,31 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         );
                     })()}
 
+                    {/* Vendor CSV importer — admin uploads a Sysco /
+                        US Foods order-guide CSV; parser matches rows
+                        against the master inventory and writes a fresh
+                        inventoryHistory snapshot for the order date so
+                        every matched item's "Last ordered" badge updates
+                        downstream. Also persists newly-resolved SKU
+                        mappings to /config/vendor_matches so the next
+                        import auto-matches them. */}
+                    {showCsvImport && (
+                        <Suspense fallback={null}>
+                            <VendorCsvImportModal
+                                language={language}
+                                storeLocation={storeLocation}
+                                customInventory={customInventory}
+                                vendorMatches={vendorMatches}
+                                staffName={staffName}
+                                viewer={(staffList || []).find(s => s.name === staffName)}
+                                onClose={() => setShowCsvImport(false)}
+                                onImported={() => {
+                                    reloadLastEnteredByItem().catch(() => {});
+                                }}
+                            />
+                        </Suspense>
+                    )}
+
                     {activeTab === "inventory" && (
                         <div className="space-y-3">
                             {/* ── TOP TOOLBAR ── */}
@@ -4586,6 +4620,13 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     </button>
                                 </div>
                                 <div className="flex items-center gap-1.5">
+                                    {currentIsAdmin && (
+                                        <button onClick={() => setShowCsvImport(true)}
+                                            title={language === "es" ? "Importar CSV del proveedor" : "Import vendor CSV"}
+                                            className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 border border-blue-200 text-xs font-bold hover:bg-blue-100 transition">
+                                            📥 {language === "es" ? "Importar CSV" : "Import CSV"}
+                                        </button>
+                                    )}
                                     <button onClick={printInventory} title="Print"
                                         className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-blue-50 hover:text-blue-700 transition text-lg">
                                         {"\u{1F5A8}"}
