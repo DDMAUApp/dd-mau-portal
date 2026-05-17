@@ -34,6 +34,7 @@ import {
     clockIn,
     clockOut,
 } from '../data/offsiteClock';
+import { toast } from '../toast';
 
 // Session-marker key. The presence of this in sessionStorage means
 // the app has already rendered the prompt once during this browser
@@ -141,7 +142,7 @@ export default function OffsiteClockPrompt({
             }
         } catch (e) {
             console.warn('offsite yes failed:', e);
-            alert(tx('Save failed — try again.', 'Error al guardar — intenta de nuevo.'));
+            toast(tx('Save failed — try again.', 'Error al guardar — intenta de nuevo.'), { kind: 'error' });
         } finally {
             setBusyId(null);
         }

@@ -1,11 +1,28 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
+import AppToast from './components/AppToast.jsx';
 import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
 
 setupPWA();
 
+// AppToast subscribes to the module-level toast queue. Rendering it
+// here (sibling of <App />) guarantees it shows on every code path —
+// the lock screen, onboarding portal, public apply page, install
+// splash, and the main app shell — without needing prop-drilling.
+//
+// HISTORICAL BUG (Andrew 2026-05-17 polish pass): AppToast was imported
+// inside src/App.jsx but never actually rendered. Every existing toast()
+// call (in AdminPanel, Operations, Onboarding, Eighty6Dashboard, etc.)
+// silently produced no UI — users saw nothing when an error toast or
+// success toast was fired. Mounting it at the root fixes the entire
+// toast pipeline in one shot.
 const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(<App />);
+root.render(
+    <React.Fragment>
+        <App />
+        <AppToast />
+    </React.Fragment>
+);

@@ -34,6 +34,7 @@ import {
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
+import { toast } from '../toast';
 
 const ChatThread = lazy(() => import('./ChatThread'));
 const ChatSettingsModal = lazy(() => import('./ChatSettingsModal'));
@@ -918,7 +919,7 @@ function NewChatModal({
             }
         } catch (e) {
             console.warn('NewChatModal create failed:', e);
-            alert(isEs ? 'No se pudo crear el chat.' : 'Could not create chat.');
+            toast(isEs ? 'No se pudo crear el chat.' : 'Could not create chat.', { kind: 'error' });
         } finally {
             setBusy(false);
         }
@@ -1171,7 +1172,7 @@ function ChatListActionSheet({ chat, viewer, isAdmin, staffName, isEs, onClose, 
             onDeleted();
         } catch (e) {
             console.warn('chat delete failed:', e);
-            alert(tx('Delete failed', 'Error al eliminar'));
+            toast(tx('Delete failed', 'Error al eliminar'), { kind: 'error' });
         } finally {
             setBusy(false);
         }

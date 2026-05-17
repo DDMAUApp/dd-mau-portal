@@ -33,6 +33,7 @@ import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMes
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
 import { claimCoverage, approveCoverage, denyCoverage, withdrawCoverage } from '../data/coverage';
+import { toast } from '../toast';
 import TranslatableText, { renderWithMentions } from './TranslatableText';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
@@ -283,7 +284,7 @@ export default function ChatThread({
             setDraft('');
         } catch (e) {
             console.warn('send text failed:', e);
-            alert(tx('Send failed', 'Error al enviar'));
+            toast(tx('Send failed', 'Error al enviar'), { kind: 'error' });
         } finally {
             setSending(false);
         }
@@ -295,7 +296,7 @@ export default function ChatThread({
         e.target.value = ''; // reset so re-picking same file fires change
         if (!file) return;
         if (kind === 'video' && file.size > MAX_VIDEO_BYTES) {
-            alert(tx('Video too large (50MB max).', 'Video muy grande (50MB máx).'));
+            toast(tx('Video too large (50MB max).', 'Video muy grande (50MB máx).'), { kind: 'warn' });
             return;
         }
         setSending(true);
@@ -332,7 +333,7 @@ export default function ChatThread({
             setDraft('');
         } catch (err) {
             console.warn(`${kind} send failed:`, err);
-            alert(tx('Upload failed', 'Error al subir'));
+            toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
         } finally {
             setSending(false);
             setUploadProgress(null);
@@ -376,7 +377,7 @@ export default function ChatThread({
             setRecording(true);
         } catch (e) {
             console.warn('mic access failed:', e);
-            alert(tx('Mic access denied', 'Acceso al micrófono denegado'));
+            toast(tx('Mic access denied', 'Acceso al micrófono denegado'), { kind: 'error' });
         }
     }
     function stopRecording(cancel = false) {
@@ -417,7 +418,7 @@ export default function ChatThread({
             });
         } catch (e) {
             console.warn('voice upload failed:', e);
-            alert(tx('Voice send failed', 'Error al enviar voz'));
+            toast(tx('Voice send failed', 'Error al enviar voz'), { kind: 'error' });
         } finally {
             setSending(false);
             setUploadProgress(null);
@@ -456,8 +457,9 @@ export default function ChatThread({
         if (!message?.id) return;
         const isPinned = message.pinned === true;
         if (!isPinned && pinnedMessages.length >= 5) {
-            alert(tx('Up to 5 messages can be pinned. Unpin one first.',
-                     'Hasta 5 mensajes pueden estar fijados. Quita uno primero.'));
+            toast(tx('Up to 5 messages can be pinned. Unpin one first.',
+                     'Hasta 5 mensajes pueden estar fijados. Quita uno primero.'),
+                  { kind: 'warn' });
             return;
         }
         try {
@@ -530,8 +532,8 @@ export default function ChatThread({
             });
         } catch (e) {
             const msg = String(e.message || e);
-            if (msg === 'coverage_not_open') alert(tx('Already claimed.', 'Ya reclamado.'));
-            else alert(tx('Claim failed.', 'Error al reclamar.'));
+            if (msg === 'coverage_not_open') toast(tx('Already claimed.', 'Ya reclamado.'), { kind: 'warn' });
+            else toast(tx('Claim failed.', 'Error al reclamar.'), { kind: 'error' });
         }
     }
     async function handleApproveCoverage(message) {
@@ -541,7 +543,7 @@ export default function ChatThread({
                 managerName: staffName, managerId: viewer?.id,
             });
         } catch (e) {
-            alert(tx('Approve failed.', 'Error al aprobar.'));
+            toast(tx('Approve failed.', 'Error al aprobar.'), { kind: 'error' });
         }
     }
     async function handleDenyCoverage(message) {
@@ -551,7 +553,7 @@ export default function ChatThread({
                 managerName: staffName, managerId: viewer?.id,
             });
         } catch (e) {
-            alert(tx('Deny failed.', 'Error al negar.'));
+            toast(tx('Deny failed.', 'Error al negar.'), { kind: 'error' });
         }
     }
     async function handleWithdrawCoverage(message) {
@@ -561,7 +563,7 @@ export default function ChatThread({
                 requesterName: staffName, requesterId: viewer?.id,
             });
         } catch (e) {
-            alert(tx('Withdraw failed.', 'Error al retirar.'));
+            toast(tx('Withdraw failed.', 'Error al retirar.'), { kind: 'error' });
         }
     }
 

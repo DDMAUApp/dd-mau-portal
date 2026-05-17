@@ -10,7 +10,9 @@ import { playKitchenBell } from './data/bell';
 import HomePage from './components/HomePage';
 import InstallAppButton from './components/InstallAppButton';
 import AppVersion from './components/AppVersion';
-import AppToast from './components/AppToast';
+// AppToast is mounted at root in main.jsx (not here) so it renders
+// across every code path including the lock screen and the public
+// onboarding/apply routes that bypass App's main shell.
 // Eager-loaded — the off-site prompt has to fire as soon as the staff
 // signs in so we don't gate it behind a tab-chunk download. The
 // component is tiny (~3KB gzipped) and unrendered (returns null) when

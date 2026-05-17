@@ -21,6 +21,7 @@ import { doc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeB
 import { canEditChat } from '../data/chat';
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
+import { toast } from '../toast';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
 
 export default function ChatSettingsModal({
@@ -77,7 +78,7 @@ export default function ChatSettingsModal({
             onClose();
         } catch (e) {
             console.warn('chat update failed:', e);
-            alert(tx('Save failed', 'Error al guardar'));
+            toast(tx('Save failed', 'Error al guardar'), { kind: 'error' });
         } finally {
             setBusy(false);
         }
@@ -110,7 +111,7 @@ export default function ChatSettingsModal({
         } catch (e) {
             console.warn('add member failed:', e);
             setMembers(prev); // rollback
-            alert(tx('Could not add — try again', 'No se pudo añadir — intenta de nuevo'));
+            toast(tx('Could not add — try again', 'No se pudo añadir — intenta de nuevo'), { kind: 'error' });
         } finally {
             setMemberBusy(false);
         }
@@ -118,8 +119,9 @@ export default function ChatSettingsModal({
     async function removeMemberNow(name) {
         if (!canEdit || isDm || memberBusy) return;
         if (chat.createdBy === name) {
-            alert(tx('Cannot remove the creator. They can leave on their own.',
-                     'No se puede quitar al creador. Solo ellos pueden salir.'));
+            toast(tx('Cannot remove the creator. They can leave on their own.',
+                     'No se puede quitar al creador. Solo ellos pueden salir.'),
+                  { kind: 'warn' });
             return;
         }
         const prev = members;
@@ -146,7 +148,7 @@ export default function ChatSettingsModal({
             console.warn('remove member failed:', e);
             setMembers(prev);
             setCoAdmins(prevCo);
-            alert(tx('Could not remove — try again', 'No se pudo quitar — intenta de nuevo'));
+            toast(tx('Could not remove — try again', 'No se pudo quitar — intenta de nuevo'), { kind: 'error' });
         } finally {
             setMemberBusy(false);
         }
@@ -220,7 +222,7 @@ export default function ChatSettingsModal({
             onDeleted();
         } catch (e) {
             console.warn('delete failed:', e);
-            alert(tx('Delete failed', 'Error al eliminar'));
+            toast(tx('Delete failed', 'Error al eliminar'), { kind: 'error' });
         } finally {
             setBusy(false);
         }
@@ -240,7 +242,7 @@ export default function ChatSettingsModal({
             `BORRADO PERMANENTE: esto elimina el chat + todos los mensajes. Para confirmar, escribe DELETE`
         ));
         if (confirmText !== 'DELETE') {
-            if (confirmText !== null) alert(tx('Cancelled — phrase did not match.', 'Cancelado — la frase no coincide.'));
+            if (confirmText !== null) toast(tx('Cancelled — phrase did not match.', 'Cancelado — la frase no coincide.'), { kind: 'info' });
             return;
         }
         setBusy(true);
@@ -313,7 +315,7 @@ export default function ChatSettingsModal({
             onDeleted();
         } catch (e) {
             console.warn('hard delete failed:', e);
-            alert(tx('Hard delete failed: ', 'Borrado permanente falló: ') + (e.message || e));
+            toast(tx('Hard delete failed: ', 'Borrado permanente falló: ') + (e.message || e), { kind: 'error', duration: 6000 });
         } finally {
             setBusy(false);
         }

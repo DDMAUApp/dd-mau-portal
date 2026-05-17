@@ -12,6 +12,7 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { DEFAULT_NOTIF_POLICY } from '../data/chat';
 import { recordAudit } from '../data/audit';
+import { toast } from '../toast';
 import EnableNotificationsBanner from './EnableNotificationsBanner';
 
 export default function ChatNotifSettings({
@@ -61,7 +62,7 @@ export default function ChatNotifSettings({
             onClose();
         } catch (e) {
             console.error('save notif policy:', e);
-            alert(tx('Save failed', 'Error al guardar'));
+            toast(tx('Save failed', 'Error al guardar'), { kind: 'error' });
         } finally {
             setBusy(false);
         }

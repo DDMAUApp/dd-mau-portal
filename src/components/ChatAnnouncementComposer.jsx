@@ -25,6 +25,7 @@ import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { canPostAnnouncements } from '../data/chatPermissions';
 import { channelDocId, AUTO_CHANNELS } from '../data/chat';
+import { toast } from '../toast';
 
 export default function ChatAnnouncementComposer({
     language = 'en', staffName, staffList, viewer, isAdmin, isManager,
@@ -187,7 +188,7 @@ export default function ChatAnnouncementComposer({
             onPosted?.({ announcementGroupId, recipientCount: recipientsAll.size });
         } catch (e) {
             console.error('announcement post failed:', e);
-            alert(tx('Send failed: ', 'Error al enviar: ') + (e.message || e));
+            toast(tx('Send failed: ', 'Error al enviar: ') + (e.message || e), { kind: 'error', duration: 6000 });
         } finally {
             setBusy(false);
         }

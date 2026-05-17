@@ -17,6 +17,7 @@ import { db } from '../firebase';
 import { collection, onSnapshot, doc } from 'firebase/firestore';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
+import { toast } from '../toast';
 import TranslatableText from './TranslatableText';
 
 export default function ChatAckDashboard({
@@ -95,7 +96,7 @@ export default function ChatAckDashboard({
                 targetId: message?.id,
                 details: { count: pending.length, chatId: chat?.id },
             });
-            alert(tx('Reminders sent ✓', 'Recordatorios enviados ✓'));
+            toast(tx('Reminders sent ✓', 'Recordatorios enviados ✓'), { kind: 'success' });
         } catch (e) {
             console.warn('nudge failed:', e);
         } finally {

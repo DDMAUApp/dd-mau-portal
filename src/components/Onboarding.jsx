@@ -747,7 +747,7 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
             onWriteAudit('zip_exported', { hireId: hire.id, hireName: hire.name });
         } catch (e) {
             console.error('Export failed:', e);
-            alert(tx('Export failed: ', 'Falló la exportación: ') + (e.message || e));
+            toast(tx('Export failed: ', 'Falló la exportación: ') + (e.message || e), { kind: 'error', duration: 6000 });
         } finally {
             setExporting(false);
         }
@@ -1530,7 +1530,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
             onCreated({ ...hire }, token);
         } catch (e) {
             console.error(isEditing ? 'Edit hire failed:' : 'Create hire failed:', e);
-            alert((isEditing ? tx('Could not save: ', 'No se pudo guardar: ') : tx('Could not create hire: ', 'No se pudo crear: ')) + (e.message || e));
+            toast((isEditing ? tx('Could not save: ', 'No se pudo guardar: ') : tx('Could not create hire: ', 'No se pudo crear: ')) + (e.message || e), { kind: 'error', duration: 6000 });
         } finally {
             setSaving(false);
         }

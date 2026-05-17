@@ -27,6 +27,7 @@ import {
 } from 'firebase/firestore';
 import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
+import { toast } from '../toast';
 
 const PRIORITIES = [
     { key: 'low',    en: 'Low',    es: 'Baja',    color: 'bg-dd-bg text-dd-text-2 border-dd-line' },
@@ -131,7 +132,7 @@ export default function ChatTaskFromMessageModal({
             onCreated?.({ taskId: taskRef.id });
         } catch (e) {
             console.error('task convert failed:', e);
-            alert(tx('Could not create task', 'No se pudo crear la tarea'));
+            toast(tx('Could not create task', 'No se pudo crear la tarea'), { kind: 'error' });
         } finally {
             setBusy(false);
         }

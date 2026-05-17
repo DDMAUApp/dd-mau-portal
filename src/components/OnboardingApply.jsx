@@ -41,6 +41,7 @@ import {
     EDUCATION_LEVELS, REFERENCE_RELATIONS, REFERRAL_SOURCES, LANGUAGES,
     normalizeUsPhone, isValidEmail, sha256Hex, labelFor,
 } from '../data/applyForm';
+import { toast } from '../toast';
 
 const COOLDOWN_KEY = 'ddmau:applyLastSubmit';
 const DRAFT_KEY    = 'ddmau:applyDraft.v2';
@@ -991,11 +992,11 @@ function Step4({ values, setField, toggleInArray, setValues, resumeFile, setResu
         const f = (filesList || [])[0];
         if (!f) return;
         if (f.size > 10 * 1024 * 1024) {
-            alert(tx('Resume too large — max 10 MB.', 'CV demasiado grande — máx 10 MB.'));
+            toast(tx('Resume too large — max 10 MB.', 'CV demasiado grande — máx 10 MB.'), { kind: 'warn' });
             return;
         }
         if (!/^image\/|^application\/pdf$/.test(f.type)) {
-            alert(tx('Resume must be a PDF or photo (JPG/PNG/HEIC).', 'CV debe ser PDF o foto.'));
+            toast(tx('Resume must be a PDF or photo (JPG/PNG/HEIC).', 'CV debe ser PDF o foto.'), { kind: 'warn' });
             return;
         }
         setResumeFile(f);

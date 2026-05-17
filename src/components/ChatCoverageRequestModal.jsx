@@ -27,6 +27,7 @@ import {
 import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { channelDocId } from '../data/chat';
+import { toast } from '../toast';
 
 export default function ChatCoverageRequestModal({
     language = 'en', staffName, staffList, viewer, onClose, onPosted,
@@ -182,7 +183,7 @@ export default function ChatCoverageRequestModal({
             onPosted?.({ messageId: msgRef.id, chatId });
         } catch (e) {
             console.error('coverage request failed:', e);
-            alert(tx('Send failed', 'Error al enviar'));
+            toast(tx('Send failed', 'Error al enviar'), { kind: 'error' });
         } finally {
             setBusy(false);
         }

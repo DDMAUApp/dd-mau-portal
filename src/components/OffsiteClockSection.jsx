@@ -28,6 +28,7 @@ import {
     subscribeAllOffsite,
     formatOffsiteWhen,
 } from '../data/offsiteClock';
+import { toast } from '../toast';
 
 export default function OffsiteClockSection({
     language = 'en', staffName, staffList, viewer,
@@ -132,7 +133,7 @@ export default function OffsiteClockSection({
             });
         } catch (e) {
             console.warn('cancel failed:', e);
-            alert(tx('Cancel failed', 'Error al cancelar'));
+            toast(tx('Cancel failed', 'Error al cancelar'), { kind: 'error' });
         }
     }
 
@@ -147,7 +148,7 @@ export default function OffsiteClockSection({
             });
         } catch (e) {
             console.warn('force-out failed:', e);
-            alert(tx('Force clock-out failed', 'Error al cerrar turno'));
+            toast(tx('Force clock-out failed', 'Error al cerrar turno'), { kind: 'error' });
         }
     }
 

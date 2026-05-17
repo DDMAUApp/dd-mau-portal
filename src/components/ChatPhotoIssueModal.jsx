@@ -22,6 +22,7 @@ import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { channelDocId, ISSUE_CATEGORIES, ISSUE_URGENCIES } from '../data/chat';
+import { toast } from '../toast';
 
 export default function ChatPhotoIssueModal({
     language = 'en', staffName, staffList, viewer, storeLocation,
@@ -155,7 +156,7 @@ export default function ChatPhotoIssueModal({
             onPosted?.({ ticketId });
         } catch (e) {
             console.error('issue report failed:', e);
-            alert(tx('Report failed', 'Error al reportar'));
+            toast(tx('Report failed', 'Error al reportar'), { kind: 'error' });
         } finally {
             setBusy(false);
         }

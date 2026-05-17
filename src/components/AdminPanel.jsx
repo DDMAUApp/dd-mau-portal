@@ -2333,9 +2333,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         try {
                                             const result = await enableFcmPush(staffName, staffList, setStaffList);
                                             if (result.ok) {
-                                                alert(language === 'es'
+                                                toast(language === 'es'
                                                     ? '✅ Registrado. Tu token está guardado. Prueba enviarte un push.'
-                                                    : '✅ Registered. Your token is saved. Try sending a test push.');
+                                                    : '✅ Registered. Your token is saved. Try sending a test push.',
+                                                    { kind: 'success', duration: 5000 });
                                             } else {
                                                 const reasonLabel = {
                                                     'no-notification-api': language === 'es' ? 'Este navegador no soporta notificaciones' : "This browser doesn't support notifications",
@@ -2346,11 +2347,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     'get-token-failed': language === 'es' ? 'FCM rechazó dar un token (mira la consola)' : 'FCM refused to issue a token (check console)',
                                                     'no-token': language === 'es' ? 'FCM devolvió token vacío' : 'FCM returned empty token',
                                                 }[result.reason] || result.reason;
-                                                alert((language === 'es' ? '❌ Falló: ' : '❌ Failed: ') + reasonLabel);
+                                                toast((language === 'es' ? '❌ Falló: ' : '❌ Failed: ') + reasonLabel, { kind: 'error', duration: 6000 });
                                             }
                                         } catch (e) {
                                             console.error('register now failed:', e);
-                                            alert((language === 'es' ? '❌ Error: ' : '❌ Error: ') + (e.message || e));
+                                            toast((language === 'es' ? '❌ Error: ' : '❌ Error: ') + (e.message || e), { kind: 'error', duration: 6000 });
                                         }
                                     }}
                                     className="w-full mt-2 py-2 rounded-lg bg-green-600 text-white text-sm font-bold hover:bg-green-700">
@@ -2385,12 +2386,13 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 );
                                                 tx.set(ref, { list: next });
                                             });
-                                            alert(language === 'es'
+                                            toast(language === 'es'
                                                 ? 'Tokens borrados. Recarga la página para re-registrar.'
-                                                : 'Tokens cleared. Reload the page to re-register a fresh single token.');
+                                                : 'Tokens cleared. Reload the page to re-register a fresh single token.',
+                                                { kind: 'success', duration: 5000 });
                                         } catch (e) {
                                             console.error('reset push tokens failed:', e);
-                                            alert('Reset failed: ' + (e.message || e));
+                                            toast('Reset failed: ' + (e.message || e), { kind: 'error', duration: 6000 });
                                         }
                                     }}
                                     className="w-full mt-2 py-2 rounded-lg bg-white border-2 border-blue-300 text-blue-700 text-sm font-bold hover:bg-blue-100">

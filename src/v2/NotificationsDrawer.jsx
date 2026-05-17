@@ -10,11 +10,15 @@
 //     forStaff: string,         // staff name (matches staffList.name)
 //     read: boolean,
 //     createdAt: timestamp,
-//     kind: 'shift_published' | 'shift_offered' | 'shift_taken' |
-//           'pto_approved' | 'task_assigned' | ...
+//     type: 'shift_published' | 'shift_offered' | 'shift_taken' |
+//           'swap_request' | 'pto_approved' | 'pto_denied' |
+//           'task_assigned' | 'task_handoff' | 'chat_message' |
+//           'eighty_six_alert' | 'tardy_logged' | 'handoff_*' | ...
+//                              // (legacy: `kind`, still read as a fallback)
 //     title: string,            // short headline (already localized at write time)
 //     body: string,             // 1-2 line body
-//     deepLink: 'schedule' | 'operations' | 'recipes' | ... (optional)
+//     deepLink: 'schedule' | 'operations' | 'chat' | ... (optional;
+//                              // inferred from type family when absent)
 //   }
 //
 // The drawer subscribes to forStaff == currentStaffName and renders
@@ -55,25 +59,89 @@ function timeAgo(ts, isEs) {
     } catch { return ''; }
 }
 
+// Type-keyed metadata.
+//
+// HISTORICAL NOTE (Andrew 2026-05-17 polish pass): writer sites in
+// notify.js / Schedule / Eighty6 / etc. write `type:`, but this drawer
+// originally read `item.kind`. Result: every notification fell through
+// to the default 🔔 icon and tone — the rich KIND_META table below
+// was dead code for months. The lookup now reads `item.type ?? item.kind`
+// (`kind` retained for the legacy schema in the file header) and the
+// table is extended with the full set of `type` values actually written
+// by the app, plus a prefix-based fallback for unknown family members.
 const KIND_META = {
-    shift_published:  { icon: '📅', tone: 'bg-dd-green-50 text-dd-green-700' },
-    shift_offered:    { icon: '📣', tone: 'bg-blue-50 text-blue-700' },
-    shift_taken:      { icon: '🤝', tone: 'bg-purple-50 text-purple-700' },
-    shift_approved:   { icon: '✓',  tone: 'bg-dd-green-50 text-dd-green-700' },
-    shift_deleted:    { icon: '🗑', tone: 'bg-red-50 text-red-700' },
-    shift_edited:     { icon: '✏️', tone: 'bg-amber-50 text-amber-800' },
-    pto_approved:     { icon: '🌴', tone: 'bg-dd-green-50 text-dd-green-700' },
-    pto_denied:       { icon: '🌴', tone: 'bg-red-50 text-red-700' },
-    pto_request:      { icon: '🌴', tone: 'bg-amber-50 text-amber-800' },
-    task_assigned:    { icon: '📋', tone: 'bg-blue-50 text-blue-700' },
-    task_message:     { icon: '💬', tone: 'bg-blue-50 text-blue-700' },
-    task_comment:     { icon: '💬', tone: 'bg-blue-50 text-blue-700' },
-    chat_message:     { icon: '💬', tone: 'bg-dd-green-50 text-dd-green-700' },
-    chat_mention:     { icon: '📣', tone: 'bg-amber-50 text-amber-800' },
-    shift_reminder:   { icon: '⏰', tone: 'bg-amber-50 text-amber-800' },
-    swap_pending:     { icon: '⏳', tone: 'bg-purple-50 text-purple-700' },
-    default:          { icon: '🔔', tone: 'bg-dd-bg text-dd-text-2' },
+    // Shifts
+    shift_published:        { icon: '📅', tone: 'bg-dd-green-50 text-dd-green-700' },
+    shift_offered:          { icon: '📣', tone: 'bg-blue-50 text-blue-700' },
+    shift_taken:            { icon: '🤝', tone: 'bg-purple-50 text-purple-700' },
+    shift_approved:         { icon: '✓',  tone: 'bg-dd-green-50 text-dd-green-700' },
+    shift_deleted:          { icon: '🗑', tone: 'bg-red-50 text-red-700' },
+    shift_deleted_admin:    { icon: '🗑', tone: 'bg-red-50 text-red-700' },
+    shift_edited:           { icon: '✏️', tone: 'bg-amber-50 text-amber-800' },
+    shift_reminder:         { icon: '⏰', tone: 'bg-amber-50 text-amber-800' },
+    // PTO
+    pto_approved:           { icon: '🌴', tone: 'bg-dd-green-50 text-dd-green-700' },
+    pto_denied:             { icon: '🌴', tone: 'bg-red-50 text-red-700' },
+    pto_request:            { icon: '🌴', tone: 'bg-amber-50 text-amber-800' },
+    pto_withdrawn:          { icon: '🌴', tone: 'bg-dd-bg text-dd-text-2' },
+    // Swap
+    swap_request:           { icon: '🔄', tone: 'bg-blue-50 text-blue-700' },
+    swap_approved:          { icon: '✓',  tone: 'bg-dd-green-50 text-dd-green-700' },
+    swap_approved_admin:    { icon: '✓',  tone: 'bg-dd-green-50 text-dd-green-700' },
+    swap_denied:            { icon: '✕',  tone: 'bg-red-50 text-red-700' },
+    swap_denied_admin:      { icon: '✕',  tone: 'bg-red-50 text-red-700' },
+    swap_pending:           { icon: '⏳', tone: 'bg-purple-50 text-purple-700' },
+    // Tasks
+    task_assigned:          { icon: '📋', tone: 'bg-blue-50 text-blue-700' },
+    task_message:           { icon: '💬', tone: 'bg-blue-50 text-blue-700' },
+    task_comment:           { icon: '💬', tone: 'bg-blue-50 text-blue-700' },
+    task_handoff:           { icon: '🤝', tone: 'bg-purple-50 text-purple-700' },
+    // Chat
+    chat_message:           { icon: '💬', tone: 'bg-dd-green-50 text-dd-green-700' },
+    chat_mention:           { icon: '📣', tone: 'bg-amber-50 text-amber-800' },
+    // 86 board
+    eighty_six_alert:       { icon: '🚫', tone: 'bg-red-50 text-red-700' },
+    // Handoff / Tardies / Sauce
+    handoff_acknowledged:   { icon: '✓',  tone: 'bg-dd-green-50 text-dd-green-700' },
+    handoff_submitted:      { icon: '🤝', tone: 'bg-purple-50 text-purple-700' },
+    tardy_logged:           { icon: '⏰', tone: 'bg-amber-50 text-amber-800' },
+    sauce_urgent:           { icon: '🌶', tone: 'bg-red-50 text-red-700' },
+    sauce_request:          { icon: '🥣', tone: 'bg-amber-50 text-amber-800' },
+    // Diagnostic
+    test:                   { icon: '🔔', tone: 'bg-dd-bg text-dd-text-2' },
+    default:                { icon: '🔔', tone: 'bg-dd-bg text-dd-text-2' },
 };
+
+// Family-prefix fallback for unknown variants in the same group.
+// e.g. a future 'shift_swapped_back' still gets the calendar icon.
+function metaForKind(t) {
+    if (!t) return KIND_META.default;
+    if (KIND_META[t]) return KIND_META[t];
+    if (t.startsWith('shift_'))     return { icon: '📅', tone: 'bg-dd-bg text-dd-text-2' };
+    if (t.startsWith('pto_'))       return { icon: '🌴', tone: 'bg-dd-bg text-dd-text-2' };
+    if (t.startsWith('swap_'))      return { icon: '🔄', tone: 'bg-dd-bg text-dd-text-2' };
+    if (t.startsWith('task_'))      return { icon: '📋', tone: 'bg-dd-bg text-dd-text-2' };
+    if (t.startsWith('chat_'))      return { icon: '💬', tone: 'bg-dd-bg text-dd-text-2' };
+    if (t.startsWith('handoff_'))   return { icon: '🤝', tone: 'bg-dd-bg text-dd-text-2' };
+    if (t.startsWith('eighty'))     return { icon: '🚫', tone: 'bg-dd-bg text-dd-text-2' };
+    return KIND_META.default;
+}
+
+// Infer where to navigate on tap when the notification doc didn't carry
+// an explicit `deepLink`. This lets old notifications (and writer sites
+// that forgot to set deepLink) still route to the right tab.
+function deepLinkFor(item) {
+    if (item.deepLink) return item.deepLink;
+    const t = item.type || item.kind || '';
+    if (t.startsWith('shift_') || t.startsWith('pto_') || t.startsWith('swap_')) return 'schedule';
+    if (t.startsWith('chat_'))      return 'chat';
+    if (t.startsWith('task_'))      return 'operations';
+    if (t.startsWith('handoff_'))   return 'handoff';
+    if (t === 'tardy_logged')       return 'tardies';
+    if (t.startsWith('sauce_'))     return 'operations';
+    if (t === 'eighty_six_alert' || t.startsWith('eighty')) return 'eighty6';
+    return null;
+}
 
 export default function NotificationsDrawer({ open, onClose, staffName, language = 'en', onNavigate }) {
     const isEs = language === 'es';
@@ -103,7 +171,11 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
 
     const handleItemClick = (item) => {
         if (!item.read) markRead(item.id);
-        if (item.deepLink && onNavigate) onNavigate(item.deepLink);
+        // deepLink may be explicit on the doc OR inferred from the type
+        // family (notifications written before deepLink became standard
+        // still navigate to the right tab).
+        const target = deepLinkFor(item);
+        if (target && onNavigate) onNavigate(target);
         onClose?.();
     };
 
@@ -173,7 +245,11 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
                     ) : (
                         <ul className="divide-y divide-dd-line">
                             {items.map(item => {
-                                const meta = KIND_META[item.kind] || KIND_META.default;
+                                // Resolve icon/tone from the doc's `type`
+                                // field (canonical) and fall back to the
+                                // legacy `kind` field for any pre-existing
+                                // docs that used the older schema.
+                                const meta = metaForKind(item.type || item.kind);
                                 return (
                                     <li key={item.id}>
                                         <button onClick={() => handleItemClick(item)}
