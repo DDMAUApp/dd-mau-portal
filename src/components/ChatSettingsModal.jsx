@@ -207,6 +207,23 @@ export default function ChatSettingsModal({
             }
             // 3. Delete the chat doc itself.
             await deleteDoc(doc(db, 'chats', chat.id));
+            // 4. Tombstone — without this the AppDataContext / ChatCenter
+            //    auto-sync would re-create the channel on next mount.
+            //    Andrew flagged this bug after deleting a channel and
+            //    watching it come back. The tombstone is keyed by the
+            //    same doc id so the sync's "skip if tombstoned" check
+            //    catches it. Stored under /chats_purged.
+            try {
+                await setDoc(doc(db, 'chats_purged', chat.id), {
+                    purgedAt: serverTimestamp(),
+                    purgedBy: staffName,
+                    chatType: chat.type,
+                    channelKey: chat.channelKey || null,
+                    chatName: chat.name || null,
+                });
+            } catch (e) {
+                console.warn('tombstone write failed (non-fatal):', e);
+            }
             recordAudit({
                 action: 'chat.delete.hard',
                 actorName: staffName,

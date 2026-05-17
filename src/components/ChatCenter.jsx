@@ -96,12 +96,24 @@ export default function ChatCenter({
     }, [staffName]);
 
     // ── Auto-channel sync ─────────────────────────────────────────
-    // On first mount + whenever staffList changes, make sure the three
-    // channels exist and that their members[] reflects current roster.
+    // On first mount + whenever staffList changes, make sure the
+    // canonical channels exist and that their members[] reflects the
+    // current roster.
     //
-    // Idempotent: setDoc({ merge: true }) updates the membership array
-    // without clobbering messages or other fields. Skipped if the
-    // membership array hasn't changed (avoids needless writes).
+    // 2026-05-16 — Andrew deleted a channel and it kept coming back.
+    // Two delete states the sync now respects so a delete sticks:
+    //   1. SOFT-DELETED chat doc (deletedAt is set) — leave it alone;
+    //      do NOT repopulate the members array.
+    //   2. HARD-DELETED — the chat doc is gone. We check a tombstone
+    //      collection (/chats_purged/{channelKey}). If a tombstone
+    //      exists, do NOT recreate the chat doc.
+    // Both delete sites (settings modal + chat-list action sheet) now
+    // write the tombstone on hard-delete and skip-on-soft naturally
+    // works because deletedAt is set.
+    //
+    // To bring a system channel back, an admin can delete its
+    // tombstone in /chats_purged via Firestore console (or via a
+    // "Restore channel" UI — out of v1 scope).
     useEffect(() => {
         if (!Array.isArray(staffList) || staffList.length === 0) return;
         let cancelled = false;
@@ -109,7 +121,13 @@ export default function ChatCenter({
             for (const ch of AUTO_CHANNELS) {
                 const id = channelDocId(ch.key);
                 const ref = doc(db, 'chats', id);
+                const tombRef = doc(db, 'chats_purged', id);
                 try {
+                    // Tombstone check first — if hard-deleted, never recreate.
+                    const tombSnap = await getDoc(tombRef);
+                    if (cancelled) return;
+                    if (tombSnap.exists()) continue;
+
                     const snap = await getDoc(ref);
                     const wantMembers = channelMembersFor(ch.key, staffList);
                     if (cancelled) return;
@@ -128,7 +146,11 @@ export default function ChatCenter({
                             lastActivityAt: serverTimestamp(),
                         });
                     } else {
-                        const cur = snap.data().members || [];
+                        const data = snap.data();
+                        // Soft-deleted — leave it alone. Repopulating
+                        // would resurrect the channel for everyone.
+                        if (data.deletedAt) continue;
+                        const cur = data.members || [];
                         const same = cur.length === wantMembers.length
                             && cur.every(m => wantMembers.includes(m));
                         if (!same) {
