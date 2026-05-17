@@ -31,6 +31,7 @@ import { canViewLabor } from '../data/staff';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
+import StaffTodoCard from '../components/StaffTodoCard';
 
 function todayKey() {
     const d = new Date();
@@ -246,6 +247,17 @@ export default function MobileHome({
                 staffList={staffList}
                 setStaffList={setStaffList}
                 language={language}
+            />
+
+            {/* Staff TO-DO card — admin-defined todos + auto-detected
+                "fill out your birthday" / "set your availability" hints.
+                Renders null when there's nothing to do. Sits ABOVE the
+                hero shift card so action items get top billing. */}
+            <StaffTodoCard
+                language={language}
+                staffName={staffName}
+                viewer={me}
+                onNavigate={onNavigate}
             />
 
             {/* HERO — Today's shift. Solid charcoal-2 with dd-green inner

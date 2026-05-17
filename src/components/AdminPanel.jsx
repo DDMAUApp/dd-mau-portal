@@ -8,6 +8,7 @@ import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
 import ImportStaffModal from './ImportStaffModal';
 import OffsiteClockSection from './OffsiteClockSection';
+import StaffTodosAdmin from './StaffTodosAdmin';
 import { toast, undoToast } from '../toast';
 import { enableFcmPush } from '../messaging';
 
@@ -892,6 +893,19 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         staffName={staffName}
                         staffList={staffList}
                         viewer={(staffList || []).find(s => s.name === staffName)}
+                    />
+
+                    {/* ── STAFF TODOS ──
+                        Admin section for managing the custom todos that
+                        appear on every targeted staff member's Home page.
+                        Auto-detected todos (missing birthday / availability)
+                        are computed client-side from each staff record and
+                        not managed here — they disappear when the field
+                        is filled. */}
+                    <StaffTodosAdmin
+                        language={language}
+                        staffName={staffName}
+                        staffList={staffList}
                     />
 
                     {/* ── STAFF LIST (collapsible) ── */}

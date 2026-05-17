@@ -15,6 +15,7 @@ import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
+import StaffTodoCard from '../components/StaffTodoCard';
 
 // ── Primitives ─────────────────────────────────────────────────────────
 function Card({ className = '', children, hover = false, ...rest }) {
@@ -216,6 +217,17 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                 staffList={staffList}
                 setStaffList={setStaffList}
                 language={language}
+            />
+
+            {/* Staff TO-DO card — admin-defined todos + auto-detected
+                "fill out your birthday" / "set your availability" hints.
+                Renders null when there's nothing to do. Sits above the
+                stats so action items get top billing on desktop too. */}
+            <StaffTodoCard
+                language={language}
+                staffName={staffName}
+                viewer={(staffList || []).find(s => s.name === staffName) || null}
+                onNavigate={onNavigate}
             />
 
             {/* Stats */}

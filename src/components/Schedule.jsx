@@ -406,6 +406,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // 2026-05-16 — staff self-serve birthday. Available to every staff
     // member regardless of role; writes to their own record only.
     const [showMyBirthdayModal, setShowMyBirthdayModal] = useState(false);
+
+    // Auto-open hook for the Home → StaffTodoCard deep-links. When a
+    // staff member taps "Set your availability" or "Add your birthday"
+    // on Home, the card stashes a marker in sessionStorage under
+    // OPEN_MODAL_KEY and navigates here. We pick that up on first
+    // mount, open the matching modal, and clear the key so a refresh
+    // doesn't re-open. Per-modal one-shot — see staffTodos.js for the
+    // writer side.
+    useEffect(() => {
+        try {
+            const key = 'ddmau:scheduleOpenModal';
+            const wanted = sessionStorage.getItem(key);
+            if (!wanted) return;
+            sessionStorage.removeItem(key);
+            if (wanted === 'availability') setShowMyAvailModal(true);
+            else if (wanted === 'birthday') setShowMyBirthdayModal(true);
+        } catch { /* sessionStorage disabled — silent */ }
+    }, []);
     // 2026-05-16 — shift SWAP request flow (separate from the existing
     // "offer to market" handleOfferShift flow). Direct trade: staff
     // picks their own shift + another staff's shift → manager approves
