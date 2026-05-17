@@ -645,6 +645,60 @@ export default function VendorCsvImportModal({
                 importedAt: serverTimestamp(),
             });
 
+            // Also write to /vendor_prices/{vendor} so the Pricing tab
+            // shows the imported items + prices alongside the scraper
+            // data (for Sysco/US Foods) or as the sole source (for
+            // Costco, which has no scraper).
+            //
+            // Dotted-path merge under .prices.{sku} so concurrent
+            // imports for the same vendor don't clobber each other's
+            // SKUs. lastScraped / lastImported timestamps track the
+            // freshness banner up top.
+            const priceFields = {};
+            for (const r of resolved) {
+                if (r.skipped || !r.sku) continue;
+                // Parse price from the row's price column if present.
+                const priceCol = parsed.mapping.price;
+                let parsedPrice = null;
+                if (priceCol != null) {
+                    const raw = String(parsed.body[r.rowIdx]?.[priceCol] || '');
+                    const m = raw.replace(/[^0-9.\-]/g, '');
+                    const n = parseFloat(m);
+                    if (!isNaN(n) && n > 0) parsedPrice = n;
+                }
+                const unitCol = parsed.mapping.unit;
+                const pack = unitCol != null ? String(parsed.body[r.rowIdx]?.[unitCol] || '').trim() : '';
+                priceFields[`prices.${r.sku}`] = {
+                    name: r.name,
+                    price: parsedPrice,
+                    pack: pack || null,
+                    invId: r.finalItemId || null,
+                    updatedAt: new Date().toISOString(),
+                };
+            }
+            if (Object.keys(priceFields).length > 0) {
+                priceFields['lastImported'] = new Date().toISOString();
+                priceFields['lastImportedBy'] = staffName;
+                priceFields['lastImportedFile'] = parsed.fileName;
+                try {
+                    await updateDoc(doc(db, 'vendor_prices', vendor), priceFields);
+                } catch (err) {
+                    if (err?.code === 'not-found') {
+                        // First-run create for vendors that have never
+                        // been scraped (e.g. Costco). Promote the dotted
+                        // keys into a real nested prices map.
+                        const nested = { prices: {} };
+                        for (const [k, v] of Object.entries(priceFields)) {
+                            if (k.startsWith('prices.')) nested.prices[k.slice(7)] = v;
+                            else nested[k] = v;
+                        }
+                        await setDoc(doc(db, 'vendor_prices', vendor), nested, { merge: true });
+                    } else {
+                        console.warn('vendor_prices write failed:', err);
+                    }
+                }
+            }
+
             // Persist any newly-resolved SKU mappings into vendor_matches
             // so the next import for this vendor auto-matches them.
             if (Object.keys(newSkuMappings).length > 0) {

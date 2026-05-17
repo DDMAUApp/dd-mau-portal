@@ -608,6 +608,39 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
             }, [livePrices.usfoods, USFOODS_OVERRIDES, autoMatch]);
 
+            // Costco — populated only by VendorCsvImportModal (no scraper).
+            // Each item write from the importer already carries its
+            // master-inventory invId (it does the SKU-match work). We
+            // surface those directly here; fuzzy auto-match is skipped
+            // because the importer's own picker is the canonical place
+            // to resolve unmatched Costco SKUs.
+            const costcoPricingData = useMemo(() => {
+                const cData = livePrices.costco || {};
+                const prices = cData.prices || {};
+                const allEntries = Object.entries(prices).map(([costcoId, data]) => {
+                    const overrideRaw = (vendorMatches?.costco || {})[costcoId];
+                    const invId = data.invId || overrideRaw || null;
+                    return [costcoId, {
+                        ...data,
+                        name: data.name || `Costco Item ${costcoId}`,
+                        invId,
+                        matchType: invId ? (data.invId ? 'auto' : 'confirmed') : null,
+                    }];
+                });
+                const sorted = [...allEntries].sort((a, b) => {
+                    const aRank = a[1].invId ? 0 : 1;
+                    const bRank = b[1].invId ? 0 : 1;
+                    if (aRank !== bRank) return aRank - bRank;
+                    return (a[1].name || '').localeCompare(b[1].name || '');
+                });
+                return {
+                    costcoData: cData,
+                    sorted,
+                    matchedCount: sorted.filter(([,d]) => d.invId).length,
+                    withPriceCount: sorted.filter(([,d]) => d.price != null).length,
+                };
+            }, [livePrices.costco, vendorMatches]);
+
             // Reverse lookup: inventory item ID → ALL vendor prices for that item.
             // Returns { <invId>: [{vendor, vendorId, price, pack, brand, ...}, ...] }
             // sorted by price ascending (so [0] is the cheapest). The single-best lookup
@@ -1537,10 +1570,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const unsubUsfoodsStatus = onSnapshot(doc(db, "vendor_prices", "usfoods_status"), (docSnap) => {
                     if (docSnap.exists()) setUsfoodsScrapeStatus(docSnap.data());
                 });
+                // Costco — populated only by manual CSV/PDF imports
+                // (no scraper). Lives in the same vendor_prices doc
+                // shape so the Pricing tab can render it identically
+                // to Sysco / US Foods.
+                const unsubCostcoPrices = onSnapshot(doc(db, "vendor_prices", "costco"), (docSnap) => {
+                    if (docSnap.exists()) setLivePrices(prev => ({ ...prev, costco: docSnap.data() }));
+                });
 
                 return () => {
                     unsubSyscoPrices(); unsubSyscoTrigger(); unsubSyscoStatus();
                     unsubUsfoodsPrices(); unsubUsfoodsTrigger(); unsubUsfoodsStatus();
+                    unsubCostcoPrices();
                     pendingTimeouts.forEach(id => clearTimeout(id));
                     pendingTimeouts.clear();
                 };
@@ -5644,22 +5685,40 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                             {/* ── PRICING VIEW ── */}
                             {invViewMode === "pricing" && (() => {
+                                // 2026-05-16 — pricingVendor now supports
+                                // 'sysco' | 'usfoods' | 'costco'. Costco has
+                                // no live scraper; its data comes from the
+                                // CSV/PDF importer. The renderer hides the
+                                // scrape refresh button + status alert when
+                                // the active vendor is Costco.
                                 const isSysco = pricingVendor === "sysco";
-                                const pData = isSysco ? syscoPricingData : usfoodsPricingData;
+                                const isCostco = pricingVendor === "costco";
+                                const pData = isSysco ? syscoPricingData
+                                    : isCostco ? costcoPricingData
+                                    : usfoodsPricingData;
                                 const sorted = pData.sorted || [];
                                 const matchedCount = pData.matchedCount || 0;
                                 const withPriceCount = pData.withPriceCount || 0;
-                                const vendorData = isSysco ? (pData.syscoData || {}) : (pData.ufData || {});
-                                const vendorName = isSysco ? "Sysco" : "US Foods";
-                                const vendorColor = isSysco ? "blue" : "orange";
+                                const vendorData = isSysco ? (pData.syscoData || {})
+                                    : isCostco ? (pData.costcoData || {})
+                                    : (pData.ufData || {});
+                                const vendorName = isSysco ? "Sysco" : isCostco ? "Costco" : "US Foods";
+                                const vendorColor = isSysco ? "blue" : isCostco ? "red" : "orange";
 
-                                // Scrape health status
-                                const scrapeStatus = (isSysco ? syscoScrapeStatus : usfoodsScrapeStatus) || {};
-                                const triggerStatus = isSysco ? syscoTriggerStatus : usfoodsTriggerStatus;
-                                const setTriggerStatus = isSysco ? setSyscoTriggerStatus : setUsfoodsTriggerStatus;
-                                const triggerDocName = isSysco ? "sysco_trigger" : "usfoods_trigger";
+                                // Scrape health — Costco has none.
+                                const scrapeStatus = isCostco
+                                    ? {}
+                                    : ((isSysco ? syscoScrapeStatus : usfoodsScrapeStatus) || {});
+                                const triggerStatus = isCostco ? null
+                                    : isSysco ? syscoTriggerStatus : usfoodsTriggerStatus;
+                                const setTriggerStatus = isCostco ? () => {}
+                                    : isSysco ? setSyscoTriggerStatus : setUsfoodsTriggerStatus;
+                                const triggerDocName = isCostco ? null
+                                    : isSysco ? "sysco_trigger" : "usfoods_trigger";
+                                const lastImportMs = vendorData.lastImported ? new Date(vendorData.lastImported).getTime() : 0;
                                 const lastScrapedMs = vendorData.lastScraped ? new Date(vendorData.lastScraped).getTime() : 0;
-                                const isStale = lastScrapedMs > 0 && (Date.now() - lastScrapedMs > 48 * 60 * 60 * 1000);
+                                const effectiveLastMs = Math.max(lastImportMs, lastScrapedMs);
+                                const isStale = effectiveLastMs > 0 && (Date.now() - effectiveLastMs > 48 * 60 * 60 * 1000);
                                 const hasFailed = scrapeStatus.status && scrapeStatus.status !== "success" && scrapeStatus.status !== "running";
 
                                 return (
@@ -5687,6 +5746,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             <button onClick={() => setPricingVendor("usfoods")}
                                                 className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${pricingVendor === "usfoods" ? "bg-orange-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                                 US Foods
+                                            </button>
+                                            <button onClick={() => setPricingVendor("costco")}
+                                                className={`flex-1 py-2 rounded-xl text-sm font-bold transition ${pricingVendor === "costco" ? "bg-red-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                                Costco
                                             </button>
                                         </div>
 
@@ -5749,65 +5812,86 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             inline banner was noisy and not actionable. */}
 
                                         {/* Header */}
-                                        <div className={`bg-gradient-to-r ${isSysco ? "from-blue-700 to-blue-600" : "from-orange-600 to-orange-500"} text-white rounded-xl p-3 flex items-center justify-between`}>
+                                        <div className={`bg-gradient-to-r ${isSysco ? "from-blue-700 to-blue-600" : isCostco ? "from-red-700 to-red-600" : "from-orange-600 to-orange-500"} text-white rounded-xl p-3 flex items-center justify-between`}>
                                             <div>
-                                                <div className="font-bold text-sm">{language === "es" ? `Precios de ${vendorName} — Historial` : `${vendorName} Pricing — Purchase History`}</div>
-                                                <div className={`${isSysco ? "text-blue-200" : "text-orange-200"} text-xs mt-0.5`}>
+                                                <div className="font-bold text-sm">{language === "es" ? `Precios de ${vendorName}` : `${vendorName} Pricing`}</div>
+                                                <div className={`${isSysco ? "text-blue-200" : isCostco ? "text-red-200" : "text-orange-200"} text-xs mt-0.5`}>
                                                     {sorted.length} {language === "es" ? "articulos" : "items"} &middot; {withPriceCount} {language === "es" ? "con precio" : "with prices"} &middot; {matchedCount} {language === "es" ? "vinculados" : "matched"}
-                                                    {vendorData.lastScraped && (<> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(vendorData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>)}
+                                                    {(vendorData.lastImported || vendorData.lastScraped) && (
+                                                        <> &middot; {language === "es" ? "Actualizado" : "Updated"}: {new Date(vendorData.lastImported || vendorData.lastScraped).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</>
+                                                    )}
                                                 </div>
                                             </div>
-                                            <button
-                                                onClick={async () => {
-                                                    if (triggerStatus === "requesting" || triggerStatus === "running") return;
-                                                    setTriggerStatus("requesting");
-                                                    try {
-                                                        await setDoc(doc(db, "vendor_prices", triggerDocName), {
-                                                            trigger: true,
-                                                            requestedAt: new Date().toISOString(),
-                                                            requestedBy: staffName || "unknown",
-                                                            status: "pending"
-                                                        });
-                                                    } catch (e) {
-                                                        console.error("Trigger error:", e);
-                                                        setTriggerStatus("error");
-                                                        setTimeout(() => setTriggerStatus(null), 4000);
-                                                    }
-                                                }}
-                                                disabled={triggerStatus === "requesting" || triggerStatus === "running"}
-                                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
-                                                    triggerStatus === "running" || triggerStatus === "requesting"
-                                                        ? "bg-white/10 text-white/60 cursor-wait"
-                                                        : triggerStatus === "done"
-                                                            ? "bg-green-500/30 text-green-100"
-                                                            : triggerStatus === "error"
-                                                                ? "bg-red-500/30 text-red-100"
-                                                                : "bg-white/20 hover:bg-white/30 text-white cursor-pointer"
-                                                }`}
-                                                title={language === "es" ? "Solicitar actualizacion de precios" : "Request price refresh"}
-                                            >
-                                                {triggerStatus === "running" || triggerStatus === "requesting" ? (
-                                                    <><span className="animate-spin inline-block">{"\u{1F504}"}</span> {language === "es" ? "Actualizando..." : "Refreshing..."}</>
-                                                ) : triggerStatus === "done" ? (
-                                                    <>{"\u{2705}"} {language === "es" ? "Listo" : "Done!"}</>
-                                                ) : triggerStatus === "error" ? (
-                                                    <>{"\u{274C}"} {language === "es" ? "Error" : "Error"}</>
-                                                ) : (
-                                                    <>{"\u{1F504}"} {language === "es" ? "Actualizar Precios" : "Refresh Prices"}</>
-                                                )}
-                                            </button>
+                                            {/* Refresh button — Sysco / US Foods only.
+                                                Costco has no scraper, so we show an
+                                                Import-CSV shortcut instead. */}
+                                            {isCostco ? (
+                                                <button
+                                                    onClick={() => setShowCsvImport(true)}
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white/20 hover:bg-white/30 text-white transition"
+                                                    title={language === "es" ? "Importar lista de Costco" : "Import Costco list"}
+                                                >
+                                                    📥 {language === "es" ? "Importar" : "Import"}
+                                                </button>
+                                            ) : (
+                                                <button
+                                                    onClick={async () => {
+                                                        if (triggerStatus === "requesting" || triggerStatus === "running") return;
+                                                        setTriggerStatus("requesting");
+                                                        try {
+                                                            await setDoc(doc(db, "vendor_prices", triggerDocName), {
+                                                                trigger: true,
+                                                                requestedAt: new Date().toISOString(),
+                                                                requestedBy: staffName || "unknown",
+                                                                status: "pending"
+                                                            });
+                                                        } catch (e) {
+                                                            console.error("Trigger error:", e);
+                                                            setTriggerStatus("error");
+                                                            setTimeout(() => setTriggerStatus(null), 4000);
+                                                        }
+                                                    }}
+                                                    disabled={triggerStatus === "requesting" || triggerStatus === "running"}
+                                                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                                                        triggerStatus === "running" || triggerStatus === "requesting"
+                                                            ? "bg-white/10 text-white/60 cursor-wait"
+                                                            : triggerStatus === "done"
+                                                                ? "bg-green-500/30 text-green-100"
+                                                                : triggerStatus === "error"
+                                                                    ? "bg-red-500/30 text-red-100"
+                                                                    : "bg-white/20 hover:bg-white/30 text-white cursor-pointer"
+                                                    }`}
+                                                    title={language === "es" ? "Solicitar actualizacion de precios" : "Request price refresh"}
+                                                >
+                                                    {triggerStatus === "running" || triggerStatus === "requesting" ? (
+                                                        <><span className="animate-spin inline-block">{"\u{1F504}"}</span> {language === "es" ? "Actualizando..." : "Refreshing..."}</>
+                                                    ) : triggerStatus === "done" ? (
+                                                        <>{"\u{2705}"} {language === "es" ? "Listo" : "Done!"}</>
+                                                    ) : triggerStatus === "error" ? (
+                                                        <>{"\u{274C}"} {language === "es" ? "Error" : "Error"}</>
+                                                    ) : (
+                                                        <>{"\u{1F504}"} {language === "es" ? "Actualizar Precios" : "Refresh Prices"}</>
+                                                    )}
+                                                </button>
+                                            )}
                                         </div>
 
-                                        {/* Scraper running indicator */}
-                                        {scrapeStatus.status === "running" && (
+                                        {/* Scraper running indicator (not shown for Costco — it has none) */}
+                                        {!isCostco && scrapeStatus.status === "running" && (
                                             <div className="text-center py-2 text-blue-600 text-xs bg-blue-50 rounded-lg border border-blue-200 animate-pulse">
                                                 {"\u{1F504}"} {language === "es" ? "Scraper ejecutandose ahora..." : "Scraper running now..."}
                                             </div>
                                         )}
 
-                                        {sorted.length === 0 && scrapeStatus.status !== "running" && (
-                                            <div className="text-center py-3 text-gray-400 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
-                                                {language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily."}
+                                        {sorted.length === 0 && (isCostco || scrapeStatus.status !== "running") && (
+                                            <div className="text-center py-4 text-gray-500 text-xs bg-yellow-50 rounded-lg border border-yellow-200">
+                                                {isCostco ? (
+                                                    <>
+                                                        {language === "es"
+                                                            ? "Sin datos de Costco aún. Costco no tiene scraper — usa el botón Importar para subir un PDF de tu lista de Costco Business."
+                                                            : "No Costco data yet. Costco has no scraper — use the Import button to upload a PDF of your Costco Business list."}
+                                                    </>
+                                                ) : (language === "es" ? "Esperando datos del scraper. Los precios se actualizan diariamente." : "Waiting for scraper data. Prices update daily.")}
                                             </div>
                                         )}
 
