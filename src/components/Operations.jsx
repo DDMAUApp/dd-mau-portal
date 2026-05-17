@@ -214,6 +214,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             //
             // Map shape: { itemId: { date: 'Mon May 12', qty: 3, dateIso: '2026-05-12T...' } }
             const [lastEnteredByItem, setLastEnteredByItem] = useState({});
+            // Per-vendor latest import timestamp — populated from the
+            // same inventoryHistory walk as lastEnteredByItem. Keyed by
+            // the vendor slug the CSV / PDF importer stamps onto each
+            // snapshot (importedFrom: 'sysco' | 'usfoods' | 'costco' |
+            // 'other'). Drives the "Prices freshness" banner at the
+            // top of the Pricing view so admin can see at a glance
+            // which vendor data is current vs stale per location.
+            //
+            // Shape: { sysco: { dateIso, dateLabel, fileName }, ... }
+            const [lastVendorImport, setLastVendorImport] = useState({});
             // CSV-import modal — replaces the broken Sysco/USF live scraper
             // for any week where the scraper is down. Admin exports the
             // order guide from the vendor portal (one click) and uploads
@@ -2445,6 +2455,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     docs.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
                     const slice = docs.slice(0, 30);
                     const summary = {};
+                    const vendorImports = {};
                     for (const d of slice) {
                         const counts = d.counts || {};
                         const iso = d.date || (d.id ? d.id.slice(0, 10) : null);
@@ -2458,8 +2469,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 summary[itemId] = { date: dateLabel, qty: n, dateIso: iso };
                             }
                         }
+                        // Track the most recent import per vendor.
+                        const fromVendor = d.importedFrom;
+                        if (fromVendor && !vendorImports[fromVendor]) {
+                            vendorImports[fromVendor] = {
+                                dateIso: iso,
+                                dateLabel,
+                                fileName: typeof d.listName === 'string' ? d.listName : null,
+                            };
+                        }
                     }
                     setLastEnteredByItem(summary);
+                    setLastVendorImport(vendorImports);
                 } catch (err) {
                     console.warn('reloadLastEnteredByItem failed:', err);
                 }
@@ -5643,6 +5664,20 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                                 return (
                                     <div className="space-y-2">
+                                        {/* ── Prices-freshness banner ──
+                                            One row per vendor. Each row shows the
+                                            most recent timestamp from either the
+                                            live scraper (vendor_prices/{vendor}
+                                            .lastScraped) OR the most recent CSV/PDF
+                                            import for that vendor (importedFrom
+                                            tag in inventoryHistory). Whichever is
+                                            newer wins. Color-coded by age. */}
+                                        <PricesFreshnessBanner
+                                            livePrices={livePrices}
+                                            lastVendorImport={lastVendorImport}
+                                            language={language}
+                                        />
+
                                         {/* Vendor toggle */}
                                         <div className="flex gap-2">
                                             <button onClick={() => setPricingVendor("sysco")}
@@ -6608,5 +6643,103 @@ function SkipOtherInput({ onSubmit, isEs }) {
 
         // NOTE: MenuReference, Schedule, useGeofence, RecipeForm live in their own files
         // (imported by App.jsx). Duplicate definitions removed to save ~490 lines.
+
+// ─────────────────────────────────────────────────────────────────
+// PricesFreshnessBanner — replaces the old Sysco-only "scrape failed"
+// banner with a multi-vendor freshness summary. One row per vendor:
+//   Sysco     · Updated May 14 · 2d ago    🟢
+//   US Foods  · Updated May 8  · 8d ago    🟡
+//   Costco    · Updated May 16 · today     🟢
+//
+// Latest-of-two timestamp per vendor:
+//   • livePrices[vendor].lastScraped   — server-side scraper
+//   • lastVendorImport[vendor].dateIso  — manual CSV/PDF import
+// Whichever is newer determines the displayed date.
+//
+// Color thresholds:
+//   ≤ 7d  → green (fresh enough for menu decisions)
+//   ≤ 30d → amber (might need a refresh before quoting catering)
+//   > 30d → red   (stale; price decisions should pull a new export)
+//   never → gray  (no data yet)
+// ─────────────────────────────────────────────────────────────────
+const FRESHNESS_VENDORS = [
+    { key: 'sysco',    label: 'Sysco',    accent: 'border-l-blue-500' },
+    { key: 'usfoods',  label: 'US Foods', accent: 'border-l-orange-500' },
+    { key: 'costco',   label: 'Costco',   accent: 'border-l-red-500' },
+];
+function PricesFreshnessBanner({ livePrices, lastVendorImport, language }) {
+    const isEs = language === 'es';
+    const now = Date.now();
+
+    function vendorRow(v) {
+        const scraped = livePrices?.[v.key]?.lastScraped
+            ? new Date(livePrices[v.key].lastScraped).getTime()
+            : 0;
+        const imported = lastVendorImport?.[v.key]?.dateIso
+            ? new Date(lastVendorImport[v.key].dateIso).getTime()
+            : 0;
+        const best = Math.max(scraped, imported);
+        const source = best === 0
+            ? null
+            : best === scraped && scraped > imported
+                ? (isEs ? 'scraper' : 'scraper')
+                : (isEs ? 'CSV/PDF' : 'CSV/PDF');
+        if (best === 0) {
+            return { v, label: isEs ? 'Sin datos' : 'Never imported', tone: 'gray', source: null, ageDays: null };
+        }
+        const ageMs = now - best;
+        const ageDays = Math.floor(ageMs / 86400_000);
+        const tone = ageDays <= 7 ? 'green' : ageDays <= 30 ? 'amber' : 'red';
+        const d = new Date(best);
+        const label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' });
+        const ageLabel = ageDays === 0
+            ? (isEs ? 'hoy' : 'today')
+            : ageDays === 1
+            ? (isEs ? 'hace 1d' : '1d ago')
+            : (isEs ? `hace ${ageDays}d` : `${ageDays}d ago`);
+        return { v, label, ageLabel, tone, source, ageDays };
+    }
+    const rows = FRESHNESS_VENDORS.map(vendorRow);
+
+    const toneClasses = {
+        green: 'bg-green-50 text-green-800 border-green-200',
+        amber: 'bg-amber-50 text-amber-800 border-amber-200',
+        red:   'bg-red-50 text-red-800 border-red-200',
+        gray:  'bg-gray-50 text-gray-500 border-gray-200',
+    };
+    const dot = {
+        green: 'bg-green-500',
+        amber: 'bg-amber-500',
+        red:   'bg-red-500',
+        gray:  'bg-gray-300',
+    };
+
+    return (
+        <div className="rounded-xl border border-gray-200 bg-white p-2">
+            <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5 px-1">
+                {isEs ? '💲 Frescura de precios' : '💲 Prices freshness'}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+                {rows.map(r => (
+                    <div key={r.v.key}
+                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border-l-4 ${r.v.accent} ${toneClasses[r.tone]}`}>
+                        <span className={`w-2 h-2 rounded-full ${dot[r.tone]} shrink-0`} />
+                        <div className="min-w-0 flex-1">
+                            <div className="text-[12px] font-black truncate">{r.v.label}</div>
+                            {r.tone === 'gray' ? (
+                                <div className="text-[10px] italic">{r.label}</div>
+                            ) : (
+                                <div className="text-[10px] truncate">
+                                    {isEs ? 'Actualizado' : 'Updated'} {r.label} · {r.ageLabel}
+                                    {r.source && <span className="ml-1 opacity-60">({r.source})</span>}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
 
 
