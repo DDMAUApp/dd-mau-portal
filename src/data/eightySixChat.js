@@ -1,39 +1,58 @@
-// Auto-post 86 alerts into chat.
+// 86 alert fan-out — FCM push + audit only.
 //
-// Called from Eighty6Dashboard whenever an item's state flips (set out
-// or cleared back in). Posts a `eighty_six_alert` message into the
-// location's role channel (#foh-{loc}) so FOH staff stop ringing it up.
+// HISTORICAL (2026-05-11 → 2026-05-16): this module used to also auto-
+// post a chat card into the side-specific channel (#foh) and the
+// management channel (#managers) so staff saw the 86 in chat alongside
+// the dashboard.
 //
-// We DON'T post into the all-team channel by default — it's noisy and
-// BOH staff already see the 86 board. Manager can configure org-wide
-// "also broadcast 86s to #all" toggle in the future.
+// 2026-05-17 — Andrew opted out of system auto-channels (AUTO_CHANNELS
+// is now empty in src/data/chat.js, and existing #foh / #managers /
+// etc. were purged via tombstone). The chat-post branch was writing
+// to channels that no longer have members → invisible alerts +
+// silent-failure UX (AUDIT.md finding 86-001).
 //
-// Idempotency: each (item, location, transition direction) gets a tag.
-// Same-tag notifications replace at the OS level so FOH on multiple
-// devices don't pile up.
+// The chat write is now removed entirely. 86 alerts surface through:
+//   • The Eighty6Dashboard (clients subscribe to ops/86_{loc})
+//   • The FCM push fan-out below — on-duty FOH staff get a phone
+//     notification
+//   • The audit log entry (single doc per transition)
+//
+// If chat-based 86 surfacing is wanted later, the cleanest re-add is
+// to thread a `chatId` config through (e.g. /config/eighty_six_targets
+// = { webster: 'group_abc', maryland: 'group_xyz' }) and write to that
+// specific chat doc. The deterministic-message-id idempotency
+// machinery below is preserved for that future use.
+//
+// The function name `postEightySixToChat` is kept (rather than
+// renaming to `emitEightySixAlert`) so existing callers compile
+// without churn; AUDIT.md flagged the rename as worth doing during
+// the broader SaaS-prep refactor, not now.
 
 import { db } from '../firebase';
-import {
-    collection, doc, addDoc, updateDoc, setDoc, getDoc, serverTimestamp,
-} from 'firebase/firestore';
-import { channelDocId } from './chat';
+import { serverTimestamp } from 'firebase/firestore';
 import { notifyStaff } from './notify';
 import { recordAudit } from './audit';
 
-// Slugify an item name for use in a deterministic doc ID. Lowercase,
-// replace non-alphanum with underscore, trim.
+// Slugify kept for the audit log's stable id — lets future
+// reconstruction find the "same" alert across retries.
 function slug(s) {
     return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
 }
 
-// Hour bucket (UTC) so multi-client races within the same hour land
-// in the same deterministic doc id and dedup. Different hour = new doc.
+// Hour bucket (UTC) so retries within the hour share one audit row.
 function hourBucket() {
     const d = new Date();
     return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}_${String(d.getUTCHours()).padStart(2, '0')}`;
 }
 
 // `transition`: 'out' (item just 86'd) or 'in' (item back in stock).
+//
+// Side effects:
+//   1. Records ONE audit row at /audit per (item, location, transition,
+//      hour-bucket) — captures who flipped it, when, for what item.
+//   2. Fans out FCM push to every name in notifyRecipients (caller
+//      pre-filters to on-duty + non-manager — Eighty6Dashboard already
+//      has that logic).
 export async function postEightySixToChat({
     location,           // 'webster' | 'maryland'
     itemName,
@@ -43,83 +62,44 @@ export async function postEightySixToChat({
     attributedTo,       // 'who actually 86'd' from Toast cross-reference (optional)
     notifyRecipients = [],  // staff names to FCM-push
 }) {
-    // For DD Mau we post into the side-specific channel (FOH cares most
-    // about menu-item 86s) AND also stamp the location channel so
-    // managers in #managers see them in one place.
-    const targets = ['foh'];
-    if (transition === 'out' || transition === 'in') {
-        targets.push('managers');
-    }
-
     const emoji = transition === 'out' ? '🚫' : '✅';
-    const verb = transition === 'out' ? '86\'d' : 'back in stock';
-    const text = `${emoji} ${itemName} ${verb}${attributedTo ? ` (last seen by ${attributedTo})` : ''}`;
-
-    // Deterministic message id per (location, item, transition, hour
-    // bucket). If two admin clients (or the scraper + a client) both try
-    // to post the same transition within the same hour, the SECOND
-    // setDoc just overwrites the same doc instead of creating a
-    // duplicate. Snapshot listeners in chat threads will then
-    // collapse to one rendered card.
     const stableId = `auto86_${slug(itemName)}_${location}_${transition}_${hourBucket()}`;
 
-    for (const channelKey of targets) {
-        const chatId = channelDocId(channelKey);
-        try {
-            const msgRef = doc(db, 'chats', chatId, 'messages', stableId);
-            const existing = await getDoc(msgRef);
-            if (existing.exists()) continue; // already posted this hour
-            await setDoc(msgRef, {
-                senderName: actorName || 'System',
-                senderId: actorId ?? null,
-                type: 'eighty_six_alert',
-                text,
-                eightySixData: {
-                    location,
-                    itemName,
-                    transition,
-                    attributedTo: attributedTo || null,
-                },
-                reactions: {},
-                mentions: [],
-                createdAt: serverTimestamp(),
-            });
-            await updateDoc(doc(db, 'chats', chatId), {
-                lastMessage: {
-                    text,
-                    sender: actorName || 'System',
-                    ts: serverTimestamp(),
-                    type: 'eighty_six_alert',
-                },
-                lastActivityAt: serverTimestamp(),
-            });
-            recordAudit({
-                action: 'chat.eighty_six.post',
-                actorName: actorName || 'system',
-                actorId,
-                targetType: 'chat',
-                targetId: chatId,
-                details: { messageId: stableId, location, itemName, transition },
-            });
-        } catch (e) {
-            console.warn(`86 chat post (${channelKey}) failed:`, e);
-        }
-    }
+    // One audit row per transition (was previously one per channel; now
+    // one total since we no longer fan out to two channels).
+    recordAudit({
+        action: 'eighty_six.alert',
+        actorName: actorName || 'system',
+        actorId,
+        targetType: 'eighty_six',
+        targetId: `${location}__${slug(itemName)}__${transition}`,
+        details: {
+            stableId,
+            location,
+            itemName,
+            transition,
+            attributedTo: attributedTo || null,
+        },
+    });
 
     // FCM fan-out to staff currently on-duty at this location (managers
-    // exempt — they get the dashboard alerts anyway). The caller passes
-    // notifyRecipients pre-filtered (Eighty6Dashboard already has the
-    // geofence + on-duty logic from the earlier work).
+    // exempt — they get the dashboard alerts anyway). Tap on the push
+    // deep-links to 'eighty6' so they land directly on the dashboard
+    // (was 'chat' previously — pointless without the chat card to
+    // navigate to). Per-recipient tag dedups same-item retries at the
+    // OS notification level.
     for (const to of notifyRecipients) {
         notifyStaff({
             forStaff: to,
             type: 'eighty_six',
             title: emoji + ' ' + (transition === 'out' ? '86 alert' : 'Back in stock'),
             body: `${itemName} · ${location === 'maryland' ? 'Maryland' : 'Webster'}`,
-            deepLink: 'chat',
-            link: '/chat',
+            deepLink: 'eighty6',
+            link: '/eighty6',
             tag: `eighty_six:${location}:${itemName}:${transition}:${to}`,
             createdBy: actorName || 'system',
+            // 86 alerts are operational-critical — bypass quiet hours.
+            priority: 'high',
         }).catch(() => {});
     }
 }
