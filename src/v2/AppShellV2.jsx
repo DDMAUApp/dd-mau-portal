@@ -37,6 +37,8 @@ export default function AppShellV2({
     isAdmin = false,
     isManager = false,
     hiddenPages = [],
+    staffList = [],
+    setStaffList,
     onLogout,
     onForceRefresh,
     onLanguageToggle,
@@ -83,6 +85,8 @@ export default function AppShellV2({
                     language={language}
                     staffName={staffName}
                     storeLocation={storeLocation}
+                    staffList={staffList}
+                    setStaffList={setStaffList}
                     onMenuClick={() => setSidebarOpen(true)}
                     onLanguageToggle={onLanguageToggle}
                     onLogout={onLogout}

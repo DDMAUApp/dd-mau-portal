@@ -1,4 +1,5 @@
 import { useAppData } from './AppDataContext';
+import EnableNotificationsHeaderButton from './EnableNotificationsHeaderButton';
 
 // V2 header — Toast/Sling-style mission-control strip.
 //
@@ -22,6 +23,7 @@ const LOCATIONS = [
 
 export default function Header({
     language, staffName, storeLocation = 'webster',
+    staffList = [], setStaffList,
     onMenuClick, onLanguageToggle, onLogout, onLocationChange, onBellClick,
 }) {
     const isEs = language === 'es';
@@ -105,6 +107,19 @@ export default function Header({
                             <span className="text-[15px] md:text-base">🔒</span>
                         </button>
                     )}
+                    {/* Enable-notifications pill — only renders when
+                        Notification.permission !== 'granted'. Sits
+                        directly next to the bell so the "fix me" call
+                        is impossible to miss. The pulsing green
+                        treatment + small "!" badge signals action
+                        without screaming. Tap fires the OS prompt
+                        (counts as a user gesture for iOS Safari). */}
+                    <EnableNotificationsHeaderButton
+                        staffName={staffName}
+                        staffList={staffList}
+                        setStaffList={setStaffList}
+                        language={language}
+                    />
                     <button onClick={onBellClick}
                         className="relative min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg active:scale-95 transition"
                         title={isEs ? `Notificaciones${unreadCount > 0 ? ` (${unreadCount})` : ''}` : `Notifications${unreadCount > 0 ? ` (${unreadCount})` : ''}`}
