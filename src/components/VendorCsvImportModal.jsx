@@ -243,14 +243,34 @@ export default function VendorCsvImportModal({
     function normalizeHeader(h) {
         return String(h || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     }
+    // Two-pass detection so EXACT matches always beat fuzzy substring
+    // matches. Without this, the sku alias 'item' hijacked the Sysco
+    // "Item Status" column (because itemstatus.includes('item') is
+    // true), so every row got SKU+name out of the wrong (empty)
+    // column and nothing fuzzy-matched downstream.
     function detectColumns(headers) {
         const map = {};
         const norm = headers.map(normalizeHeader);
         for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
+            // Pass 1: exact match between any header and any alias.
+            let idx = -1;
             for (const alias of aliases) {
-                const idx = norm.findIndex(h => h === alias || h.includes(alias));
-                if (idx !== -1) { map[field] = idx; break; }
+                idx = norm.findIndex(h => h === alias);
+                if (idx !== -1) break;
             }
+            // Pass 2: substring fallback for variants like "Order Qty"
+            // (header "orderqty" contains alias "qty"). Only runs when
+            // exact-match failed, which protects "Item Status" etc.
+            if (idx === -1) {
+                for (const alias of aliases) {
+                    // Skip very-short aliases on the fallback pass —
+                    // they're the ones that caused the earlier hijack.
+                    if (alias.length < 4) continue;
+                    idx = norm.findIndex(h => h.includes(alias));
+                    if (idx !== -1) break;
+                }
+            }
+            if (idx !== -1) map[field] = idx;
         }
         return map;
     }
