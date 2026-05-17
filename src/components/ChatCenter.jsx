@@ -677,15 +677,24 @@ function NewChatModal({
     const [busy, setBusy] = useState(false);
 
     const candidates = useMemo(() => {
-        // hideFromSchedule is a SCHEDULE-GRID flag, not a chat flag —
-        // owners use it on themselves so they don't clutter the
-        // schedule, but they still belong in chat. (2026-05-16 fix.)
+        // Location separation (2026-05-16): non-admin staff at a single
+        // location only see same-location peers + 'both'-location staff
+        // (owners + floaters). Admin sees everyone — they're the only
+        // role allowed to start cross-location chats.
         const term = filter.trim().toLowerCase();
+        const myLoc = viewer?.location;
+        const sameLocation = (s) => {
+            if (isAdmin) return true;             // admin sees all locations
+            if (!myLoc || myLoc === 'both') return true; // floaters/admins
+            if (s.location === 'both') return true;     // 'both' staff visible to everyone
+            return s.location === myLoc;
+        };
         return (staffList || [])
             .filter(s => s.name && s.name !== staffName)
+            .filter(sameLocation)
             .filter(s => !term || s.name.toLowerCase().includes(term))
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [staffList, staffName, filter]);
+    }, [staffList, staffName, filter, viewer, isAdmin]);
 
     const mode = picked.length <= 1 ? 'dm' : 'group';
 

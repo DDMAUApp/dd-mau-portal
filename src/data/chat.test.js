@@ -172,6 +172,48 @@ describe('channelMembersFor', () => {
     });
 });
 
+describe('channelMembersFor — location-split side channels', () => {
+    // Location separation (2026-05-16). Webster + Maryland staff each
+    // get their own side channels; owners (location 'both') auto-join
+    // every pair so they can see chatter from either store.
+    const websterFoh  = { id: 1, name: 'Cash Magruder',  role: 'FOH', location: 'webster' };
+    const websterBoh  = { id: 2, name: 'Tom Lee',         role: 'BOH', location: 'webster' };
+    const marylandFoh = { id: 3, name: 'Riley Maryland',  role: 'FOH', location: 'maryland' };
+    const marylandBoh = { id: 4, name: 'Sam Cook',        role: 'BOH', location: 'maryland' };
+    const floaterFoh  = { id: 5, name: 'Avery Floater',   role: 'FOH', location: 'both' };
+    const ownerBoth   = { id: 40, name: 'Andrew Shih',    role: 'Owner', location: 'both' };
+    const list = [websterFoh, websterBoh, marylandFoh, marylandBoh, floaterFoh, ownerBoth];
+
+    it('foh-webster includes Webster FOH + both-location FOH + owners', () => {
+        const m = channelMembersFor('foh-webster', list);
+        expect(m).toContain('Cash Magruder');
+        expect(m).toContain('Avery Floater');
+        expect(m).toContain('Andrew Shih');
+        expect(m).not.toContain('Riley Maryland');   // Maryland FOH excluded
+        expect(m).not.toContain('Tom Lee');           // Webster BOH excluded
+        expect(m).not.toContain('Sam Cook');          // Maryland BOH excluded
+    });
+    it('foh-maryland includes Maryland FOH + both-location FOH + owners', () => {
+        const m = channelMembersFor('foh-maryland', list);
+        expect(m).toContain('Riley Maryland');
+        expect(m).toContain('Avery Floater');
+        expect(m).toContain('Andrew Shih');
+        expect(m).not.toContain('Cash Magruder');     // Webster FOH excluded
+    });
+    it('boh-webster includes only Webster BOH + both', () => {
+        const m = channelMembersFor('boh-webster', list);
+        expect(m).toContain('Tom Lee');
+        expect(m).toContain('Andrew Shih');
+        expect(m).not.toContain('Sam Cook');
+        expect(m).not.toContain('Cash Magruder');
+    });
+    it('boh-maryland includes only Maryland BOH + both', () => {
+        const m = channelMembersFor('boh-maryland', list);
+        expect(m).toContain('Sam Cook');
+        expect(m).not.toContain('Tom Lee');
+    });
+});
+
 describe('parseMentions', () => {
     const list = [owner, manager, lineFoh, { id: 99, name: 'Andrew Jones' }];
     it('matches bare @firstname', () => {

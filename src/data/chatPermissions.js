@@ -43,7 +43,11 @@ export function canPostInChat(chat, viewer, isAdmin, isManager) {
     if (!chat || !viewer) return false;
     const isMember = Array.isArray(chat.members) && chat.members.includes(viewer.name);
     if (!isMember) return false;
-    if (chat.kind === 'announcement' || chat.channelKey === 'announcements') {
+    // Announcement channels + the cross-location #all channel are
+    // restrict-posting — only managers can write. Day-to-day chatter
+    // routes through location channels so Webster + Maryland stay
+    // separate by default.
+    if (chat.kind === 'announcement' || chat.channelKey === 'announcements' || chat.channelKey === 'all') {
         return canPostAnnouncements(viewer, isAdmin, isManager);
     }
     return true;

@@ -49,6 +49,20 @@ describe('canPostInChat — announcement channel locks out non-managers', () => 
     it('staff cannot post', () => expect(canPostInChat(annChat, lineFoh, false, false)).toBe(false));
 });
 
+describe('canPostInChat — #all-team is admin-only (cross-location lock)', () => {
+    // Location separation (2026-05-16): #all became a managers-only
+    // broadcast so non-admins cannot reach the whole org from there.
+    // Day-to-day chatter routes through the location channels instead.
+    const allChat = {
+        kind: 'system_role',
+        channelKey: 'all',
+        members: ['Andrew Shih', 'Maria Lopez', 'Cash Magruder'],
+    };
+    it('admin can post', () => expect(canPostInChat(allChat, owner, true, true)).toBe(true));
+    it('manager can post', () => expect(canPostInChat(allChat, manager, false, true)).toBe(true));
+    it('staff cannot post', () => expect(canPostInChat(allChat, lineFoh, false, false)).toBe(false));
+});
+
 describe('canPostInChat — non-announcement channels', () => {
     const chat = { type: 'channel', kind: 'system_role', members: ['Cash Magruder'] };
     it('member can post', () => expect(canPostInChat(chat, lineFoh, false, false)).toBe(true));

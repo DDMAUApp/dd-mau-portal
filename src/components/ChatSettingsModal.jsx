@@ -41,12 +41,20 @@ export default function ChatSettingsModal({
     const [busy, setBusy] = useState(false);
 
     const addable = useMemo(() => {
-        // hideFromSchedule suppresses schedule-grid rendering — not
-        // chat membership. Don't filter here. (2026-05-16 fix.)
+        // Location separation (2026-05-16): non-admins only see
+        // same-location peers + 'both'-location staff. Admin sees all.
+        const myLoc = viewer?.location;
+        const sameLocation = (s) => {
+            if (isAdmin) return true;
+            if (!myLoc || myLoc === 'both') return true;
+            if (s.location === 'both') return true;
+            return s.location === myLoc;
+        };
         return (staffList || [])
             .filter(s => s.name && !members.includes(s.name))
+            .filter(sameLocation)
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [staffList, members]);
+    }, [staffList, members, viewer, isAdmin]);
 
     async function handleSave() {
         if (!canEdit || isDm || busy) return;

@@ -146,6 +146,25 @@ export function channelMembersFor(key, staffList) {
             .filter(s => s.location === loc || s.location === 'both')
             .map(s => s.name);
     }
+    // side+location combo: 'foh:webster' / 'boh:maryland' / etc.
+    // Joins staff whose side matches AND whose location matches (or 'both').
+    // Owners + managers auto-join every side+location pair within their
+    // location scope so admin/management can see kitchen + service
+    // chatter at each store.
+    const sideLoc = /^(foh|boh):(\w+)$/.exec(typeof rule === 'string' ? rule : '');
+    if (sideLoc) {
+        const [, sideKey, loc] = sideLoc;
+        const sideMatch = sideKey === 'foh' ? isFohRole : isBohRole;
+        return visible
+            .filter(s => {
+                const locOk = s.location === loc || s.location === 'both';
+                if (!locOk) return false;
+                // Owners + managers see side chatter regardless of role.
+                if (isManagerRole(s)) return true;
+                return sideMatch(s);
+            })
+            .map(s => s.name);
+    }
     return [];
 }
 
@@ -260,14 +279,27 @@ export function formatChatTime(ts) {
 //
 // The `autoMembership` key tells channelMembersFor() how to compute
 // the members[] array from staffList. See that helper for the rule set.
+//
+// Location separation (2026-05-16): #foh and #boh are now split by
+// location so a Webster line cook doesn't see Maryland's BOH chatter
+// and vice versa. The owners (location: 'both') auto-join both pairs.
+// The old non-split #foh and #boh remain in Firestore as legacy docs
+// until manually deleted via the new delete-chat UI; auto-sync no
+// longer touches them.
+//
+// #all-team becomes admin-post-only so non-admins can't broadcast
+// across locations. Day-to-day cross-team chatter routes through the
+// location channels (#webster, #maryland) instead.
 export const AUTO_CHANNELS = [
-    { key: 'announcements', kind: 'announcement',   name: 'Announcements', emoji: '📣', autoMembership: 'all',         en: 'Announcements',   es: 'Anuncios',          restrictPosting: true },
-    { key: 'all',           kind: 'system_role',    name: 'All Team',      emoji: '🍜', autoMembership: 'all',         en: 'All Team',        es: 'Todo el Equipo' },
-    { key: 'foh',           kind: 'system_role',    name: 'Front of House',emoji: '🪑', autoMembership: 'foh',         en: 'Front of House',  es: 'Servicio' },
-    { key: 'boh',           kind: 'system_role',    name: 'Back of House', emoji: '👩‍🍳', autoMembership: 'boh',         en: 'Back of House',   es: 'Cocina' },
-    { key: 'managers',      kind: 'system_role',    name: 'Managers',      emoji: '🧑‍💼', autoMembership: 'managers',    en: 'Managers',        es: 'Gerentes' },
-    { key: 'webster',       kind: 'system_location',name: 'Webster',       emoji: '🏠', autoMembership: 'loc:webster', en: 'Webster',         es: 'Webster' },
-    { key: 'maryland',      kind: 'system_location',name: 'Maryland Hts',  emoji: '🏠', autoMembership: 'loc:maryland',en: 'Maryland Hts',    es: 'Maryland' },
+    { key: 'announcements',  kind: 'announcement',   name: 'Announcements',     emoji: '📣', autoMembership: 'all',                en: 'Announcements',      es: 'Anuncios',           restrictPosting: true },
+    { key: 'all',            kind: 'system_role',    name: 'All Team',          emoji: '🍜', autoMembership: 'all',                en: 'All Team',           es: 'Todo el Equipo',     restrictPosting: true },
+    { key: 'foh-webster',    kind: 'system_role',    name: 'FOH · Webster',     emoji: '🪑', autoMembership: 'foh:webster',        en: 'FOH · Webster',      es: 'FOH · Webster' },
+    { key: 'foh-maryland',   kind: 'system_role',    name: 'FOH · Maryland',    emoji: '🪑', autoMembership: 'foh:maryland',       en: 'FOH · Maryland',     es: 'FOH · Maryland' },
+    { key: 'boh-webster',    kind: 'system_role',    name: 'BOH · Webster',     emoji: '👩‍🍳', autoMembership: 'boh:webster',        en: 'BOH · Webster',      es: 'BOH · Webster' },
+    { key: 'boh-maryland',   kind: 'system_role',    name: 'BOH · Maryland',    emoji: '👩‍🍳', autoMembership: 'boh:maryland',       en: 'BOH · Maryland',     es: 'BOH · Maryland' },
+    { key: 'managers',       kind: 'system_role',    name: 'Managers',          emoji: '🧑‍💼', autoMembership: 'managers',           en: 'Managers',           es: 'Gerentes' },
+    { key: 'webster',        kind: 'system_location',name: 'Webster',           emoji: '🏠', autoMembership: 'loc:webster',        en: 'Webster',            es: 'Webster' },
+    { key: 'maryland',       kind: 'system_location',name: 'Maryland Hts',      emoji: '🏠', autoMembership: 'loc:maryland',       en: 'Maryland Hts',       es: 'Maryland' },
 ];
 
 // Message-type registry. Single polymorphic table; type drives renderer
