@@ -301,8 +301,19 @@ export default function ChatCenter({
         });
     }, [chats, search, staffName]);
 
+    // Container height uses dynamic viewport units (dvh) instead of vh
+    // — iOS Safari treats vh as the INITIAL viewport (address bar
+    // visible) and never shrinks when the keyboard slides up. With vh,
+    // tapping the composer pushed it below the keyboard and forced the
+    // user to scroll the whole page to reach the input. dvh recomputes
+    // as the visible viewport changes, so the composer stays anchored
+    // at the bottom of whatever's actually visible. (Andrew 2026-05-17.)
+    // dvh: Safari 15.4+ / Chrome 108+ / Firefox 101+. The vh class is
+    // listed FIRST so older browsers parsing the dvh declaration as
+    // invalid fall back to the previous vh value — keeps the old
+    // pre-fix behavior intact rather than collapsing to auto-height.
     return (
-        <div className="flex h-[calc(100vh-160px)] md:h-[calc(100vh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -my-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
+        <div className="flex h-[calc(100vh-160px)] h-[calc(100dvh-160px)] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -my-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
             {/* ── LEFT PANE: chat list ──────────────────────────── */}
             <aside className={`${mobileShowList ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-[340px] md:border-r border-dd-line bg-white shrink-0`}>
                 {/* Header */}

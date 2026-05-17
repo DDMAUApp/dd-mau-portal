@@ -114,9 +114,19 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
             {/* Scrim */}
             <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
             {/* Drawer — slides in from the right on desktop, bottom-sheet on
-                mobile. */}
-            <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-0 sm:right-0 sm:left-auto sm:w-[420px] sm:max-w-[92vw] sm:h-screen z-50 flex flex-col bg-white shadow-2xl rounded-t-2xl sm:rounded-none modal-scroll-lock"
-                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                mobile.
+                Mobile (default): bounded between the iPhone notch (top-0
+                + safe-area-inset-top) and the home-indicator. Without an
+                explicit top bound, the drawer grew past the viewport
+                and the inner flex-1 overflow-y-auto had no scroll
+                ceiling → scrolling up thrashed the layout, perceived as
+                a "crash" by the user. (Andrew 2026-05-17.)
+                Desktop (sm+): unchanged — full-height side panel on
+                the right. */}
+            <div className="fixed inset-x-0 top-0 bottom-0 sm:bottom-auto sm:right-0 sm:left-auto sm:w-[420px] sm:max-w-[92vw] sm:h-screen z-50 flex flex-col bg-white shadow-2xl rounded-t-2xl sm:rounded-none modal-scroll-lock"
+                style={{
+                    paddingBottom: 'env(safe-area-inset-bottom)',
+                }}>
                 {/* Header */}
                 <div className="flex items-center justify-between px-4 py-3 border-b border-dd-line"
                      style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}>
