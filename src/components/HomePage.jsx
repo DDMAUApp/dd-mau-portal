@@ -67,6 +67,22 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
         return () => clearInterval(id);
     }, [lockedUntil, now]);
 
+    // Auto-submit when the 4th digit lands. Saves a tap — most staff
+    // were typing four digits and then having to scan down to the OK
+    // button. We wait one frame after the 4th digit before resolving
+    // so the user sees all 4 dots fill in before the screen changes;
+    // without the delay the screen flips on the LAST keypress and the
+    // user never sees the completed PIN dot row.
+    useEffect(() => {
+        if (pin.length !== 4) return;
+        if (lockedUntil > now) return;
+        const id = setTimeout(() => { handlePinSubmit(); }, 120);
+        return () => clearTimeout(id);
+    // handlePinSubmit is stable enough (reads from the current pin state)
+    // that we only retrigger on actual pin changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [pin]);
+
     const isLocked = lockedUntil > now;
     const lockSecondsLeft = isLocked ? Math.ceil((lockedUntil - now) / 1000) : 0;
 

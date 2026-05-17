@@ -62,6 +62,14 @@ const prewarmChunks = () => {
     import('./components/Recipes').catch(() => {});
     import('./components/MenuReference').catch(() => {});
     import('./components/Eighty6Dashboard').catch(() => {});
+    // Chat is a primary tile on MobileHome and a daily destination for
+    // every staff member — pre-warming it removes the brief spinner the
+    // first time someone taps the chat tile after sign-in.
+    import('./components/ChatCenter').catch(() => {});
+    // Pull in the ChatThread + commonly-mounted lazy children of
+    // ChatCenter at the same time so a tap into a specific chat
+    // doesn't restart the chunk-fetch dance.
+    import('./components/ChatThread').catch(() => {});
 };
 
 // Error boundary — catches render errors in child components.

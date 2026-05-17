@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
+import { isAdmin as checkIsAdmin } from '../data/staff';
 
 export default function InsuranceEnrollment({ language, staffName, staffList }) {
   const [loading, setLoading] = useState(true);
@@ -16,8 +17,15 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
   const [loadingAll, setLoadingAll] = useState(false);
   const [selectedEnrollment, setSelectedEnrollment] = useState(null);
 
+  // Admin gate. The canonical helper resolves by staff ID (40 = Andrew,
+  // 41 = Julie) — much safer than the previous string-match against
+  // ["andrew shih", "julie truong"], which (a) had Julie's surname
+  // wrong (Shih, not Truong) so Julie was silently denied admin
+  // access here, and (b) leaked across rename / re-org.
+  // The local ADMIN_PIN remains a separate "Are you sure?" gate
+  // independent of the owner identity check.
   const ADMIN_PIN = "ZhongGuo87";
-  const isAdmin = staffName && ["andrew shih", "julie truong"].includes(staffName.toLowerCase());
+  const isAdmin = checkIsAdmin(staffName, staffList);
 
   const handleAdminAccess = () => {
     const entered = prompt("Enter admin password:");
