@@ -17,8 +17,10 @@
 
 import { useState, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
 import { canEditChat } from '../data/chat';
+import { canDeleteChat } from '../data/chatPermissions';
+import { recordAudit } from '../data/audit';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
 
 export default function ChatSettingsModal({
@@ -27,6 +29,7 @@ export default function ChatSettingsModal({
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const canEdit = canEditChat(chat, viewer, isAdmin);
+    const canDelete = canDeleteChat(chat, viewer, isAdmin);
     const isChannel = chat.type === 'channel';
     const isDm = chat.type === 'dm';
 
@@ -90,27 +93,130 @@ export default function ChatSettingsModal({
         }
     }
 
+    // Soft delete = clear members → vanishes from every chat list.
+    // Keeps the doc as a stub so audit + notification deep-links don't
+    // 404. Works for DMs, groups, and channels.
+    //
+    // For channels: the AppDataContext / ChatCenter auto-sync would
+    // RE-CREATE the channel on next mount (since channels are managed).
+    // To make a channel delete actually stick, we'd need a "purged"
+    // flag — out of v1 scope. Admins deleting a channel today gets a
+    // "fresh reset" effect — useful for clearing a polluted channel,
+    // not for permanent removal.
     async function handleDelete() {
-        if (!canEdit || isDm || isChannel || busy) return;
+        if (!canDelete || busy) return;
+        const typeLabel = isChannel
+            ? tx('channel (note: it will auto-recreate on next load)',
+                 'canal (nota: se recreará en el próximo arranque)')
+            : isDm
+            ? tx('direct message', 'mensaje directo')
+            : tx('group', 'grupo');
         const ok = window.confirm(tx(
-            'Delete this group? Messages stay in the audit log but the group disappears for everyone.',
-            '¿Eliminar este grupo? Los mensajes permanecen en el log pero el grupo desaparece para todos.'
+            `Delete this ${typeLabel}? It disappears for everyone. Messages stay in the audit log.`,
+            `¿Eliminar este ${typeLabel}? Desaparece para todos. Los mensajes permanecen en el log.`
         ));
         if (!ok) return;
         setBusy(true);
         try {
-            // Soft delete: clear members → vanishes from every list.
-            // We don't deleteDoc immediately so we keep a stub for any
-            // audit references (mentioned link in notifications, etc.).
             await updateDoc(doc(db, 'chats', chat.id), {
                 members: [],
                 deletedAt: serverTimestamp(),
                 deletedBy: staffName,
             });
+            recordAudit({
+                action: 'chat.delete.soft',
+                actorName: staffName,
+                actorId: viewer?.id,
+                actorRole: viewer?.role,
+                targetType: 'chat',
+                targetId: chat.id,
+                details: {
+                    chatType: chat.type,
+                    chatName: chat.name || null,
+                    channelKey: chat.channelKey || null,
+                    memberCount: (chat.members || []).length,
+                },
+            });
             onDeleted();
         } catch (e) {
             console.warn('delete failed:', e);
             alert(tx('Delete failed', 'Error al eliminar'));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    // HARD delete (admin-only) — purges the chat doc + every message in
+    // the subcollection. Audit log retains the action record. Use case:
+    // permanently nuking spam / mistaken / sensitive chats. Cannot be
+    // undone by the app — only Firestore PITR.
+    async function handleHardDelete() {
+        if (!isAdmin || busy) return;
+        const phrase = chat.type === 'dm'
+            ? tx('DM', 'DM')
+            : (chat.name || tx('chat', 'chat'));
+        const confirmText = window.prompt(tx(
+            `PERMANENT DELETE: this nukes the chat + every message inside it. To confirm, type DELETE`,
+            `BORRADO PERMANENTE: esto elimina el chat + todos los mensajes. Para confirmar, escribe DELETE`
+        ));
+        if (confirmText !== 'DELETE') {
+            if (confirmText !== null) alert(tx('Cancelled — phrase did not match.', 'Cancelado — la frase no coincide.'));
+            return;
+        }
+        setBusy(true);
+        try {
+            // 1. Purge messages in batches of 400 (Firestore batch cap is 500;
+            //    leave room for the parent delete + acks/pins/typing/reads).
+            //    We loop because a single batch can't hold an arbitrary count.
+            const messagesRef = collection(db, 'chats', chat.id, 'messages');
+            // We re-fetch each iteration because batched deletes don't shrink
+            // the unread snapshot we already have in memory.
+            // eslint-disable-next-line no-constant-condition
+            while (true) {
+                const snap = await getDocs(messagesRef);
+                if (snap.empty) break;
+                const batch = writeBatch(db);
+                let count = 0;
+                snap.forEach(d => {
+                    if (count >= 400) return;
+                    batch.delete(d.ref);
+                    count++;
+                });
+                await batch.commit();
+                if (snap.size <= 400) break;
+            }
+            // 2. Purge subcollections (acks, pins, typing markers). Best-effort.
+            for (const sub of ['acks', 'pins', 'typing']) {
+                try {
+                    const ref = collection(db, 'chats', chat.id, sub);
+                    const snap = await getDocs(ref);
+                    if (!snap.empty) {
+                        const batch = writeBatch(db);
+                        snap.forEach(d => batch.delete(d.ref));
+                        await batch.commit();
+                    }
+                } catch (e) { /* sub may not exist — ignore */ }
+            }
+            // 3. Delete the chat doc itself.
+            await deleteDoc(doc(db, 'chats', chat.id));
+            recordAudit({
+                action: 'chat.delete.hard',
+                actorName: staffName,
+                actorId: viewer?.id,
+                actorRole: viewer?.role,
+                targetType: 'chat',
+                targetId: chat.id,
+                details: {
+                    chatType: chat.type,
+                    chatName: chat.name || null,
+                    channelKey: chat.channelKey || null,
+                    memberCount: (chat.members || []).length,
+                },
+            });
+            onDeleted();
+        } catch (e) {
+            console.warn('hard delete failed:', e);
+            alert(tx('Hard delete failed: ', 'Borrado permanente falló: ') + (e.message || e));
         } finally {
             setBusy(false);
         }
@@ -300,6 +406,48 @@ export default function ChatSettingsModal({
                     )}
                 </div>
 
+                {/* Danger zone — soft delete (anyone with permission)
+                    + hard delete (admin only). Inside its own bordered
+                    block so it can't be tapped accidentally during
+                    save flow. */}
+                {(canDelete || isAdmin) && (
+                    <div className="px-3 py-3 border-t border-dd-line bg-red-50/50">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-red-800 mb-2">
+                            ⚠ {tx('Danger zone', 'Zona peligrosa')}
+                        </div>
+                        {canDelete && (
+                            <button
+                                onClick={handleDelete}
+                                disabled={busy}
+                                className="w-full text-left text-xs font-bold text-red-700 hover:bg-red-100 px-3 py-2 rounded border border-red-200 mb-1"
+                            >
+                                🗑 {isDm
+                                    ? tx('Delete this DM', 'Eliminar este DM')
+                                    : isChannel
+                                    ? tx('Reset this channel (clears + re-syncs members)', 'Reiniciar canal (limpia y resincroniza)')
+                                    : tx('Delete group', 'Eliminar grupo')}
+                                <div className="text-[10px] font-normal text-red-700/80 mt-0.5">
+                                    {tx('Disappears for everyone. Messages preserved in audit log.',
+                                        'Desaparece para todos. Mensajes preservados en log.')}
+                                </div>
+                            </button>
+                        )}
+                        {isAdmin && (
+                            <button
+                                onClick={handleHardDelete}
+                                disabled={busy}
+                                className="w-full text-left text-xs font-black text-red-800 hover:bg-red-200 px-3 py-2 rounded border-2 border-red-400 bg-white"
+                            >
+                                💥 {tx('Permanently delete (admin)', 'Borrado permanente (admin)')}
+                                <div className="text-[10px] font-normal text-red-700/80 mt-0.5">
+                                    {tx('Purges every message. Cannot be undone.',
+                                        'Borra todos los mensajes. No se puede deshacer.')}
+                                </div>
+                            </button>
+                        )}
+                    </div>
+                )}
+
                 {/* Footer */}
                 <div className="px-3 py-3 border-t border-dd-line flex items-center justify-between gap-2 shrink-0">
                     {!isChannel && !isDm && (
@@ -311,21 +459,12 @@ export default function ChatSettingsModal({
                             {tx('Leave', 'Salir')}
                         </button>
                     )}
-                    {canEdit && !isDm && !isChannel && (
-                        <button
-                            onClick={handleDelete}
-                            disabled={busy}
-                            className="text-xs font-bold text-red-600 hover:text-red-700 px-2 py-2"
-                        >
-                            {tx('Delete group', 'Eliminar grupo')}
-                        </button>
-                    )}
                     <div className="flex-1" />
                     <button
                         onClick={onClose}
                         className="px-3 py-2 rounded-full text-sm font-bold text-dd-text-2 hover:bg-dd-bg"
                     >
-                        {tx('Cancel', 'Cancelar')}
+                        {tx('Close', 'Cerrar')}
                     </button>
                     {canEdit && !isDm && (
                         <button

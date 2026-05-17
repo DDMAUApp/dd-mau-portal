@@ -14,6 +14,7 @@ import {
     canViewAuditLog,
     canDeleteAnyMessage,
     canDeleteOwnMessage,
+    canDeleteChat,
     canPostCoverageRequest,
     canClaimCoverage,
     canApproveCoverage,
@@ -180,6 +181,38 @@ describe('canPostCoverageRequest', () => {
     it('anyone with a name can request', () => {
         expect(canPostCoverageRequest(lineFoh)).toBe(true);
         expect(canPostCoverageRequest(null)).toBe(false);
+    });
+});
+
+describe('canDeleteChat', () => {
+    it('admin can delete any chat type', () => {
+        expect(canDeleteChat({ type: 'dm', members: ['a', 'b'] }, owner, true)).toBe(true);
+        expect(canDeleteChat({ type: 'group', createdBy: 'someone-else' }, owner, true)).toBe(true);
+        expect(canDeleteChat({ type: 'channel', channelKey: 'all' }, owner, true)).toBe(true);
+    });
+    it('non-admin cannot delete channels', () => {
+        expect(canDeleteChat({ type: 'channel', channelKey: 'all' }, manager, false)).toBe(false);
+    });
+    it('DM participant can delete the DM', () => {
+        const dm = { type: 'dm', members: ['Cash Magruder', 'Maria Lopez'] };
+        expect(canDeleteChat(dm, lineFoh, false)).toBe(true);
+        expect(canDeleteChat(dm, manager, false)).toBe(true);
+    });
+    it('non-participant cannot delete a DM', () => {
+        const dm = { type: 'dm', members: ['Cash Magruder', 'Maria Lopez'] };
+        expect(canDeleteChat(dm, lineBoh, false)).toBe(false);
+    });
+    it('group creator can delete their group', () => {
+        const group = { type: 'group', createdBy: 'Cash Magruder', members: ['Cash Magruder', 'Tom Lee'] };
+        expect(canDeleteChat(group, lineFoh, false)).toBe(true);
+    });
+    it('group member who is not creator cannot delete', () => {
+        const group = { type: 'group', createdBy: 'Cash Magruder', members: ['Cash Magruder', 'Tom Lee'] };
+        expect(canDeleteChat(group, lineBoh, false)).toBe(false);
+    });
+    it('group co-admin can delete', () => {
+        const group = { type: 'group', createdBy: 'Cash Magruder', admins: ['Tom Lee'], members: ['Cash Magruder', 'Tom Lee'] };
+        expect(canDeleteChat(group, lineBoh, false)).toBe(true);
     });
 });
 

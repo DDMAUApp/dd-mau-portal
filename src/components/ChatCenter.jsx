@@ -32,7 +32,8 @@ import {
     AUTO_CHANNELS, channelDocId, channelMembersFor, dmDocId,
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
 } from '../data/chat';
-import { canPostAnnouncements, canPostCoverageRequest } from '../data/chatPermissions';
+import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
+import { recordAudit } from '../data/audit';
 
 const ChatThread = lazy(() => import('./ChatThread'));
 const ChatSettingsModal = lazy(() => import('./ChatSettingsModal'));
@@ -188,6 +189,7 @@ export default function ChatCenter({
     const [showSearchPanel, setShowSearchPanel] = useState(false);
     const [showNotifSettings, setShowNotifSettings] = useState(false);
     const [showActionMenu, setShowActionMenu] = useState(false);  // FAB expand
+    const [longPressedChat, setLongPressedChat] = useState(null); // chat-list long-press action sheet
 
     const canAnnounce = canPostAnnouncements(viewer, isAdmin, isManager);
     const canCover = canPostCoverageRequest(viewer);
@@ -281,6 +283,7 @@ export default function ChatCenter({
                                     setActiveChatId(c.id);
                                     setMobileShowList(false);
                                 }}
+                                onLongPress={() => setLongPressedChat(c)}
                                 isEs={isEs}
                             />
                         ))
@@ -458,6 +461,27 @@ export default function ChatCenter({
                 </Suspense>
             )}
 
+            {/* ── Chat-list long-press action sheet ───────────── */}
+            {longPressedChat && (
+                <ChatListActionSheet
+                    chat={longPressedChat}
+                    viewer={viewer}
+                    isAdmin={isAdmin}
+                    staffName={staffName}
+                    isEs={isEs}
+                    onClose={() => setLongPressedChat(null)}
+                    onDeleted={() => {
+                        if (activeChatId === longPressedChat.id) setActiveChatId(null);
+                        setLongPressedChat(null);
+                    }}
+                    onOpenSettings={() => {
+                        setActiveChatId(longPressedChat.id);
+                        setShowSettings(true);
+                        setLongPressedChat(null);
+                    }}
+                />
+            )}
+
             {/* ── Group settings modal ─────────────────────────── */}
             {showSettings && activeChat && (
                 <Suspense fallback={null}>
@@ -487,14 +511,51 @@ export default function ChatCenter({
 // One row in the chat list. Avatar disc on the left (initials for DMs,
 // emoji for channels/groups), name + preview in the middle, time +
 // unread dot on the right.
-function ChatListItem({ chat, viewerName, active, onClick, isEs }) {
+function ChatListItem({ chat, viewerName, active, onClick, onLongPress, isEs }) {
     const name = chatDisplayName(chat, viewerName);
     const subtitle = previewOf(chat.lastMessage) || subtitleFor(chat, isEs);
     const unread = isChatUnread(chat, viewerName);
     const time = formatChatTime(chat.lastActivityAt);
+
+    // Long-press timer for the row's action sheet. 500ms feels right —
+    // shorter fires on sloppy taps, longer leaves the user wondering.
+    //
+    // Pattern: let onClick handle the tap (browser synthesizes it after
+    // touchend). When long-press fires we set longPressFired.current so
+    // the upcoming synthetic click is suppressed. Scroll cancels via
+    // touchmove. Desktop right-click → onContextMenu also fires long-press.
+    const pressTimer = useRef(null);
+    const longPressFired = useRef(false);
+    function pressStart() {
+        longPressFired.current = false;
+        pressTimer.current = setTimeout(() => {
+            pressTimer.current = null;
+            longPressFired.current = true;
+            onLongPress?.();
+        }, 500);
+    }
+    function pressCancel() {
+        if (pressTimer.current) clearTimeout(pressTimer.current);
+        pressTimer.current = null;
+    }
+
     return (
         <button
-            onClick={onClick}
+            onClick={(e) => {
+                if (longPressFired.current) {
+                    // Synthetic click after a long-press — swallow it
+                    // so we don't open the chat AND show the sheet.
+                    longPressFired.current = false;
+                    e.preventDefault();
+                    return;
+                }
+                onClick?.();
+            }}
+            onTouchStart={pressStart}
+            onTouchEnd={pressCancel}
+            onTouchMove={pressCancel}
+            onTouchCancel={pressCancel}
+            onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
             className={`w-full flex items-start gap-3 px-3 py-3 border-b border-dd-line/60 text-left transition ${active ? 'bg-dd-sage-50' : 'hover:bg-dd-bg active:bg-dd-bg'}`}
         >
             <ChatAvatar chat={chat} viewerName={viewerName} size={44} />
@@ -830,6 +891,98 @@ function EmojiPicker({ value, onChange }) {
                     ))}
                 </div>
             )}
+        </div>
+    );
+}
+
+// ── Action sheet for chat-list long-press ───────────────────────
+// Bottom-sheet on mobile, centered modal on desktop. Shows the chat
+// title up top and a list of actions — currently Delete + Open
+// settings (more later: mute, pin-to-top, mark-read).
+//
+// Delete here = soft delete (clear members + set deletedAt). The
+// settings modal has the danger-zone for hard-delete and channel-
+// reset cases.
+function ChatListActionSheet({ chat, viewer, isAdmin, staffName, isEs, onClose, onDeleted, onOpenSettings }) {
+    const tx = (en, es) => isEs ? es : en;
+    const [busy, setBusy] = useState(false);
+    const candelete = canDeleteChat(chat, viewer, isAdmin);
+    const name = chatDisplayName(chat, staffName);
+
+    async function handleDelete() {
+        if (!candelete || busy) return;
+        const typeLabel = chat.type === 'channel'
+            ? tx('channel (will auto-recreate)', 'canal (se recreará)')
+            : chat.type === 'dm'
+            ? tx('DM', 'DM')
+            : tx('chat', 'chat');
+        if (!window.confirm(tx(
+            `Delete this ${typeLabel}? Disappears for everyone. Messages stay in audit log.`,
+            `¿Eliminar este ${typeLabel}? Desaparece para todos. Mensajes en log.`
+        ))) return;
+        setBusy(true);
+        try {
+            await updateDoc(doc(db, 'chats', chat.id), {
+                members: [],
+                deletedAt: serverTimestamp(),
+                deletedBy: staffName,
+            });
+            recordAudit({
+                action: 'chat.delete.soft',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'chat',
+                targetId: chat.id,
+                details: {
+                    chatType: chat.type,
+                    chatName: chat.name || null,
+                    channelKey: chat.channelKey || null,
+                    via: 'long_press',
+                },
+            });
+            onDeleted();
+        } catch (e) {
+            console.warn('chat delete failed:', e);
+            alert(tx('Delete failed', 'Error al eliminar'));
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
+            <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl p-2 shadow-xl" onClick={(e) => e.stopPropagation()}>
+                <div className="md:hidden flex justify-center pt-1 pb-2">
+                    <div className="w-10 h-1 bg-dd-line rounded-full" />
+                </div>
+                <div className="px-3 py-2 border-b border-dd-line mb-1">
+                    <div className="text-[11px] font-bold uppercase tracking-widest text-dd-text-2">{tx('Chat actions', 'Acciones')}</div>
+                    <div className="text-sm font-black text-dd-text truncate">{name}</div>
+                </div>
+                <button
+                    onClick={onOpenSettings}
+                    className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-dd-bg text-left"
+                >
+                    <span className="text-xl">⚙️</span>
+                    <span className="font-bold text-dd-text">{tx('Open settings', 'Abrir configuración')}</span>
+                </button>
+                {candelete && (
+                    <button
+                        onClick={handleDelete}
+                        disabled={busy}
+                        className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-red-50 text-left text-red-700 font-bold disabled:opacity-50"
+                    >
+                        <span className="text-xl">🗑</span>
+                        <span>{busy ? tx('Deleting…', 'Eliminando…') : tx('Delete chat', 'Eliminar chat')}</span>
+                    </button>
+                )}
+                <button
+                    onClick={onClose}
+                    className="w-full px-4 py-3 mt-1 text-sm font-bold text-dd-text-2 border-t border-dd-line"
+                >
+                    {tx('Cancel', 'Cancelar')}
+                </button>
+            </div>
         </div>
     );
 }

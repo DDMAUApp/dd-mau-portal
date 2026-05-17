@@ -494,16 +494,20 @@ export default function ChatThread({
                                 : `${(chat.members || []).length} ${tx('members', 'miembros')}`)}
                     </div>
                 </div>
-                {(chat.type !== 'dm') && (
-                    <button
-                        onClick={onOpenSettings}
-                        className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg"
-                        aria-label={tx('Group settings', 'Configuración del grupo')}
-                        title={canEdit ? tx('Edit group', 'Editar grupo') : tx('Group info', 'Info del grupo')}
-                    >
-                        {canEdit ? '⚙️' : 'ⓘ'}
-                    </button>
-                )}
+                {/* Settings gear — always visible. For DMs/channels and
+                    for non-editors it's a view + delete affordance. The
+                    modal hides edit fields when canEdit is false but
+                    keeps the Delete option for admins / DM participants
+                    / group creators. (2026-05-16 — needed so admins can
+                    delete DMs and channels.) */}
+                <button
+                    onClick={onOpenSettings}
+                    className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg"
+                    aria-label={tx('Settings', 'Configuración')}
+                    title={canEdit ? tx('Edit', 'Editar') : tx('Info', 'Info')}
+                >
+                    {canEdit ? '⚙️' : 'ⓘ'}
+                </button>
             </header>
 
             {/* ── Pin banner — only when ≥1 pinned message ──────────── */}

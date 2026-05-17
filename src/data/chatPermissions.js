@@ -152,6 +152,30 @@ export function canEditOwnNotifPolicy() {
     return true;
 }
 
+// Can this viewer delete an entire chat (not just one message)?
+//
+// Rules:
+//   • App admin       → always (any type, any chat).
+//   • Group creator   → can delete their own group.
+//   • Group co-admin  → can delete the group they were deputized on.
+//   • DM participants → can delete a DM (it's just the two of them).
+//   • Channels (#all, #foh, etc.) → admin only (they auto-recreate
+//     on next mount unless we add a "purged" flag — for v1, deleting
+//     a channel is essentially a "clean reset" that re-syncs from
+//     scratch on the next ChatCenter load).
+export function canDeleteChat(chat, viewer, isAdmin) {
+    if (!chat || !viewer) return false;
+    if (isAdmin) return true;
+    if (chat.type === 'channel') return false;
+    if (chat.type === 'dm') {
+        return Array.isArray(chat.members) && chat.members.includes(viewer.name);
+    }
+    // group
+    if (chat.createdBy === viewer.name) return true;
+    if (Array.isArray(chat.admins) && chat.admins.includes(viewer.name)) return true;
+    return false;
+}
+
 // Display tier label — used in UI hints ("Only managers can edit").
 export function tierLabel(viewer, isAdmin, isManager) {
     if (isAdmin) return 'Admin';
