@@ -674,10 +674,22 @@ export default function ChatThread({
             )}
 
             {/* ── Message list ────────────────────────────────── */}
+            {/* CLASSIC FLEXBOX FIX (Andrew 2026-05-17): the messages list
+                MUST have `min-h-0` — without it, a flex item with
+                `flex-1 overflow-y-auto` defaults to min-height: auto,
+                which means the item grows to its content size and
+                pushes the parent flex container to expand beyond its
+                bounds. Result: the header + composer get dragged
+                off-screen as you scroll because the whole ChatThread
+                is taller than its parent. min-h-0 forces the item to
+                honor the parent's height constraint, so overflow-y-auto
+                actually scrolls INSIDE the bounded box. min-w-0 is the
+                same gotcha on the horizontal axis (kept defensively
+                for long inline content like raw URLs). */}
             <div
                 ref={scrollRef}
                 onScroll={handleScroll}
-                className="flex-1 overflow-y-auto px-3 py-2 space-y-1"
+                className="flex-1 min-h-0 min-w-0 overflow-y-auto px-3 py-2 space-y-1"
             >
                 {/* Load-older button — only when we haven't reached the
                     bottom of the message history yet. Bumps the limit
