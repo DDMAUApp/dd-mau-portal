@@ -30,6 +30,7 @@ import { collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
+import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 
 function todayKey() {
     const d = new Date();
@@ -65,6 +66,7 @@ export default function MobileHome({
     isAdmin = false,
     isManager = false,
     staffList = [],
+    setStaffList,
     hiddenPages = [],
 }) {
     const isEs = language === 'es';
@@ -227,6 +229,24 @@ export default function MobileHome({
                     {todayDateLabel}
                 </p>
             </header>
+
+            {/* Enable-notifications banner — first-sign-in nudge.
+                Component renders null when Notification.permission is
+                'granted' (the steady state for everyone who's already
+                opted in), so it only takes up screen real estate when
+                the viewer actually needs to act. iOS requires the
+                requestPermission() call to come from a user gesture,
+                so the button inside this banner is what makes the OS
+                prompt actually appear on iPhone PWAs. (Andrew added
+                2026-05-17 after Julie's PWA had FCM tokens registered
+                but the iOS-level permission was never granted, so
+                pushes never reached her lock screen.) */}
+            <EnableNotificationsBanner
+                staffName={staffName}
+                staffList={staffList}
+                setStaffList={setStaffList}
+                language={language}
+            />
 
             {/* HERO — Today's shift. Solid charcoal-2 with dd-green inner
                 accent stripe instead of the previous loud green gradient.

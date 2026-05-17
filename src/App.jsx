@@ -733,6 +733,7 @@ export default function App() {
                         staffName={staffName}
                         storeLocation={effectiveLocation}
                         staffList={staffList}
+                        setStaffList={setStaffList}
                         onNavigate={(tab) => setActiveTab(tab)}
                         hasOpsAccess={hasOpsAccess}
                         hasRecipesAccess={hasRecipesAccess}
@@ -747,6 +748,7 @@ export default function App() {
                         staffName={staffName}
                         storeLocation={effectiveLocation}
                         staffList={staffList}
+                        setStaffList={setStaffList}
                         onNavigate={(tab) => setActiveTab(tab)} />
                 );
             }
@@ -754,7 +756,7 @@ export default function App() {
             // sit on the sage page background; cards inside them stay white.
             // We negate the top-level dark backgrounds some legacy components
             // ship with via a CSS reset class that the tab itself defines.
-            if (activeTab === 'chat') return <ChatCenter language={language} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} />;
+            if (activeTab === 'chat') return <ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} />;
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
             if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;

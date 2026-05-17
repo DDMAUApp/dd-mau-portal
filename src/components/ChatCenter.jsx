@@ -47,6 +47,7 @@ export default function ChatCenter({
     language = 'en',
     staffName = '',
     staffList = [],
+    setStaffList,
     isAdmin = false,
     isManager = false,
     storeLocation = 'webster',
@@ -541,6 +542,8 @@ export default function ChatCenter({
                         chats={chats}
                         language={language}
                         staffName={staffName}
+                        staffList={staffList}
+                        setStaffList={setStaffList}
                         viewer={viewer}
                         onClose={() => setShowNotifSettings(false)}
                     />

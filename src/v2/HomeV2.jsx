@@ -14,6 +14,7 @@ import { db } from '../firebase';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
 import { useAppData } from './AppDataContext';
+import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 
 // ── Primitives ─────────────────────────────────────────────────────────
 function Card({ className = '', children, hover = false, ...rest }) {
@@ -125,7 +126,7 @@ function dayLabel(dateStr, isEn) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────
-export default function HomeV2({ language = 'en', staffName = '', storeLocation = 'webster', staffList = [], onNavigate }) {
+export default function HomeV2({ language = 'en', staffName = '', storeLocation = 'webster', staffList = [], setStaffList, onNavigate }) {
     const isEn = language !== 'es';
     const tx = (en, es) => (isEn ? en : es);
 
@@ -204,6 +205,18 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                     <span className="text-dd-text font-semibold normal-case">DD Mau {locName}</span>
                 </p>
             </div>
+
+            {/* Enable-notifications banner — first-sign-in nudge.
+                Same component as MobileHome's banner; renders null when
+                Notification.permission is already granted. See
+                EnableNotificationsBanner.jsx for the iOS-gesture
+                requirement that makes this affordance necessary. */}
+            <EnableNotificationsBanner
+                staffName={staffName}
+                staffList={staffList}
+                setStaffList={setStaffList}
+                language={language}
+            />
 
             {/* Stats */}
             <section>

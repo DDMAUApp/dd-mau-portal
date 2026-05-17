@@ -12,9 +12,10 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { DEFAULT_NOTIF_POLICY } from '../data/chat';
 import { recordAudit } from '../data/audit';
+import EnableNotificationsBanner from './EnableNotificationsBanner';
 
 export default function ChatNotifSettings({
-    chats, language = 'en', staffName, viewer, onClose,
+    chats, language = 'en', staffName, staffList = [], setStaffList, viewer, onClose,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
@@ -93,6 +94,21 @@ export default function ChatNotifSettings({
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-5">
+                    {/* Enable-notifications affordance — renders null when
+                        Notification.permission === 'granted'. Lets a user
+                        who previously denied (or never accepted) the OS
+                        prompt re-enable from inside the settings panel.
+                        Same component used on the Home page banner, just
+                        rendered inside the modal. Tap originates from the
+                        user clicking inside this surface, so iOS Safari
+                        treats it as a valid gesture for requestPermission. */}
+                    <EnableNotificationsBanner
+                        staffName={staffName}
+                        staffList={staffList}
+                        setStaffList={setStaffList}
+                        language={language}
+                    />
+
                     {/* Master push toggle */}
                     <label className="flex items-center justify-between gap-3 p-3 rounded-lg bg-dd-bg cursor-pointer">
                         <div>
