@@ -1163,20 +1163,41 @@ exports.translateMessage = onCall(
             throw new HttpsError("internal", "translation service unavailable");
         }
 
-        // Persist the cache + the auto-detected source lang so the next
-        // viewer doesn't re-bill. Skip if the source equals the target
-        // (no-op — the API still answers but we don't want junk like
-        // {translations.en: <original english text>} cluttering the doc).
-        if (msgRef && translatedText && detectedSourceLang !== targetLang) {
-            try {
-                await msgRef.update({
-                    [`translations.${targetLang}`]: translatedText,
-                    // Only set sourceLang if we don't already have one.
-                    ...(msgData?.sourceLang ? {} : (detectedSourceLang ? { sourceLang: detectedSourceLang } : {})),
-                });
-            } catch (e) {
-                // Non-fatal: caller still gets the translation. Cache miss next time.
-                logger.warn("translation cache write failed (non-fatal):", e);
+        // Persist the auto-detected source lang on the message doc so
+        // future viewers know what we're dealing with. Two distinct
+        // cases handled by separate branches:
+        //
+        //   A. source != target (real translation happened) — write
+        //      the translation under translations.{targetLang} AND
+        //      record sourceLang if we don't have it yet.
+        //
+        //   B. source == target (API returned input verbatim) —
+        //      DON'T write a junk translation entry, but DO write
+        //      sourceLang. Without this, shouldOfferTranslation has
+        //      no way to know the message is already in the viewer's
+        //      language; the chip re-appears on every reload and the
+        //      next tap re-bills the API for nothing. (2026-05-17 fix
+        //      — Andrew reported tapping Translate on English messages
+        //      with target=en and seeing the chip come back after each
+        //      reload.)
+        if (msgRef && translatedText) {
+            const norm = (s) => String(s || "").toLowerCase().split("-")[0];
+            const sourceMatchesTarget = detectedSourceLang
+                && norm(detectedSourceLang) === norm(targetLang);
+            const patch = {};
+            if (!sourceMatchesTarget) {
+                patch[`translations.${targetLang}`] = translatedText;
+            }
+            if (!msgData?.sourceLang && detectedSourceLang) {
+                patch.sourceLang = detectedSourceLang;
+            }
+            if (Object.keys(patch).length > 0) {
+                try {
+                    await msgRef.update(patch);
+                } catch (e) {
+                    // Non-fatal: caller still gets the translation. Cache miss next time.
+                    logger.warn("translation cache write failed (non-fatal):", e);
+                }
             }
         }
 

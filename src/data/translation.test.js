@@ -84,6 +84,16 @@ describe('shouldOfferTranslation', () => {
             expect(shouldOfferTranslation(msg, me, 'es')).toBe(true);
         }
     });
+    it('treats locale variants as same language (en-US matches en)', () => {
+        // 2026-05-17 regression — viewer with targetLang='en-US' was
+        // still seeing the chip on messages cached with sourceLang='en'
+        // because we compared the raw strings.
+        const msg = { senderName: 'Maria', type: 'text', text: 'Hello', sourceLang: 'en' };
+        expect(shouldOfferTranslation(msg, me, 'en-US')).toBe(false);
+        expect(shouldOfferTranslation(msg, me, 'EN')).toBe(false);
+        const esMsg = { senderName: 'Maria', type: 'text', text: 'Hola', sourceLang: 'es-MX' };
+        expect(shouldOfferTranslation(esMsg, me, 'es')).toBe(false);
+    });
 });
 
 describe('detectLanguageHint', () => {

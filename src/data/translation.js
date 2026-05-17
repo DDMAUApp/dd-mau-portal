@@ -69,6 +69,15 @@ export function readCachedTranslation(message, targetLang) {
 //   • Messages whose stored sourceLang already matches the target
 //   • System events (announcements / coverage cards translate, but
 //     pure system_event control messages do not)
+//
+// Language code comparison uses the BCP-47 primary subtag only — i.e.
+// `en-US` and `en` are treated as the same language. Without this
+// normalization, a viewer with targetLang='en-US' looking at a
+// message cached with sourceLang='en' would still see the chip
+// because '"en-US" !== "en"'.
+function normLang(s) {
+    return String(s || '').toLowerCase().split('-')[0];
+}
 export function shouldOfferTranslation(message, viewerName, targetLang) {
     if (!message || !targetLang) return false;
     if (message.deleted) return false;
@@ -78,7 +87,7 @@ export function shouldOfferTranslation(message, viewerName, targetLang) {
     const text = (message.text || '').trim();
     if (text.length < 2) return false;
     const sourceLang = message.sourceLang;
-    if (sourceLang && sourceLang.toLowerCase() === targetLang.toLowerCase()) return false;
+    if (sourceLang && normLang(sourceLang) === normLang(targetLang)) return false;
     return true;
 }
 

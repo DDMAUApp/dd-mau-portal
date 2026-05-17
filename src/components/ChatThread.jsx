@@ -847,12 +847,15 @@ function MessageBubble({
             <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
                 <CoverageCard
                     message={message}
+                    chat={chat}
                     isMine={isMine}
                     isEs={isEs}
                     staffName={staffName}
                     viewer={viewer}
                     isAdmin={isAdmin}
                     isManager={isManager}
+                    targetLang={targetLang}
+                    autoTranslate={autoTranslate}
                     onClaim={onClaimCoverage}
                     onApprove={onApproveCoverage}
                     onDeny={onDenyCoverage}
@@ -907,7 +910,14 @@ function MessageBubble({
     if (message.type === 'task_handoff') {
         return (
             <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
-                <TaskHandoffCard message={message} isEs={isEs} />
+                <TaskHandoffCard
+                    message={message}
+                    chat={chat}
+                    isEs={isEs}
+                    staffName={staffName}
+                    targetLang={targetLang}
+                    autoTranslate={autoTranslate}
+                />
             </div>
         );
     }
@@ -1672,7 +1682,8 @@ function AnnouncementCard({
 }
 
 function CoverageCard({
-    message, isMine, isEs, staffName, viewer, isAdmin, isManager,
+    message, chat, isMine, isEs, staffName, viewer, isAdmin, isManager,
+    targetLang, autoTranslate,
     onClaim, onApprove, onDeny, onWithdraw, onLongPress,
 }) {
     const tx = (en, es) => isEs ? es : en;
@@ -1711,7 +1722,18 @@ function CoverageCard({
                     {shift.startTime}–{shift.endTime} · {(shift.side || '').toUpperCase()} · {shift.location === 'maryland' ? 'Maryland' : shift.location === 'webster' ? 'Webster' : shift.location}
                 </div>
                 {message.text && (
-                    <p className="mt-2 text-sm text-dd-text-2 italic">"{message.text}"</p>
+                    <div className="mt-2 text-sm text-dd-text-2 italic">
+                        "<TranslatableText
+                            message={message}
+                            chatId={chat?.id}
+                            targetLang={targetLang}
+                            autoTranslate={autoTranslate}
+                            staffName={staffName}
+                            isMine={false}
+                            isEs={isEs}
+                            blockMode={false}
+                        />"
+                    </div>
                 )}
                 {message.claimedBy && (
                     <div className="mt-2 text-xs text-blue-700 font-bold">
@@ -1853,7 +1875,7 @@ function PhotoIssueCard({ message, chat, isEs, isManager, staffName, viewer, tar
     );
 }
 
-function TaskHandoffCard({ message, isEs }) {
+function TaskHandoffCard({ message, chat, isEs, staffName, targetLang, autoTranslate }) {
     const tx = (en, es) => isEs ? es : en;
     return (
         <div className="rounded-xl overflow-hidden border-2 border-purple-300 bg-purple-50/40 shadow-card">
@@ -1864,7 +1886,18 @@ function TaskHandoffCard({ message, isEs }) {
                 </span>
             </div>
             <div className="px-4 py-3">
-                <p className="text-sm text-dd-text">{message.text}</p>
+                <div className="text-sm text-dd-text">
+                    <TranslatableText
+                        message={message}
+                        chatId={chat?.id}
+                        targetLang={targetLang}
+                        autoTranslate={autoTranslate}
+                        staffName={staffName}
+                        isMine={false}
+                        isEs={isEs}
+                        blockMode={false}
+                    />
+                </div>
             </div>
         </div>
     );
