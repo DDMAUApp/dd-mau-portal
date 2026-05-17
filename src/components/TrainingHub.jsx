@@ -24,7 +24,50 @@ function applyLessonOverride(lesson, override) {
         titleEs: override.titleEs != null ? override.titleEs : lesson.titleEs,
         contentEn: Array.isArray(override.contentEn) ? override.contentEn : lesson.contentEn,
         contentEs: Array.isArray(override.contentEs) ? override.contentEs : lesson.contentEs,
+        // Per-lesson YouTube video IDs — admins set via the Edit modal.
+        // Stored on the override doc so a video can be added/swapped
+        // without redeploying training.js. ES variant is optional; if
+        // only videoIdEn is set, Spanish viewers see the same video
+        // (YouTube auto-captioning can fill the gap). (2026-05-17.)
+        videoIdEn: override.videoIdEn != null ? override.videoIdEn : lesson.videoIdEn,
+        videoIdEs: override.videoIdEs != null ? override.videoIdEs : lesson.videoIdEs,
     };
+}
+
+// Parse a YouTube URL or raw video ID into the canonical 11-char video
+// ID that the embed iframe needs. Accepts:
+//   • Raw ID:                       "dQw4w9WgXcQ"
+//   • Standard watch URL:           "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=12"
+//   • Short URL (youtu.be):         "https://youtu.be/dQw4w9WgXcQ?si=..."
+//   • Mobile / m. domain:           "https://m.youtube.com/watch?v=dQw4w9WgXcQ"
+//   • Shorts / Embed / Live URLs:   handled by the /shorts/ + /embed/ + /live/ shape
+// Returns null on anything that doesn't look like a YouTube ID.
+//
+// Pure function — used by the Edit modal (validate on paste) and by
+// the lesson renderer (when override data was stored as a URL by an
+// earlier admin who skipped validation).
+export function parseYouTubeId(input) {
+    if (!input || typeof input !== 'string') return null;
+    const s = input.trim();
+    // Already a bare 11-char ID
+    if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+    // Try URL parse — fail closed on anything that's not a URL.
+    let url;
+    try { url = new URL(s); } catch { return null; }
+    const host = url.hostname.replace(/^www\./, '').replace(/^m\./, '');
+    if (host === 'youtu.be') {
+        // youtu.be/{id}
+        const id = url.pathname.replace(/^\//, '').split('/')[0];
+        return /^[A-Za-z0-9_-]{11}$/.test(id) ? id : null;
+    }
+    if (host !== 'youtube.com' && host !== 'youtube-nocookie.com') return null;
+    // watch?v={id}
+    const vParam = url.searchParams.get('v');
+    if (vParam && /^[A-Za-z0-9_-]{11}$/.test(vParam)) return vParam;
+    // /shorts/{id} | /embed/{id} | /live/{id}
+    const m = url.pathname.match(/^\/(?:shorts|embed|live|v)\/([A-Za-z0-9_-]{11})/);
+    if (m) return m[1];
+    return null;
 }
 
 // Doc id helper — staff name → safe Firestore doc id
@@ -536,6 +579,36 @@ export default function TrainingHub({ staffName, language, staffList }) {
                         onClose={() => setEditorOpen(false)}
                     />
                 )}
+
+                {/* YouTube video — renders above the lesson text. Picks
+                    videoIdEs for Spanish viewers if set, falls back to
+                    videoIdEn so EN-only-video lessons still play for ES
+                    staff (YouTube auto-captions can bridge the gap).
+                    Lazy-loaded (loading="lazy" on the iframe) so a
+                    module with 8 lessons doesn't kick off 8 YouTube
+                    embeds when the staff scrolls. Privacy-enhanced
+                    domain (youtube-nocookie.com) reduces tracking. */}
+                {(() => {
+                    const rawVid = (isEn ? null : activeLesson.videoIdEs) || activeLesson.videoIdEn;
+                    const vid = parseYouTubeId(rawVid) || (typeof rawVid === 'string' && /^[A-Za-z0-9_-]{11}$/.test(rawVid) ? rawVid : null);
+                    if (!vid) return null;
+                    return (
+                        <div className="mb-4 rounded-xl overflow-hidden border border-gray-200 shadow-sm bg-black">
+                            <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+                                <iframe
+                                    src={`https://www.youtube-nocookie.com/embed/${vid}?rel=0&modestbranding=1`}
+                                    title={tx(activeLesson.titleEn, activeLesson.titleEs)}
+                                    loading="lazy"
+                                    referrerPolicy="strict-origin-when-cross-origin"
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                    className="absolute inset-0 w-full h-full"
+                                />
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 <div className="space-y-3 text-gray-800 text-sm leading-relaxed">
                     {content.map((para, i) => (
                         <p key={i} className={para.startsWith("•") || para.startsWith("—") || /^\d+\./.test(para) ? "ml-2" : ""}>{para}</p>
@@ -789,6 +862,13 @@ function LessonEditor({ lesson, moduleId, moduleCode, lessonIdx, overrideKey, ha
     const [titleEs, setTitleEs] = useState(lesson.titleEs || "");
     const [bodyEn, setBodyEn] = useState((lesson.contentEn || []).join("\n"));
     const [bodyEs, setBodyEs] = useState((lesson.contentEs || []).join("\n"));
+    // YouTube video state — admins paste either a full URL
+    // (https://youtu.be/... / https://www.youtube.com/watch?v=...) OR
+    // a raw 11-char video ID. parseYouTubeId() normalizes both. We
+    // store the parsed ID on the override doc so the renderer can
+    // skip parsing on every page view. (2026-05-17.)
+    const [videoUrlEn, setVideoUrlEn] = useState(lesson.videoIdEn || "");
+    const [videoUrlEs, setVideoUrlEs] = useState(lesson.videoIdEs || "");
     const [saving, setSaving] = useState(false);
     const [err, setErr] = useState(null);
 
@@ -796,11 +876,27 @@ function LessonEditor({ lesson, moduleId, moduleCode, lessonIdx, overrideKey, ha
     const esLines = bodyEs.split("\n").map(s => s.trimEnd()).filter(s => s.length > 0);
     const balanced = enLines.length === esLines.length;
 
+    // Parsed video IDs — null if the input field is empty OR doesn't
+    // look like a YouTube URL/ID. Surface the error inline so admins
+    // know to paste a different URL before saving.
+    const trimEn = videoUrlEn.trim();
+    const trimEs = videoUrlEs.trim();
+    const parsedVidEn = trimEn ? parseYouTubeId(trimEn) : null;
+    const parsedVidEs = trimEs ? parseYouTubeId(trimEs) : null;
+    const videoEnInvalid = trimEn && !parsedVidEn;
+    const videoEsInvalid = trimEs && !parsedVidEs;
+
     const save = async () => {
         if (!balanced) {
             if (!confirm(tx(
                 `EN has ${enLines.length} lines, ES has ${esLines.length}. Save anyway? The bilingual renderer expects them to match.`,
                 `EN tiene ${enLines.length} líneas, ES tiene ${esLines.length}. ¿Guardar igual? El renderer bilingüe espera que coincidan.`
+            ))) return;
+        }
+        if (videoEnInvalid || videoEsInvalid) {
+            if (!confirm(tx(
+                "One of the video URLs doesn't look like a YouTube link. Save anyway? Staff won't see a video until you fix it.",
+                "Una de las URLs de video no parece un enlace de YouTube. ¿Guardar igual? Los empleados no verán video hasta corregirlo."
             ))) return;
         }
         setSaving(true); setErr(null);
@@ -812,6 +908,15 @@ function LessonEditor({ lesson, moduleId, moduleCode, lessonIdx, overrideKey, ha
                     titleEs: titleEs.trim(),
                     contentEn: enLines,
                     contentEs: esLines,
+                    // Store the normalized 11-char ID, NOT the URL the
+                    // admin pasted. Keeps the override doc small and
+                    // lets the renderer iframe URL be constructed with
+                    // no per-render parsing. Falls back to the raw
+                    // trimmed input only if the parser couldn't pull
+                    // a valid ID — preserves user input for the next
+                    // edit even if it's malformed.
+                    videoIdEn: parsedVidEn || (trimEn || null),
+                    videoIdEs: parsedVidEs || (trimEs || null),
                     editedAt: new Date().toISOString(),
                     editedBy: editorBy || "admin",
                 }
@@ -870,6 +975,74 @@ function LessonEditor({ lesson, moduleId, moduleCode, lessonIdx, overrideKey, ha
                             <input type="text" value={titleEs} onChange={e => setTitleEs(e.target.value)}
                                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                         </div>
+                    </div>
+                    {/* YouTube video URLs — optional, one per language.
+                        Paste a full URL or just the 11-char ID; the
+                        save handler normalizes both to the ID. If you
+                        only have EN, leave ES blank and Spanish
+                        viewers will get the same video (YouTube auto-
+                        captioning can handle the language gap). */}
+                    <div className="border-t border-gray-200 pt-3">
+                        <div className="flex items-center justify-between mb-1">
+                            <label className="text-xs font-bold text-gray-600">
+                                🎬 {tx("YouTube video (optional)", "Video de YouTube (opcional)")}
+                            </label>
+                            <span className="text-[10px] text-gray-400">
+                                {tx("paste URL or ID", "pega URL o ID")}
+                            </span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-[11px] text-gray-500 mb-1">{tx("English video", "Video en inglés")}</label>
+                                <input
+                                    type="text"
+                                    value={videoUrlEn}
+                                    onChange={e => setVideoUrlEn(e.target.value)}
+                                    placeholder="https://youtu.be/dQw4w9WgXcQ"
+                                    className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${
+                                        videoEnInvalid ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                                    }`}
+                                />
+                                {parsedVidEn && (
+                                    <p className="text-[10px] text-green-700 mt-0.5">
+                                        ✓ ID: <span className="font-mono">{parsedVidEn}</span>
+                                    </p>
+                                )}
+                                {videoEnInvalid && (
+                                    <p className="text-[10px] text-red-700 mt-0.5">
+                                        ⚠ {tx("Not a recognizable YouTube link", "No parece un enlace de YouTube")}
+                                    </p>
+                                )}
+                            </div>
+                            <div>
+                                <label className="block text-[11px] text-gray-500 mb-1">{tx("Spanish video (optional)", "Video en español (opcional)")}</label>
+                                <input
+                                    type="text"
+                                    value={videoUrlEs}
+                                    onChange={e => setVideoUrlEs(e.target.value)}
+                                    placeholder={tx("leave blank to reuse EN video", "déjalo vacío para usar el video EN")}
+                                    className={`w-full border rounded-lg px-3 py-2 text-sm font-mono ${
+                                        videoEsInvalid ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                                    }`}
+                                />
+                                {parsedVidEs && (
+                                    <p className="text-[10px] text-green-700 mt-0.5">
+                                        ✓ ID: <span className="font-mono">{parsedVidEs}</span>
+                                    </p>
+                                )}
+                                {videoEsInvalid && (
+                                    <p className="text-[10px] text-red-700 mt-0.5">
+                                        ⚠ {tx("Not a recognizable YouTube link", "No parece un enlace de YouTube")}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-gray-500 leading-relaxed mt-1.5">
+                            {tx(
+                                "Tip: upload as Unlisted on YouTube so only people with the link can watch. The link goes here. Public viewing isn't required.",
+                                "Consejo: sube como 'No listado' en YouTube para que solo quienes tengan el enlace puedan ver. El enlace va aquí. No necesita ser público."
+                            )}
+                        </p>
                     </div>
                     <p className="text-xs text-gray-500 leading-relaxed">
                         {tx(
