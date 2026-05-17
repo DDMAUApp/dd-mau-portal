@@ -607,7 +607,20 @@ export default function CateringOrder({ language, staffName }) {
                         await addDoc(collection(db, "cateringOrders"), order);
                     }
                     setSubmitted(true);
-                } catch (err) { console.error("Error submitting catering order:", err); setSubmitted(false); }
+                } catch (err) {
+                    // Surface the failure — previously this just logged and
+                    // left `submitted` false, so the UI silently rolled
+                    // back to the cart with no signal that the save failed.
+                    // Order-save failures (Firestore offline, perm-denied
+                    // race) are rare but high-impact — staff need to know
+                    // to retry before assuming the order is in.
+                    console.error("Error submitting catering order:", err);
+                    setSubmitted(false);
+                    toast(language === 'es'
+                        ? `Error al guardar pedido: ${err.message || err}. Intenta de nuevo.`
+                        : `Order save failed: ${err.message || err}. Try again.`,
+                        { kind: 'error', duration: 8000 });
+                }
             };
             const resetForm = () => {
                 setCustomer({ name: "", phone: "", email: "", date: "", time: "", guests: "", address: "", orderType: "pickup", pickupLocation: "" });
