@@ -88,8 +88,20 @@ service cloud.firestore {
 
     // forceRefresh broadcast — admins write a timestamp to trigger reload
     // on every device. Read by all clients.
+    //
+    // Hardened 2026-05-17 (SEC-007): the previous `allow read, write: if
+    // true` let anyone with the Firebase apiKey trigger a mass reload of
+    // every staff device at will. We now require the write to look like
+    // a real broadcast — must carry `triggeredBy` (a name string) and
+    // `triggeredAt` must equal request.time (i.e. a freshly-generated
+    // serverTimestamp, no replay). A determined attacker can still
+    // fabricate this payload; the real fix is Firebase Auth + admin
+    // claim, but this stops casual abuse + makes mass-reload writes
+    // traceable in audit replay.
     match /config/forceRefresh {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if request.resource.data.triggeredBy is string
+                   && request.resource.data.triggeredAt == request.time;
     }
 
     // Recipes doc — hardened after the 2026-05-09 Import Master incident.
@@ -303,6 +315,42 @@ service cloud.firestore {
                       request.resource.data.size() <= resource.data.size() + 5
                     );
       allow delete: if false;
+    }
+
+    // Rate-limit buckets — written only by Cloud Functions (admin SDK
+    // bypasses these rules). Clients have no business reading or
+    // writing here; sealing it shut prevents a tampered client from
+    // resetting its own counter to bypass the limit. (Added 2026-05-17
+    // alongside the translateMessage rate limiter, SEC-002.)
+    match /rate_limits/{bucketId} {
+      allow read, write: if false;
+    }
+
+    // Audit log — append-only.
+    //
+    // Hardened 2026-05-17 (SEC-005). Previously this collection inherited
+    // the open catch-all below, which meant any signed-in device could
+    // delete + rewrite audit history. That defeats the entire point of
+    // having an audit log (forensic reconstruction after a security
+    // incident, payroll dispute, recipe revert, etc.).
+    //
+    // Now: append-only. Read is open so the admin panel can render it;
+    // create requires the shape that recordAudit() in src/data/audit.js
+    // already writes (action + actorName + createdAt as server timestamp);
+    // update + delete are forever forbidden from clients. A future Cloud
+    // Function with admin SDK access can prune old entries (>2 years)
+    // — that bypasses these rules legitimately.
+    //
+    // Why createdAt == request.time: it forces every audit doc to carry
+    // a freshly-issued server timestamp. Stale-payload replay attacks
+    // (write an audit with a forged actorName + an old timestamp) get
+    // rejected.
+    match /audit/{auditId} {
+      allow read: if true;
+      allow create: if request.resource.data.action is string
+                    && request.resource.data.actorName is string
+                    && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
     }
 
     // All other documents inherit a permissive default (matches current

@@ -1068,9 +1068,60 @@ exports.triggerOrdersSync = onSchedule(
 //   ~20-50 messages/day need translation × ~120 chars avg = under 200K
 //   chars/month. Stays inside the free tier with margin. Cached on the
 //   message doc so re-views of the same message cost nothing.
+// Per-IP rate limit for translateMessage. Without Firebase Auth wired
+// (Phase 2), we can't tie the call to a specific staff member — but we
+// can cap how many calls a single IP can make in a rolling window so a
+// scripted attacker can't drain the Translation API quota.
+//
+// Limit: 60 requests per 5-minute window per IP. A real DD Mau viewer
+// translating every message they scroll past would never get close.
+// A scripted abuser hits the wall after one minute of looping.
+//
+// Counter doc lives at /rate_limits/translate_{ipHash}. We hash the IP
+// (so it's not stored raw) and bucket by 5-minute window so the doc
+// resets itself naturally — no GC needed. Best-effort: if the rate-
+// limit read or write fails (Firestore unavailable, etc.) we let the
+// translation through. Defense-in-depth, not a guarantee.
+async function checkTranslateRateLimit(ip) {
+    if (!ip) return; // unknown IP — let through; nothing to throttle against
+    try {
+        const crypto = require("crypto");
+        const ipHash = crypto.createHash("sha256").update(ip).digest("hex").slice(0, 16);
+        const windowMs = 5 * 60_000;
+        const bucket = Math.floor(Date.now() / windowMs);
+        const docId = `translate_${ipHash}_${bucket}`;
+        const ref = db.doc(`rate_limits/${docId}`);
+        const snap = await ref.get();
+        const cur = snap.exists ? (snap.data().count || 0) : 0;
+        if (cur >= 60) {
+            throw new HttpsError(
+                "resource-exhausted",
+                "Translation rate limit reached — try again in a few minutes.",
+            );
+        }
+        // Increment via merge so two simultaneous calls don't lose the bump.
+        // FieldValue.increment is atomic at the Firestore layer.
+        await ref.set({
+            count: FieldValue.increment(1),
+            expiresAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    } catch (e) {
+        if (e instanceof HttpsError) throw e;
+        logger.warn("rate-limit check failed (allowing through):", e);
+    }
+}
+
 exports.translateMessage = onCall(
     { region: "us-central1", cors: true, maxInstances: 10 },
     async (request) => {
+        // Rate limit by source IP before doing any work. This is the
+        // only auth-shaped check we can do without Firebase Auth wired
+        // — see SEC-002 in AUDIT.md for the full picture.
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await checkTranslateRateLimit(ip);
+
         const data = request.data || {};
         const targetLang = String(data.targetLang || "").toLowerCase();
         if (!targetLang || !/^[a-z]{2}(-[a-z]{2,4})?$/i.test(targetLang)) {
