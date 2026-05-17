@@ -524,6 +524,7 @@ export default function ChatCenter({
                         chats={chats}
                         language={language}
                         staffName={staffName}
+                        viewer={viewer}
                         onClose={() => setShowSearchPanel(false)}
                         onJump={({ chatId, messageId }) => {
                             setShowSearchPanel(false);

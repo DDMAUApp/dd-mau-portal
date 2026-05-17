@@ -17,12 +17,17 @@ import { db } from '../firebase';
 import { collection, onSnapshot, doc } from 'firebase/firestore';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
+import TranslatableText from './TranslatableText';
 
 export default function ChatAckDashboard({
     chat, message, language = 'en', staffName, viewer, onClose,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
+    // Viewer's preferred target language for the dashboard's
+    // translate chip. Lets a Spanish-speaking manager review an
+    // English announcement in their own language, or vice versa.
+    const targetLang = viewer?.preferredLanguage || (isEs ? 'es' : 'en');
     const [acks, setAcks] = useState([]); // [{ userName, ackedAt }]
     const [nudging, setNudging] = useState(false);
 
@@ -114,9 +119,18 @@ export default function ChatAckDashboard({
                         <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                     </div>
                     {message?.text && (
-                        <p className="mt-2 text-xs text-dd-text-2 line-clamp-2 italic">
-                            "{message.text}"
-                        </p>
+                        <div className="mt-2 text-xs text-dd-text-2 italic">
+                            "<TranslatableText
+                                message={message}
+                                chatId={chat?.id}
+                                targetLang={targetLang}
+                                autoTranslate={false}
+                                staffName={staffName}
+                                isMine={false}
+                                isEs={isEs}
+                                blockMode={false}
+                            />"
+                        </div>
                     )}
                 </div>
 

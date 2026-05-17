@@ -11,9 +11,12 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import TranslatableText from './TranslatableText';
 
 export default function ChatPinsDrawer({
-    chat, language = 'en', onClose, onJumpToMessage,
+    chat, language = 'en', staffName,
+    targetLang, autoTranslate,
+    onClose, onJumpToMessage,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
@@ -66,7 +69,23 @@ export default function ChatPinsDrawer({
                                     </span>
                                 </div>
                                 <div className="text-sm text-dd-text line-clamp-3">
-                                    {m.text || (m.type === 'image' ? '📷 Photo' : m.type === 'video' ? '🎬 Video' : m.type === 'audio' ? '🎤 Voice' : '—')}
+                                    {m.text ? (
+                                        <TranslatableText
+                                            message={m}
+                                            chatId={chat?.id}
+                                            targetLang={targetLang}
+                                            autoTranslate={autoTranslate}
+                                            staffName={staffName}
+                                            isMine={false}
+                                            isEs={isEs}
+                                            blockMode={false}
+                                        />
+                                    ) : (
+                                        m.type === 'image' ? '📷 Photo'
+                                            : m.type === 'video' ? '🎬 Video'
+                                            : m.type === 'audio' ? '🎤 Voice'
+                                            : '—'
+                                    )}
                                 </div>
                             </button>
                         ))

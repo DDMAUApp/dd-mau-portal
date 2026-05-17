@@ -19,10 +19,16 @@ import { collection, collectionGroup, query, where, onSnapshot, orderBy, limit }
 import { chatDisplayName, ChatAvatar } from './ChatCenter';
 
 export default function ChatSearchPanel({
-    chats, language = 'en', staffName, onClose, onJump,
+    chats, language = 'en', staffName, viewer, onClose, onJump,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
+    // Note: we intentionally don't render a Translate chip in search
+    // results. The result snippet uses <mark> highlighting on the
+    // query term, which would conflict with TranslatableText's body
+    // swap. The user taps a result to jump into the chat thread,
+    // where the chip works normally with no UX clash. (Considered + ruled
+    // out 2026-05-17.)
 
     const [q, setQ] = useState('');
     const [fromUser, setFromUser] = useState('');
