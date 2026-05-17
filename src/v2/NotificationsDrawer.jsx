@@ -25,7 +25,7 @@
 // the most recent 50, sorted by createdAt desc. Tapping an item marks
 // it read AND optionally navigates to its deepLink tab.
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, updateDoc, writeBatch } from 'firebase/firestore';
 import { useAppData } from './AppDataContext';
@@ -179,6 +179,27 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
         onClose?.();
     };
 
+    // Lock body scroll while the drawer is open. Without this, pulling
+    // down at the top of the inner notification list bleeds the
+    // gesture into the page below, where iOS Safari interprets it as a
+    // pull-to-refresh + the chunk-reload auto-recovery in App.jsx
+    // sometimes mistakes the resulting reflow for a chunk failure and
+    // reloads. The user sees the drawer "crash" mid-scroll.
+    // Combined with `overscroll-behavior: contain` on the inner
+    // scrollable (below), this fully isolates drawer scroll from page
+    // scroll on every iOS version.
+    useEffect(() => {
+        if (!open) return;
+        const prevOverflow = document.body.style.overflow;
+        const prevTouchAction = document.body.style.touchAction;
+        document.body.style.overflow = 'hidden';
+        document.body.style.touchAction = 'none';
+        return () => {
+            document.body.style.overflow = prevOverflow;
+            document.body.style.touchAction = prevTouchAction;
+        };
+    }, [open]);
+
     if (!open) return null;
 
     return (
@@ -194,8 +215,14 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
                 ceiling → scrolling up thrashed the layout, perceived as
                 a "crash" by the user. (Andrew 2026-05-17.)
                 Desktop (sm+): unchanged — full-height side panel on
-                the right. */}
-            <div className="fixed inset-x-0 top-0 bottom-0 sm:bottom-auto sm:right-0 sm:left-auto sm:w-[420px] sm:max-w-[92vw] sm:h-screen z-50 flex flex-col bg-white shadow-2xl rounded-t-2xl sm:rounded-none modal-scroll-lock"
+                the right.
+
+                Height note: `top-0 bottom-0` covers the layout viewport
+                on every device; the inner scrollable handles all motion
+                so the outer container's exact pixel height doesn't
+                matter. `overflow-hidden` on the container guarantees
+                no child content escapes during overscroll bounces. */}
+            <div className="fixed inset-x-0 top-0 bottom-0 sm:bottom-auto sm:right-0 sm:left-auto sm:w-[420px] sm:max-w-[92vw] sm:h-screen z-50 flex flex-col bg-white shadow-2xl rounded-t-2xl sm:rounded-none overflow-hidden"
                 style={{
                     paddingBottom: 'env(safe-area-inset-bottom)',
                 }}>
@@ -226,8 +253,28 @@ export default function NotificationsDrawer({ open, onClose, staffName, language
                     </div>
                 </div>
 
-                {/* Body */}
-                <div className="flex-1 overflow-y-auto">
+                {/* Body — the scrolling element.
+                    `overscroll-behavior: contain` MUST live here on the
+                    actual scrollable, not on the parent (overscroll
+                    behavior is per-element, not inherited). Without
+                    this, pulling down past the first notification
+                    bounced the gesture into the page below and iOS
+                    Safari interpreted it as pull-to-refresh — combined
+                    with App.jsx's chunk-reload safety net, the result
+                    was a perceived "crash."
+                    `touch-action: pan-y` blocks horizontal scroll and
+                    pinch-zoom on the scrollable so iOS doesn't try to
+                    interpret a vertical drag as a different gesture
+                    mid-scroll.
+                    `-webkit-overflow-scrolling: touch` enables
+                    momentum scroll on iOS Safari < 16 (no-op on
+                    modern Safari, harmless on every other browser). */}
+                <div className="flex-1 overflow-y-auto"
+                    style={{
+                        overscrollBehavior: 'contain',
+                        WebkitOverflowScrolling: 'touch',
+                        touchAction: 'pan-y',
+                    }}>
                     {loading ? (
                         <div className="p-3 space-y-2">
                             {[1,2,3].map(i => (
