@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
@@ -2409,9 +2409,31 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 } catch (err) { console.error("Error saving inventory snapshot:", err); }
             };
 
-            const updateInventoryCount = async (itemId, newCount) => {
+            // updateInventoryCount(itemId, newCount, delta?)
+            //
+            // newCount: the post-update absolute value (used for the
+            //   optimistic local state + audit log)
+            // delta: optional. If +1 / -1 is passed, we write via
+            //   FieldValue.increment so two simultaneous +1 taps from
+            //   different devices BOTH land (AUDIT OPS-004 fix). If
+            //   omitted, falls back to the old absolute-set behavior
+            //   (no current call site needs this; kept for safety).
+            //
+            // Race-fix history (2026-05-17): previously every call
+            // wrote `counts.${itemId} = newCount` as an absolute value.
+            // If two staff +1'd the same item between snapshot ticks,
+            // both read prev=5 from local state, both wrote 6 → one
+            // +1 lost. With increment, both writes apply atomically
+            // at the Firestore layer and the final count is 7.
+            const updateInventoryCount = async (itemId, newCount, delta = null) => {
                 const count = parseInt(newCount) || 0;
                 const prevCount = inventory[itemId] || 0;
+                // Decrement guard: if the user is decrementing and our
+                // local view says count is already 0, no-op. Avoids
+                // momentarily writing -1 even though Firestore would
+                // accept it (we clamp via UI but the increment path
+                // doesn't know about the clamp).
+                if (delta === -1 && prevCount <= 0) return;
                 const newInventory = { ...inventory, [itemId]: count };
                 setInventory(newInventory);
                 const now = new Date();
@@ -2456,8 +2478,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
                 const ref = doc(db, "ops", "inventory_" + storeLocation);
                 // Targeted update via dotted paths so concurrent edits on other items aren't clobbered.
+                // When a delta is provided (+1 / -1 from the bump buttons), use
+                // Firestore's atomic FieldValue.increment so simultaneous taps
+                // from two devices both land. Falls back to absolute set for
+                // any caller that doesn't pass a delta (none today).
                 const update = {
-                    [`counts.${itemId}`]: count,
+                    [`counts.${itemId}`]: delta === 1 || delta === -1 ? increment(delta) : count,
                     [`countMeta.${itemId}`]: count === 0 ? deleteField() : { by: staffName, at: timeStr },
                     date: new Date().toISOString(),
                 };
@@ -5157,10 +5183,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                         </div>
                                                                         <div className="flex items-center gap-1 flex-shrink-0">
                                                                             <>
-                                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
                                                                                     className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                                 <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
-                                                                                <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                                <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                     className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                             </>
                                                                         </div>
@@ -5403,10 +5429,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                         </div>
                                                                     </div>
                                                                     <div className="flex items-center gap-1 flex-shrink-0">
-                                                                        <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                        <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
                                                                             className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                         <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
-                                                                        <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                        <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                             className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                     </div>
                                                                 </div>
@@ -5597,10 +5623,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                     )}
                                                                                 </div>
                                                                                 <div className="flex items-center gap-1 flex-shrink-0">
-                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1))}
+                                                                                    <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
                                                                                         className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
                                                                                     <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
-                                                                                    <button onClick={() => updateInventoryCount(item.id, count + 1)}
+                                                                                    <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                         className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                                 </div>
                                                                             </div>

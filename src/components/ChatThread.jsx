@@ -82,11 +82,21 @@ export default function ChatThread({
     // ── Mark read on view + on each new message ────────────────────
     // We write a single lastReadByName.{name} timestamp on the chat doc.
     // Dot-notation update preserves other members' read markers.
+    //
+    // Debounced 1.5s (AUDIT CHAT-002). Previous version fired a write
+    // on EVERY messages.length change — so 10 messages streaming in
+    // via snapshot triggered 10 writes back to Firestore just to
+    // mark-read. With ~30 staff × ~50 chats × ~200 messages/day, that
+    // adds up to ~75K wasted writes/day. Debouncing collapses each
+    // burst of arrivals into one write while the user is reading.
     useEffect(() => {
         if (!chat?.id || !staffName) return;
         const ref = doc(db, 'chats', chat.id);
-        updateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
-            .catch(e => console.warn('markRead failed:', e));
+        const t = setTimeout(() => {
+            updateDoc(ref, { [`lastReadByName.${staffName}`]: serverTimestamp() })
+                .catch(e => console.warn('markRead failed:', e));
+        }, 1500);
+        return () => clearTimeout(t);
     }, [chat?.id, staffName, messages.length]);
 
     // ── Auto-scroll-to-bottom on new messages ──────────────────────

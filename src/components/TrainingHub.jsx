@@ -134,6 +134,55 @@ export default function TrainingHub({ staffName, language, staffList }) {
     const [quizAnswers, setQuizAnswers] = useState({});
     const [lastResult, setLastResult] = useState(null);
 
+    // Persist quiz answers to localStorage so a mid-quiz refresh
+    // doesn't lose progress (AUDIT TRAIN-003). Keyed by
+    // (moduleId, staffName) so a different person on the same
+    // device starting a quiz of their own doesn't pick up the
+    // previous tester's answers.
+    //
+    // Lifecycle:
+    //   • Restored on mount when activeModuleId flips → 'quiz' view
+    //   • Saved on every quizAnswers change (cheap — <200 bytes)
+    //   • Cleared after submission (success OR fail — the attempt
+    //     is recorded server-side either way; replaying old answers
+    //     after a fresh retake would be confusing)
+    const quizStorageKey = (moduleId) => (
+        moduleId && staffName
+            ? `ddmau:quiz:${moduleId}:${staffName}`
+            : null
+    );
+    // Restore when entering the quiz view for a given module.
+    useEffect(() => {
+        if (view !== "quiz" || !activeModuleId) return;
+        const k = quizStorageKey(activeModuleId);
+        if (!k) return;
+        try {
+            const raw = localStorage.getItem(k);
+            if (!raw) return;
+            const saved = JSON.parse(raw);
+            if (saved && typeof saved === 'object') {
+                setQuizAnswers(saved);
+            }
+        } catch { /* corrupt entry — skip */ }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [view, activeModuleId, staffName]);
+    // Save on every change while in the quiz view.
+    useEffect(() => {
+        if (view !== "quiz" || !activeModuleId) return;
+        const k = quizStorageKey(activeModuleId);
+        if (!k) return;
+        try {
+            localStorage.setItem(k, JSON.stringify(quizAnswers));
+        } catch { /* storage full — non-fatal */ }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [quizAnswers, view, activeModuleId, staffName]);
+    // Clear after the result lands.
+    function clearSavedQuiz(moduleId) {
+        const k = quizStorageKey(moduleId);
+        if (!k) return;
+        try { localStorage.removeItem(k); } catch {}
+    }
+
     // Progress for current user
     const [progress, setProgress] = useState(null); // { modules: { mX: { lessonsCompleted, attempts, passed, locked } } }
     const [loading, setLoading] = useState(true);
@@ -266,6 +315,11 @@ export default function TrainingHub({ staffName, language, staffList }) {
             },
         }));
         await persistModulePatch(m.id, patch);
+        // Submission recorded — drop the saved-progress entry so a
+        // subsequent retake starts with a fresh slate. (Otherwise
+        // localStorage would keep the last-submitted answers and
+        // restore them on re-entry to the quiz view.)
+        clearSavedQuiz(m.id);
         setLastResult({ score, correct, total: m.quiz.questions.length, passed, locked });
         setView("quiz-result");
     };

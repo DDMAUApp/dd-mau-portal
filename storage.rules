@@ -65,6 +65,52 @@ service firebase.storage {
       allow delete: if true;
     }
 
+    // Chat attachments — photos, voice notes, short videos.
+    //
+    // Hardened 2026-05-17 (AUDIT CHAT-001). Previously these uploads
+    // fell through to the open catch-all below, so the 50 MB client-
+    // side cap in ChatThread.jsx was bypassable from DevTools. A
+    // scripted attacker could fill the bucket arbitrarily.
+    //
+    // 50 MB cap matches the existing client check (MAX_VIDEO_BYTES).
+    // Content type restricted to image/* | video/* | audio/* — chat
+    // never uploads arbitrary file types.
+    //
+    // Path: chats/{chatId}/{messageId}.{ext}. See ChatThread.jsx
+    // handleMediaPick + uploadVoice for the producer side.
+    match /chats/{chatId}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 50 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*|video/.*|audio/.*');
+      allow delete: if true;     // hard-delete cascade from chat purge
+    }
+
+    // Announcement banners + photos. Posted by managers via the
+    // ChatAnnouncementComposer. Same posture as chats/*/.
+    //
+    // Path: chats/announcements/{announcementId}.{ext}. Image only —
+    // composer doesn't accept video.
+    match /chats/announcements/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 15 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if true;
+    }
+
+    // Maintenance ticket photos. Submitted via MaintenanceRequest.jsx
+    // by line staff reporting broken equipment / cleaning issues.
+    //
+    // Hardened 2026-05-17 (AUDIT MAINT-001). Image only, 10 MB cap —
+    // a kitchen photo is rarely above 5 MB after iOS auto-compression.
+    //
+    // Path: maintenance/{ticketId}/{fileName} — see MaintenanceRequest.jsx.
+    match /maintenance/{ticketId}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if true;
+    }
+
     // Everything else — match existing app behavior (open). Tighten
     // per-path as new features land.
     match /{allPaths=**} {
