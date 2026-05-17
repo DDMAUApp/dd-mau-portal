@@ -20,10 +20,12 @@
  */
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
+const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
+const { GoogleAuth } = require("google-auth-library");
 
 initializeApp();
 const db = getFirestore();
@@ -1021,5 +1023,159 @@ exports.triggerOrdersSync = onSchedule(
         } catch (err) {
             logger.error("triggerOrdersSync failed", err);
         }
+    },
+);
+
+// ── 5. translateMessage — on-demand chat message translation ─────────────
+// HTTPS callable. The chat thread shows a small "🌐 Translate" link under
+// each non-own message; tapping it calls this function which:
+//
+//   1. Picks the text to translate. Caller passes `{chatId, messageId,
+//      targetLang}` for cached path (we read the message from Firestore
+//      and persist the translation back), or `{text, targetLang}` for a
+//      one-shot ad-hoc translation without persistence.
+//   2. Hits Google Cloud Translation v2 REST endpoint with an
+//      Application-Default-Credentials access token (google-auth-library
+//      handles the metadata server lookup on Cloud Functions — no API key
+//      to manage, no service account JSON to commit).
+//   3. If chatId/messageId provided, writes
+//        translations.{targetLang} = translatedText
+//        sourceLang = detectedSource
+//      onto the message doc so the next viewer sees the cached translation
+//      instantly without re-billing the API.
+//   4. Returns {translatedText, sourceLang, cached}.
+//
+// Why server-side (vs calling Translate from the browser):
+//   • Browser would need an API key shipped in client code → quota theft.
+//   • Cloud Functions run on a service account → ADC token, no secret.
+//   • Persisting the translation requires admin SDK access anyway.
+//
+// Why v2 REST (not @google-cloud/translate npm pkg):
+//   • One less heavy dep. The REST surface is two endpoints.
+//   • Auth via google-auth-library which we already have for ops scripts.
+//
+// One-time GCP setup BEFORE this works:
+//   1. Enable the "Cloud Translation API" on the dd-mau-staff-app GCP project
+//      (Console → APIs & Services → Library → Cloud Translation API).
+//   2. Grant the default compute service account
+//      (PROJECT_NUMBER-compute@developer.gserviceaccount.com) the
+//      "Cloud Translation API User" role on the project. Cloud Functions
+//      v2 uses the compute SA by default, so this is the right principal.
+//   3. Verify Blaze plan is active (translation API requires billing
+//      account; first 500K chars/month are free, then ~$20 per million).
+//
+// Throughput / cost (DD Mau scale):
+//   ~20-50 messages/day need translation × ~120 chars avg = under 200K
+//   chars/month. Stays inside the free tier with margin. Cached on the
+//   message doc so re-views of the same message cost nothing.
+exports.translateMessage = onCall(
+    { region: "us-central1", cors: true, maxInstances: 10 },
+    async (request) => {
+        const data = request.data || {};
+        const targetLang = String(data.targetLang || "").toLowerCase();
+        if (!targetLang || !/^[a-z]{2}(-[a-z]{2,4})?$/i.test(targetLang)) {
+            throw new HttpsError("invalid-argument", "targetLang required (e.g. 'en' or 'es')");
+        }
+
+        // Resolve the text. Two modes:
+        //   A. {chatId, messageId} → read from Firestore + cache result back.
+        //   B. {text} → one-shot ad-hoc translation, no persistence.
+        let text = "";
+        let chatId = data.chatId ? String(data.chatId) : null;
+        let messageId = data.messageId ? String(data.messageId) : null;
+        let msgRef = null;
+        let msgData = null;
+        if (chatId && messageId) {
+            msgRef = db.doc(`chats/${chatId}/messages/${messageId}`);
+            const snap = await msgRef.get();
+            if (!snap.exists) {
+                throw new HttpsError("not-found", "message not found");
+            }
+            msgData = snap.data() || {};
+            text = String(msgData.text || "").trim();
+            // Cache hit — return without billing the API again.
+            const cached = (msgData.translations || {})[targetLang];
+            if (cached && typeof cached === "string") {
+                return {
+                    translatedText: cached,
+                    sourceLang: msgData.sourceLang || null,
+                    cached: true,
+                };
+            }
+        } else {
+            text = String(data.text || "").trim();
+        }
+
+        if (!text) {
+            throw new HttpsError("invalid-argument", "no text to translate");
+        }
+        // Sanity cap — chat messages above 5k chars are essays, not chat.
+        // Stops accidental abuse of the API quota.
+        if (text.length > 5000) {
+            throw new HttpsError("invalid-argument", "text too long (max 5000 chars)");
+        }
+
+        // Call Google Cloud Translation v2 REST. ADC handles the access
+        // token; we never see a raw key.
+        let translatedText = "";
+        let detectedSourceLang = null;
+        try {
+            const auth = new GoogleAuth({
+                scopes: ["https://www.googleapis.com/auth/cloud-translation"],
+            });
+            const client = await auth.getClient();
+            const token = await client.getAccessToken();
+            const projectId = await auth.getProjectId();
+            const url = "https://translation.googleapis.com/language/translate/v2";
+            const resp = await fetch(url, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${token.token || token}`,
+                    "Content-Type": "application/json",
+                    "x-goog-user-project": projectId,
+                },
+                body: JSON.stringify({
+                    q: text,
+                    target: targetLang,
+                    format: "text",
+                }),
+            });
+            if (!resp.ok) {
+                const body = await resp.text();
+                logger.error("translate API error", resp.status, body);
+                throw new HttpsError("internal", `translate failed: ${resp.status}`);
+            }
+            const json = await resp.json();
+            const tr = json?.data?.translations?.[0] || {};
+            translatedText = String(tr.translatedText || "");
+            detectedSourceLang = tr.detectedSourceLanguage || null;
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("translateMessage call failed:", e);
+            throw new HttpsError("internal", "translation service unavailable");
+        }
+
+        // Persist the cache + the auto-detected source lang so the next
+        // viewer doesn't re-bill. Skip if the source equals the target
+        // (no-op — the API still answers but we don't want junk like
+        // {translations.en: <original english text>} cluttering the doc).
+        if (msgRef && translatedText && detectedSourceLang !== targetLang) {
+            try {
+                await msgRef.update({
+                    [`translations.${targetLang}`]: translatedText,
+                    // Only set sourceLang if we don't already have one.
+                    ...(msgData?.sourceLang ? {} : (detectedSourceLang ? { sourceLang: detectedSourceLang } : {})),
+                });
+            } catch (e) {
+                // Non-fatal: caller still gets the translation. Cache miss next time.
+                logger.warn("translation cache write failed (non-fatal):", e);
+            }
+        }
+
+        return {
+            translatedText,
+            sourceLang: detectedSourceLang,
+            cached: false,
+        };
     },
 );

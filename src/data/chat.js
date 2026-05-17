@@ -195,6 +195,17 @@ function isBohRole(s) {
 // Token format: @FirstName or @"First Last" — we accept either bare
 // (until a space) or quoted (for staff with multi-word names where the
 // last name matters).
+//
+// Bare-mention regex uses the Unicode property escape \p{L} so names
+// with accented characters parse correctly. @María, @José, @Andrés
+// all match. Without this, the regex stopped at the first non-ASCII
+// letter and the mention was silently dropped — DD Mau has bilingual
+// staff and this caused notifications to miss the @-target whenever
+// the typer used the accented spelling.
+//
+// The 'u' flag is required for \p{...} support. All current browser
+// targets (modern Chrome/Safari/Firefox, included Safari 14+ on iOS)
+// handle it.
 export function parseMentions(text, staffList) {
     if (!text || typeof text !== 'string') return { mentions: [] };
     const list = Array.isArray(staffList) ? staffList : [];
@@ -206,8 +217,8 @@ export function parseMentions(text, staffList) {
         const target = names.find(n => n.toLowerCase() === m[1].toLowerCase());
         if (target) found.add(target);
     }
-    // Bare: @firstname (up to whitespace or punctuation)
-    const bare = text.matchAll(/@([A-Za-z][A-Za-z'\-]*)/g);
+    // Bare: @firstname (Unicode-letter-aware so @María / @José work).
+    const bare = text.matchAll(/@(\p{L}[\p{L}'\-]*)/gu);
     for (const m of bare) {
         const lower = m[1].toLowerCase();
         // Match by first name, then full name. Pick the most specific.
@@ -388,5 +399,11 @@ export const DEFAULT_NOTIF_POLICY = {
     digestMode: 'realtime',           // 'realtime' | 'hourly' | 'daily'
     quietHours: null,                 // { start: '22:00', end: '06:00' } | null
     channelPrefs: {},                 // channelId -> 'all' | 'mentions' | 'none'
+    // Auto-translate every foreign-language message into the viewer's
+    // preferredLanguage. Default OFF so we don't surprise existing
+    // users with a Cloud Function bill — they have to opt in via
+    // ChatNotifSettings. Per-message "🌐 Translate" chip works
+    // regardless of this flag.
+    autoTranslate: false,
 };
 

@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 
 const firebaseConfig = {
     apiKey: "AIzaSyDTJccmQHzvbgwW_9_1aDDkAgK0B4PJfkQ",
@@ -58,4 +59,9 @@ const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+// Cloud Functions client (region must match the deploy region in
+// functions/index.js — us-central1). Currently used by chat
+// translation (translateMessage callable); other callers may be
+// added later.
+export const functions = getFunctions(app, 'us-central1');
 export default app;

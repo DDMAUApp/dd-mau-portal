@@ -256,6 +256,13 @@ export default function ChatCenter({
 
     // ── UI state ─────────────────────────────────────────────────
     const [activeChatId, setActiveChatId] = useState(null);
+    // When the user lands here from the cross-chat search, we pass this
+    // through to ChatThread which scrolls + highlights the message. The
+    // id is one-shot — ChatThread clears the highlight after a brief
+    // flash, but the prop stays until they navigate to a different chat
+    // (cheap; the effect inside ChatThread is keyed on the id so it
+    // won't re-fire spuriously).
+    const [jumpToMessageId, setJumpToMessageId] = useState(null);
     const [search, setSearch] = useState('');
     const [showNewChat, setShowNewChat] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
@@ -381,6 +388,7 @@ export default function ChatCenter({
                             isManager={isManager}
                             viewer={viewer}
                             viewerTier={viewerTier}
+                            jumpToMessageId={jumpToMessageId}
                             onBack={() => { setActiveChatId(null); setMobileShowList(true); }}
                             onOpenSettings={() => setShowSettings(true)}
                         />
@@ -517,9 +525,10 @@ export default function ChatCenter({
                         language={language}
                         staffName={staffName}
                         onClose={() => setShowSearchPanel(false)}
-                        onJump={({ chatId }) => {
+                        onJump={({ chatId, messageId }) => {
                             setShowSearchPanel(false);
                             setActiveChatId(chatId);
+                            setJumpToMessageId(messageId || null);
                             setMobileShowList(false);
                         }}
                     />

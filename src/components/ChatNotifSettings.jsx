@@ -163,6 +163,38 @@ export default function ChatNotifSettings({
                         </select>
                     </div>
 
+                    {/* Auto-translate */}
+                    {/* Bilingual team — Andrew kept this for staff who
+                        only read one language. ON = every foreign
+                        message kicks the Cloud Function on view so the
+                        translation appears as a chip without a tap.
+                        OFF = the chip is still there per-message, the
+                        viewer just has to tap it to call the API. The
+                        per-message cache lives on the message doc so
+                        every member only pays the translation cost
+                        the first time it's requested. */}
+                    <div className="p-3 rounded-lg border border-dd-line bg-dd-sage-50/50">
+                        <label className="flex items-center justify-between gap-3 cursor-pointer">
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-black text-dd-text">🌐 {tx('Auto-translate messages', 'Traducir automáticamente')}</div>
+                                <div className="text-[11px] text-dd-text-2 mt-0.5">
+                                    {tx('Show every foreign-language message translated into your language. Tap the chip to see the original.',
+                                        'Muestra cada mensaje en otro idioma traducido al tuyo. Toca el chip para ver el original.')}
+                                </div>
+                            </div>
+                            <input
+                                type="checkbox"
+                                checked={!!policy.autoTranslate}
+                                onChange={(e) => setPolicy(p => ({ ...p, autoTranslate: e.target.checked }))}
+                                className="w-5 h-5"
+                            />
+                        </label>
+                        <p className="mt-2 text-[10px] text-dd-text-2 italic">
+                            {tx('Per-message manual "🌐 Translate" still works either way. This just removes the tap step.',
+                                'El botón "🌐 Traducir" por mensaje sigue funcionando. Esto solo evita el toque.')}
+                        </p>
+                    </div>
+
                     {/* Per-channel prefs */}
                     <div>
                         <div className="text-sm font-black text-dd-text mb-1">📍 {tx('Per-channel', 'Por canal')}</div>

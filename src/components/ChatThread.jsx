@@ -24,6 +24,7 @@ import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
     addDoc, setDoc, updateDoc, serverTimestamp, where, getCountFromServer,
+    arrayUnion, arrayRemove, getDoc,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
@@ -32,6 +33,13 @@ import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMes
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
 import { claimCoverage, approveCoverage, denyCoverage, withdrawCoverage } from '../data/coverage';
+import {
+    translateMessage as translateMsg,
+    readCachedTranslation,
+    shouldOfferTranslation,
+    subscribeTranslation,
+    detectLanguageHint,
+} from '../data/translation';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
 // the common case where the user just scrolls + types.
@@ -42,10 +50,19 @@ const ChatTaskFromMessageModal = lazy(() => import('./ChatTaskFromMessageModal')
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;  // 50MB cap on video uploads
+// Voice messages auto-stop at 5 minutes. The MediaRecorder will happily
+// run forever if the user forgets to hit stop; a runaway hold-to-record
+// session can dump hundreds of MB into Storage and overrun the 50MB
+// upload-byte budget assumed elsewhere. 5 minutes is the longest useful
+// kitchen voice memo (a recipe walkthrough), past that they should
+// type or call. Hard stop fires onStop so the upload pipeline runs
+// normally — the user just sees the recorder snap closed.
+const MAX_RECORD_MS = 5 * 60 * 1000;
 
 export default function ChatThread({
     chat, language, staffName, staffList, isAdmin, isManager,
     viewer, viewerTier, onBack, onOpenSettings,
+    jumpToMessageId,   // optional id to scroll-into-view + highlight on mount
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
@@ -108,6 +125,52 @@ export default function ChatThread({
     const [taskModalMsg, setTaskModalMsg] = useState(null);
     const [contextMenuMsg, setContextMenuMsg] = useState(null);  // {message, anchorRect}
     const [highlightMsgId, setHighlightMsgId] = useState(null);  // scroll-target after jump-to
+
+    // ── Translation preferences ──────────────────────────────────
+    // Viewer's target language for translations. Chat-side preference
+    // (in /chat_prefs/{me}) wins; falls back to the staff-record
+    // preferredLanguage; defaults to the current UI language. Auto-
+    // translate fires the Cloud Function for every foreign message
+    // when ON — when OFF, the user has to tap the "🌐 Translate"
+    // chip per message.
+    const [autoTranslate, setAutoTranslate] = useState(false);
+    const targetLang = useMemo(() => {
+        return viewer?.preferredLanguage || (isEs ? 'es' : 'en');
+    }, [viewer?.preferredLanguage, isEs]);
+    useEffect(() => {
+        if (!staffName) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const snap = await getDoc(doc(db, 'chat_prefs', staffName));
+                if (cancelled) return;
+                if (snap.exists()) {
+                    setAutoTranslate(!!snap.data()?.autoTranslate);
+                }
+            } catch (e) {
+                console.warn('autoTranslate pref load failed:', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [staffName]);
+
+    // ── Jump-to-message from chat search ─────────────────────────
+    // ChatCenter passes jumpToMessageId from the search panel; we
+    // scroll the element into view + flash the highlight ring. The
+    // effect only fires when the id changes AND messages contain it,
+    // so the initial load doesn't trigger before subscriptions land.
+    useEffect(() => {
+        if (!jumpToMessageId) return;
+        if (!messages.some(m => m.id === jumpToMessageId)) return;
+        setHighlightMsgId(jumpToMessageId);
+        setAtBottom(false);
+        const t = setTimeout(() => {
+            const el = document.getElementById(`msg-${jumpToMessageId}`);
+            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 60);
+        const t2 = setTimeout(() => setHighlightMsgId(null), 2800);
+        return () => { clearTimeout(t); clearTimeout(t2); };
+    }, [jumpToMessageId, messages]);
 
     // ── My personal ack set for this chat (so I can show "✓ Read") ──
     // Subscribe to /chats/{id}/acks where userName == me. Small per-user
@@ -243,6 +306,7 @@ export default function ChatThread({
     const recorderRef = useRef(null);
     const recordChunks = useRef([]);
     const recordStartRef = useRef(0);
+    const recordTimerRef = useRef(null);
     async function startRecording() {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -263,6 +327,13 @@ export default function ChatThread({
             rec.start();
             recorderRef.current = rec;
             recordStartRef.current = Date.now();
+            // Auto-stop at MAX_RECORD_MS so a forgotten hold-to-record
+            // doesn't fill Storage. Browsers don't auto-cap MediaRecorder
+            // sessions on their own.
+            if (recordTimerRef.current) clearTimeout(recordTimerRef.current);
+            recordTimerRef.current = setTimeout(() => {
+                if (recorderRef.current) stopRecording(false);
+            }, MAX_RECORD_MS);
             setRecording(true);
         } catch (e) {
             console.warn('mic access failed:', e);
@@ -271,6 +342,10 @@ export default function ChatThread({
     }
     function stopRecording(cancel = false) {
         const rec = recorderRef.current;
+        if (recordTimerRef.current) {
+            clearTimeout(recordTimerRef.current);
+            recordTimerRef.current = null;
+        }
         if (!rec) return;
         try {
             if (cancel) {
@@ -452,16 +527,27 @@ export default function ChatThread({
     }
 
     // ── Reaction toggle ──────────────────────────────────────────
+    // We use dot-path arrayUnion / arrayRemove so two simultaneous
+    // reactors don't overwrite each other. The previous "read map,
+    // mutate, write whole map" pattern lost reactions whenever two
+    // users tapped within the same Firestore tick — second writer
+    // saw a stale `reactions` snapshot and clobbered the first.
+    // arrayUnion is the canonical fix and Firestore guarantees it's
+    // atomic against concurrent writers.
+    //
+    // Note: we never actually `delete reactions[emoji]` anymore when
+    // the list goes empty. An empty array renders as zero chips in
+    // the bubble (the filter on Object.entries drops zero-length
+    // entries already), so the doc just carries a dangling `[]` key.
+    // Acceptable — keeps the write atomic without a transaction.
     async function handleReact(message, emoji) {
         const ref = doc(db, 'chats', chat.id, 'messages', message.id);
-        const reactions = { ...(message.reactions || {}) };
-        const cur = Array.isArray(reactions[emoji]) ? reactions[emoji] : [];
+        const cur = Array.isArray(message.reactions?.[emoji]) ? message.reactions[emoji] : [];
         const hasIt = cur.includes(staffName);
-        const next = hasIt ? cur.filter(n => n !== staffName) : [...cur, staffName];
-        if (next.length === 0) delete reactions[emoji];
-        else reactions[emoji] = next;
         try {
-            await updateDoc(ref, { reactions });
+            await updateDoc(ref, {
+                [`reactions.${emoji}`]: hasIt ? arrayRemove(staffName) : arrayUnion(staffName),
+            });
         } catch (e) {
             console.warn('react failed:', e);
         }
@@ -577,6 +663,8 @@ export default function ChatThread({
                                     isManager={isManager}
                                     myAcks={myAcks}
                                     highlighted={msg.id === highlightMsgId}
+                                    targetLang={targetLang}
+                                    autoTranslate={autoTranslate}
                                     onReact={(emoji) => handleReact(msg, emoji)}
                                     onAck={() => handleAck(msg)}
                                     onOpenAckDashboard={() => setAckDashboardMsg(msg)}
@@ -677,6 +765,7 @@ export default function ChatThread({
 function MessageBubble({
     message, chat, isMine, showSender, showAvatar, isEs, staffName,
     viewer, isAdmin, isManager, myAcks, highlighted,
+    targetLang, autoTranslate,
     onReact, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
 }) {
@@ -727,12 +816,15 @@ function MessageBubble({
             <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
                 <AnnouncementCard
                     message={message}
+                    chat={chat}
                     isMine={isMine}
                     isEs={isEs}
                     staffName={staffName}
                     viewer={viewer}
                     isAdmin={isAdmin}
                     isManager={isManager}
+                    targetLang={targetLang}
+                    autoTranslate={autoTranslate}
                     iAcked={myAcks?.has(message.id)}
                     onAck={onAck}
                     onOpenAckDashboard={onOpenAckDashboard}
@@ -791,10 +883,13 @@ function MessageBubble({
             <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
                 <PhotoIssueCard
                     message={message}
+                    chat={chat}
                     isEs={isEs}
                     isManager={isManager}
                     staffName={staffName}
                     viewer={viewer}
+                    targetLang={targetLang}
+                    autoTranslate={autoTranslate}
                     onLongPress={() => setShowActions(true)}
                 />
                 {showActions && (
@@ -859,9 +954,16 @@ function MessageBubble({
                             <AudioPlayer src={message.mediaUrl} duration={message.duration} isMine={isMine} />
                         )}
                         {(message.text || message.type === 'text') && (
-                            <span className={`whitespace-pre-wrap text-[14.5px] leading-snug ${message.type !== 'text' ? 'block mt-1' : ''}`}>
-                                {renderWithMentions(message.text || '', isMine)}
-                            </span>
+                            <TranslatableText
+                                message={message}
+                                targetLang={targetLang}
+                                autoTranslate={autoTranslate}
+                                staffName={staffName}
+                                chatId={chat.id}
+                                isMine={isMine}
+                                isEs={isEs}
+                                blockMode={message.type !== 'text'}
+                            />
                         )}
                         <div className={`text-[10px] mt-1 text-right ${isMine ? 'text-white/70' : 'text-dd-text-2'}`}>
                             {time}
@@ -1007,10 +1109,158 @@ function AudioPlayer({ src, duration, isMine }) {
     );
 }
 
+// ── TranslatableText ─────────────────────────────────────────────
+// One stop for rendering message text + the inline "🌐 Translate"
+// affordance. Encapsulates:
+//   • The cache lookup (from message.translations[targetLang])
+//   • Per-bubble toggle between original + translation
+//   • Auto-translate fire when the viewer opted in
+//   • Per-message API call (deduped via translation module)
+//
+// Renders as a <span>, so the parent bubble keeps its layout. The
+// chip sits underneath the text on its own line — small enough to
+// fade into the bubble until the viewer needs it. State is in this
+// component (per-message render) so toggling one bubble doesn't
+// re-render every bubble in the thread.
+function TranslatableText({
+    message, targetLang, autoTranslate, staffName, chatId,
+    isMine, isEs, blockMode,
+}) {
+    const tx = (en, es) => (isEs ? es : en);
+    const original = message.text || '';
+    const cached = readCachedTranslation(message, targetLang);
+    const offered = shouldOfferTranslation(message, staffName, targetLang);
+
+    // showing = which version we're rendering right now: 'original' or 'translated'.
+    // pending = a Cloud Function call is in flight.
+    // err     = the last call failed (we show a "retry" chip).
+    const [showing, setShowing] = useState('original');
+    const [pending, setPending] = useState(false);
+    const [err, setErr] = useState(null);
+    const [liveTranslation, setLiveTranslation] = useState(cached || null);
+
+    // Subscribe to the in-memory cache so another bubble (or auto-
+    // translate firing in the background) can fill us in even if the
+    // message doc snapshot hasn't re-arrived yet.
+    useEffect(() => {
+        if (!chatId || !message.id) return;
+        const unsub = subscribeTranslation(chatId, message.id, targetLang, (v) => {
+            if (v) setLiveTranslation(v);
+        });
+        return () => unsub();
+    }, [chatId, message.id, targetLang]);
+
+    // If the message doc updates with a fresh cached translation
+    // (e.g., someone else translated it first), pick that up.
+    useEffect(() => {
+        if (cached) setLiveTranslation(cached);
+    }, [cached]);
+
+    async function doTranslate(autoFire = false) {
+        if (pending) return;
+        setPending(true);
+        setErr(null);
+        try {
+            const res = await translateMsg({
+                chatId, messageId: message.id,
+                text: original, targetLang,
+            });
+            if (res?.translatedText) {
+                setLiveTranslation(res.translatedText);
+                // Auto-fire respects the user's intent: don't yank
+                // the viewer to the translation if they didn't ask.
+                // Setting `showing` to translated only on explicit
+                // taps keeps the auto-translate behavior subtle —
+                // the chip switches to "Translated · show original"
+                // once content arrives, but the bubble keeps the
+                // original visible until they tap.
+                if (!autoFire) setShowing('translated');
+            }
+        } catch (e) {
+            console.warn('translate failed:', e);
+            setErr(e?.message || 'failed');
+        } finally {
+            setPending(false);
+        }
+    }
+
+    // Auto-translate on mount / when prefs flip on. Only fires once
+    // per (message, targetLang) because the second call is a no-op
+    // cache hit anyway (deduped inside translateMsg).
+    useEffect(() => {
+        if (!autoTranslate) return;
+        if (!offered) return;
+        if (liveTranslation) return;
+        // The detect hint stops us from translating same-language
+        // messages (no point firing the API for "ok thanks" if it's
+        // already in the viewer's language). Server still has the
+        // final say — if the hint is wrong, the user can tap manually.
+        const hint = detectLanguageHint(original);
+        if (hint && hint === targetLang.split('-')[0]) return;
+        doTranslate(true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [autoTranslate, offered, targetLang]);
+
+    const showTranslated = showing === 'translated' && !!liveTranslation;
+    const body = showTranslated ? liveTranslation : original;
+
+    return (
+        <>
+            <span className={`whitespace-pre-wrap text-[14.5px] leading-snug ${blockMode ? 'block mt-1' : ''}`}>
+                {renderWithMentions(body, isMine)}
+            </span>
+            {offered && (
+                <div className={`mt-1 ${isMine ? 'text-right' : 'text-left'}`}>
+                    {showTranslated ? (
+                        <button
+                            onClick={() => setShowing('original')}
+                            className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 ${isMine
+                                ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                                : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
+                            title={tx('Show the message as it was sent', 'Mostrar el mensaje original')}
+                        >
+                            <span>🌐</span>
+                            <span>{tx('Translated · Show original', 'Traducido · Ver original')}</span>
+                        </button>
+                    ) : liveTranslation ? (
+                        <button
+                            onClick={() => setShowing('translated')}
+                            className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 ${isMine
+                                ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                                : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
+                        >
+                            <span>🌐</span>
+                            <span>{tx('Show translation', 'Ver traducción')}</span>
+                        </button>
+                    ) : (
+                        <button
+                            onClick={() => doTranslate(false)}
+                            disabled={pending}
+                            className={`inline-flex items-center gap-1 text-[10.5px] font-bold rounded-full px-2 py-0.5 transition active:scale-95 disabled:opacity-60 ${isMine
+                                ? 'bg-white/15 text-white/80 hover:bg-white/25'
+                                : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-white'}`}
+                            title={err ? tx('Retry translation', 'Reintentar traducción') : tx('Translate this message', 'Traducir este mensaje')}
+                        >
+                            <span>🌐</span>
+                            <span>
+                                {pending ? tx('Translating…', 'Traduciendo…')
+                                    : err ? tx('Retry', 'Reintentar')
+                                    : tx('Translate', 'Traducir')}
+                            </span>
+                        </button>
+                    )}
+                </div>
+            )}
+        </>
+    );
+}
+
 // Render text body with @mentions highlighted. Cheap regex split.
+// Unicode-aware to match parseMentions in chat.js — @María / @José
+// get the highlight treatment same as ASCII names.
 function renderWithMentions(text, isMine) {
     if (!text) return null;
-    const parts = text.split(/(@"[^"]+"|@[A-Za-z][A-Za-z'\-]*)/g);
+    const parts = text.split(/(@"[^"]+"|@\p{L}[\p{L}'\-]*)/gu);
     return parts.map((p, i) => {
         if (!p) return null;
         if (p.startsWith('@')) {
@@ -1302,7 +1552,8 @@ async function probeVideo(file) {
 // ─────────────────────────────────────────────────────────────────
 
 function AnnouncementCard({
-    message, isMine, isEs, staffName, viewer, isAdmin, isManager,
+    message, chat, isMine, isEs, staffName, viewer, isAdmin, isManager,
+    targetLang, autoTranslate,
     iAcked, onAck, onOpenAckDashboard, onLongPress,
 }) {
     const tx = (en, es) => isEs ? es : en;
@@ -1327,9 +1578,18 @@ function AnnouncementCard({
                 {message.mediaUrl && (
                     <img src={message.mediaUrl} alt="" className="w-full max-h-[280px] object-cover rounded-lg mb-3" />
                 )}
-                <p className="text-[15px] text-dd-text whitespace-pre-wrap leading-snug">
-                    {message.text}
-                </p>
+                <div className="text-[15px] text-dd-text leading-snug">
+                    <TranslatableText
+                        message={message}
+                        chatId={chat?.id}
+                        targetLang={targetLang}
+                        autoTranslate={autoTranslate}
+                        staffName={staffName}
+                        isMine={false}
+                        isEs={isEs}
+                        blockMode={false}
+                    />
+                </div>
                 {message.ackRequired && (
                     <div className="mt-3">
                         {iAcked ? (
@@ -1489,7 +1749,7 @@ function EightySixCard({ message, isEs }) {
     );
 }
 
-function PhotoIssueCard({ message, isEs, isManager, staffName, viewer, onLongPress }) {
+function PhotoIssueCard({ message, chat, isEs, isManager, staffName, viewer, targetLang, autoTranslate, onLongPress }) {
     const tx = (en, es) => isEs ? es : en;
     const data = message.issueData || {};
     const cat = ISSUE_CATEGORIES.find(c => c.key === data.category);
@@ -1515,7 +1775,24 @@ function PhotoIssueCard({ message, isEs, isManager, staffName, viewer, onLongPre
                 <div className="text-xs font-bold text-dd-text-2 mb-1">
                     {formatChatName(message.senderName)} · {data.location === 'maryland' ? 'Maryland' : 'Webster'}
                 </div>
-                {data.note && <p className="text-sm text-dd-text mt-1">{data.note}</p>}
+                {/* Render the full message text (category + urgency
+                    + the user's note as one string). Translatable —
+                    cached on the doc so subsequent viewers see the
+                    translation instantly. */}
+                {message.text && (
+                    <div className="text-sm text-dd-text mt-1">
+                        <TranslatableText
+                            message={message}
+                            chatId={chat?.id}
+                            targetLang={targetLang}
+                            autoTranslate={autoTranslate}
+                            staffName={staffName}
+                            isMine={false}
+                            isEs={isEs}
+                            blockMode={false}
+                        />
+                    </div>
+                )}
                 <div className="mt-2 flex items-center gap-2">
                     <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-dd-bg text-dd-text-2 border border-dd-line">
                         {data.status === 'resolved' ? '✓ ' + tx('Resolved', 'Resuelto')
