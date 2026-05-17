@@ -305,18 +305,24 @@ export default function ChatSettingsModal({
                         </div>
                     )}
 
-                    {/* Members section */}
+                    {/* Members section — add/remove staff. The +Add button
+                        on top opens the picker; each member row has an ✕
+                        on the right to remove. Andrew flagged this UI as
+                        not obvious in v1; bumped to a pill button + a
+                        tap-target ✕ on every row to make it unmissable. */}
                     <div>
-                        <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center justify-between mb-2">
                             <label className="block text-[11px] font-bold uppercase tracking-widest text-dd-text-2">
-                                {tx('Members', 'Miembros')} ({members.length})
+                                {tx('Members', 'Miembros')} · {members.length}
                             </label>
                             {canEdit && !isChannel && !isDm && (
                                 <button
                                     onClick={() => setShowAdd(s => !s)}
-                                    className="text-xs font-bold text-dd-green hover:text-dd-green-700"
+                                    className={`px-3 py-1.5 rounded-full font-bold text-xs shadow-sm transition active:scale-95 ${showAdd
+                                        ? 'bg-dd-bg text-dd-text border border-dd-line'
+                                        : 'bg-dd-green text-white hover:bg-dd-green-700'}`}
                                 >
-                                    {showAdd ? tx('Done', 'Listo') : `+ ${tx('Add', 'Añadir')}`}
+                                    {showAdd ? `✓ ${tx('Done adding', 'Listo')}` : `+ ${tx('Add staff', 'Añadir personal')}`}
                                 </button>
                             )}
                         </div>
@@ -385,10 +391,11 @@ export default function ChatSettingsModal({
                                                 {!isCreator && (
                                                     <button
                                                         onClick={() => toggleMember(n)}
-                                                        className="text-dd-text-2 hover:text-red-600 w-7 h-7 rounded hover:bg-red-50 flex items-center justify-center"
+                                                        className="px-2.5 py-1.5 rounded-full text-[11px] font-bold bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 active:scale-95 transition flex items-center gap-1"
                                                         aria-label={tx('Remove', 'Quitar')}
+                                                        title={tx('Remove from group', 'Quitar del grupo')}
                                                     >
-                                                        ✕
+                                                        <span>✕</span><span>{tx('Remove', 'Quitar')}</span>
                                                     </button>
                                                 )}
                                             </>

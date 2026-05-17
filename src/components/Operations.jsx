@@ -1805,17 +1805,80 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // as an array of {by, at, text}. arrayUnion makes concurrent
             // comments safe — two cooks adding notes at the same moment
             // both land instead of one clobbering the other.
-            const addTaskComment = async (taskId, text) => {
+            //
+            // 2026-05-16 — comments now fire PUSH NOTIFICATIONS to the
+            // task's stakeholders so a manager note ("don't forget the
+            // walk-in") reaches the assignee even when they're not on
+            // this screen. Recipients = assignee(s) + previous commenters
+            // + whoever completed the task, minus the commenter. Same-
+            // task notifications dedupe via a stable docId so a chatty
+            // thread doesn't spam the bell — only the latest comment is
+            // surfaced per recipient until they read it.
+            //
+            // taskObj: optional. When provided, we use task.assignTo +
+            // task.task (the title) directly. Otherwise we fall back to
+            // checklistAssignments[taskId] and a generic title.
+            const addTaskComment = async (taskId, text, taskObj = null) => {
                 if (!text || !text.trim()) return;
                 const pKey = currentPrefix + taskId + "_comments";
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
                 const comment = { by: staffName, at: timeStr, text: text.trim(), ts: now.toISOString() };
-                // Optimistic local update so UI shows comment instantly.
                 const cur = checksRef.current;
                 const existing = Array.isArray(cur[pKey]) ? cur[pKey] : [];
+                // Optimistic local update so UI shows comment instantly.
                 setChecks({ ...cur, [pKey]: [...existing, comment] });
                 await appendCheckArrayValue(pKey, comment);
+
+                // ── Notification fan-out ────────────────────────
+                try {
+                    const recipients = new Set();
+                    // Task-level assignee(s) from the task definition
+                    if (taskObj?.assignTo) {
+                        if (Array.isArray(taskObj.assignTo)) {
+                            taskObj.assignTo.forEach(n => n && recipients.add(n));
+                        } else {
+                            recipients.add(taskObj.assignTo);
+                        }
+                    }
+                    // Per-task dynamic assignment (manager dragged a task
+                    // to a specific person today)
+                    const dynamicAssignee = checklistAssignmentsRef.current?.[taskId];
+                    if (dynamicAssignee) recipients.add(dynamicAssignee);
+                    // Whoever completed the task today gets the note too
+                    const completedBy = cur[currentPrefix + taskId + '_by'];
+                    if (completedBy) recipients.add(completedBy);
+                    // Previous commenters on this task (so a back-and-forth
+                    // keeps everyone in the loop)
+                    for (const c of existing) {
+                        if (c?.by) recipients.add(c.by);
+                    }
+                    recipients.delete(staffName); // never notify self
+                    if (recipients.size === 0) return;
+
+                    const rawName = taskObj?.task || taskObj?.label || 'Task';
+                    const taskName = String(rawName).split('\n')[0].slice(0, 80);
+                    const body = comment.text.length > 140
+                        ? comment.text.slice(0, 137) + '…'
+                        : comment.text;
+                    for (const recipient of recipients) {
+                        // Dedup docId per (task, recipient): each new
+                        // comment overwrites the prior one in the bell
+                        // until the recipient reads it.
+                        const safeId = String(taskId).replace(/[^a-zA-Z0-9_-]/g, '_');
+                        const safeName = String(recipient).replace(/[^a-zA-Z0-9_-]/g, '_');
+                        await taskNotify(
+                            recipient,
+                            'task_comment',
+                            { en: `💬 Task note: ${taskName}`, es: `💬 Nota de tarea: ${taskName}` },
+                            { en: `${staffName}: ${body}`, es: `${staffName}: ${body}` },
+                            null,
+                            { docId: `task_comment_${safeId}_${safeName}` }
+                        );
+                    }
+                } catch (e) {
+                    console.warn('task-comment notify failed (non-fatal):', e);
+                }
             };
 
             const removeTaskComment = async (taskId, idx) => {
@@ -1852,6 +1915,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (forStaff === staffName && !opts.allowSelf) return;
                 const recipient = (staffList || []).find(s => s.name === forStaff);
                 try {
+                    // Routes the bell tap back to the right tab. Task-
+                    // notification types all deep-link to Operations
+                    // unless an explicit opts.deepLink overrides.
+                    const deepLink = opts.deepLink
+                        || (type === 'task_comment' || type === 'task_message' || type === 'task_completed' || type === 'task_reminder'
+                            ? 'operations' : null);
                     if (opts.docId) {
                         // Idempotent path — used for time-based reminders so multiple
                         // devices firing checkDeadlines don't write duplicates. Fixed
@@ -1861,14 +1930,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             forStaff, type,
                             title: taskNotifyResolve(title, recipient),
                             body: taskNotifyResolve(body, recipient),
-                            link, createdAt: serverTimestamp(), read: false, createdBy: staffName,
+                            link,
+                            ...(deepLink ? { deepLink } : {}),
+                            createdAt: serverTimestamp(), read: false, createdBy: staffName,
                         });
                     } else {
                         await addDoc(collection(db, 'notifications'), {
                             forStaff, type,
                             title: taskNotifyResolve(title, recipient),
                             body: taskNotifyResolve(body, recipient),
-                            link, createdAt: serverTimestamp(), read: false, createdBy: staffName,
+                            link,
+                            ...(deepLink ? { deepLink } : {}),
+                            createdAt: serverTimestamp(), read: false, createdBy: staffName,
                         });
                     }
                 } catch (e) {
@@ -3694,10 +3767,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                     <div className="flex gap-1">
                                                                         <input type="text" value={commentDraft}
                                                                             onChange={e => setCommentDraft(e.target.value)}
-                                                                            onKeyDown={e => { if (e.key === "Enter" && commentDraft.trim()) { addTaskComment(item.id, commentDraft); setCommentDraft(""); } }}
+                                                                            onKeyDown={e => { if (e.key === "Enter" && commentDraft.trim()) { addTaskComment(item.id, commentDraft, item); setCommentDraft(""); } }}
                                                                             placeholder={language === "es" ? "Anota algo..." : "Type a note..."}
                                                                             className="flex-1 px-2 py-1 border border-blue-200 rounded text-[11px]" />
-                                                                        <button onClick={() => { if (commentDraft.trim()) { addTaskComment(item.id, commentDraft); setCommentDraft(""); } }}
+                                                                        <button onClick={() => { if (commentDraft.trim()) { addTaskComment(item.id, commentDraft, item); setCommentDraft(""); } }}
                                                                             disabled={!commentDraft.trim()}
                                                                             className={`px-2 py-1 rounded text-[11px] font-bold ${commentDraft.trim() ? "bg-blue-600 text-white" : "bg-gray-200 text-gray-400"}`}>
                                                                             ✓
