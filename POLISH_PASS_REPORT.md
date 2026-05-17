@@ -2,9 +2,24 @@
 
 **Operator:** Claude (acting as senior full-stack engineer per Andrew's autonomous instructions)
 **Branch:** `main`
-**Commits:** `f05fc62..e17f485` (4 new commits this pass, plus prior session work)
+**Latest commits this pass:** `f05fc62..4c72af3` (10 commits total)
 **Baseline:** 173 tests passing, clean build (4.47s)
-**Final:** 173 tests passing, clean build (4.63s)
+**Final:** 173 tests passing, clean build (~4s)
+
+## Commit log this pass
+
+| Commit | Title |
+|---|---|
+| `4c72af3` | CateringOrder: surface save failures instead of swallowing |
+| `90ec3db` | Polish #2: silent-failure cleanup + PrepList manager bug |
+| `8c4c583` | Notifications: surface a "Refresh" affordance when token went stale |
+| `0d55170` | NotificationsDrawer: kill the scroll-up crash for real |
+| `8c4c583` | (see above) |
+| `5909ead` | Chat composer: clear the bottom nav on iPhones with a notch |
+| `03802d6` | Add POLISH_PASS_REPORT.md — autonomous engineering pass docs |
+| `e17f485` | AdminPanel: confirm the "Send test push" click landed |
+| `99f602d` | Polish pass: PIN auto-submit, chunk pre-warm, Julie admin fix |
+| `5f7d9bc` | Toast pipeline + notification icons: ship two latent bug fixes |
 
 ---
 
@@ -68,6 +83,48 @@ Net: **22 files touched, ~225 lines changed**, no destructive operations, no fea
 - **Why safe:** Pure additive UX; no flow changes.
 - **How to test:** Admin → scroll to "Push notifications diagnostic" → tap "Send test push to myself". Toast should appear top-right.
 
+**B6. Mobile chat composer was hidden behind the bottom nav on iPhone X+.** *(commit 5909ead)*
+- **File:** `src/components/ChatCenter.jsx`
+- **What was wrong:** Chat container height was `100dvh − 160px`, which didn't account for `env(safe-area-inset-top)` (~44px notch). On iPhone X+ the header took ~100px (h-14 + notch) and the bottom nav took ~94px (60px content + ~34px home-indicator), totaling 194px — but only 160px was being reserved. Plus a `-my-3` negative margin extended the chat another 12px into the nav area. Composer ended up ~30-40px behind the bottom nav.
+- **Fix:** New calc: `100dvh − 146px − env(safe-area-inset-top) − env(safe-area-inset-bottom)` — that's `56 (header) + 60 (nav) + 30 (breathing room) + variable safe areas via env()`. Result: ~30px clear space above the bottom nav on every device. Also dropped `-my-3` to `-mt-3` so the chat doesn't extend its bottom into the nav-reserved padding.
+- **Why safe:** Pure layout change, no business logic touched. Fallback `100vh − 220px` for older browsers without `dvh` support gives slightly more empty space on no-notch devices (acceptable trade).
+- **How to test:** Open chat on iPhone. The text input should be visibly above the bottom nav with ~30px gap.
+
+**B7. Notification bell drawer crashed on scroll-up.** *(commit 0d55170)*
+- **File:** `src/v2/NotificationsDrawer.jsx`
+- **What was wrong:** Three-step chain: (1) user scrolls up past the top of the notification list, (2) iOS Safari interprets the pull-down as a pull-to-refresh because no `overscroll-behavior: contain` was set on the actual scrollable element (it was on the parent — and that property doesn't inherit), (3) the page below reflows and App.jsx's chunk-reload safety net sometimes misreads the transient error as a chunk failure, calling `window.location.reload()`. Net effect: bell drawer crashes mid-scroll.
+- **Fix:** Three layers — moved `overscroll-behavior: contain` to the inner scrollable via inline style (per-element, not inherited); added body scroll lock while drawer is open (`document.body.style.overflow = 'hidden'` + `touch-action: none`); added `touch-action: pan-y` + `-webkit-overflow-scrolling: touch` to the scrollable for iOS gesture stability. Plus `overflow-hidden` on the outer drawer.
+- **Why safe:** Belt-and-suspenders fix targeting the root cause (overscroll bleed-through) AND multiple symptoms (gesture drift). Cleanup function restores body styles on unmount.
+- **How to test:** Open the bell drawer on iPhone, scroll past the top by pulling down — nothing should happen except a soft visual bounce that doesn't trigger page reload.
+
+**B8. "Refresh notifications" affordance was missing for the broken-token state.** *(commit 8c4c583)*
+- **Files:** `src/v2/EnableNotificationsHeaderButton.jsx`, `src/components/EnableNotificationsBanner.jsx`
+- **What was wrong:** Both the header pill and home banner hid entirely once `Notification.permission === 'granted'`. But if the FCM token was missing for the device (token rotation broke it, cross-staff sweep removed it, FCM expiry, etc.), there was NO visible affordance to re-register. Users with broken push had no way to fix it without diving into the admin push diagnostic.
+- **Fix:** Added a fourth state: 'granted but no device token' → shows a distinct blue 🔄 "Refresh notifications" pill / banner. Tap → calls `enableFcmPush()` to mint a fresh token. Detection via `localStorage["ddmau:fcmDeviceId"]` matched against the current staff's `fcmTokens[].deviceId`.
+- **Why safe:** Optimistic guard prevents flash at sign-in (returns "has token" until staffList loads). Otherwise no flow changes.
+- **How to test:** Clear `localStorage.ddmau:fcmDeviceId` in DevTools, reload, observe blue Refresh pill appear next to the bell + banner on home.
+
+**B9. PrepList managers couldn't edit prep items.** *(commit 90ec3db)*
+- **File:** `src/components/PrepList.jsx`
+- **What was wrong:** `currentIsManager` gate used `s.role === "manager" || s.role === "admin"` — lowercase string equality — but every staff record's role is capitalized ("Manager", "Kitchen Manager", "Asst Manager", "Owner"). Only the two hardcoded ADMIN_IDS (40 = Andrew, 41 = Julie) could edit prep — actual restaurant managers were locked out of their own prep editor.
+- **Fix:** Switched to `/manager|admin|owner/i` case-insensitive regex, matching the pattern used everywhere else in the app.
+- **Why safe:** Strict superset — same names pass + the real managers now pass too.
+- **How to test:** Sign in as a non-owner manager (e.g. Brandon Green). Operations → PrepList → edit a prep item should now work.
+
+**B10. CateringOrder save failures were swallowed.** *(commit 4c72af3)*
+- **File:** `src/components/CateringOrder.jsx`
+- **What was wrong:** `submitOrder` logged to console + set `submitted = false` on error — but the UI just rolled back to the cart with no signal that the order failed to save. Staff assumed orders were in but Firestore had no record. Highest-impact failure mode in the app — under transient network blips during dinner rush.
+- **Fix:** 8-second error toast surfaces the actual error message + clear "Try again" prompt. EN + ES copy.
+- **Why safe:** Pure additive UX. Success flow unchanged.
+- **How to test:** Block network in DevTools, submit a catering order. Should see a red error toast instead of silently looking like nothing happened.
+
+**B11. Silent onSnapshot subscription errors across 5 modules.** *(commit 90ec3db)*
+- **Files:** `Recipes.jsx`, `CateringOrder.jsx`, `PrepList.jsx`, `LaborDashboard.jsx`, `Operations.jsx` (10 sites total)
+- **What was wrong:** Bare `onSnapshot(ref, callback)` without an error handler — when the SDK errored (perm-denied race, brief offline, token refresh), no log line fired. The Firestore SDK auto-recovers, but staff with a stuck-empty list had no diagnostic signal to share with support.
+- **Fix:** Added a `(err) => console.warn(...)` to every callsite. Operations' 7 vendor_prices subscriptions were wrapped via a small `onVpErr(tag)` helper to keep the diff readable.
+- **Why safe:** Pure observability addition. Same code path on success.
+- **How to test:** Open DevTools console while using the page. Any subscription error now shows a clearly-tagged warning.
+
 ---
 
 ## 3. Performance / loading improvements
@@ -106,6 +163,14 @@ Net: **22 files touched, ~225 lines changed**, no destructive operations, no fea
 No lint or typecheck commands exist for this project. Build pipeline does type/import checking via Vite + Rollup; success implies the chunk graph and imports are sound.
 
 ---
+
+## 5b. Cloud Functions audit (read-only — no changes shipped)
+
+Reviewed `functions/index.js` (1370 lines). Found one risk worth documenting (not fixed because Cloud Function deploy requires separate user action):
+
+- **`dispatchNotification` writes the full staff list back to Firestore** after pruning dead tokens (line ~122: `await db.doc("config/staff").set({ list: newList })`). The dispatcher reads the list at the start, computes a delta, then writes the full list back — if another writer (e.g., AdminPanel PIN edit, staff update) races between read and write, the dispatcher's write would clobber that concurrent change. Risk is rare in practice (dispatcher only writes when liveTokens length differs), but worth a transactional rewrite before scaling beyond DD Mau's current team size. See "Needs Owner Review" below.
+
+Everything else in Cloud Functions looks robust: error handling, idempotency flags, DST-aware reminder timing, token-pruning logic.
 
 ## 6. Regression review (per Andrew's request)
 
@@ -149,6 +214,10 @@ These are risky, behavior-changing, or governance issues — I documented them b
 3. **`recordAudit({ action: 'chat.delete.soft' })` payload includes the chat name** — generally fine, but if any chat names contain personal info (e.g. "Andrew + Lorena disciplinary"), that lands in the audit log. Confirm with you whether that's desired or should be redacted.
 4. **`enableFcmPush` sweeps cross-staff tokens by deviceId** — strong correct fix for the Julie-gets-her-own-pushes bug, but it's load-bearing. If you ever re-introduce shared devices intentionally (e.g. a "kitchen tablet" that everyone signs into), the sweep would actively delete shared tokens on every other sign-in. Document this in CLAUDE.md or AGENTS.md if shared-tablet usage becomes a thing.
 5. **AppCheck still disabled in `firebase.js`** — see commit `eba85eb`-era comment in that file. Re-enabling is documented in the comment but requires the ReCAPTCHA site key to be re-registered for `app.ddmaustl.com`. Not blocking for today, blocking for SaaS.
+
+6. **`dispatchNotification` race-condition rewrite** — `functions/index.js` line ~122 does a full-doc rewrite of `/config/staff` when pruning dead FCM tokens. Concurrent writes from AdminPanel (PIN edit, staff add/remove) could be clobbered. Rare in practice but unbounded as the team grows. Suggested rewrite: use `runTransaction` to read+update inside an atomic operation, OR use `arrayRemove` for token cleanup so the rest of the doc isn't touched. Requires `firebase deploy --only functions` to ship.
+
+7. **Service worker `notificationclick` doesn't deep-link** — currently when a user taps a chat notification on the lock screen, the app opens to wherever they were last (or home), not to the chat. The drawer's `deepLinkFor()` infers the right tab from notification type, but the SW could route there directly on cold open. Requires postMessage between SW and app + a navigate listener in App.jsx. Not breaking, but a polish opportunity.
 
 ---
 
