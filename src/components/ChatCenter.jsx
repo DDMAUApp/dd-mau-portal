@@ -757,6 +757,25 @@ function NewChatModal({
         setPicked(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
     }
 
+    // Are all currently-visible candidates already picked?
+    const allVisibleSelected = candidates.length > 0
+        && candidates.every(c => picked.includes(c.name));
+
+    // Select-all / Clear-all toggle — operates on the CURRENT filter
+    // result so "Webster" + tap "Select all" adds every Webster
+    // staff. Stays additive: pressing "Select all" on a narrower
+    // filter doesn't drop already-picked people outside the filter.
+    function toggleSelectAllVisible() {
+        const visibleNames = candidates.map(c => c.name);
+        if (allVisibleSelected) {
+            // Drop visible ones; keep anyone picked from prior filters.
+            setPicked(prev => prev.filter(n => !visibleNames.includes(n)));
+        } else {
+            // Union: add every visible that isn't already in picked.
+            setPicked(prev => Array.from(new Set([...prev, ...visibleNames])));
+        }
+    }
+
     async function handleCreate() {
         if (picked.length === 0 || busy) return;
         setBusy(true);
@@ -893,6 +912,30 @@ function NewChatModal({
                         className="w-full px-3 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30"
                     />
                 </div>
+
+                {/* Select-all bar — only appears when there's something
+                    to bulk-pick. Always visible (not just when filtered)
+                    so the affordance is consistent: count on the left,
+                    toggle on the right. */}
+                {candidates.length > 0 && (
+                    <div className="px-3 py-1.5 border-b border-dd-line/60 bg-dd-bg/40 flex items-center justify-between shrink-0">
+                        <span className="text-[11px] font-bold text-dd-text-2 tabular-nums">
+                            {candidates.length} {candidates.length === 1
+                                ? tx('person shown', 'persona')
+                                : tx('people shown', 'personas')}
+                        </span>
+                        <button
+                            onClick={toggleSelectAllVisible}
+                            className={`px-2.5 py-1 rounded-full text-[11px] font-black border transition active:scale-95 ${allVisibleSelected
+                                ? 'bg-white text-red-700 border-red-200 hover:bg-red-50'
+                                : 'bg-dd-green text-white border-dd-green hover:bg-dd-green-700'}`}
+                        >
+                            {allVisibleSelected
+                                ? `✕ ${tx('Clear all', 'Quitar todos')}`
+                                : `✓ ${tx('Select all', 'Seleccionar todos')}`}
+                        </button>
+                    </div>
+                )}
 
                 {/* Candidate list */}
                 <div className="flex-1 overflow-y-auto">
