@@ -50,7 +50,19 @@ export default function OffsiteClockPrompt({
 
     const [shifts, setShifts] = useState([]);
     const [busyId, setBusyId] = useState(null);
-    const [, forceTick] = useState(0);
+    // Bumped every time we need currentShift to recompute outside of
+    // a `shifts` change — i.e. when the user taps "Not yet" (writes a
+    // snooze key to localStorage that the useMemo otherwise can't see)
+    // and once per minute so an expired snooze re-opens the prompt
+    // and a "clock_in_soon" shift transitions to "clock_in_now" when
+    // its arrival window opens.
+    //
+    // Earlier version used `useState(0)` + `forceTick` to force a
+    // render but DID NOT include the tick in the useMemo's deps. The
+    // memo cached `currentShift` forever and "Not yet" looked broken
+    // — modal stayed open after the tap because the cached shift
+    // skipped the snooze check on every re-render. (2026-05-17 fix.)
+    const [tick, setTick] = useState(0);
 
     // Clear snoozes on the first ever mount of this app session.
     // This is what makes "app close + reopen → re-prompt" work.
@@ -75,7 +87,7 @@ export default function OffsiteClockPrompt({
     //   2. A "clock in soon" shift transitions into "clock in now"
     //      when the arrival time arrives.
     useEffect(() => {
-        const t = setInterval(() => forceTick(n => n + 1), 60_000);
+        const t = setInterval(() => setTick(n => n + 1), 60_000);
         return () => clearInterval(t);
     }, []);
 
@@ -84,6 +96,10 @@ export default function OffsiteClockPrompt({
     //      somewhere, that's the most important state to resolve.
     //   2. Any pending shift whose arrival window has opened.
     // Snoozed shifts are skipped; we'll pick them up after the TTL.
+    //
+    // `tick` is in the deps so the snooze write from handleNotYet
+    // (which only touches localStorage, not React state) actually
+    // causes a recompute.
     const currentShift = useMemo(() => {
         const now = Date.now();
         // active first
@@ -99,7 +115,8 @@ export default function OffsiteClockPrompt({
             if (offsitePromptKind(s, now) === 'clock_in_now') return s;
         }
         return null;
-    }, [shifts]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [shifts, tick]);
 
     if (!staffName || !currentShift) return null;
 
@@ -133,9 +150,11 @@ export default function OffsiteClockPrompt({
     function handleNotYet() {
         // Park it for 10 min (TTL inside snoozeOffsitePrompt).
         // The 60s re-check tick will re-open the modal once the
-        // TTL expires.
+        // TTL expires. We bump `tick` here so the useMemo above
+        // re-evaluates and sees the new snooze immediately —
+        // otherwise the modal stays open after the tap.
         snoozeOffsitePrompt(currentShift.id);
-        forceTick(n => n + 1);
+        setTick(n => n + 1);
     }
 
     const isClockOut = kind === 'clock_out';
