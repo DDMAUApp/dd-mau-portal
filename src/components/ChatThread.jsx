@@ -63,21 +63,56 @@ export default function ChatThread({
     const canEdit = canEditChat(chat, viewer, isAdmin);
 
     // ── Subscribe to messages ─────────────────────────────────────
+    // Fetches the newest N messages and reverses them so display
+    // stays oldest-first / newest-at-bottom.
+    //
+    // PREVIOUSLY THIS WAS A BUG: orderBy('createdAt','asc') + limit(200)
+    // returns the OLDEST 200 messages. For any chat with >200 total
+    // messages, viewers would see ancient history and never the
+    // recent stuff. The autoscroll-to-bottom hid the bug for chats
+    // ≤200 (those rendered fine), but the moment a chat crossed 200
+    // messages, new messages would never load.
+    //
+    // Also: limit was 200, which felt slow on first paint because we
+    // were waiting for 200 docs over the wire before showing anything.
+    // Most chat sessions don't scroll back further than ~30 messages,
+    // so the new default is 50, with a "Load older" button for older
+    // scrollback. (AUDIT CHAT-008.)
     const [messages, setMessages] = useState([]);
+    const [messageLimit, setMessageLimit] = useState(50);
+    const [hasMore, setHasMore] = useState(true);
+    useEffect(() => {
+        if (!chat?.id) return;
+        // Reset pagination when switching chats.
+        setMessageLimit(50);
+        setHasMore(true);
+    }, [chat?.id]);
     useEffect(() => {
         if (!chat?.id) return;
         const q = query(
             collection(db, 'chats', chat.id, 'messages'),
-            orderBy('createdAt', 'asc'),
-            limit(200)
+            orderBy('createdAt', 'desc'),
+            limit(messageLimit)
         );
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            // Snapshot is newest-first because of the desc order; reverse
+            // so render order stays oldest-first / newest-at-bottom.
+            list.reverse();
             setMessages(list);
+            // If we got fewer than we asked for, there's no older to load.
+            if (snap.size < messageLimit) setHasMore(false);
         }, (err) => console.warn('messages snapshot failed:', err));
         return () => unsub();
-    }, [chat?.id]);
+    }, [chat?.id, messageLimit]);
+
+    // Load-older handler — bumps the limit by another 50. Re-runs the
+    // subscription effect above against the new limit, which re-fetches
+    // (Firestore can't extend a snapshot's limit incrementally).
+    function loadOlderMessages() {
+        setMessageLimit(n => n + 50);
+    }
 
     // ── Mark read on view + on each new message ────────────────────
     // We write a single lastReadByName.{name} timestamp on the chat doc.
@@ -642,6 +677,19 @@ export default function ChatThread({
                 onScroll={handleScroll}
                 className="flex-1 overflow-y-auto px-3 py-2 space-y-1"
             >
+                {/* Load-older button — only when we haven't reached the
+                    bottom of the message history yet. Bumps the limit
+                    by 50 and re-runs the subscription. */}
+                {hasMore && messages.length > 0 && (
+                    <div className="text-center py-2">
+                        <button
+                            onClick={loadOlderMessages}
+                            className="text-[11px] font-bold text-dd-green hover:text-dd-green-700 px-3 py-1.5 rounded-full bg-dd-sage-50 border border-dd-green/30 hover:bg-dd-green/10 active:scale-95 transition"
+                        >
+                            ↑ {tx('Load older messages', 'Cargar mensajes antiguos')}
+                        </button>
+                    </div>
+                )}
                 {grouped.map((group) => (
                     <div key={group.label}>
                         <div className="text-center text-[11px] font-bold text-dd-text-2 uppercase tracking-widest py-3">

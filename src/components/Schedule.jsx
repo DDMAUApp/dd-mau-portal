@@ -335,6 +335,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // ("↺ Open") and the Closures & Calendar modal open button +
     // every block/event/recurring write handler is gated on this.
     const staffIsAdmin = isAdmin(staffName, staffList);
+    // Manager-or-admin gate. Used to hide weekly-hours summaries from
+    // staff/shift-leads — Andrew (2026-05-17): "weekly hours need to
+    // only be seen by managers and up". A shift lead with FOH/BOH
+    // edit rights can still ADD shifts, but the per-staff weekly
+    // totals + scoreboard + SPLH advisor stay hidden so labor-cost
+    // info doesn't leak.
+    const _currentStaff = (staffList || []).find(s => s.name === staffName);
+    const isManagerOrAdmin = staffIsAdmin
+        || (_currentStaff && /manager|owner/i.test(_currentStaff.role || ''));
     const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
     const [selectedDayIdx, setSelectedDayIdx] = useState(() => (new Date().getDay() - WEEK_START_DOW + 7) % 7);
     const [showAddModal, setShowAddModal] = useState(false);
@@ -3753,6 +3762,38 @@ ${dayBlocks}
                 ))}
             </div>
 
+            {/* "My Schedule" quick-toggle button — Andrew (2026-05-17):
+                "i want a my schedule button. so a staff member can see
+                only their schedule." One-tap shortcut to filter every
+                view to just the viewer's own shifts. Toggle behavior:
+                tap to filter, tap again to clear. Works alongside the
+                detailed person-dropdown filter in the action bar below
+                — both write to the same personFilter state. Visible to
+                everyone (managers also benefit from a quick "show me
+                just my own shifts" shortcut). */}
+            {staffName && (
+                <div className="mb-3 flex print:hidden">
+                    <button
+                        onClick={() => setPersonFilter(personFilter === staffName ? null : staffName)}
+                        className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-black transition shadow-sm active:scale-[0.99] ${
+                            personFilter === staffName
+                                ? 'bg-dd-green text-white hover:bg-dd-green-700'
+                                : 'bg-white border-2 border-dd-green/40 text-dd-green hover:bg-dd-sage-50'
+                        }`}
+                        title={personFilter === staffName
+                            ? tx('Tap to see everyone', 'Toca para ver a todos')
+                            : tx('Tap to see only your shifts', 'Toca para ver solo tus turnos')}
+                    >
+                        <span className="text-base">👤</span>
+                        <span>
+                            {personFilter === staffName
+                                ? tx('Showing my shifts · tap to clear', 'Mostrando mis turnos · toca para quitar')
+                                : tx('My Schedule', 'Mi Horario')}
+                        </span>
+                    </button>
+                </div>
+            )}
+
             {/* Action bar — v2 button hierarchy.
                   PRIMARY (dd-green):  Publish (when drafts exist), + Shift
                   SECONDARY (white):   Print, iCal, person filter, "More" toggle
@@ -4118,13 +4159,15 @@ ${dayBlocks}
                     {/* Grid view fills the page (already wide). HoursSummary at the bottom. */}
                     {viewMode === 'grid' && (
                         <>
-                            {/* Scoreboard + SPLH advisor are scheduler-only.
-                                Per Andrew (2026-05-12): staff without an
-                                editor toggle shouldn't see forecast / target
-                                / weekly-hours bars — those are planning
-                                tools for the scheduler, not status info for
-                                the line. Hidden entirely if !canEdit. */}
-                            {canEdit && (
+                            {/* Scoreboard + SPLH advisor are managers-only.
+                                Andrew (2026-05-17): "weekly hours need to
+                                only be seen by managers and up" — was
+                                previously gated by canEdit (which includes
+                                shift leads with FOH/BOH scheduling toggles).
+                                Tightened to isManagerOrAdmin so labor-cost
+                                + forecast info is restricted to managers +
+                                owners regardless of who has scheduling rights. */}
+                            {isManagerOrAdmin && (
                                 <>
                                     <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
                                     <SplhAdvisor
@@ -4250,7 +4293,14 @@ ${dayBlocks}
                                 dateHasOpenOverride={dateHasOpenOverride}
                                 dateClosedByRecurring={dateClosedByRecurring}
                             />
-                            <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                            {/* Weekly hours summary — managers-only per
+                                Andrew (2026-05-17). Was rendered for
+                                everyone; now hidden for staff + shift
+                                leads who shouldn't see total scheduled
+                                hours or OT warnings across the team. */}
+                            {isManagerOrAdmin && (
+                                <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                            )}
                         </>
                     )}
 
@@ -4310,15 +4360,21 @@ ${dayBlocks}
                                     />
                                 )}
                             </div>
-                            {/* Desktop: sticky right sidebar with hours summary */}
-                            <aside className="hidden lg:block lg:w-72 lg:flex-shrink-0 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
-                                <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
-                            </aside>
+                            {/* Desktop: sticky right sidebar with hours summary.
+                                Manager-gated (Andrew 2026-05-17 — weekly hours
+                                are managers-only across the app). */}
+                            {isManagerOrAdmin && (
+                                <aside className="hidden lg:block lg:w-72 lg:flex-shrink-0 lg:sticky lg:top-4 lg:self-start lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+                                    <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                                </aside>
+                            )}
                             {/* Mobile + tablet: hours summary at bottom (sidebar hidden). lg:hidden ensures
-                                we don't render twice. */}
-                            <div className="lg:hidden">
-                                <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
-                            </div>
+                                we don't render twice. Same manager gate. */}
+                            {isManagerOrAdmin && (
+                                <div className="lg:hidden">
+                                    <HoursSummary staffSummary={staffSummary} isEn={isEn} currentStaffName={staffName} />
+                                </div>
+                            )}
                         </div>
                     )}
                 </>
@@ -5598,8 +5654,12 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         </span>
                                     </span>
                                 </button>
-                                {/* Per-staff weekly-hours pill — scheduler-only. */}
-                                {canEdit && (
+                                {/* Per-staff weekly-hours pill — managers + admins only.
+                                    Andrew (2026-05-17): "weekly hours need
+                                    to only be seen by managers and up".
+                                    Was canEdit-gated; tightened to drop
+                                    shift-lead-scheduler visibility. */}
+                                {isManagerOrAdmin && (
                                     <div className={`text-[10px] font-bold mt-1 inline-block px-1.5 py-0.5 rounded-md border ${hoursColor(s.totalHours)}`}>
                                         {formatHours(s.totalHours)}
                                     </div>
