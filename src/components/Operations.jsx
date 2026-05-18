@@ -330,6 +330,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // form opens. Andrew: "the edit is able to re categorize items".
             const [invEditTargetCatIdx, setInvEditTargetCatIdx] = useState(null);
             const [invEditSubcat, setInvEditSubcat] = useState("");
+            // 2026-05-17 — "move mode" for fast recategorization. The
+            // Edit form (above) is precise but slow when you have a
+            // bunch of items to relocate. Tap the 🔀 button on an item
+            // → enters move mode (movingItem = { id, name, fromCatIdx,
+            // fromSubcat }) → every subcategory header on the page
+            // becomes a tap-target → tap one to drop the item there.
+            // Tap Cancel or 🔀 again to exit. Andrew: "maybe make it
+            // a drag to move between sub categorys".
+            const [movingItem, setMovingItem] = useState(null);
             const [invShowAddForm, setInvShowAddForm] = useState(null);
             const [invNewName, setInvNewName] = useState("");
             const [invNewNameEs, setInvNewNameEs] = useState("");
@@ -2805,6 +2814,47 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setInvEditTargetCatIdx(null); setInvEditSubcat("");
             };
 
+            // Drop the currently-grabbed item into a target bucket. Same
+            // cross-category-or-not logic as saveInvEdit but without the
+            // form fields — just the relocation. Used by tap-to-drop on
+            // subcategory headers when movingItem is set.
+            const dropMovingItem = async (destCatIdx, destSubcat) => {
+                if (!movingItem) return;
+                const { id, fromCatIdx } = movingItem;
+                if (id == null) { setMovingItem(null); return; }
+                const norm = (destSubcat || '').trim();
+                // No-op if dropping into the exact same bucket.
+                const sourceItem = (customInventory[fromCatIdx]?.items || []).find(it => it.id === id);
+                if (sourceItem && fromCatIdx === destCatIdx && (sourceItem.subcat || '') === norm) {
+                    setMovingItem(null);
+                    return;
+                }
+                await mutateInventory((live) => {
+                    const src = (live[fromCatIdx]?.items || []).find(it => it.id === id);
+                    if (!src) return live;
+                    const merged = { ...src, subcat: norm };
+                    if (fromCatIdx === destCatIdx) {
+                        // Same-category: just patch subcat in place.
+                        return live.map((cat, ci) =>
+                            ci === fromCatIdx
+                                ? { ...cat, items: cat.items.map(it => it.id === id ? merged : it) }
+                                : cat
+                        );
+                    }
+                    // Cross-category: pull from source, append to dest.
+                    return live.map((cat, ci) => {
+                        if (ci === fromCatIdx) {
+                            return { ...cat, items: cat.items.filter(it => it.id !== id) };
+                        }
+                        if (ci === destCatIdx) {
+                            return { ...cat, items: [...cat.items, merged] };
+                        }
+                        return cat;
+                    });
+                });
+                setMovingItem(null);
+            };
+
             const deleteInvItem = async (catIdx, itemIdx) => {
                 // Same drift-safety: target by ID, not by index.
                 const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
@@ -4784,6 +4834,32 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 language={language}
                             />
 
+                            {/* Move-mode banner — sticky strip that surfaces
+                                the in-progress item + a Cancel. Subcategory
+                                headers across every category turn amber
+                                ("Drop here") while this is showing. */}
+                            {movingItem && (
+                                <div className="sticky top-0 z-10 bg-amber-100 border-2 border-amber-300 rounded-xl px-3 py-2 shadow-sm flex items-center gap-2">
+                                    <span className="text-lg shrink-0">{"\u{1F500}"}</span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-xs font-black text-amber-900 truncate">
+                                            {language === "es" ? "Moviendo:" : "Moving:"} {movingItem.name}
+                                        </div>
+                                        <div className="text-[10px] text-amber-800 truncate">
+                                            {language === "es"
+                                                ? "Toca una sub-categoría para soltar aquí"
+                                                : "Tap a subcategory to drop here"}
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={() => setMovingItem(null)}
+                                        className="shrink-0 px-3 py-1.5 rounded-lg bg-white text-amber-900 text-xs font-bold border border-amber-300 hover:bg-amber-50 active:scale-95 transition"
+                                    >
+                                        {language === "es" ? "Cancelar" : "Cancel"}
+                                    </button>
+                                </div>
+                            )}
+
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
                                 <div className="relative">
@@ -5105,11 +5181,45 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         <div className="divide-y divide-gray-100">
                                             {subcats.map((subGroup, subIdx) => (
                                                 <div key={subIdx}>
-                                                    {/* Subcategory header */}
+                                                    {/* Subcategory header — also acts as a
+                                                        TAP-TO-DROP zone when movingItem is
+                                                        set. Highlighted amber while a move is
+                                                        in progress so it's obvious which strips
+                                                        are tappable. The header for the SOURCE
+                                                        subcategory of the in-progress item
+                                                        gets a "(source)" tag and dropping
+                                                        there cancels the move (no-op). */}
                                                     {subGroup.name && (
-                                                        <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-100">
-                                                            <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">{subGroup.name}</span>
-                                                        </div>
+                                                        (() => {
+                                                            const isMoveActive = !!movingItem;
+                                                            const isSource = isMoveActive
+                                                                && movingItem.fromCatIdx === catIdx
+                                                                && (movingItem.fromSubcat || '') === (subGroup.name || '');
+                                                            if (!isMoveActive) {
+                                                                return (
+                                                                    <div className="px-3 py-1.5 bg-blue-50 border-b border-blue-100">
+                                                                        <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">{subGroup.name}</span>
+                                                                    </div>
+                                                                );
+                                                            }
+                                                            return (
+                                                                <button
+                                                                    onClick={() => dropMovingItem(catIdx, subGroup.name)}
+                                                                    className={`w-full px-3 py-2 border-b text-left transition active:scale-[0.98] ${
+                                                                        isSource
+                                                                            ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-default'
+                                                                            : 'bg-amber-100 border-amber-300 text-amber-900 hover:bg-amber-200'
+                                                                    }`}
+                                                                    aria-label={language === "es" ? `Mover aquí: ${subGroup.name}` : `Drop here: ${subGroup.name}`}
+                                                                >
+                                                                    <span className="text-xs font-bold uppercase tracking-wide">
+                                                                        {isSource
+                                                                            ? `${subGroup.name} ${language === "es" ? "(actual)" : "(source)"}`
+                                                                            : `${"\u{1F4E5}"} ${language === "es" ? "Mover aquí" : "Drop here"}: ${subGroup.name}`}
+                                                                    </span>
+                                                                </button>
+                                                            );
+                                                        })()
                                                     )}
 
                                                     {subGroup.items.map((item) => {
@@ -5299,6 +5409,34 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                     setInvEditTargetCatIdx(catIdx);
                                                                                     setInvEditSubcat(item.subcat || "");
                                                                                 }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
+                                                                                {/* Quick-move: tap to grab this item,
+                                                                                    then tap any subcategory header on
+                                                                                    the page to drop it there. Toggles
+                                                                                    when tapped again on the same
+                                                                                    item. Cancels any other in-progress
+                                                                                    move automatically (one item at a
+                                                                                    time). */}
+                                                                                <button onClick={() => {
+                                                                                    if (movingItem && movingItem.id === item.id) {
+                                                                                        setMovingItem(null);
+                                                                                    } else {
+                                                                                        setMovingItem({
+                                                                                            id: item.id,
+                                                                                            name: item.name,
+                                                                                            fromCatIdx: catIdx,
+                                                                                            fromSubcat: item.subcat || '',
+                                                                                        });
+                                                                                    }
+                                                                                }} className={`text-xs px-1.5 py-0.5 rounded font-medium transition ${
+                                                                                    movingItem && movingItem.id === item.id
+                                                                                        ? 'bg-amber-500 text-white animate-pulse'
+                                                                                        : 'bg-amber-50 text-amber-700 hover:bg-amber-100'
+                                                                                }`}
+                                                                                    title={language === "es" ? "Mover a otra sub-categoría" : "Move to another subcategory"}>
+                                                                                    {movingItem && movingItem.id === item.id
+                                                                                        ? (language === "es" ? "✕ Cancelar" : "✕ Cancel")
+                                                                                        : `${"\u{1F500}"} ${language === "es" ? "Mover" : "Move"}`}
+                                                                                </button>
                                                                                 {invEditMode && (
                                                                                     <>
                                                                                         <button onClick={() => moveItem(catIdx, itemIdx, -1)}
