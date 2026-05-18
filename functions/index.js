@@ -30,6 +30,57 @@ const { GoogleAuth } = require("google-auth-library");
 initializeApp();
 const db = getFirestore();
 
+// Helper: is `staffName` currently within a published shift, or
+// within 30 min of one starting? Returns true/false. Used by the
+// off-shift gate in dispatchNotification.
+//
+// Date math mirrors sendShiftReminders — we compute the actual
+// America/Chicago UTC offset for the shift's date via Intl so the
+// gate respects DST. Reading ONLY today+yesterday because:
+//   • yesterday: catches overnight shifts whose end-time has rolled
+//     past midnight UTC but the shift's `date` field is still
+//     yesterday's date in CT.
+//   • today: the obvious case.
+async function isOnShiftNow(staffName) {
+    if (!staffName) return false;
+    const now = Date.now();
+    const today = new Date();
+    const yest = new Date(today.getTime() - 86400_000);
+    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const dateRange = [fmt(yest), fmt(today)];
+
+    const snap = await db
+        .collection("shifts")
+        .where("staffName", "==", staffName)
+        .where("date", "in", dateRange)
+        .where("published", "==", true)
+        .get();
+
+    for (const sDoc of snap.docs) {
+        const sh = sDoc.data();
+        if (!sh.date || !sh.startTime || !sh.endTime) continue;
+        const [y, mo, d] = sh.date.split("-").map(Number);
+        const [hh, mm] = sh.startTime.split(":").map(Number);
+        const [eh, em] = sh.endTime.split(":").map(Number);
+        // Resolve CT offset for that date (handles DST).
+        const probe = new Date(Date.UTC(y, mo - 1, d, 12, 0));
+        const offsetParts = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Chicago",
+            timeZoneName: "shortOffset",
+        }).formatToParts(probe);
+        const offsetLabel = offsetParts.find((p) => p.type === "timeZoneName")?.value || "GMT-5";
+        const offsetMatch = /GMT([+-]?\d+)/.exec(offsetLabel);
+        const ctOffsetHours = offsetMatch ? -parseInt(offsetMatch[1], 10) : 5;
+        const startMs = Date.UTC(y, mo - 1, d, hh + ctOffsetHours, mm);
+        let endMs = Date.UTC(y, mo - 1, d, eh + ctOffsetHours, em);
+        // Overnight shift (end < start): bump end into the next day.
+        if (endMs <= startMs) endMs += 86400_000;
+        // On-shift window: 30 min before start through end.
+        if (now >= startMs - 30 * 60_000 && now <= endMs) return true;
+    }
+    return false;
+}
+
 // ── 1. Push every notification doc to its recipient's FCM tokens ──────────
 exports.dispatchNotification = onDocumentCreated(
     { document: "notifications/{id}", region: "us-central1" },
@@ -66,6 +117,69 @@ exports.dispatchNotification = onDocumentCreated(
         if (tokens.length === 0) return;
         if (tokens.length !== me.fcmTokens.length) {
             logger.info(`deduped ${me.fcmTokens.length - tokens.length} duplicate token(s) for ${forStaff}`);
+        }
+
+        // ── Off-shift quiet hours gate ──────────────────────────────
+        // Andrew (2026-05-17): "lets do number one but lets have
+        // somthing that lets us know they are silenced. and if its
+        // important we can notify anyways".
+        //
+        // We suppress the FCM push (but keep the /notifications doc —
+        // user sees it in the bell next time they open the app) when:
+        //   1. The notification type respects off-shift gating
+        //   2. The recipient is NOT currently on shift (within 30 min
+        //      of start, through end-time)
+        //   3. The recipient is NOT a manager/owner (always reachable)
+        //   4. The sender did NOT mark the notif `forceDeliver: true`
+        //
+        // ALWAYS-DELIVER types (mentions, 86 alerts, shift reminders,
+        // coverage approvals, etc.) ignore this gate entirely — they
+        // are operationally urgent or directly addressed.
+        const ALWAYS_DELIVER_TYPES = new Set([
+            "chat_mention",            // @-tagged, directly addressed
+            "eighty_six_alert",        // operational emergency
+            "photo_issue",             // operational
+            "shift_reminder_1h",       // your own shift
+            "coverage_approved",       // outcome you need now
+            "coverage_denied",         // outcome you need now
+            "required_ack",            // explicit ack flow
+            "task_handoff",            // assigned to YOU
+            "invite_sent",             // onboarding
+        ]);
+        const isManagerOrOwner = (() => {
+            if (me.id === 40 || me.id === 41) return true; // owners
+            return !!me.role && /manager|owner/i.test(me.role);
+        })();
+        const respectsGate = !ALWAYS_DELIVER_TYPES.has(notif.type)
+            && notif.forceDeliver !== true
+            && !isManagerOrOwner;
+        if (respectsGate) {
+            try {
+                const onShift = await isOnShiftNow(forStaff);
+                if (!onShift) {
+                    // User has off-shift quiet enabled (default true).
+                    // Honor it unless they've opted out via notifPolicy.
+                    const policy = me.notifPolicy || {};
+                    const offShiftQuiet = policy.offShiftQuiet !== false; // default ON
+                    if (offShiftQuiet) {
+                        logger.info(`off-shift gate: suppressing push for ${forStaff} (type=${notif.type}); doc retained for in-app view`);
+                        // Stamp the doc so the client can render a
+                        // "silenced — they'll see it when they open
+                        // the app" indicator next to delivery state.
+                        try {
+                            await snap.ref.update({ pushSuppressed: true, pushSuppressedReason: "off_shift" });
+                        } catch (e) {
+                            logger.warn(`could not stamp pushSuppressed for ${event.params.id}:`, e);
+                        }
+                        return;
+                    }
+                }
+            } catch (e) {
+                // If shift lookup fails, default to delivering — better
+                // to over-notify than to drop an important message
+                // because of a query error.
+                logger.warn(`off-shift check failed for ${forStaff}, delivering anyway:`, e);
+            }
         }
 
         // DATA-ONLY payload. Critical: with a top-level `notification`

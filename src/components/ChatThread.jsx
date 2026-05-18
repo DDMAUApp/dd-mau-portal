@@ -30,6 +30,7 @@ import {
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
 import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen } from '../data/chat';
+import { offShiftMembers } from '../data/offShift';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
@@ -182,6 +183,12 @@ export default function ChatThread({
     const [showPollModal, setShowPollModal] = useState(false);
     const [pollSubmitting, setPollSubmitting] = useState(false);
     const [showScheduleModal, setShowScheduleModal] = useState(false);
+    // "Notify anyway" — when ON, the next message bypasses the
+    // server's off-shift gate (notif.forceDeliver=true). User has
+    // to flip it for each message; we don't make it sticky because
+    // chronic override defeats the point. Visible only when at
+    // least one recipient is off-shift.
+    const [notifyAnyway, setNotifyAnyway] = useState(false);
     // ── Scheduled messages in this chat (for the banner above composer)
     // Light subscription — we just need the count + a quick list to show
     // the "📅 3 scheduled · view" link. Detailed cancel/edit lives in
@@ -262,6 +269,46 @@ export default function ChatThread({
         () => messages.filter(m => m.pinned === true && !m.deleted),
         [messages]
     );
+
+    // ── Off-shift member detection ─────────────────────────────
+    // We subscribe to today's + yesterday's published shifts (small
+    // collection, refreshes when anyone publishes/unpublishes) and
+    // compute which members of THIS chat aren't currently on shift.
+    // The Cloud Function does the same gate at push time; the client
+    // computation feeds the "🔕 N off-shift" header indicator + the
+    // composer's "Notify anyway" toggle.
+    //
+    // Yesterday is included so overnight shifts (date=yesterday in CT,
+    // end-time crossed midnight UTC) still count as "on shift".
+    // Andrew (2026-05-17). Sized small (members + 2 dates × published
+    // shifts) so the snapshot is cheap.
+    const [todayShifts, setTodayShifts] = useState([]);
+    useEffect(() => {
+        const today = new Date();
+        const yest = new Date(today.getTime() - 86400_000);
+        const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const dateRange = [fmt(yest), fmt(today)];
+        const q = query(
+            collection(db, 'shifts'),
+            where('date', 'in', dateRange),
+            where('published', '==', true),
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const list = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            setTodayShifts(list);
+        }, (err) => console.warn('today shifts snapshot failed:', err));
+        return () => unsub();
+    }, []);
+
+    // The off-shift subset of THIS chat's members, excluding the
+    // current user (we know whether WE are on shift; the indicator
+    // is about who RECEIVES our message). Recomputes when chat
+    // members or today's shifts change.
+    const offShiftRecipients = useMemo(() => {
+        const others = (chat?.members || []).filter(n => n && n !== staffName);
+        return offShiftMembers(others, todayShifts, staffList);
+    }, [chat?.members, staffName, staffList, todayShifts]);
 
     // Subscribe to MY pending scheduled messages in this chat. The
     // Cloud Function flips status='sent' (or deletes) when delivered;
@@ -345,9 +392,11 @@ export default function ChatThread({
                 type: 'text',
                 text: body,
                 replyTo: replyTarget,
+                forceDeliver: notifyAnyway,
             });
             setDraft('');
             setReplyTarget(null);
+            setNotifyAnyway(false);
         } catch (e) {
             console.warn('send text failed:', e);
             toast(tx('Send failed', 'Error al enviar'), { kind: 'error' });
@@ -396,9 +445,11 @@ export default function ChatThread({
                 mediaType: file.type,
                 width, height, duration,
                 replyTo: replyTarget,
+                forceDeliver: notifyAnyway,
             });
             setDraft('');
             setReplyTarget(null);
+            setNotifyAnyway(false);
         } catch (err) {
             console.warn(`${kind} send failed:`, err);
             toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
@@ -679,8 +730,10 @@ export default function ChatThread({
                 text: '📊 ' + payload.question,
                 poll: payload,
                 replyTo: replyTarget,
+                forceDeliver: notifyAnyway,
             });
             setReplyTarget(null);
+            setNotifyAnyway(false);
             setShowPollModal(false);
         } catch (e) {
             console.warn('poll create failed:', e);
@@ -819,10 +872,16 @@ export default function ChatThread({
                         </div>
                         <div className="text-[11px] text-dd-text-2 truncate">
                             {chat.type === 'dm'
-                                ? (typingNames.length > 0 ? tx('typing…', 'escribiendo…') : tx('Direct message · tap for info', 'Mensaje directo · tap info'))
+                                ? (typingNames.length > 0
+                                    ? tx('typing…', 'escribiendo…')
+                                    : (offShiftRecipients.length > 0
+                                        ? `🔕 ${tx('off-shift · won\'t be pushed', 'fuera de turno · sin push')}`
+                                        : tx('Direct message · tap for info', 'Mensaje directo · tap info')))
                                 : (typingNames.length > 0
                                     ? `${formatChatName(typingNames[0])} ${tx('is typing…', 'está escribiendo…')}`
-                                    : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`)}
+                                    : (offShiftRecipients.length > 0
+                                        ? `${(chat.members || []).length} ${tx('members', 'miembros')} · 🔕 ${offShiftRecipients.length} ${tx('off-shift', 'fuera de turno')}`
+                                        : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`))}
                         </div>
                     </div>
                 </button>
@@ -1045,6 +1104,9 @@ export default function ChatThread({
                 recording={recording}
                 replyTarget={replyTarget}
                 onClearReply={() => setReplyTarget(null)}
+                offShiftRecipients={offShiftRecipients}
+                notifyAnyway={notifyAnyway}
+                onToggleNotifyAnyway={() => setNotifyAnyway(v => !v)}
                 onSendText={handleSendText}
                 onPickImage={(e) => handleMediaPick(e, 'image')}
                 onPickVideo={(e) => handleMediaPick(e, 'video')}
@@ -1552,6 +1614,7 @@ function AudioPlayer({ src, duration, isMine }) {
 function Composer({
     isEs, draft, setDraft, sending, recording,
     replyTarget, onClearReply,
+    offShiftRecipients = [], notifyAnyway = false, onToggleNotifyAnyway,
     onSendText, onPickImage, onPickVideo,
     onStartRecording, onStopRecording, onCancelRecording,
     onOpenPoll, onOpenSchedule,
@@ -1640,6 +1703,48 @@ function Composer({
     const empty = !draft.trim();
     return (
         <div className="px-2 py-2 border-t border-dd-line bg-white shrink-0">
+            {/* Off-shift recipient indicator — appears above the
+                composer when at least one recipient is currently off
+                shift (per the server's gate window: 30min-before-
+                start through end-time). Surfaces:
+                  • who's silenced and how many
+                  • a "Notify anyway" toggle that sets forceDeliver=
+                    true on the notification doc, which makes the
+                    Cloud Function bypass the gate for this message
+                Always-reachable members (managers, owners) are
+                already excluded by offShiftMembers() so they never
+                count toward this number. Andrew (2026-05-17). */}
+            {offShiftRecipients.length > 0 && (
+                <button
+                    type="button"
+                    onClick={onToggleNotifyAnyway}
+                    className={`w-full flex items-center gap-2 mb-1 px-2 py-1.5 rounded-lg border text-left transition ${notifyAnyway
+                        ? 'bg-amber-50 border-amber-300'
+                        : 'bg-dd-bg border-dd-line hover:bg-dd-bg/70'}`}
+                    aria-label={isEs ? 'Notificar de todos modos' : 'Notify anyway'}
+                >
+                    <span className="text-base shrink-0">{notifyAnyway ? '🔔' : '🔕'}</span>
+                    <div className="flex-1 min-w-0">
+                        <div className={`text-[11.5px] font-bold ${notifyAnyway ? 'text-amber-800' : 'text-dd-text-2'}`}>
+                            {notifyAnyway
+                                ? (isEs
+                                    ? `Notificando de todos modos a ${offShiftRecipients.length}`
+                                    : `Will push ${offShiftRecipients.length} anyway`)
+                                : (isEs
+                                    ? `🔕 ${offShiftRecipients.length} fuera de turno · no recibirán push`
+                                    : `🔕 ${offShiftRecipients.length} off-shift · won't get push`)}
+                        </div>
+                        <div className="text-[10.5px] text-dd-text-2 truncate">
+                            {offShiftRecipients.slice(0, 3).map(n => n.split(' ')[0]).join(', ')}
+                            {offShiftRecipients.length > 3 && ` +${offShiftRecipients.length - 3}`}
+                            {' · '}
+                            {notifyAnyway
+                                ? (isEs ? 'tap para desactivar' : 'tap to undo')
+                                : (isEs ? 'tap para notificar' : 'tap to notify anyway')}
+                        </div>
+                    </div>
+                </button>
+            )}
             {/* Reply preview pill — shown above the input row when the
                 user has tapped Reply on a message. The ✕ clears the
                 target; tapping the body does nothing (intentionally —
@@ -1802,7 +1907,7 @@ async function sendMessage({
     chat, staffName, viewer, staffList,
     type, text = '', mediaUrl, mediaPath, mediaType,
     duration, width, height, thumbnailUrl,
-    replyTo, poll,
+    replyTo, poll, forceDeliver = false,
 }) {
     if (!chat?.id) return;
     const { mentions } = parseMentions(text, staffList);
@@ -1896,6 +2001,12 @@ async function sendMessage({
                 // future quiet-hours enforcement) that this delivery
                 // can't be silenced or batched into a digest.
                 priority: 'high',
+                // Off-shift gate override — when the sender flipped
+                // the "Notify anyway" toggle, stamp every recipient's
+                // notif so the dispatcher bypasses the off-shift gate.
+                // Mentions ALWAYS deliver regardless (server side),
+                // but force-delivering them is harmless.
+                forceDeliver: forceDeliver === true,
                 createdBy: staffName,
             });
         } catch (e) {

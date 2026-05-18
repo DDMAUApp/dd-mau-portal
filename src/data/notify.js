@@ -228,6 +228,7 @@ export async function notifyStaff({
     deepLink,
     tag,
     priority,        // 'high' | 'normal' (default). 'high' bypasses quiet hours + digests.
+    forceDeliver,    // bool — when true, dispatcher bypasses the off-shift gate
     createdBy = 'system',
     excludeStaff = null,
 }) {
@@ -242,6 +243,7 @@ export async function notifyStaff({
             link,
             ...(deepLink ? { deepLink } : {}),
             ...(priority ? { priority } : {}),
+            ...(forceDeliver === true ? { forceDeliver: true } : {}),
             tag: tag || `${type}:${forStaff}:${Date.now()}`,
             createdAt: serverTimestamp(),
             read: false,

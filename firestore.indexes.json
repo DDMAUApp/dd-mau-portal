@@ -17,6 +17,15 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "sendAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "shifts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "staffName", "order": "ASCENDING" },
+        { "fieldPath": "date",      "order": "ASCENDING" },
+        { "fieldPath": "published", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
