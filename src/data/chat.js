@@ -262,6 +262,85 @@ export function isChatUnread(chat, viewerName) {
     return readMs < last;
 }
 
+// ── Read receipts ("Seen by") ──────────────────────────────────────────
+//
+// Each chat carries a `seenByVisibility` field controlling who can SEE
+// the read-receipts UI on messages:
+//
+//   'everyone'    — every chat member sees who's read each message
+//   'sender_only' — only the message's author sees who read it (default,
+//                   matches iMessage/WhatsApp expectation)
+//   'admins_only' — chat admins + the message's author see receipts
+//   'off'         — no one sees read receipts in this chat
+//
+// The underlying read data (chat.lastReadByName) is ALWAYS collected
+// regardless — visibility just controls who can see the indicator.
+// Setting 'off' on a private DM means neither side knows whether the
+// other has read; flipping back to 'sender_only' resurfaces the
+// existing history.
+export const SEEN_VISIBILITY_OPTIONS = [
+    { id: 'sender_only', en: 'Sender only',   es: 'Solo el remitente' },
+    { id: 'everyone',    en: 'Everyone',       es: 'Todos' },
+    { id: 'admins_only', en: 'Admins + sender', es: 'Admins + remitente' },
+    { id: 'off',         en: 'Off (hide all)', es: 'Apagado (ocultar todos)' },
+];
+
+// Resolve the effective visibility on a chat doc, defaulting to
+// 'sender_only' when the field hasn't been set (legacy chats from
+// before this feature shipped).
+export function getSeenByVisibility(chat) {
+    const v = chat?.seenByVisibility;
+    if (v === 'everyone' || v === 'sender_only' || v === 'admins_only' || v === 'off') return v;
+    return 'sender_only';
+}
+
+// Returns true if the viewer is allowed to see read receipts on the
+// given message under the chat's current visibility setting.
+export function canSeeReceiptsForMessage(chat, message, viewer, isAdminFlag) {
+    if (!chat || !message || !viewer) return false;
+    const v = getSeenByVisibility(chat);
+    if (v === 'off') return false;
+    if (v === 'everyone') return true;
+    const isSender = message.senderName === viewer.name;
+    if (v === 'sender_only') return isSender;
+    if (v === 'admins_only') {
+        if (isSender) return true;
+        if (isAdminFlag) return true;
+        // Co-admin of the specific chat also counts.
+        if (Array.isArray(chat.admins) && chat.admins.includes(viewer.name)) return true;
+        return false;
+    }
+    return false;
+}
+
+// Resolve the list of members who have READ this message — i.e. whose
+// lastReadByName timestamp on the chat is >= the message's createdAt.
+// Returns Array<{name, readAtMs}> sorted by readAtMs ascending
+// (earliest reader first). Excludes the message's own author (sending
+// implicitly counts as reading, but we don't list yourself in your own
+// "seen by"). Excludes members no longer in the chat.
+export function getSeenByForMessage(chat, message) {
+    if (!chat || !message) return [];
+    const reads = chat.lastReadByName || {};
+    const msgMs = message.createdAt?.toMillis
+        ? message.createdAt.toMillis()
+        : (message.createdAt?.seconds ? message.createdAt.seconds * 1000 : 0);
+    if (!msgMs) return [];
+    const members = Array.isArray(chat.members) ? chat.members : [];
+    const out = [];
+    for (const name of members) {
+        if (name === message.senderName) continue;
+        const ts = reads[name];
+        const readMs = ts?.toMillis ? ts.toMillis()
+            : (ts?.seconds ? ts.seconds * 1000 : 0);
+        if (!readMs) continue;
+        if (readMs < msgMs) continue;
+        out.push({ name, readAtMs: readMs });
+    }
+    out.sort((a, b) => a.readAtMs - b.readAtMs);
+    return out;
+}
+
 // Friendly relative time for chat-list timestamps.
 // <1m → "now", <1h → "Nm", <24h → "Nh", <7d → weekday, older → date.
 export function formatChatTime(ts) {

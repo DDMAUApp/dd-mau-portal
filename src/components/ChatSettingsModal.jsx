@@ -18,7 +18,7 @@
 import { useState, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, deleteDoc, updateDoc, serverTimestamp, collection, getDocs, writeBatch } from 'firebase/firestore';
-import { canEditChat } from '../data/chat';
+import { canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility } from '../data/chat';
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
@@ -38,6 +38,10 @@ export default function ChatSettingsModal({
     const [emoji, setEmoji] = useState(chat.emoji || '💬');
     const [members, setMembers] = useState(Array.isArray(chat.members) ? chat.members : []);
     const [coAdmins, setCoAdmins] = useState(Array.isArray(chat.admins) ? chat.admins : []);
+    // Read-receipt visibility — per-chat. Defaults to 'sender_only'
+    // (matches iMessage / WhatsApp). See SEEN_VISIBILITY_OPTIONS in
+    // data/chat.js for the option set.
+    const [seenByVisibility, setSeenByVisibility] = useState(() => getSeenByVisibility(chat));
     const [showAdd, setShowAdd] = useState(false);
     const [busy, setBusy] = useState(false);
 
@@ -72,6 +76,11 @@ export default function ChatSettingsModal({
             if (!isChannel) {
                 patch.admins = coAdmins.filter(n => members.includes(n));
             }
+            // Read-receipts visibility is now auto-saved via
+            // updateSeenByVisibility (below) when the user taps an
+            // option. We DON'T also patch it here on Save — the
+            // auto-save has already landed, and including it would
+            // double-write the same value.
             if (Object.keys(patch).length > 0) {
                 await updateDoc(doc(db, 'chats', chat.id), patch);
             }
@@ -81,6 +90,33 @@ export default function ChatSettingsModal({
             toast(tx('Save failed', 'Error al guardar'), { kind: 'error' });
         } finally {
             setBusy(false);
+        }
+    }
+
+    // Auto-save the read-receipts visibility immediately on tap.
+    // Same rationale as member changes — no "save before closing"
+    // footgun. Works for DMs too (canEditChat returns false for DMs,
+    // but the per-DM visibility toggle is exposed to either member).
+    async function updateSeenByVisibility(next) {
+        if (!next || next === seenByVisibility) return;
+        const prev = seenByVisibility;
+        setSeenByVisibility(next);
+        try {
+            await updateDoc(doc(db, 'chats', chat.id), {
+                seenByVisibility: next,
+            });
+            recordAudit({
+                action: 'chat.seen_by_visibility.update',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'chat',
+                targetId: chat.id,
+                details: { from: prev, to: next, chatType: chat.type },
+            });
+        } catch (e) {
+            console.warn('seen-by visibility save failed:', e);
+            setSeenByVisibility(prev); // rollback
+            toast(tx('Could not save — try again', 'No se pudo guardar — intenta de nuevo'), { kind: 'error' });
         }
     }
 
@@ -395,6 +431,57 @@ export default function ChatSettingsModal({
                             </div>
                         </div>
                     )}
+
+                    {/* Read-receipts visibility — controls who can see
+                        "Seen by N" indicators on messages in this chat.
+                        The underlying read data (chat.lastReadByName) is
+                        always collected; this just gates the UI.
+                        Editable by:
+                          • Groups/channels: anyone who canEdit (creator
+                            + co-admins + app admins).
+                          • DMs: either of the two participants can
+                            change it (privacy is symmetric on a 2-person
+                            chat). canEditChat returns false for DMs by
+                            design — visibility is a UI gate, not a
+                            membership-management action.
+                        Default is 'sender_only'. */}
+                    {(() => {
+                        const isMember = Array.isArray(members) && viewer?.name && members.includes(viewer.name);
+                        const canChangeSeenBy = canEdit || (isDm && isMember);
+                        return (
+                    <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-widest text-dd-text-2 mb-1">
+                            {tx('Read receipts', 'Confirmaciones de lectura')}
+                        </label>
+                        <p className="text-[10px] text-dd-text-2 mb-2 italic">
+                            {tx(
+                                'Who can see who has read a message in this chat.',
+                                'Quién puede ver quién ha leído un mensaje en este chat.',
+                            )}
+                        </p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                            {SEEN_VISIBILITY_OPTIONS.map(opt => {
+                                const selected = seenByVisibility === opt.id;
+                                return (
+                                    <button
+                                        key={opt.id}
+                                        type="button"
+                                        onClick={() => canChangeSeenBy && updateSeenByVisibility(opt.id)}
+                                        disabled={!canChangeSeenBy}
+                                        className={`px-3 py-2 rounded-lg text-[12px] font-bold border-2 transition text-left ${
+                                            selected
+                                                ? 'bg-dd-green text-white border-dd-green'
+                                                : 'bg-white text-dd-text border-dd-line hover:border-dd-green/40'
+                                        } ${!canChangeSeenBy ? 'opacity-60 cursor-default' : ''}`}
+                                    >
+                                        {tx(opt.en, opt.es)}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+                        );
+                    })()}
 
                     {/* Members section — explicit Add Staff button +
                         labeled Remove on each row. All changes are

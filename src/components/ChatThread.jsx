@@ -28,7 +28,7 @@ import {
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
-import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName } from '../data/chat';
+import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage } from '../data/chat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
@@ -838,9 +838,17 @@ function MessageBubble({
     onReact, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
 }) {
+    const tx = (en, es) => (isEs ? es : en);
     const [showActions, setShowActions] = useState(false);  // long-press menu
+    const [showSeenBy, setShowSeenBy] = useState(false);    // seen-by sheet
     const reactionEntries = Object.entries(message.reactions || {})
         .filter(([, names]) => Array.isArray(names) && names.length > 0);
+    // Read-receipts gating + readers list. Computed every render — both
+    // helpers are cheap and need to reflect the live `lastReadByName`
+    // map on the chat doc (which updates ~1.5s after each viewer scrolls
+    // a new message into view).
+    const canSeeReceipts = canSeeReceiptsForMessage(chat, message, viewer, isAdmin);
+    const seenBy = canSeeReceipts ? getSeenByForMessage(chat, message) : [];
     const mentioned = Array.isArray(message.mentions) && message.mentions.includes(staffName);
     const time = useMemo(() => {
         const ts = message.createdAt;
@@ -1092,8 +1100,40 @@ function MessageBubble({
                             </span>
                         </div>
                     )}
+                    {/* Seen-by pill — small "Seen by N" link below the
+                        bubble. Only renders when the viewer is allowed
+                        to see receipts under chat.seenByVisibility AND
+                        at least one other member has read past this
+                        message. Tap → bottom-sheet with the readers
+                        list + timestamps. */}
+                    {canSeeReceipts && seenBy.length > 0 && (
+                        <div className={`mt-1 flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                            <button
+                                onClick={() => setShowSeenBy(true)}
+                                className="text-[10px] text-dd-text-2 hover:text-dd-text px-1.5 py-0.5 rounded-full hover:bg-dd-bg transition flex items-center gap-1"
+                                aria-label={tx('Show who has seen this', 'Mostrar quién lo ha visto')}
+                                title={tx('Show readers', 'Mostrar lectores')}
+                            >
+                                <span>✓✓</span>
+                                <span>
+                                    {chat.type === 'dm'
+                                        ? tx('Seen', 'Visto')
+                                        : tx(`Seen by ${seenBy.length}`, `Visto por ${seenBy.length}`)}
+                                </span>
+                            </button>
+                        </div>
+                    )}
                 </div>
             </div>
+            {showSeenBy && (
+                <SeenBySheet
+                    seenBy={seenBy}
+                    chat={chat}
+                    message={message}
+                    isEs={isEs}
+                    onClose={() => setShowSeenBy(false)}
+                />
+            )}
             {/* Double-tap-to-react affordance on desktop: small ➕ button
                 shown on hover. Mobile uses long-press above. */}
             {!showActions && (
@@ -1810,6 +1850,97 @@ function MessageActionMenu({
                         <button onClick={() => { onDelete?.(); onClose(); }} className="flex items-center gap-2 px-4 py-2.5 hover:bg-red-50 text-left text-sm text-red-700 font-bold">
                             🗑 {tx('Delete', 'Eliminar')}
                         </button>
+                    )}
+                </div>
+            </div>
+        </>
+    );
+}
+
+// Seen-by bottom sheet — shows who's read this message + when.
+// Sender excluded server-side (in getSeenByForMessage). On a DM with
+// only the other person listed, this renders "Seen at HH:MM" — on a
+// group, a scrollable list of readers, most-recent last.
+function SeenBySheet({ seenBy, chat, message, isEs, onClose }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const fmtTime = (ms) => {
+        if (!ms) return '';
+        const d = new Date(ms);
+        const today = new Date();
+        const sameDay = d.toDateString() === today.toDateString();
+        if (sameDay) return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        const yest = new Date(today.getTime() - 86400_000);
+        if (d.toDateString() === yest.toDateString()) {
+            return tx('Yesterday', 'Ayer') + ' ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+        }
+        return d.toLocaleDateString(isEs ? 'es' : 'en', { month: 'short', day: 'numeric' }) + ' ' +
+               d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    };
+    const members = Array.isArray(chat.members) ? chat.members : [];
+    const senderName = message.senderName;
+    // Compute "not yet seen" — members who exist but haven't read past
+    // this message's timestamp. Excluded: sender (implicit read) and
+    // anyone already in `seenBy`.
+    const seenNames = new Set(seenBy.map(r => r.name));
+    const notSeen = members.filter(n => n !== senderName && !seenNames.has(n));
+    return (
+        <>
+            <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
+            <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[420px] sm:max-w-[92vw] z-50 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[80vh] flex flex-col"
+                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                <header className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
+                    <div>
+                        <h2 className="text-base font-bold text-dd-text">
+                            {tx('Seen by', 'Visto por')}
+                        </h2>
+                        <p className="text-[11px] text-dd-text-2">
+                            {seenBy.length} {tx('read', 'leído(s)')}
+                            {notSeen.length > 0 && ` · ${notSeen.length} ${tx('not yet', 'pendiente(s)')}`}
+                        </p>
+                    </div>
+                    <button onClick={onClose}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:scale-95 text-lg transition"
+                        aria-label={tx('Close', 'Cerrar')}>
+                        ×
+                    </button>
+                </header>
+                <div className="flex-1 overflow-y-auto"
+                    style={{ overscrollBehavior: 'contain', touchAction: 'pan-y' }}>
+                    {seenBy.length === 0 && notSeen.length === 0 ? (
+                        <div className="py-8 px-4 text-center text-sm text-dd-text-2">
+                            {tx('Nobody to track yet.', 'Aún no hay nadie.')}
+                        </div>
+                    ) : (
+                        <ul className="divide-y divide-dd-line">
+                            {seenBy.map((r) => (
+                                <li key={r.name} className="px-4 py-2.5 flex items-center gap-3">
+                                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-dd-green text-white text-[11px] font-black shrink-0">
+                                        {(r.name || '?').split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-bold text-dd-text truncate">{r.name}</div>
+                                        <div className="text-[11px] text-dd-text-2">{fmtTime(r.readAtMs)}</div>
+                                    </div>
+                                    <span className="text-dd-green text-base">✓</span>
+                                </li>
+                            ))}
+                            {notSeen.length > 0 && (
+                                <li className="px-4 py-2 text-[10px] font-bold uppercase tracking-widest text-dd-text-2 bg-dd-bg">
+                                    {tx('Not yet seen', 'Aún no visto')}
+                                </li>
+                            )}
+                            {notSeen.map((name) => (
+                                <li key={`ns-${name}`} className="px-4 py-2.5 flex items-center gap-3 opacity-60">
+                                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-[11px] font-black shrink-0 border border-dd-line">
+                                        {(name || '?').split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-sm font-bold text-dd-text truncate">{name}</div>
+                                        <div className="text-[11px] text-dd-text-2">{tx('Not yet', 'Pendiente')}</div>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
                     )}
                 </div>
             </div>

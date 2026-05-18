@@ -22,6 +22,9 @@ import {
     isChatUnread,
     previewOf,
     formatChatName,
+    getSeenByVisibility,
+    canSeeReceiptsForMessage,
+    getSeenByForMessage,
 } from './chat';
 
 const owner    = { id: 40, name: 'Andrew Shih', role: 'Owner' };
@@ -315,5 +318,87 @@ describe('isChatUnread', () => {
     });
     it('no lastActivity = not unread (empty chat)', () => {
         expect(isChatUnread({}, 'Cash')).toBe(false);
+    });
+});
+
+describe('getSeenByVisibility — default + roundtrip', () => {
+    it('defaults to sender_only when missing', () => {
+        expect(getSeenByVisibility({})).toBe('sender_only');
+        expect(getSeenByVisibility(null)).toBe('sender_only');
+    });
+    it('passes through valid values', () => {
+        expect(getSeenByVisibility({ seenByVisibility: 'everyone' })).toBe('everyone');
+        expect(getSeenByVisibility({ seenByVisibility: 'admins_only' })).toBe('admins_only');
+        expect(getSeenByVisibility({ seenByVisibility: 'off' })).toBe('off');
+    });
+    it('coerces invalid value back to default', () => {
+        expect(getSeenByVisibility({ seenByVisibility: 'garbage' })).toBe('sender_only');
+    });
+});
+
+describe('canSeeReceiptsForMessage', () => {
+    const msg = { senderName: 'Cash Magruder', createdAt: { toMillis: () => 100 } };
+    const otherMsg = { senderName: 'Maria Lopez', createdAt: { toMillis: () => 100 } };
+    const viewerCash    = { name: 'Cash Magruder' };
+    const viewerMaria   = { name: 'Maria Lopez' };
+
+    it('off — nobody sees receipts', () => {
+        const chat = { seenByVisibility: 'off', members: [], admins: [] };
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(false);
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, true)).toBe(false);
+    });
+    it('everyone — every viewer sees receipts', () => {
+        const chat = { seenByVisibility: 'everyone' };
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(true);
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, false)).toBe(true);
+    });
+    it('sender_only — only the message author sees', () => {
+        const chat = { seenByVisibility: 'sender_only' };
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(true);
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, false)).toBe(false);
+    });
+    it('admins_only — sender + app admin + chat co-admin', () => {
+        const chat = { seenByVisibility: 'admins_only', admins: ['Maria Lopez'] };
+        // App admin sees a message they didn't send
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, true)).toBe(true);
+        // Co-admin (in chat.admins) sees too
+        expect(canSeeReceiptsForMessage(chat, otherMsg, viewerMaria, false)).toBe(true);
+        // Sender always sees their own
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(true);
+        // Non-admin non-sender does NOT see
+        expect(canSeeReceiptsForMessage(chat, otherMsg, viewerCash, false)).toBe(false);
+    });
+    it('defaults to sender_only when field absent', () => {
+        const chat = {};
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(true);
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, false)).toBe(false);
+    });
+});
+
+describe('getSeenByForMessage', () => {
+    const msg = { senderName: 'Cash Magruder', createdAt: { toMillis: () => 100 } };
+    it('lists members whose lastRead >= message createdAt, excluding sender', () => {
+        const chat = {
+            members: ['Cash Magruder', 'Maria Lopez', 'Tom Lee', 'Sam Cook'],
+            lastReadByName: {
+                'Cash Magruder': { toMillis: () => 200 },   // sender — excluded
+                'Maria Lopez':   { toMillis: () => 150 },   // read after  ✓
+                'Tom Lee':       { toMillis: () => 90 },    // read before — no
+                'Sam Cook':      { toMillis: () => 100 },   // exact — counted
+            },
+        };
+        const result = getSeenByForMessage(chat, msg);
+        expect(result.map(r => r.name)).toEqual(['Sam Cook', 'Maria Lopez']);
+    });
+    it('skips members with no lastRead entry', () => {
+        const chat = {
+            members: ['Cash Magruder', 'Maria Lopez'],
+            lastReadByName: { 'Cash Magruder': { toMillis: () => 100 } },
+        };
+        expect(getSeenByForMessage(chat, msg)).toEqual([]);
+    });
+    it('returns [] when chat or message missing', () => {
+        expect(getSeenByForMessage(null, msg)).toEqual([]);
+        expect(getSeenByForMessage({}, null)).toEqual([]);
     });
 });
