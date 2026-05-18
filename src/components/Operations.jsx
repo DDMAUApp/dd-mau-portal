@@ -323,6 +323,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invEditNameEs, setInvEditNameEs] = useState("");
             const [invEditSupplier, setInvEditSupplier] = useState("");
             const [invEditOrderDay, setInvEditOrderDay] = useState("Fri");
+            // 2026-05-17 — let edit form recategorize an item. invEditTargetCatIdx
+            // is the destination category index (move cross-category) and
+            // invEditSubcat is the subcategory within that destination. Both
+            // pre-populated from the item's current placement when the Edit
+            // form opens. Andrew: "the edit is able to re categorize items".
+            const [invEditTargetCatIdx, setInvEditTargetCatIdx] = useState(null);
+            const [invEditSubcat, setInvEditSubcat] = useState("");
             const [invShowAddForm, setInvShowAddForm] = useState(null);
             const [invNewName, setInvNewName] = useState("");
             const [invNewNameEs, setInvNewNameEs] = useState("");
@@ -2753,18 +2760,49 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // list by ID rather than by index — index drifts if other managers
                 // added/removed items in this category between snapshots.
                 const targetId = customInventory[catIdx]?.items[itemIdx]?.id;
+                if (!targetId) return;
                 const patch = {
                     name: invEditName.trim(), nameEs: invEditNameEs.trim(),
                     vendor: invEditSupplier.trim(), supplier: invEditSupplier.trim(),
                     orderDay: invEditOrderDay,
+                    subcat: (invEditSubcat || '').trim(),
                 };
-                await mutateInventory((live) => live.map((cat, cIdx) =>
-                    cIdx === catIdx
-                        ? { ...cat, items: cat.items.map(item =>
-                            item.id === targetId ? { ...item, ...patch } : item) }
-                        : cat
-                ));
-                setInvEditingIdx(null); setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri");
+                // Cross-category move: when invEditTargetCatIdx differs from
+                // the source catIdx, we PULL the item out of the source array
+                // and APPEND it to the destination's items array. ID stays
+                // the same so inventory counts, audits, and vendor matches
+                // remain linked.
+                const destCatIdx = (invEditTargetCatIdx == null || invEditTargetCatIdx === '')
+                    ? catIdx
+                    : Number(invEditTargetCatIdx);
+                if (destCatIdx === catIdx) {
+                    // Same-category update — just merge the patch onto the item.
+                    await mutateInventory((live) => live.map((cat, cIdx) =>
+                        cIdx === catIdx
+                            ? { ...cat, items: cat.items.map(item =>
+                                item.id === targetId ? { ...item, ...patch } : item) }
+                            : cat
+                    ));
+                } else {
+                    // Cross-category move — remove from source, push to dest.
+                    await mutateInventory((live) => {
+                        const sourceItem = (live[catIdx]?.items || []).find(it => it.id === targetId);
+                        if (!sourceItem) return live; // nothing to move
+                        const merged = { ...sourceItem, ...patch };
+                        return live.map((cat, cIdx) => {
+                            if (cIdx === catIdx) {
+                                return { ...cat, items: cat.items.filter(it => it.id !== targetId) };
+                            }
+                            if (cIdx === destCatIdx) {
+                                return { ...cat, items: [...cat.items, merged] };
+                            }
+                            return cat;
+                        });
+                    });
+                }
+                setInvEditingIdx(null);
+                setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri");
+                setInvEditTargetCatIdx(null); setInvEditSubcat("");
             };
 
             const deleteInvItem = async (catIdx, itemIdx) => {
@@ -5077,7 +5115,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     {subGroup.items.map((item) => {
                                                         const itemIdx = itemIdxByIdInCat.get(item.id) ?? -1;
                                                         const count = inventory[item.id] || 0;
-                                                        const isEditing = invEditMode && invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
+                                                        // Bug fix (Andrew 2026-05-17 — "edit button on every
+                                                        // item isnt working"): previously this required
+                                                        // `invEditMode && ...` which meant clicking the per-row
+                                                        // Edit pencil button set invEditingIdx but the form
+                                                        // never opened because the surrounding edit-mode
+                                                        // toggle was off. Now isEditing is purely a function
+                                                        // of which row was clicked — Edit just works without
+                                                        // having to first flip the global edit-mode switch.
+                                                        const isEditing = invEditingIdx && invEditingIdx.catIdx === catIdx && invEditingIdx.itemIdx === itemIdx;
                                                         // Visual marker for items added via the "Add as new master item" flow
                                                         // in the match audit modal — colored left border based on origin vendor.
                                                         const fromVendor = item.addedFromVendor;
@@ -5098,9 +5144,57 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
                                                                                 placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                                         </div>
+                                                                        {/* Category + subcategory pickers — let the
+                                                                            user move an item into the right place
+                                                                            when they spot a miscategorization
+                                                                            (Andrew 2026-05-17). The category dropdown
+                                                                            lists every top-level category; changing
+                                                                            it moves the item cross-category on save.
+                                                                            The subcategory dropdown lists the unique
+                                                                            subcats from the SELECTED destination
+                                                                            category's items, so the user can only
+                                                                            pick a subcat that already exists in that
+                                                                            category (or leave it blank to land
+                                                                            uncategorized within that category). */}
+                                                                        <div className="flex gap-2">
+                                                                            <select value={invEditTargetCatIdx == null ? catIdx : invEditTargetCatIdx}
+                                                                                onChange={(e) => { setInvEditTargetCatIdx(Number(e.target.value)); setInvEditSubcat(""); }}
+                                                                                className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white">
+                                                                                {customInventory.map((c, i) => (
+                                                                                    <option key={c.id ?? i} value={i}>
+                                                                                        {language === "es" && c.nameEs ? c.nameEs : c.name}
+                                                                                    </option>
+                                                                                ))}
+                                                                            </select>
+                                                                            <select value={invEditSubcat}
+                                                                                onChange={(e) => setInvEditSubcat(e.target.value)}
+                                                                                className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white">
+                                                                                <option value="">{language === "es" ? "(sin sub-categoría)" : "(no subcategory)"}</option>
+                                                                                {(() => {
+                                                                                    const destIdx = invEditTargetCatIdx == null ? catIdx : Number(invEditTargetCatIdx);
+                                                                                    const subs = new Set();
+                                                                                    for (const it of (customInventory[destIdx]?.items || [])) {
+                                                                                        if (it.subcat) subs.add(it.subcat);
+                                                                                    }
+                                                                                    if (invEditSubcat && !subs.has(invEditSubcat)) subs.add(invEditSubcat);
+                                                                                    return Array.from(subs).sort().map(s => (
+                                                                                        <option key={s} value={s}>{s}</option>
+                                                                                    ));
+                                                                                })()}
+                                                                            </select>
+                                                                        </div>
+                                                                        {/* Free-text subcat — used to create a NEW
+                                                                            subcat name not already in the destination
+                                                                            category. Tapping out commits the value
+                                                                            into invEditSubcat. */}
+                                                                        <input type="text"
+                                                                            value={invEditSubcat}
+                                                                            onChange={(e) => setInvEditSubcat(e.target.value)}
+                                                                            placeholder={language === "es" ? "...o escribe nueva sub-categoría" : "...or type a new subcategory"}
+                                                                            className="w-full px-2 py-1.5 border-2 border-dashed border-gray-300 rounded-lg text-xs text-gray-600 focus:border-mint-700 focus:outline-none" />
                                                                         <div className="flex gap-2">
                                                                             <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
-                                                                            <button onClick={() => setInvEditingIdx(null)} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
+                                                                            <button onClick={() => { setInvEditingIdx(null); setInvEditTargetCatIdx(null); setInvEditSubcat(""); }} className="flex-1 bg-gray-400 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-gray-500">{language === "es" ? "Cancelar" : "Cancel"}</button>
                                                                         </div>
                                                                     </div>
                                                                 ) : (
@@ -5148,6 +5242,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                     setInvEditNameEs(item.nameEs || "");
                                                                                     setInvEditSupplier(item.vendor || item.supplier || "");
                                                                                     setInvEditOrderDay(item.orderDay || "");
+                                                                                    setInvEditTargetCatIdx(catIdx);
+                                                                                    setInvEditSubcat(item.subcat || "");
                                                                                 }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                 {invEditMode && (
                                                                                     <>
@@ -5192,7 +5288,42 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             <>
                                                                                 <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
                                                                                     className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-gray-100 text-gray-400"}`}>{"\u{2212}"}</button>
-                                                                                <span className={`w-10 text-center font-bold text-lg ${count > 0 ? "text-green-700" : "text-gray-300"}`}>{count}</span>
+                                                                                {/* Quantity input — tap-to-type. Replaces
+                                                                                    the read-only count span so staff can
+                                                                                    enter a big number (e.g. 24 boxes)
+                                                                                    directly instead of tapping + twenty-
+                                                                                    four times. Andrew 2026-05-17.
+                                                                                    inputMode=numeric brings up the
+                                                                                    number keypad on iOS; pattern is
+                                                                                    the same. onChange saves on every
+                                                                                    keystroke via the existing
+                                                                                    updateInventoryCount path (which is
+                                                                                    transactional); we strip non-digit
+                                                                                    chars and clamp to 0..N. onFocus
+                                                                                    selects the existing value so typing
+                                                                                    replaces (the common case) instead
+                                                                                    of appending. */}
+                                                                                <input
+                                                                                    type="text"
+                                                                                    inputMode="numeric"
+                                                                                    pattern="[0-9]*"
+                                                                                    value={count}
+                                                                                    onChange={(e) => {
+                                                                                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                                                                                        const n = parseInt(raw || '0', 10);
+                                                                                        if (!Number.isFinite(n)) return;
+                                                                                        updateInventoryCount(item.id, Math.max(0, n));
+                                                                                    }}
+                                                                                    onFocus={(e) => e.target.select()}
+                                                                                    onBlur={(e) => {
+                                                                                        const n = parseInt(e.target.value || '0', 10);
+                                                                                        if (!Number.isFinite(n) || n < 0) {
+                                                                                            updateInventoryCount(item.id, 0);
+                                                                                        }
+                                                                                    }}
+                                                                                    aria-label={language === "es" ? "Cantidad" : "Quantity"}
+                                                                                    className={`w-12 h-9 text-center font-bold text-lg rounded-lg border-2 ${count > 0 ? "text-green-700 border-green-200 bg-white" : "text-gray-300 border-gray-200 bg-white"} focus:border-mint-700 focus:outline-none tabular-nums`}
+                                                                                />
                                                                                 <button onClick={() => updateInventoryCount(item.id, count + 1, +1)}
                                                                                     className="w-9 h-9 rounded-lg bg-green-100 text-green-700 font-bold text-lg flex items-center justify-center hover:bg-green-200 active:scale-95 transition">+</button>
                                                                             </>
@@ -5432,6 +5563,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                 setInvEditNameEs(item.nameEs || "");
                                                                                 setInvEditSupplier(item.vendor || item.supplier || "");
                                                                                 setInvEditOrderDay(item.orderDay || "");
+                                                                                setInvEditTargetCatIdx(item.catIdx);
+                                                                                setInvEditSubcat(item.subcat || "");
                                                                             }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                         </div>
                                                                     </div>
@@ -5610,6 +5743,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                             setInvEditNameEs(item.nameEs || "");
                                                                                             setInvEditSupplier(item.vendor || item.supplier || "");
                                                                                             setInvEditOrderDay(item.orderDay || "");
+                                                                                            setInvEditTargetCatIdx(item.catIdx);
+                                                                                            setInvEditSubcat(item.subcat || "");
                                                                                         }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
                                                                                     </div>
                                                                                     {isMoving && (
