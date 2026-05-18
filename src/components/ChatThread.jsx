@@ -2295,11 +2295,28 @@ function AnnouncementCard({
             className="rounded-xl overflow-hidden border-2 border-amber-300 bg-gradient-to-br from-amber-50 to-amber-100/40 shadow-card"
             onTouchStart={() => onLongPress?.()}
         >
-            <div className="px-4 py-2.5 bg-amber-200/60 border-b border-amber-300 flex items-center gap-2">
+            <div className="px-4 py-2.5 bg-amber-200/60 border-b border-amber-300 flex items-center gap-2 flex-wrap">
                 <span className="text-base">📣</span>
                 <span className="text-[11px] font-black uppercase tracking-widest text-amber-900 flex-1">
                     {tx('Announcement', 'Anuncio')}
                 </span>
+                {/* Reviewed-translation provenance pill. Surfaces when
+                    the message was posted with a human-reviewed
+                    translation (translationStatus === 'reviewed').
+                    Tells bilingual staff they're reading a manager-
+                    approved Spanish version, not an auto-translate
+                    that might fumble allergen / safety vocabulary. */}
+                {message.translationStatus === 'reviewed' && (
+                    <span
+                        className="text-[10px] font-black uppercase tracking-wider text-dd-green-700 bg-white/70 border border-dd-green/40 rounded-full px-1.5 py-0.5"
+                        title={message.translationReviewedBy
+                            ? tx(`Translation reviewed by ${message.translationReviewedBy}`,
+                                 `Traducción revisada por ${message.translationReviewedBy}`)
+                            : tx('Translation reviewed by a manager', 'Traducción revisada por un gerente')}
+                    >
+                        🌐 {tx('Reviewed', 'Revisada')}
+                    </span>
+                )}
                 <span className="text-[11px] font-bold text-amber-800">
                     {formatChatName(message.senderName)}
                 </span>
