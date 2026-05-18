@@ -430,6 +430,15 @@ exports.sendScheduledChatMessages = onSchedule(
                     logger.warn(`chat members lookup failed for ${chatId}:`, e);
                 }
                 const chatName = (await db.doc(`chats/${chatId}`).get()).data()?.name || "Chat";
+                // Carry the sender's "Notify anyway" intent FROM
+                // scheduling TIME into delivery time. The client
+                // stamps payload.forceDeliver=true when the sender
+                // flipped the off-shift override before scheduling;
+                // without honoring it here, the dispatcher would
+                // re-apply the off-shift gate at delivery and could
+                // silently suppress a message the sender explicitly
+                // chose to send through.
+                const scheduledForceDeliver = payload.forceDeliver === true;
                 const recipients = members.filter(n => n && n !== createdBy);
                 await Promise.all(recipients.map(async (to) => {
                     const mentioned = mentions.includes(to);
@@ -442,6 +451,7 @@ exports.sendScheduledChatMessages = onSchedule(
                         link: "/chat",
                         tag: `chat:${chatId}:${to}`,
                         priority: "high",
+                        ...(scheduledForceDeliver ? { forceDeliver: true } : {}),
                         createdAt: FieldValue.serverTimestamp(),
                         read: false,
                         createdBy: "system",

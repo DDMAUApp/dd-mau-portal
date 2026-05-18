@@ -24,7 +24,7 @@ import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
     addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, where, getCountFromServer,
-    arrayUnion, arrayRemove, getDoc,
+    arrayUnion, arrayRemove, getDoc, runTransaction,
     Timestamp,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -880,6 +880,22 @@ export default function ChatThread({
     // just audit + push to on-duty FOH staff).
     async function handlePost86({ itemName, location, note }) {
         if (!itemName || !location || posting86) return;
+        // Location-permission gate. A staff record carries `location`
+        // = 'webster' | 'maryland' | 'both' (or undefined for legacy).
+        // We only refuse when there's an EXPLICIT mismatch — undefined
+        // location means "no restriction recorded", which we treat as
+        // permissive to avoid breaking older accounts. Owners/admins
+        // can always post anywhere (their role bypasses the gate).
+        if (!isAdmin && viewer?.location
+            && viewer.location !== 'both'
+            && viewer.location !== location) {
+            toast(
+                tx(`You can only 86 items at your location (${viewer.location}).`,
+                   `Solo puedes marcar 86 en tu ubicación (${viewer.location}).`),
+                { kind: 'warn' }
+            );
+            return;
+        }
         setPosting86(true);
         try {
             // 1. Send the chat message — the EightySixCard renders
@@ -900,16 +916,21 @@ export default function ChatThread({
             });
 
             // 2. Update /ops/86_{location} — append to the items
-            //    array if not already present. Uses setDoc(merge) +
-            //    a read-modify-write so we don't clobber other
-            //    fields on the doc.
+            //    array if not already present. Wrapped in a
+            //    runTransaction so two cooks 86'ing the same item in
+            //    the same second don't read identical "exists: false"
+            //    snapshots + both write a duplicate row. Firestore
+            //    will retry the transaction body if the doc changed
+            //    between read and commit, so the dedup check stays
+            //    correct under contention.
             try {
                 const ref = doc(db, 'ops', `86_${location}`);
-                const snap = await getDoc(ref);
-                const cur = snap.exists() ? (snap.data().items || []) : [];
-                const norm = itemName.trim().toLowerCase();
-                const exists = cur.some(it => String(it?.name || '').trim().toLowerCase() === norm);
-                if (!exists) {
+                await runTransaction(db, async (txn) => {
+                    const snap = await txn.get(ref);
+                    const cur = snap.exists() ? (snap.data().items || []) : [];
+                    const norm = itemName.trim().toLowerCase();
+                    const exists = cur.some(it => String(it?.name || '').trim().toLowerCase() === norm);
+                    if (exists) return; // already on the list — no-op
                     const nextItems = [
                         ...cur,
                         {
@@ -920,8 +941,8 @@ export default function ChatThread({
                             source: 'chat',
                         },
                     ];
-                    await setDoc(ref, { items: nextItems, updatedAt: serverTimestamp() }, { merge: true });
-                }
+                    txn.set(ref, { items: nextItems, updatedAt: serverTimestamp() }, { merge: true });
+                });
             } catch (e) {
                 // Non-fatal — the chat message + push already went
                 // out. Surface a warn so the dashboard sync issue is
@@ -980,18 +1001,24 @@ export default function ChatThread({
                 'eightySixData.resolvedAt': serverTimestamp(),
             });
 
-            // 2. Update the live 86 list — drop the item.
+            // 2. Update the live 86 list — drop the item via the
+            //    same runTransaction pattern as the post path. Two
+            //    managers tapping "back in stock" simultaneously
+            //    would otherwise both read the item present + both
+            //    write a filtered-out items array, which is fine for
+            //    THIS item but could clobber a DIFFERENT 86 added
+            //    between the two reads.
             try {
                 const ref = doc(db, 'ops', `86_${location}`);
-                const snap = await getDoc(ref);
-                if (snap.exists()) {
+                await runTransaction(db, async (txn) => {
+                    const snap = await txn.get(ref);
+                    if (!snap.exists()) return;
                     const cur = snap.data().items || [];
                     const norm = itemName.trim().toLowerCase();
                     const next = cur.filter(it => String(it?.name || '').trim().toLowerCase() !== norm);
-                    if (next.length !== cur.length) {
-                        await setDoc(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
-                    }
-                }
+                    if (next.length === cur.length) return; // nothing to remove
+                    txn.set(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
+                });
             } catch (e) {
                 console.warn('86 list resolve sync failed:', e);
             }
@@ -1053,10 +1080,18 @@ export default function ChatThread({
                     // match the live staff list (someone might be added
                     // or renamed between scheduling and sending).
                     ...(replyTarget && replyTarget.id ? { replyTo: replyTarget } : {}),
+                    // Carry the sender's "Notify anyway" intent into the
+                    // future. Without this, the Cloud Function would
+                    // apply the off-shift gate at DELIVERY time, even
+                    // though the manager already made the explicit
+                    // override decision at SCHEDULING time. Surface in
+                    // the audit trail of the scheduled doc.
+                    ...(notifyAnyway ? { forceDeliver: true } : {}),
                 },
             });
             setDraft('');
             setReplyTarget(null);
+            setNotifyAnyway(false);
             setShowScheduleModal(false);
             toast(tx('Scheduled', 'Programado'), { kind: 'success' });
         } catch (e) {
@@ -3061,11 +3096,11 @@ function SeenBySheet({
 }) {
     const tx = (en, es) => (isEs ? es : en);
 
-    // Who can nudge? Manager / app admin / chat co-admin. (Staff
-    // shouldn't be able to send arbitrary pushes at coworkers.)
-    const canNudge = (isAdmin || isManager
-        || (Array.isArray(chat?.admins) && viewer?.name && chat.admins.includes(viewer.name)))
-        && message.senderName === viewer?.name || isAdmin || isManager;
+    // Who can nudge? Manager / app admin / chat co-admin. Staff
+    // shouldn't be able to send arbitrary pushes at coworkers.
+    // (handleNudge in ChatThread also enforces this server-write
+    // side — belt-and-suspenders, since the audit log captures every
+    // nudge by actor.)
     const nudgeAllowed = isAdmin || isManager
         || (Array.isArray(chat?.admins) && viewer?.name && chat.admins.includes(viewer.name));
 
