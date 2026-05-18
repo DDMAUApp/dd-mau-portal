@@ -108,9 +108,28 @@ export default function ChatSearchPanel({
 
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-stretch md:items-center justify-center" onClick={onClose}>
-            <div className="bg-white w-full md:max-w-lg md:rounded-2xl md:max-h-[88vh] h-full md:h-auto flex flex-col shadow-xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
-                <div className="px-4 py-3 border-b border-dd-line flex items-center gap-3 shrink-0">
-                    <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg">←</button>
+            {/* Container — full-screen on mobile (h-full bounded between
+                top: 0 and bottom: 0), modal-sized on md+.  Padding-bottom
+                accounts for the iPhone home indicator so the result list
+                doesn't slide under it on devices with a long swipe-bar.
+                Andrew (2026-05-17): "the search bar is too high and the
+                back arrow is un reachable" — was caused by the header
+                having no env(safe-area-inset-top) padding, so on iPhone
+                X+ the ← button and the input were both sitting under
+                the notch / status bar. Added the safe-area inline style
+                on the header below to push it clear. */}
+            <div
+                className="bg-white w-full md:max-w-lg md:rounded-2xl md:max-h-[88vh] h-full md:h-auto flex flex-col shadow-xl overflow-hidden"
+                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="px-4 py-3 border-b border-dd-line flex items-center gap-3 shrink-0"
+                     style={{ paddingTop: 'calc(env(safe-area-inset-top) + 0.75rem)' }}>
+                    <button onClick={onClose}
+                        className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg shrink-0"
+                        aria-label={tx('Back', 'Atrás')}>
+                        ←
+                    </button>
                     <input
                         type="search"
                         value={q}
@@ -158,7 +177,19 @@ export default function ChatSearchPanel({
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto">
+                {/* Result list — same overscroll-contain + touch-action
+                    pattern as NotificationsDrawer so pull-down past
+                    the top of the list doesn't bleed into the page
+                    underneath and trigger iOS pull-to-refresh / the
+                    chunk-reload safety net. */}
+                <div
+                    className="flex-1 min-h-0 overflow-y-auto"
+                    style={{
+                        overscrollBehavior: 'contain',
+                        WebkitOverflowScrolling: 'touch',
+                        touchAction: 'pan-y',
+                    }}
+                >
                     {allResults.length === 0 ? (
                         <div className="p-8 text-center text-sm text-dd-text-2">
                             {q.trim()
