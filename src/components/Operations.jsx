@@ -2731,6 +2731,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 } catch (err) { console.error("Error updating inventory (legacy):", err); }
             };
 
+            // Insert `merged` into an items array adjacent to the LAST item
+            // that shares its subcat. If no sibling exists, append. Used by
+            // cross-category move (saveInvEdit + dropMovingItem) so a moved
+            // item lands inside the matching subcategory bucket instead of
+            // at the bottom of the destination category. See saveInvEdit
+            // comment for the "chicken bone → Chicken" case that motivated
+            // this. The merged item's subcat must already be set by caller.
+            const insertNearSameSubcat = (items, merged) => {
+                const targetSub = (merged.subcat || '').trim();
+                let lastIdx = -1;
+                for (let i = 0; i < items.length; i++) {
+                    if ((items[i].subcat || '').trim() === targetSub) lastIdx = i;
+                }
+                if (lastIdx === -1) return [...items, merged]; // no sibling, append
+                return [...items.slice(0, lastIdx + 1), merged, ...items.slice(lastIdx + 1)];
+            };
+
             // Build a fresh ID that won't collide with anything currently in the category,
             // even when existing items have malformed IDs (no "-", non-numeric suffix, etc.).
             const nextItemId = (category, catIdx) => {
@@ -2810,7 +2827,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             : cat
                     ));
                 } else {
-                    // Cross-category move — remove from source, push to dest.
+                    // Cross-category move — remove from source, insert into
+                    // dest *adjacent to* existing items with the same subcat.
+                    //
+                    // Why not just append: when you move "chicken bone" to
+                    // Proteins ▸ Chicken, you want it next to the other
+                    // Chicken items, not at the end of Proteins. Appending
+                    // worked fine functionally but produced ugly storage —
+                    // and (before the grouping fix above) caused a phantom
+                    // second "Chicken" group to render. The grouping fix
+                    // makes display correct regardless, but tidy storage
+                    // helps Print, CSV exports, and any future consumer
+                    // that walks the array in order.
                     await mutateInventory((live) => {
                         const sourceItem = (live[catIdx]?.items || []).find(it => it.id === targetId);
                         if (!sourceItem) return live; // nothing to move
@@ -2820,7 +2848,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 return { ...cat, items: cat.items.filter(it => it.id !== targetId) };
                             }
                             if (cIdx === destCatIdx) {
-                                return { ...cat, items: [...cat.items, merged] };
+                                return { ...cat, items: insertNearSameSubcat(cat.items, merged) };
                             }
                             return cat;
                         });
@@ -2858,13 +2886,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 : cat
                         );
                     }
-                    // Cross-category: pull from source, append to dest.
+                    // Cross-category: pull from source, insert into dest
+                    // adjacent to existing same-subcat items (see saveInvEdit
+                    // for the rationale — keeps the storage order tidy so
+                    // the moved item shows up under the existing subcategory
+                    // header rather than tacked onto the end of the category).
                     return live.map((cat, ci) => {
                         if (ci === fromCatIdx) {
                             return { ...cat, items: cat.items.filter(it => it.id !== id) };
                         }
                         if (ci === destCatIdx) {
-                            return { ...cat, items: [...cat.items, merged] };
+                            return { ...cat, items: insertNearSameSubcat(cat.items, merged) };
                         }
                         return cat;
                     });
@@ -5184,17 +5216,31 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     itemIdxByIdInCat.set(category.items[i].id, i);
                                 }
 
-                                // Group by subcategory
-                                const subcats = [];
-                                let currentSub = null;
+                                // Group by subcategory.
+                                //
+                                // Bug fix (Andrew 2026-05-17 — "i tried to move
+                                // the chicken bone to chicken and it didnt
+                                // work"): we used to walk items in order and
+                                // open a NEW group every time `subcat` changed.
+                                // So a category whose items were [Beef, Chicken,
+                                // Chicken, Pork, Chicken-bone-just-moved-here]
+                                // rendered as four groups: Beef / Chicken (2) /
+                                // Pork / Chicken (1). The moved item appeared
+                                // under a *second* "Chicken" header instead of
+                                // merging into the existing one — making moves
+                                // look broken even though the data was fine.
+                                //
+                                // Use a Map keyed by subcat name so same-named
+                                // groups collapse together regardless of how
+                                // the items are interleaved in storage. First-
+                                // appearance order is preserved.
+                                const subcatMap = new Map();
                                 filteredItems.forEach(item => {
                                     const sub = item.subcat || "";
-                                    if (sub !== currentSub) {
-                                        subcats.push({ name: sub, items: [] });
-                                        currentSub = sub;
-                                    }
-                                    subcats[subcats.length - 1].items.push(item);
+                                    if (!subcatMap.has(sub)) subcatMap.set(sub, []);
+                                    subcatMap.get(sub).push(item);
                                 });
+                                const subcats = Array.from(subcatMap, ([name, items]) => ({ name, items }));
 
                                 return (
                                 <div key={catIdx} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
