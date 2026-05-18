@@ -242,6 +242,11 @@ export function previewOf(msg) {
     if (msg.type === 'video') return who + '🎬 Video';
     if (msg.type === 'audio') return who + '🎤 Voice message';
     if (msg.type === 'poll') return who + '📊 ' + (msg.poll?.question || 'Poll');
+    if (msg.type === 'eighty_six_alert') {
+        const d = msg.eightySixData || {};
+        const prefix = d.transition === 'in' ? '✅ Back in stock' : '🚫 86';
+        return who + `${prefix}: ${d.itemName || 'item'}`;
+    }
     if (msg.type === 'system') return msg.text || '';
     const t = (msg.text || '').replace(/\s+/g, ' ').trim();
     return who + (t.length > 60 ? t.slice(0, 57) + '…' : t);

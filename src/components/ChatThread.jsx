@@ -31,6 +31,8 @@ import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
 import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen } from '../data/chat';
 import { offShiftMembers } from '../data/offShift';
+import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { postEightySixToChat } from '../data/eightySixChat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
@@ -46,6 +48,7 @@ const ChatTaskFromMessageModal = lazy(() => import('./ChatTaskFromMessageModal')
 const ChatPollModal = lazy(() => import('./ChatPollModal'));
 const ChatScheduleModal = lazy(() => import('./ChatScheduleModal'));
 const ChatEmojiPicker = lazy(() => import('./ChatEmojiPicker'));
+const ChatEightySixModal = lazy(() => import('./ChatEightySixModal'));
 
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this
@@ -183,6 +186,8 @@ export default function ChatThread({
     const [showPollModal, setShowPollModal] = useState(false);
     const [pollSubmitting, setPollSubmitting] = useState(false);
     const [showScheduleModal, setShowScheduleModal] = useState(false);
+    const [show86Modal, setShow86Modal] = useState(false);
+    const [posting86, setPosting86] = useState(false);
     // "Notify anyway" — when ON, the next message bypasses the
     // server's off-shift gate (notif.forceDeliver=true). User has
     // to flip it for each message; we don't make it sticky because
@@ -789,6 +794,159 @@ export default function ChatThread({
         }
     }
 
+    // ── 86 alerts (compose + resolve) ────────────────────────────
+    // Post an `eighty_six_alert` message into the current chat AND
+    // sync to the live 86 list at /ops/86_{location}. That doc is
+    // already subscribed everywhere (Home tile, sidebar pip,
+    // Eighty6Dashboard) so a single write surfaces the item in every
+    // 86 view. Audit + FCM fan-out flow through postEightySixToChat
+    // (its name is misleading — it doesn't write a chat doc anymore,
+    // just audit + push to on-duty FOH staff).
+    async function handlePost86({ itemName, location, note }) {
+        if (!itemName || !location || posting86) return;
+        setPosting86(true);
+        try {
+            // 1. Send the chat message — the EightySixCard renders
+            //    from message.eightySixData so we pack everything
+            //    needed into that field.
+            await sendMessage({
+                chat, staffName, viewer, staffList,
+                type: 'eighty_six_alert',
+                text: `🚫 86: ${itemName}${note ? ` — ${note}` : ''}`,
+                eightySixData: {
+                    itemName,
+                    location,
+                    note: note || '',
+                    transition: 'out',
+                    addedBy: staffName,
+                    resolved: false,
+                },
+            });
+
+            // 2. Update /ops/86_{location} — append to the items
+            //    array if not already present. Uses setDoc(merge) +
+            //    a read-modify-write so we don't clobber other
+            //    fields on the doc.
+            try {
+                const ref = doc(db, 'ops', `86_${location}`);
+                const snap = await getDoc(ref);
+                const cur = snap.exists() ? (snap.data().items || []) : [];
+                const norm = itemName.trim().toLowerCase();
+                const exists = cur.some(it => String(it?.name || '').trim().toLowerCase() === norm);
+                if (!exists) {
+                    const nextItems = [
+                        ...cur,
+                        {
+                            name: itemName,
+                            status: 'OUT_OF_STOCK',
+                            addedBy: staffName,
+                            addedAt: new Date().toISOString(),
+                            source: 'chat',
+                        },
+                    ];
+                    await setDoc(ref, { items: nextItems, updatedAt: serverTimestamp() }, { merge: true });
+                }
+            } catch (e) {
+                // Non-fatal — the chat message + push already went
+                // out. Surface a warn so the dashboard sync issue is
+                // visible without aborting the alert.
+                console.warn('86 list sync failed:', e);
+            }
+
+            // 3. FCM fan-out + audit. notifyRecipients is the chat's
+            //    member list minus the sender — matches the existing
+            //    Eighty6Dashboard fan-out behavior at a smaller
+            //    scope. (Dashboard fan-out is location-wide; chat
+            //    fan-out is chat-wide. Caller's choice.)
+            const recipients = (chat?.members || []).filter(n => n && n !== staffName);
+            await postEightySixToChat({
+                location,
+                itemName,
+                transition: 'out',
+                actorName: staffName,
+                actorId: viewer?.id,
+                notifyRecipients: recipients,
+            });
+
+            setShow86Modal(false);
+            toast(tx('86 posted', '86 publicado'), { kind: 'success' });
+        } catch (e) {
+            console.warn('86 post failed:', e);
+            toast(tx('Could not post 86', 'No se pudo publicar 86'), { kind: 'error' });
+        } finally {
+            setPosting86(false);
+        }
+    }
+
+    // Mark a previously-86'd item back in stock. Manager + the
+    // original poster can resolve; the button only renders for
+    // those viewers (see EightySixCard render). We:
+    //   1. Patch the source message: eightySixData.resolved = true
+    //      + resolvedBy/resolvedAt (so the card flips to its muted
+    //      "Back in Stock" treatment)
+    //   2. Remove the item from /ops/86_{location}.items
+    //   3. Post a new eighty_six_alert with transition='in' so the
+    //      team sees a fresh "back in stock" bubble
+    async function handleResolve86(message) {
+        if (!message?.id) return;
+        const data = message.eightySixData || {};
+        const itemName = data.itemName;
+        const location = data.location;
+        if (!itemName || !location) return;
+        // Permission check: manager OR original poster
+        if (!isAdmin && !isManager && message.senderName !== staffName) return;
+
+        try {
+            // 1. Patch the source 86 message
+            await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
+                'eightySixData.resolved': true,
+                'eightySixData.resolvedBy': staffName,
+                'eightySixData.resolvedAt': serverTimestamp(),
+            });
+
+            // 2. Update the live 86 list — drop the item.
+            try {
+                const ref = doc(db, 'ops', `86_${location}`);
+                const snap = await getDoc(ref);
+                if (snap.exists()) {
+                    const cur = snap.data().items || [];
+                    const norm = itemName.trim().toLowerCase();
+                    const next = cur.filter(it => String(it?.name || '').trim().toLowerCase() !== norm);
+                    if (next.length !== cur.length) {
+                        await setDoc(ref, { items: next, updatedAt: serverTimestamp() }, { merge: true });
+                    }
+                }
+            } catch (e) {
+                console.warn('86 list resolve sync failed:', e);
+            }
+
+            // 3. Post a fresh "back in stock" message
+            await sendMessage({
+                chat, staffName, viewer, staffList,
+                type: 'eighty_six_alert',
+                text: `✅ Back in stock: ${itemName}`,
+                eightySixData: {
+                    itemName,
+                    location,
+                    transition: 'in',
+                    addedBy: staffName,
+                },
+            });
+
+            await postEightySixToChat({
+                location,
+                itemName,
+                transition: 'in',
+                actorName: staffName,
+                actorId: viewer?.id,
+                notifyRecipients: (chat?.members || []).filter(n => n && n !== staffName),
+            });
+        } catch (e) {
+            console.warn('86 resolve failed:', e);
+            toast(tx('Could not resolve', 'No se pudo resolver'), { kind: 'error' });
+        }
+    }
+
     // ── Scheduled send ────────────────────────────────────────────
     // Stash the draft (+ any reply target / poll) into /scheduled_messages
     // with a future sendAt. A Cloud Function (sendScheduledChatMessages)
@@ -999,6 +1157,7 @@ export default function ChatThread({
                                     onWithdrawCoverage={() => handleWithdrawCoverage(msg)}
                                     onVote={(optionId) => handleVote(msg, optionId)}
                                     onClosePoll={() => handleClosePoll(msg)}
+                                    onResolve86={() => handleResolve86(msg)}
                                     onJumpToReply={(targetId) => {
                                         if (!targetId) return;
                                         setHighlightMsgId(targetId);
@@ -1115,6 +1274,7 @@ export default function ChatThread({
                 onCancelRecording={() => stopRecording(true)}
                 onOpenPoll={() => setShowPollModal(true)}
                 onOpenSchedule={() => setShowScheduleModal(true)}
+                onOpen86={() => setShow86Modal(true)}
                 recordStartMs={recordStartRef.current}
             />
 
@@ -1142,6 +1302,20 @@ export default function ChatThread({
                 </Suspense>
             )}
 
+            {/* ── 86 modal ────────────────────────────────────── */}
+            {show86Modal && (
+                <Suspense fallback={null}>
+                    <ChatEightySixModal
+                        language={language}
+                        viewer={viewer}
+                        inventory={INVENTORY_CATEGORIES}
+                        busy={posting86}
+                        onClose={() => setShow86Modal(false)}
+                        onPost={handlePost86}
+                    />
+                </Suspense>
+            )}
+
             {/* ── Scheduled-list drawer ──────────────────────── */}
             {showScheduledDrawer && (
                 <ScheduledListDrawer
@@ -1162,7 +1336,7 @@ function MessageBubble({
     targetLang, autoTranslate,
     onReact, onReply, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
-    onVote, onClosePoll, onJumpToReply,
+    onVote, onClosePoll, onResolve86, onJumpToReply,
 }) {
     const tx = (en, es) => (isEs ? es : en);
     const [showActions, setShowActions] = useState(false);  // long-press menu
@@ -1280,7 +1454,24 @@ function MessageBubble({
     if (message.type === 'eighty_six_alert') {
         return (
             <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
-                <EightySixCard message={message} isEs={isEs} />
+                <EightySixCard
+                    message={message}
+                    isEs={isEs}
+                    staffName={staffName}
+                    isAdmin={isAdmin}
+                    isManager={isManager}
+                    onResolve={onResolve86}
+                    onLongPress={() => setShowActions(true)}
+                />
+                {showActions && (
+                    <MessageActionMenu
+                        message={message} chat={chat} isMine={isMine} viewer={viewer}
+                        isAdmin={isAdmin} isManager={isManager} isEs={isEs}
+                        onClose={() => setShowActions(false)}
+                        onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
+                        onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                    />
+                )}
             </div>
         );
     }
@@ -1617,7 +1808,7 @@ function Composer({
     offShiftRecipients = [], notifyAnyway = false, onToggleNotifyAnyway,
     onSendText, onPickImage, onPickVideo,
     onStartRecording, onStopRecording, onCancelRecording,
-    onOpenPoll, onOpenSchedule,
+    onOpenPoll, onOpenSchedule, onOpen86,
     recordStartMs,
 }) {
     const imageInputRef = useRef(null);
@@ -1818,6 +2009,21 @@ function Composer({
                         📊
                     </button>
                 )}
+                {/* 86 alert — out of stock. Bright red ring on hover
+                    so it visually stands apart from neutral actions
+                    (this is destructive/operational, not a neutral
+                    media insert). */}
+                {onOpen86 && (
+                    <button
+                        onClick={onOpen86}
+                        disabled={sending}
+                        className="w-10 h-10 rounded-full hover:bg-red-50 hover:text-red-700 flex items-center justify-center text-xl shrink-0 disabled:opacity-40 transition"
+                        aria-label={isEs ? 'Marcar 86' : 'Post 86'}
+                        title={isEs ? '86 — sin existencia' : '86 — out of stock'}
+                    >
+                        🚫
+                    </button>
+                )}
                 {/* Emoji picker — restaurant-themed catalog + recent
                     row. Tapping toggles the picker; the picker itself
                     inserts the chosen emoji at the cursor via
@@ -1907,7 +2113,7 @@ async function sendMessage({
     chat, staffName, viewer, staffList,
     type, text = '', mediaUrl, mediaPath, mediaType,
     duration, width, height, thumbnailUrl,
-    replyTo, poll, forceDeliver = false,
+    replyTo, poll, eightySixData, forceDeliver = false,
 }) {
     if (!chat?.id) return;
     const { mentions } = parseMentions(text, staffList);
@@ -1927,6 +2133,7 @@ async function sendMessage({
     // from the modal; Firestore will store it as a Timestamp via the
     // SDK's automatic Date→Timestamp coercion.
     const pollField = (poll && Array.isArray(poll.options) && poll.options.length >= 2) ? { poll } : {};
+    const eightySixField = (eightySixData && typeof eightySixData === 'object') ? { eightySixData } : {};
     const msgDoc = {
         senderName: staffName,
         senderId: viewer?.id || null,
@@ -1939,6 +2146,7 @@ async function sendMessage({
         ...(thumbnailUrl ? { thumbnailUrl } : {}),
         ...replyToField,
         ...pollField,
+        ...eightySixField,
         reactions: {},
         mentions,
         createdAt: serverTimestamp(),
@@ -1951,7 +2159,9 @@ async function sendMessage({
         : type === 'video' ? '🎬 Video'
         : type === 'audio' ? '🎤 Voice'
         : type === 'poll' ? `📊 ${poll?.question || 'Poll'}`
-        : text;
+        : type === 'eighty_six_alert'
+            ? `${eightySixData?.transition === 'in' ? '✅ Back in stock' : '🚫 86'}: ${eightySixData?.itemName || 'item'}`
+            : text;
     try {
         await updateDoc(doc(db, 'chats', chat.id), {
             lastMessage: {
@@ -2251,30 +2461,96 @@ function CoverageCard({
     );
 }
 
-function EightySixCard({ message, isEs }) {
+function EightySixCard({ message, isEs, staffName, isAdmin, isManager, onResolve, onLongPress }) {
     const tx = (en, es) => isEs ? es : en;
     const data = message.eightySixData || {};
     const isOut = data.transition === 'out';
+    // A previously-86'd item has been brought back in stock —
+    // visually demote the card so the active 86s stand apart from
+    // the historical "resolved" ones in the thread.
+    const isResolved = data.resolved === true || data.transition === 'in';
+
+    // Manager / admin / the original poster can flip an 86 back to
+    // "in stock". Resolve button shows only on an UNRESOLVED OUT
+    // alert — once resolved or once it's a transition='in' bubble,
+    // we never need to flip it again.
+    const canResolve = isOut && !isResolved
+        && (isAdmin || isManager || message.senderName === staffName);
+
+    // Long-press → action menu (react/reply/pin/copy/delete).
+    const longPressTimer = useRef(null);
+    function startLongPress() {
+        longPressTimer.current = setTimeout(() => onLongPress?.(), 400);
+    }
+    function endLongPress() {
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    }
+
+    const resolvedAtMs = data.resolvedAt?.toMillis ? data.resolvedAt.toMillis()
+        : (data.resolvedAt?.seconds ? data.resolvedAt.seconds * 1000 : 0);
+    const resolvedWhen = resolvedAtMs ? new Date(resolvedAtMs).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
+
     return (
-        <div className={`rounded-xl overflow-hidden border-2 ${isOut ? 'border-red-300 bg-red-50' : 'border-dd-green/40 bg-dd-sage-50'} shadow-card`}>
-            <div className={`px-4 py-2 flex items-center gap-2 border-b ${isOut ? 'bg-red-200 border-red-300' : 'bg-dd-green/15 border-dd-green/40'}`}>
-                <span className="text-base">{isOut ? '🚫' : '✅'}</span>
-                <span className={`text-[11px] font-black uppercase tracking-widest flex-1 ${isOut ? 'text-red-900' : 'text-dd-green-700'}`}>
+        <div
+            onTouchStart={startLongPress}
+            onTouchEnd={endLongPress}
+            onTouchCancel={endLongPress}
+            onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
+            className={`rounded-xl overflow-hidden border-2 shadow-card transition ${isResolved
+                ? 'border-dd-line bg-dd-bg/70 opacity-80'
+                : (isOut
+                    ? 'border-red-300 bg-red-50'
+                    : 'border-dd-green/40 bg-dd-sage-50')}`}
+        >
+            <div className={`px-4 py-2 flex items-center gap-2 border-b ${isResolved
+                ? 'bg-dd-line/40 border-dd-line'
+                : (isOut
+                    ? 'bg-red-200 border-red-300'
+                    : 'bg-dd-green/15 border-dd-green/40')}`}>
+                <span className="text-base">{isResolved ? '✅' : (isOut ? '🚫' : '✅')}</span>
+                <span className={`text-[11px] font-black uppercase tracking-widest flex-1 ${isResolved
+                    ? 'text-dd-text-2 line-through'
+                    : (isOut ? 'text-red-900' : 'text-dd-green-700')}`}>
                     {isOut ? tx('86 Alert', 'Alerta 86') : tx('Back in Stock', 'En existencia')}
                 </span>
+                {isResolved && (
+                    <span className="text-[10px] font-bold text-dd-green-700 px-1.5 py-0.5 rounded-full bg-dd-sage-50">
+                        ✓ {tx('resolved', 'resuelto')}
+                    </span>
+                )}
             </div>
             <div className="px-4 py-3">
-                <div className="text-base font-black text-dd-text">{data.itemName}</div>
+                <div className={`text-base font-black ${isResolved ? 'text-dd-text-2 line-through' : 'text-dd-text'}`}>
+                    {data.itemName}
+                </div>
                 <div className="text-xs text-dd-text-2 mt-0.5">
                     {data.location === 'maryland' ? 'Maryland Heights' : 'Webster'}
                     {data.attributedTo && (
                         <span> · {tx('last by', 'último por')} {data.attributedTo}</span>
                     )}
                 </div>
-                {isOut && (
+                {data.note && !isResolved && (
+                    <div className="text-xs text-dd-text-2 mt-1 italic">"{data.note}"</div>
+                )}
+                {isOut && !isResolved && (
                     <p className="mt-2 text-xs text-red-700 font-bold">
                         {tx('Stop ringing it up — let guests know.', 'Dejen de cobrarlo — avisen a los huéspedes.')}
                     </p>
+                )}
+                {isResolved && (
+                    <p className="mt-2 text-[11px] text-dd-text-2">
+                        {tx('Marked back in stock', 'Marcado de vuelta')}
+                        {data.resolvedBy && ` ${tx('by', 'por')} ${data.resolvedBy}`}
+                        {resolvedWhen && ` · ${resolvedWhen}`}
+                    </p>
+                )}
+                {canResolve && (
+                    <button
+                        onClick={onResolve}
+                        className="mt-3 w-full px-3 py-2 rounded-lg bg-dd-green text-white font-bold text-sm hover:bg-dd-green-700 active:scale-[0.98] transition"
+                    >
+                        ✅ {tx('Mark back in stock', 'Marcar de vuelta')}
+                    </button>
                 )}
             </div>
         </div>
