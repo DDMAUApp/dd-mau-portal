@@ -137,6 +137,7 @@ exports.dispatchNotification = onDocumentCreated(
         // are operationally urgent or directly addressed.
         const ALWAYS_DELIVER_TYPES = new Set([
             "chat_mention",            // @-tagged, directly addressed
+            "chat_nudge",              // manager explicitly reminding YOU to read
             "eighty_six_alert",        // operational emergency
             "photo_issue",             // operational
             "shift_reminder_1h",       // your own shift

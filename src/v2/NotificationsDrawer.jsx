@@ -101,6 +101,7 @@ const KIND_META = {
     // Chat
     chat_message:           { icon: '💬', tone: 'bg-dd-green-50 text-dd-green-700' },
     chat_mention:           { icon: '📣', tone: 'bg-amber-50 text-amber-800' },
+    chat_nudge:             { icon: '⏰', tone: 'bg-dd-sage-50 text-dd-green-700' },
     // 86 board
     eighty_six_alert:       { icon: '🚫', tone: 'bg-red-50 text-red-700' },
     // Catering + invoice

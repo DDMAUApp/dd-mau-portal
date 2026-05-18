@@ -781,6 +781,82 @@ export default function ChatThread({
         }
     }
 
+    // ── Nudge (manager → unread reader) ───────────────────────────
+    // Manager taps "Nudge" on a row in the SeenBySheet's "Not yet
+    // seen" list. We fire a fresh chat_nudge notification at that
+    // staff member with forceDeliver=true so the off-shift gate is
+    // bypassed (the act of nudging IS the explicit override — the
+    // manager has made a deliberate call to reach this person now).
+    //
+    // The push body names the manager + the chat so the receiver
+    // knows who's waiting on them ("Andrew is waiting on your read in
+    // #foh-webster"). Tap deep-links into the chat, jumps to the
+    // specific message via jumpToMessageId.
+    //
+    // Audit row per nudge for accountability.
+    async function handleNudge(message, targetName) {
+        if (!message?.id || !targetName) return;
+        // Permission check — manager / admin / chat co-admin only.
+        if (!isAdmin && !isManager
+            && !(Array.isArray(chat?.admins) && chat.admins.includes(staffName))) {
+            return;
+        }
+        if (targetName === staffName) return; // no self-nudge
+
+        const chatLabel = chat?.type === 'dm' ? staffName : (chat?.name || 'Chat');
+        try {
+            await notifyStaff({
+                forStaff: targetName,
+                type: 'chat_nudge',
+                title: '⏰ ' + tx('Reminder', 'Recordatorio'),
+                body: tx(
+                    `${staffName} is waiting on your read in ${chatLabel}`,
+                    `${staffName} espera tu lectura en ${chatLabel}`,
+                ),
+                deepLink: 'chat',
+                link: '/chat',
+                // tag includes the message id so multiple nudges on
+                // DIFFERENT messages don't collapse, but RE-nudging
+                // the same message replaces the previous OS toast.
+                tag: `chat_nudge:${chat.id}:${message.id}:${targetName}`,
+                priority: 'high',
+                forceDeliver: true,
+                createdBy: staffName,
+            });
+            recordAudit({
+                action: 'chat.nudge.send',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'staff',
+                targetId: targetName,
+                details: {
+                    chatId: chat.id,
+                    messageId: message.id,
+                    chatLabel,
+                },
+            });
+        } catch (e) {
+            console.warn(`nudge failed for ${targetName}:`, e);
+            toast(tx('Nudge failed', 'Error al recordar'), { kind: 'error' });
+        }
+    }
+
+    // Bulk-nudge every unread reader. Used by "Nudge all" in the
+    // SeenBySheet header. Sequential awaits (not Promise.all) so a
+    // failure on one push doesn't abort the rest — each notifyStaff
+    // already swallows its own errors, but explicit sequencing makes
+    // the audit log readable in order.
+    async function handleNudgeAll(message, targetNames) {
+        if (!message?.id || !Array.isArray(targetNames) || targetNames.length === 0) return;
+        for (const name of targetNames) {
+            await handleNudge(message, name);
+        }
+        toast(
+            tx(`Nudged ${targetNames.length}`, `${targetNames.length} recordados`),
+            { kind: 'success' }
+        );
+    }
+
     // Close a poll. Only the creator or admin can close.
     async function handleClosePoll(message) {
         if (!message?.id) return;
@@ -1158,6 +1234,8 @@ export default function ChatThread({
                                     onVote={(optionId) => handleVote(msg, optionId)}
                                     onClosePoll={() => handleClosePoll(msg)}
                                     onResolve86={() => handleResolve86(msg)}
+                                    onNudge={(targetName) => handleNudge(msg, targetName)}
+                                    onNudgeAll={(targetNames) => handleNudgeAll(msg, targetNames)}
                                     onJumpToReply={(targetId) => {
                                         if (!targetId) return;
                                         setHighlightMsgId(targetId);
@@ -1336,7 +1414,7 @@ function MessageBubble({
     targetLang, autoTranslate,
     onReact, onReply, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
-    onVote, onClosePoll, onResolve86, onJumpToReply,
+    onVote, onClosePoll, onResolve86, onNudge, onNudgeAll, onJumpToReply,
 }) {
     const tx = (en, es) => (isEs ? es : en);
     const [showActions, setShowActions] = useState(false);  // long-press menu
@@ -1702,7 +1780,12 @@ function MessageBubble({
                     seenBy={seenBy}
                     chat={chat}
                     message={message}
+                    viewer={viewer}
+                    isAdmin={isAdmin}
+                    isManager={isManager}
                     isEs={isEs}
+                    onNudge={onNudge}
+                    onNudgeAll={onNudgeAll}
                     onClose={() => setShowSeenBy(false)}
                 />
             )}
@@ -2965,8 +3048,54 @@ function relativeTime(ms, isEs) {
 // Sender excluded server-side (in getSeenByForMessage). On a DM with
 // only the other person listed, this renders "Seen at HH:MM" — on a
 // group, a scrollable list of readers, most-recent last.
-function SeenBySheet({ seenBy, chat, message, isEs, onClose }) {
+//
+// Manager affordance: a "Nudge" button on each unread row + a
+// "Nudge all" header button. Nudging fires a chat_nudge notification
+// at the target staff member (forceDeliver=true, bypasses off-shift
+// gate — the manager has made an explicit call). Per-row state
+// tracks who was just nudged so the button flips to "✓ Nudged" for
+// 30 seconds and disables, preventing accidental spam-tapping.
+function SeenBySheet({
+    seenBy, chat, message, viewer, isAdmin, isManager, isEs,
+    onNudge, onNudgeAll, onClose,
+}) {
     const tx = (en, es) => (isEs ? es : en);
+
+    // Who can nudge? Manager / app admin / chat co-admin. (Staff
+    // shouldn't be able to send arbitrary pushes at coworkers.)
+    const canNudge = (isAdmin || isManager
+        || (Array.isArray(chat?.admins) && viewer?.name && chat.admins.includes(viewer.name)))
+        && message.senderName === viewer?.name || isAdmin || isManager;
+    const nudgeAllowed = isAdmin || isManager
+        || (Array.isArray(chat?.admins) && viewer?.name && chat.admins.includes(viewer.name));
+
+    // Per-row recently-nudged state. After tapping, the row's button
+    // flips to "✓ Nudged" + disables for 30s to prevent spam taps.
+    // Tracking is a Set in state — single re-render per add/remove.
+    const [recentlyNudged, setRecentlyNudged] = useState(() => new Set());
+    function markNudged(name) {
+        setRecentlyNudged(prev => {
+            const next = new Set(prev);
+            next.add(name);
+            return next;
+        });
+        setTimeout(() => {
+            setRecentlyNudged(prev => {
+                if (!prev.has(name)) return prev;
+                const next = new Set(prev);
+                next.delete(name);
+                return next;
+            });
+        }, 30_000);
+    }
+
+    function nudgeOne(name) {
+        if (!nudgeAllowed) return;
+        if (recentlyNudged.has(name)) return;
+        onNudge?.(name);
+        markNudged(name);
+    }
+
     const fmtTime = (ms) => {
         if (!ms) return '';
         const d = new Date(ms);
@@ -2987,13 +3116,19 @@ function SeenBySheet({ seenBy, chat, message, isEs, onClose }) {
     // anyone already in `seenBy`.
     const seenNames = new Set(seenBy.map(r => r.name));
     const notSeen = members.filter(n => n !== senderName && !seenNames.has(n));
+
+    // "Nudge all" target list — everyone in not-yet-seen that we
+    // haven't already nudged in the last 30s. The button is hidden
+    // when this list is empty (nothing left to nudge).
+    const nudgeAllTargets = notSeen.filter(n => !recentlyNudged.has(n));
+
     return (
         <>
             <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
-            <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[420px] sm:max-w-[92vw] z-50 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[80vh] flex flex-col"
+            <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[460px] sm:max-w-[92vw] z-50 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[80vh] flex flex-col"
                 style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
-                <header className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
-                    <div>
+                <header className="px-4 py-3 border-b border-dd-line flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
                         <h2 className="text-base font-bold text-dd-text">
                             {tx('Seen by', 'Visto por')}
                         </h2>
@@ -3002,8 +3137,26 @@ function SeenBySheet({ seenBy, chat, message, isEs, onClose }) {
                             {notSeen.length > 0 && ` · ${notSeen.length} ${tx('not yet', 'pendiente(s)')}`}
                         </p>
                     </div>
+                    {/* Nudge-all button — visible to managers only when
+                        there's at least one un-nudged unread person.
+                        Sends a fresh chat_nudge push at every name in
+                        the unread list with a 30s recently-nudged
+                        cooldown per name to prevent spam. */}
+                    {nudgeAllowed && nudgeAllTargets.length > 0 && (
+                        <button
+                            onClick={() => {
+                                onNudgeAll?.(nudgeAllTargets);
+                                nudgeAllTargets.forEach(markNudged);
+                            }}
+                            className="px-2.5 py-1.5 rounded-full bg-dd-green text-white text-[11px] font-black shadow-sm hover:bg-dd-green-700 active:scale-95 transition shrink-0"
+                            title={tx('Send a reminder push to everyone who hasn\'t read this',
+                                       'Enviar recordatorio a quienes no han leído')}
+                        >
+                            ⏰ {tx(`Nudge ${nudgeAllTargets.length}`, `Recordar ${nudgeAllTargets.length}`)}
+                        </button>
+                    )}
                     <button onClick={onClose}
-                        className="w-9 h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:scale-95 text-lg transition"
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:scale-95 text-lg transition shrink-0"
                         aria-label={tx('Close', 'Cerrar')}>
                         ×
                     </button>
@@ -3033,17 +3186,37 @@ function SeenBySheet({ seenBy, chat, message, isEs, onClose }) {
                                     {tx('Not yet seen', 'Aún no visto')}
                                 </li>
                             )}
-                            {notSeen.map((name) => (
-                                <li key={`ns-${name}`} className="px-4 py-2.5 flex items-center gap-3 opacity-60">
-                                    <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-[11px] font-black shrink-0 border border-dd-line">
-                                        {(name || '?').split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}
-                                    </span>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="text-sm font-bold text-dd-text truncate">{name}</div>
-                                        <div className="text-[11px] text-dd-text-2">{tx('Not yet', 'Pendiente')}</div>
-                                    </div>
-                                </li>
-                            ))}
+                            {notSeen.map((name) => {
+                                const wasNudged = recentlyNudged.has(name);
+                                return (
+                                    <li key={`ns-${name}`} className="px-4 py-2.5 flex items-center gap-3">
+                                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-[11px] font-black shrink-0 border border-dd-line">
+                                            {(name || '?').split(' ').map(p => p[0]).slice(0, 2).join('').toUpperCase()}
+                                        </span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-bold text-dd-text truncate">{name}</div>
+                                            <div className="text-[11px] text-dd-text-2">
+                                                {wasNudged
+                                                    ? tx('Nudged just now', 'Recordado ahora')
+                                                    : tx('Not yet', 'Pendiente')}
+                                            </div>
+                                        </div>
+                                        {nudgeAllowed && (
+                                            <button
+                                                onClick={() => nudgeOne(name)}
+                                                disabled={wasNudged}
+                                                className={`shrink-0 px-2.5 py-1 rounded-full text-[11px] font-bold transition ${wasNudged
+                                                    ? 'bg-dd-sage-50 text-dd-green-700 cursor-default'
+                                                    : 'bg-dd-bg text-dd-text-2 border border-dd-line hover:bg-dd-green hover:text-white hover:border-dd-green active:scale-95'}`}
+                                                title={tx('Send a reminder push to this person',
+                                                          'Enviar un recordatorio a esta persona')}
+                                            >
+                                                {wasNudged ? '✓ ' + tx('Nudged', 'Recordado') : '⏰ ' + tx('Nudge', 'Recordar')}
+                                            </button>
+                                        )}
+                                    </li>
+                                );
+                            })}
                         </ul>
                     )}
                 </div>
