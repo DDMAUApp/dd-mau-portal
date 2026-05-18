@@ -339,6 +339,23 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Tap Cancel or 🔀 again to exit. Andrew: "maybe make it
             // a drag to move between sub categorys".
             const [movingItem, setMovingItem] = useState(null);
+            // 2026-05-17 — inventory density toggle. Compact mode hides
+            // the metadata row (alternate-language name, vendor, pack,
+            // price, Edit/Move buttons, Last-ordered badge) so the
+            // master list is just NAME + QUANTITY. Faster scanning
+            // during count nights. Detailed mode = the original rich
+            // layout. Persisted to localStorage so the choice survives
+            // reloads. Andrew: "make a toggle that makes the master
+            // list just the items name and quantity or what it looks
+            // like now".
+            const [invCompactView, setInvCompactView] = useState(() => {
+                try { return localStorage.getItem('ddmau:invCompactView') === '1'; }
+                catch { return false; }
+            });
+            useEffect(() => {
+                try { localStorage.setItem('ddmau:invCompactView', invCompactView ? '1' : '0'); }
+                catch { /* storage full or disabled */ }
+            }, [invCompactView]);
             const [invShowAddForm, setInvShowAddForm] = useState(null);
             const [invNewName, setInvNewName] = useState("");
             const [invNewNameEs, setInvNewNameEs] = useState("");
@@ -4814,6 +4831,23 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-blue-50 hover:text-blue-700 transition text-lg">
                                         {"\u{1F5A8}"}
                                     </button>
+                                    {/* Density toggle — flips master list rows
+                                        between the rich detailed view (current
+                                        default) and a stripped-down NAME +
+                                        QUANTITY layout for fast counting. */}
+                                    <button onClick={() => setInvCompactView(v => !v)}
+                                        title={invCompactView
+                                            ? (language === "es" ? "Vista detallada" : "Detailed view")
+                                            : (language === "es" ? "Vista compacta" : "Compact view")}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                                            invCompactView
+                                                ? 'bg-purple-600 text-white'
+                                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                        }`}>
+                                        {invCompactView
+                                            ? (language === "es" ? "≡ Compacto" : "≡ Compact")
+                                            : (language === "es" ? "≣ Detallado" : "≣ Detailed")}
+                                    </button>
                                     <button onClick={() => { setInvEditMode(!invEditMode); setInvEditingIdx(null); setInvShowAddForm(null); }}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invEditMode ? "bg-green-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {invEditMode ? (language === "es" ? "Listo" : "Done") : (language === "es" ? "Editar" : "Edit")}
@@ -5367,6 +5401,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             <p className={`text-sm font-semibold ${count > 0 ? "text-green-800" : "text-gray-800"} truncate`}>
                                                                                 {language === "es" && item.nameEs ? item.nameEs : item.name}
                                                                             </p>
+                                                                            {/* Compact mode: hide the alternate-language
+                                                                                name + vendor/price metadata + Edit/Move
+                                                                                buttons + Last-ordered badge. Just the
+                                                                                primary name above + quantity controls
+                                                                                on the right stay visible. Toggle is in
+                                                                                the inventory toolbar (≣ Detailed / ≡
+                                                                                Compact). Andrew 2026-05-17. */}
+                                                                            {!invCompactView && (
+                                                                            <>
                                                                             <div className="flex items-center gap-2 mt-0.5">
                                                                                 {language === "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.name}</span>}
                                                                                 {language !== "es" && item.nameEs && <span className="text-xs text-gray-400 italic truncate">{item.nameEs}</span>}
@@ -5474,6 +5517,8 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                 <p className="text-[11px] text-mint-700 mt-0.5">
                                                                                     📦 {language === "es" ? "Último pedido" : "Last ordered"}: {lastEnteredByItem[item.id].date} · <span className="font-bold tabular-nums">{lastEnteredByItem[item.id].qty}</span>
                                                                                 </p>
+                                                                            )}
+                                                                            </>
                                                                             )}
                                                                         </div>
                                                                         <div className="flex items-center gap-1 flex-shrink-0">
