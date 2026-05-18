@@ -44,6 +44,7 @@ const ChatPinsDrawer = lazy(() => import('./ChatPinsDrawer'));
 const ChatTaskFromMessageModal = lazy(() => import('./ChatTaskFromMessageModal'));
 const ChatPollModal = lazy(() => import('./ChatPollModal'));
 const ChatScheduleModal = lazy(() => import('./ChatScheduleModal'));
+const ChatEmojiPicker = lazy(() => import('./ChatEmojiPicker'));
 
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this
@@ -1558,7 +1559,44 @@ function Composer({
 }) {
     const imageInputRef = useRef(null);
     const videoInputRef = useRef(null);
+    // Textarea ref — needed so the emoji picker can insert at the
+    // user's current cursor position (not blindly at the end). We
+    // keep the cursor in a state slot too so re-renders don't lose
+    // our place between key + emoji input.
+    const textareaRef = useRef(null);
+    const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [elapsed, setElapsed] = useState(0);
+
+    // Insert an emoji at the textarea's current cursor position.
+    // Falls back to "append at end" if the textarea isn't mounted
+    // (e.g. on first render right after the picker mounts but the
+    // ref hasn't latched yet — rare but possible).
+    //
+    // After insert we re-focus the textarea and place the caret AFTER
+    // the inserted emoji so the user can keep typing without tapping
+    // the field again.
+    function insertEmoji(emoji) {
+        const ta = textareaRef.current;
+        if (!ta) {
+            setDraft((draft || '') + emoji);
+            return;
+        }
+        const start = ta.selectionStart ?? draft.length;
+        const end = ta.selectionEnd ?? draft.length;
+        const next = draft.slice(0, start) + emoji + draft.slice(end);
+        setDraft(next);
+        // Defer the cursor reposition until React has applied the
+        // value update. Without rAF the caret jumps to 0 because the
+        // <textarea> re-renders with the new value before our
+        // setSelectionRange call lands.
+        requestAnimationFrame(() => {
+            const tx = textareaRef.current;
+            if (!tx) return;
+            tx.focus();
+            const caret = start + emoji.length;
+            try { tx.setSelectionRange(caret, caret); } catch {}
+        });
+    }
     useEffect(() => {
         if (!recording) { setElapsed(0); return; }
         const t = setInterval(() => setElapsed(Math.round((Date.now() - recordStartMs) / 1000)), 250);
@@ -1675,8 +1713,24 @@ function Composer({
                         📊
                     </button>
                 )}
+                {/* Emoji picker — restaurant-themed catalog + recent
+                    row. Tapping toggles the picker; the picker itself
+                    inserts the chosen emoji at the cursor via
+                    insertEmoji() and keeps itself open (keepOpen)
+                    so the user can drop multiple emojis without
+                    re-opening. Andrew (2026-05-17). */}
+                <button
+                    onClick={() => setShowEmojiPicker(v => !v)}
+                    disabled={sending}
+                    className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 disabled:opacity-40 transition ${showEmojiPicker ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg'}`}
+                    aria-label={isEs ? 'Emojis' : 'Emojis'}
+                    title={isEs ? 'Emojis' : 'Emojis'}
+                >
+                    😀
+                </button>
                 {/* Text input */}
                 <textarea
+                    ref={textareaRef}
                     rows={1}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
@@ -1721,6 +1775,20 @@ function Composer({
                     </>
                 )}
             </div>
+            {/* Emoji picker — bottom sheet on mobile, popover on
+                md+. Inserts at the textarea's cursor position. Lazy-
+                loaded so the chat chunk doesn't pay for the emoji
+                catalog up front. */}
+            {showEmojiPicker && (
+                <Suspense fallback={null}>
+                    <ChatEmojiPicker
+                        language={isEs ? 'es' : 'en'}
+                        onPick={insertEmoji}
+                        onClose={() => setShowEmojiPicker(false)}
+                        keepOpen={true}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }
