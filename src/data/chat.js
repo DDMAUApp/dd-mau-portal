@@ -519,6 +519,64 @@ export function isPollOpen(poll) {
 // thumb-sized on mobile. Order = priority (👍 first).
 export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🔥', '🎉', '✅'];
 
+// ── Edit-your-own-message window ────────────────────────────────────
+// After 15 minutes a message is "settled" — editing past that point
+// crosses the line from typo-fix to revisionism, especially in a
+// work chat where decisions are referenced later. Delete still works
+// for older messages because it's transparently flagged (the bubble
+// shows "(message deleted)" + the audit log captures the original),
+// whereas a stealth edit on a 2-day-old message could be deceptive.
+//
+// 15 min mirrors WhatsApp / iMessage / Slack convention.
+export const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+// Which message TYPES are editable?
+//   • text:                 always (the obvious case)
+//   • image / video / audio: only if there's a CAPTION (we let the
+//                            author fix typos in the caption — we
+//                            don't allow swapping the media itself)
+//   • announcement:          NO. Announcements are read by many
+//                            people who may have acked; a silent
+//                            edit could change what they "agreed"
+//                            to. Author must delete + repost.
+//   • poll / coverage_request / 86 / task_handoff / system:
+//                            NO. These carry structured data with
+//                            operational or compliance implications.
+//                            Edit by deleting + re-issuing.
+export function isMessageEditable(message) {
+    if (!message || message.deleted) return false;
+    if (message.type === 'text') return true;
+    if ((message.type === 'image' || message.type === 'video' || message.type === 'audio')
+        && typeof message.text === 'string' && message.text.trim().length > 0) {
+        return true;
+    }
+    return false;
+}
+
+// Is this message inside the edit window? Reads createdAt; tolerates
+// missing/half-formed timestamps by returning false (safer to refuse
+// the edit than to allow one with no provenance).
+export function isWithinEditWindow(message, nowMs = Date.now()) {
+    const ts = message?.createdAt;
+    const ms = ts?.toMillis ? ts.toMillis()
+        : (ts?.seconds ? ts.seconds * 1000 : 0);
+    if (!ms) return false;
+    return (nowMs - ms) < EDIT_WINDOW_MS;
+}
+
+// Composable "can THIS viewer edit THIS message right now?" check.
+// Used by MessageActionMenu to gate the ✏️ Edit affordance and by
+// handleEditMessage as a server-write guard. Returns true only when
+// every condition is met — viewer is the author, type is editable,
+// and we're still inside the window.
+export function canEditMessage(message, viewer, nowMs = Date.now()) {
+    if (!message || !viewer) return false;
+    if (message.senderName !== viewer.name) return false;
+    if (!isMessageEditable(message)) return false;
+    if (!isWithinEditWindow(message, nowMs)) return false;
+    return true;
+}
+
 // Display name format inside chat threads: full first name + last
 // initial. Used for sender labels in group / channel chats and
 // inside specialty cards (coverage requests, photo issues, etc.)

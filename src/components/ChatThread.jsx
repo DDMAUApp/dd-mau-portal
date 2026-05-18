@@ -29,7 +29,7 @@ import {
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
-import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen } from '../data/chat';
+import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage } from '../data/chat';
 import { offShiftMembers } from '../data/offShift';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { postEightySixToChat } from '../data/eightySixChat';
@@ -188,6 +188,13 @@ export default function ChatThread({
     const [showScheduleModal, setShowScheduleModal] = useState(false);
     const [show86Modal, setShow86Modal] = useState(false);
     const [posting86, setPosting86] = useState(false);
+    // ── Inline edit state ───────────────────────────────────────────
+    // editingMessageId: which bubble is currently in the "swap text
+    //   for textarea" mode. Only one message can be edited at a time;
+    //   tapping Edit on another implicitly cancels the first.
+    // We don't store the draft text here — the inline editor manages
+    // its own local input state. We just track WHICH bubble.
+    const [editingMessageId, setEditingMessageId] = useState(null);
     // "Notify anyway" — when ON, the next message bypasses the
     // server's off-shift gate (notif.forceDeliver=true). User has
     // to flip it for each message; we don't make it sticky because
@@ -645,6 +652,61 @@ export default function ChatThread({
         try {
             navigator.clipboard.writeText(text);
         } catch {}
+    }
+
+    // ── Edit a previously-sent message (own + within window) ─────
+    // Patches the message doc with the new text + edited:true +
+    // editedAt + editedBy. Wipes any cached translations because
+    // the text changed — TranslatableText will refire on next view
+    // if the auto-translate pref is on. Audit log captures the
+    // original snippet + edit so disputes are resolvable.
+    //
+    // Note: notifications were already fired when the message was
+    // sent. We don't re-notify on edit (a silent typo fix shouldn't
+    // ping the whole channel). If someone needs to announce the
+    // change, they should send a follow-up.
+    async function handleEditMessage(message, newText) {
+        if (!message?.id) return;
+        if (!canEditMessage(message, viewer)) return;
+        const trimmed = String(newText || '').trim();
+        if (!trimmed) return; // empty edit = no-op (use delete instead)
+        if (trimmed === (message.text || '').trim()) {
+            // No textual change — close the editor without writing
+            // anything (avoids a noisy "edited" suffix from a fat-
+            // finger Save with no actual edit).
+            setEditingMessageId(null);
+            return;
+        }
+        try {
+            await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
+                text: trimmed,
+                edited: true,
+                editedAt: serverTimestamp(),
+                editedBy: staffName,
+                // Drop stale translations + auto-detected sourceLang
+                // so the next viewer (or the auto-translate pref) re-
+                // translates from the current text rather than serving
+                // a stale Spanish version of the original.
+                translations: {},
+                sourceLang: null,
+            });
+            recordAudit({
+                action: 'chat.message.edit',
+                actorName: staffName,
+                actorId: viewer?.id,
+                targetType: 'message',
+                targetId: message.id,
+                details: {
+                    chatId: chat.id,
+                    originalSnippet: (message.text || '').slice(0, 200),
+                    editedSnippet: trimmed.slice(0, 200),
+                },
+            });
+            setEditingMessageId(null);
+        } catch (e) {
+            console.warn('edit failed:', e);
+            toast(tx('Edit failed', 'Error al editar'), { kind: 'error' });
+        }
     }
 
     // ── Coverage-request actions (called by CoverageCard) ────────
@@ -1271,6 +1333,10 @@ export default function ChatThread({
                                     onResolve86={() => handleResolve86(msg)}
                                     onNudge={(targetName) => handleNudge(msg, targetName)}
                                     onNudgeAll={(targetNames) => handleNudgeAll(msg, targetNames)}
+                                    editing={editingMessageId === msg.id}
+                                    onStartEdit={() => setEditingMessageId(msg.id)}
+                                    onCancelEdit={() => setEditingMessageId(null)}
+                                    onSaveEdit={(newText) => handleEditMessage(msg, newText)}
                                     onJumpToReply={(targetId) => {
                                         if (!targetId) return;
                                         setHighlightMsgId(targetId);
@@ -1449,7 +1515,9 @@ function MessageBubble({
     targetLang, autoTranslate,
     onReact, onReply, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
-    onVote, onClosePoll, onResolve86, onNudge, onNudgeAll, onJumpToReply,
+    onVote, onClosePoll, onResolve86, onNudge, onNudgeAll,
+    editing, onStartEdit, onCancelEdit, onSaveEdit,
+    onJumpToReply,
 }) {
     const tx = (en, es) => (isEs ? es : en);
     const [showActions, setShowActions] = useState(false);  // long-press menu
@@ -1527,6 +1595,7 @@ function MessageBubble({
                         onClose={() => setShowActions(false)}
                         onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                        onStartEdit={onStartEdit}
                     />
                 )}
             </div>
@@ -1559,6 +1628,7 @@ function MessageBubble({
                         onClose={() => setShowActions(false)}
                         onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                        onStartEdit={onStartEdit}
                     />
                 )}
             </div>
@@ -1583,6 +1653,7 @@ function MessageBubble({
                         onClose={() => setShowActions(false)}
                         onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                        onStartEdit={onStartEdit}
                     />
                 )}
             </div>
@@ -1609,6 +1680,7 @@ function MessageBubble({
                         onClose={() => setShowActions(false)}
                         onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                        onStartEdit={onStartEdit}
                     />
                 )}
             </div>
@@ -1649,6 +1721,7 @@ function MessageBubble({
                         onClose={() => setShowActions(false)}
                         onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                        onStartEdit={onStartEdit}
                     />
                 )}
             </div>
@@ -1726,19 +1799,34 @@ function MessageBubble({
                             <AudioPlayer src={message.mediaUrl} duration={message.duration} isMine={isMine} />
                         )}
                         {(message.text || message.type === 'text') && (
-                            <TranslatableText
-                                message={message}
-                                targetLang={targetLang}
-                                autoTranslate={autoTranslate}
-                                staffName={staffName}
-                                chatId={chat.id}
-                                isMine={isMine}
-                                isEs={isEs}
-                                blockMode={message.type !== 'text'}
-                            />
+                            editing ? (
+                                <InlineEditor
+                                    initialText={message.text || ''}
+                                    isMine={isMine}
+                                    isEs={isEs}
+                                    onSave={(v) => onSaveEdit?.(v)}
+                                    onCancel={() => onCancelEdit?.()}
+                                />
+                            ) : (
+                                <TranslatableText
+                                    message={message}
+                                    targetLang={targetLang}
+                                    autoTranslate={autoTranslate}
+                                    staffName={staffName}
+                                    chatId={chat.id}
+                                    isMine={isMine}
+                                    isEs={isEs}
+                                    blockMode={message.type !== 'text'}
+                                />
+                            )
                         )}
                         <div className={`text-[10px] mt-1 text-right ${isMine ? 'text-white/70' : 'text-dd-text-2'}`}>
                             {time}
+                            {message.edited && (
+                                <span title={message.editedAt?.toMillis
+                                    ? new Date(message.editedAt.toMillis()).toLocaleString()
+                                    : ''}> · {tx('edited', 'editado')}</span>
+                            )}
                         </div>
                     </div>
                     {/* Reactions row */}
@@ -1836,6 +1924,72 @@ function MessageBubble({
                     ☺︎
                 </button>
             )}
+        </div>
+    );
+}
+
+// Inline editor for a message bubble — swaps the rendered text for
+// an editable textarea + Save/Cancel buttons. Lives inside the same
+// bubble shell so the surrounding context (reactions, seen-by, etc.)
+// stays put and the edit feels in-place. Local state owns the draft;
+// onSave fires with the trimmed value, parent decides whether to
+// write or no-op.
+//
+// Layout: textarea sized to the bubble width, neutral background on
+// "my" bubbles so the green-on-green doesn't bleed legibility. Cmd/
+// Ctrl + Enter = Save. Esc = Cancel.
+function InlineEditor({ initialText, isMine, isEs, onSave, onCancel }) {
+    const tx = (en, es) => isEs ? es : en;
+    const [draft, setDraft] = useState(initialText || '');
+    const ref = useRef(null);
+    useEffect(() => {
+        // Auto-focus + select-all on mount so the user can either
+        // start typing (replacing) or arrow to a spot (preserving).
+        const t = ref.current;
+        if (!t) return;
+        t.focus();
+        try { t.setSelectionRange(0, t.value.length); } catch {}
+    }, []);
+    function handleKey(e) {
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            onCancel?.();
+        } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            onSave?.(draft);
+        }
+    }
+    return (
+        <div className={`block w-full ${isMine ? 'text-white' : 'text-dd-text'}`}>
+            <textarea
+                ref={ref}
+                rows={Math.min(8, Math.max(2, draft.split('\n').length))}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={handleKey}
+                className={`w-full min-w-[200px] px-2 py-1.5 rounded-lg text-[14.5px] leading-snug resize-none focus:outline-none ${isMine
+                    ? 'bg-white/15 text-white placeholder-white/60 border border-white/30'
+                    : 'bg-dd-bg text-dd-text border border-dd-line'}`}
+            />
+            <div className="flex items-center justify-end gap-1.5 mt-1">
+                <button
+                    onClick={onCancel}
+                    className={`px-2 py-1 rounded-full text-[11px] font-bold transition ${isMine
+                        ? 'bg-white/15 text-white/90 hover:bg-white/25'
+                        : 'bg-dd-bg text-dd-text-2 hover:bg-dd-line/40'}`}
+                >
+                    {tx('Cancel', 'Cancelar')}
+                </button>
+                <button
+                    onClick={() => onSave?.(draft)}
+                    disabled={!draft.trim()}
+                    className={`px-3 py-1 rounded-full text-[11px] font-black transition disabled:opacity-40 ${isMine
+                        ? 'bg-white text-dd-green hover:bg-white/90'
+                        : 'bg-dd-green text-white hover:bg-dd-green-700'}`}
+                >
+                    {tx('Save', 'Guardar')}
+                </button>
+            </div>
         </div>
     );
 }
@@ -2785,7 +2939,7 @@ function TaskHandoffCard({ message, chat, isEs, staffName, targetLang, autoTrans
 // of message actions: pin, copy, make task, delete.
 function MessageActionMenu({
     message, chat, isMine, viewer, isAdmin, isManager, isEs,
-    onClose, onReact, onReply, onTogglePin, onMakeTask, onDelete, onCopy,
+    onClose, onReact, onReply, onTogglePin, onMakeTask, onDelete, onCopy, onStartEdit,
 }) {
     const tx = (en, es) => isEs ? es : en;
     const pinnable = canPinMessages(chat, viewer, isAdmin, isManager);
@@ -2793,6 +2947,7 @@ function MessageActionMenu({
     const canOwn = canDeleteOwnMessage(message, viewer);
     const canAny = canDeleteAnyMessage(chat, viewer, isAdmin, isManager);
     const deletable = canOwn || canAny;
+    const editable = canEditMessage(message, viewer);
     // Reply is available on any non-deleted message — even your own.
     // Quoting your own message threading-style is legitimate ("see my
     // earlier point about X").
@@ -2818,6 +2973,11 @@ function MessageActionMenu({
                     {replyable && (
                         <button onClick={() => { onReply?.(); onClose(); }} className="flex items-center gap-2 px-4 py-2.5 hover:bg-dd-bg text-left text-sm">
                             ↩️ {tx('Reply', 'Responder')}
+                        </button>
+                    )}
+                    {editable && onStartEdit && (
+                        <button onClick={() => { onStartEdit?.(); onClose(); }} className="flex items-center gap-2 px-4 py-2.5 hover:bg-dd-bg text-left text-sm">
+                            ✏️ {tx('Edit', 'Editar')}
                         </button>
                     )}
                     {pinnable && (

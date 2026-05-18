@@ -25,6 +25,10 @@ import {
     getSeenByVisibility,
     canSeeReceiptsForMessage,
     getSeenByForMessage,
+    canEditMessage,
+    isMessageEditable,
+    isWithinEditWindow,
+    EDIT_WINDOW_MS,
 } from './chat';
 
 const owner    = { id: 40, name: 'Andrew Shih', role: 'Owner' };
@@ -422,5 +426,78 @@ describe('getSeenByForMessage', () => {
     it('returns [] when chat or message missing', () => {
         expect(getSeenByForMessage(null, msg)).toEqual([]);
         expect(getSeenByForMessage({}, null)).toEqual([]);
+    });
+});
+
+// Edit-your-own-message — author + window + type gates. Each gate is
+// individually testable so a future change (e.g., widening the
+// window or supporting announcement edits) doesn't silently widen
+// the surface in production without an updated test.
+describe('canEditMessage / isMessageEditable / isWithinEditWindow', () => {
+    const now = 1_730_000_000_000; // arbitrary fixed Date.now()
+    const mkMsg = (overrides = {}) => ({
+        id: 'm1',
+        senderName: 'Cash Magruder',
+        type: 'text',
+        text: 'hello',
+        createdAt: { toMillis: () => now - 60_000 }, // 1 min ago
+        ...overrides,
+    });
+    const viewerCash = { name: 'Cash Magruder' };
+    const viewerMaria = { name: 'Maria Lopez' };
+
+    it('isMessageEditable: text yes; image w/ caption yes; image w/o caption no', () => {
+        expect(isMessageEditable(mkMsg({ type: 'text' }))).toBe(true);
+        expect(isMessageEditable(mkMsg({ type: 'image', text: 'caption' }))).toBe(true);
+        expect(isMessageEditable(mkMsg({ type: 'image', text: '' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'audio', text: 'note' }))).toBe(true);
+        expect(isMessageEditable(mkMsg({ type: 'audio', text: '' }))).toBe(false);
+    });
+
+    it('isMessageEditable: structured types are not editable', () => {
+        expect(isMessageEditable(mkMsg({ type: 'announcement' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'poll' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'coverage_request' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'eighty_six_alert' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'photo_issue' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'task_handoff' }))).toBe(false);
+        expect(isMessageEditable(mkMsg({ type: 'system' }))).toBe(false);
+    });
+
+    it('isMessageEditable: deleted messages cannot be edited', () => {
+        expect(isMessageEditable(mkMsg({ deleted: true }))).toBe(false);
+    });
+
+    it('isWithinEditWindow: 1 min ago = yes, just over 15 min = no', () => {
+        expect(isWithinEditWindow(mkMsg(), now)).toBe(true);
+        const oneSecOver = mkMsg({
+            createdAt: { toMillis: () => now - EDIT_WINDOW_MS - 1_000 },
+        });
+        expect(isWithinEditWindow(oneSecOver, now)).toBe(false);
+    });
+
+    it('isWithinEditWindow: missing createdAt → refuse (no provenance)', () => {
+        expect(isWithinEditWindow({ id: 'x' }, now)).toBe(false);
+        expect(isWithinEditWindow({ id: 'x', createdAt: null }, now)).toBe(false);
+    });
+
+    it('canEditMessage: author + editable type + within window → true', () => {
+        expect(canEditMessage(mkMsg(), viewerCash, now)).toBe(true);
+    });
+
+    it('canEditMessage: NOT author → false even if otherwise editable', () => {
+        expect(canEditMessage(mkMsg(), viewerMaria, now)).toBe(false);
+    });
+
+    it('canEditMessage: outside window → false', () => {
+        const old = mkMsg({
+            createdAt: { toMillis: () => now - EDIT_WINDOW_MS - 1_000 },
+        });
+        expect(canEditMessage(old, viewerCash, now)).toBe(false);
+    });
+
+    it('canEditMessage: non-editable type → false', () => {
+        const ann = mkMsg({ type: 'announcement' });
+        expect(canEditMessage(ann, viewerCash, now)).toBe(false);
     });
 });
