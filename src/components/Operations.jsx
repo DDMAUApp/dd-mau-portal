@@ -5144,53 +5144,107 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
                                                                                 placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                                         </div>
-                                                                        {/* Category + subcategory pickers — let the
-                                                                            user move an item into the right place
-                                                                            when they spot a miscategorization
-                                                                            (Andrew 2026-05-17). The category dropdown
-                                                                            lists every top-level category; changing
-                                                                            it moves the item cross-category on save.
-                                                                            The subcategory dropdown lists the unique
-                                                                            subcats from the SELECTED destination
-                                                                            category's items, so the user can only
-                                                                            pick a subcat that already exists in that
-                                                                            category (or leave it blank to land
-                                                                            uncategorized within that category). */}
-                                                                        <div className="flex gap-2">
-                                                                            <select value={invEditTargetCatIdx == null ? catIdx : invEditTargetCatIdx}
-                                                                                onChange={(e) => { setInvEditTargetCatIdx(Number(e.target.value)); setInvEditSubcat(""); }}
-                                                                                className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white">
-                                                                                {customInventory.map((c, i) => (
-                                                                                    <option key={c.id ?? i} value={i}>
-                                                                                        {language === "es" && c.nameEs ? c.nameEs : c.name}
-                                                                                    </option>
-                                                                                ))}
-                                                                            </select>
-                                                                            <select value={invEditSubcat}
-                                                                                onChange={(e) => setInvEditSubcat(e.target.value)}
-                                                                                className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white">
-                                                                                <option value="">{language === "es" ? "(sin sub-categoría)" : "(no subcategory)"}</option>
-                                                                                {(() => {
-                                                                                    const destIdx = invEditTargetCatIdx == null ? catIdx : Number(invEditTargetCatIdx);
-                                                                                    const subs = new Set();
-                                                                                    for (const it of (customInventory[destIdx]?.items || [])) {
-                                                                                        if (it.subcat) subs.add(it.subcat);
-                                                                                    }
-                                                                                    if (invEditSubcat && !subs.has(invEditSubcat)) subs.add(invEditSubcat);
-                                                                                    return Array.from(subs).sort().map(s => (
-                                                                                        <option key={s} value={s}>{s}</option>
-                                                                                    ));
-                                                                                })()}
-                                                                            </select>
-                                                                        </div>
-                                                                        {/* Free-text subcat — used to create a NEW
-                                                                            subcat name not already in the destination
-                                                                            category. Tapping out commits the value
-                                                                            into invEditSubcat. */}
+                                                                        {/* "Move to" picker — flat list of every
+                                                                            existing TopCategory > SubCategory leaf in
+                                                                            the inventory. One dropdown, no way to
+                                                                            accidentally pick a subcat in the wrong
+                                                                            top-level. Andrew (2026-05-17): "edit and
+                                                                            move the category to chicken… create its
+                                                                            own chicken category. i need it to move
+                                                                            to a chicken category already made up
+                                                                            top". The old two-dropdown picker let you
+                                                                            change subcat without realising the
+                                                                            top-level was still wrong, so an item in
+                                                                            Frozen with subcat="Chicken" looked like
+                                                                            a brand-new "Chicken" group sitting
+                                                                            under Frozen. The flat picker shows the
+                                                                            FULL destination (e.g. "Proteins ▸
+                                                                            Chicken") so you can't make that mistake.
+
+                                                                            Below the picker, a free-text input lets
+                                                                            you create a brand-new subcategory inside
+                                                                            the currently-selected top-level — type
+                                                                            a name that doesn't exist yet and Save. */}
+                                                                        {(() => {
+                                                                            // Flatten: every existing leaf as
+                                                                            // {catIdx, subcat, label}. Includes a
+                                                                            // "(uncategorized)" pseudo-leaf for
+                                                                            // each top-level so items without a
+                                                                            // subcat have a target.
+                                                                            const leaves = [];
+                                                                            for (let ci = 0; ci < customInventory.length; ci++) {
+                                                                                const cat = customInventory[ci];
+                                                                                const subs = new Set();
+                                                                                for (const it of (cat.items || [])) {
+                                                                                    if (it.subcat) subs.add(it.subcat);
+                                                                                }
+                                                                                const catLabel = language === "es" && cat.nameEs ? cat.nameEs : cat.name;
+                                                                                // (uncategorized) entry first.
+                                                                                leaves.push({
+                                                                                    key: `${ci}|`,
+                                                                                    catIdx: ci,
+                                                                                    subcat: '',
+                                                                                    label: `${catLabel} ${"▸"} ${language === "es" ? "(sin sub-categoría)" : "(no subcategory)"}`,
+                                                                                });
+                                                                                for (const s of Array.from(subs).sort()) {
+                                                                                    leaves.push({
+                                                                                        key: `${ci}|${s}`,
+                                                                                        catIdx: ci,
+                                                                                        subcat: s,
+                                                                                        label: `${catLabel} ${"▸"} ${s}`,
+                                                                                    });
+                                                                                }
+                                                                            }
+                                                                            // Current selection key. Default to the
+                                                                            // item's existing placement.
+                                                                            const curCat = invEditTargetCatIdx == null ? catIdx : Number(invEditTargetCatIdx);
+                                                                            const selectedKey = `${curCat}|${invEditSubcat || ''}`;
+                                                                            return (
+                                                                                <select
+                                                                                    value={selectedKey}
+                                                                                    onChange={(e) => {
+                                                                                        const [ciStr, ...rest] = e.target.value.split('|');
+                                                                                        const ci = Number(ciStr);
+                                                                                        const sub = rest.join('|');
+                                                                                        setInvEditTargetCatIdx(ci);
+                                                                                        setInvEditSubcat(sub);
+                                                                                    }}
+                                                                                    className="w-full px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none bg-white"
+                                                                                    aria-label={language === "es" ? "Mover a" : "Move to"}
+                                                                                >
+                                                                                    {leaves.map(l => (
+                                                                                        <option key={l.key} value={`${l.catIdx}|${l.subcat}`}>
+                                                                                            {l.label}
+                                                                                        </option>
+                                                                                    ))}
+                                                                                    {/* If the current subcat doesn't exist
+                                                                                        in the destination yet (in-progress
+                                                                                        free-text edit), surface it as a
+                                                                                        selectable option so the dropdown
+                                                                                        accurately reflects current state. */}
+                                                                                    {invEditSubcat && !leaves.some(l => l.catIdx === curCat && l.subcat === invEditSubcat) && (
+                                                                                        <option value={`${curCat}|${invEditSubcat}`}>
+                                                                                            {(() => {
+                                                                                                const cat = customInventory[curCat];
+                                                                                                const catLabel = cat ? (language === "es" && cat.nameEs ? cat.nameEs : cat.name) : '?';
+                                                                                                return `${catLabel} ${"▸"} ${invEditSubcat} ${language === "es" ? "(nuevo)" : "(new)"}`;
+                                                                                            })()}
+                                                                                        </option>
+                                                                                    )}
+                                                                                </select>
+                                                                            );
+                                                                        })()}
+                                                                        {/* Free-text — create a brand-new
+                                                                            subcategory inside the currently-selected
+                                                                            top-level category. Typing here ONLY
+                                                                            changes the subcat — the top-level stays
+                                                                            whatever the picker above is set to, so
+                                                                            you can't accidentally drop a new "Chicken"
+                                                                            subcat in the wrong category. */}
                                                                         <input type="text"
                                                                             value={invEditSubcat}
                                                                             onChange={(e) => setInvEditSubcat(e.target.value)}
-                                                                            placeholder={language === "es" ? "...o escribe nueva sub-categoría" : "...or type a new subcategory"}
+                                                                            placeholder={language === "es" ? "...o escribe nueva sub-categoría dentro de la categoría elegida" : "...or type a new subcategory inside the selected category"}
                                                                             className="w-full px-2 py-1.5 border-2 border-dashed border-gray-300 rounded-lg text-xs text-gray-600 focus:border-mint-700 focus:outline-none" />
                                                                         <div className="flex gap-2">
                                                                             <button onClick={() => saveInvEdit(catIdx, itemIdx)} className="flex-1 bg-green-600 text-white py-1.5 rounded-lg text-sm font-bold hover:bg-green-700">{language === "es" ? "Guardar" : "Save"}</button>
