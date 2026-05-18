@@ -23,12 +23,13 @@ import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } fro
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
-    addDoc, setDoc, updateDoc, serverTimestamp, where, getCountFromServer,
+    addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, where, getCountFromServer,
     arrayUnion, arrayRemove, getDoc,
+    Timestamp,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatCenter';
-import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage } from '../data/chat';
+import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen } from '../data/chat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
@@ -41,6 +42,8 @@ import TranslatableText, { renderWithMentions } from './TranslatableText';
 const ChatAckDashboard = lazy(() => import('./ChatAckDashboard'));
 const ChatPinsDrawer = lazy(() => import('./ChatPinsDrawer'));
 const ChatTaskFromMessageModal = lazy(() => import('./ChatTaskFromMessageModal'));
+const ChatPollModal = lazy(() => import('./ChatPollModal'));
+const ChatScheduleModal = lazy(() => import('./ChatScheduleModal'));
 
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this
@@ -165,6 +168,25 @@ export default function ChatThread({
     const [taskModalMsg, setTaskModalMsg] = useState(null);
     const [contextMenuMsg, setContextMenuMsg] = useState(null);  // {message, anchorRect}
     const [highlightMsgId, setHighlightMsgId] = useState(null);  // scroll-target after jump-to
+    // ── Reply target ────────────────────────────────────────────────
+    // When the user picks "Reply" from a message's action menu we stash
+    // a snapshot of the target here ({ id, senderName, snippet, type })
+    // — NOT a live message reference, because the target could get
+    // edited / deleted between pick and send. The Composer renders the
+    // snippet as a pill above the textarea with an ✕ to clear; the
+    // sendMessage path stamps it onto the new message's `replyTo`
+    // field. Bubble renderer reads `message.replyTo` and draws the
+    // quoted preview on top of the bubble (tap → scroll to original).
+    const [replyTarget, setReplyTarget] = useState(null);
+    const [showPollModal, setShowPollModal] = useState(false);
+    const [pollSubmitting, setPollSubmitting] = useState(false);
+    const [showScheduleModal, setShowScheduleModal] = useState(false);
+    // ── Scheduled messages in this chat (for the banner above composer)
+    // Light subscription — we just need the count + a quick list to show
+    // the "📅 3 scheduled · view" link. Detailed cancel/edit lives in
+    // ChatScheduledDrawer (lazy-mounted on tap).
+    const [scheduledMessages, setScheduledMessages] = useState([]);
+    const [showScheduledDrawer, setShowScheduledDrawer] = useState(false);
 
     // ── Translation preferences ──────────────────────────────────
     // Viewer's target language for translations. Chat-side preference
@@ -240,6 +262,28 @@ export default function ChatThread({
         [messages]
     );
 
+    // Subscribe to MY pending scheduled messages in this chat. The
+    // Cloud Function flips status='sent' (or deletes) when delivered;
+    // we only render `status==='pending'`. Capped to 20 — the realistic
+    // number a person schedules is single digits.
+    useEffect(() => {
+        if (!chat?.id || !staffName) return;
+        const q = query(
+            collection(db, 'scheduled_messages'),
+            where('chatId', '==', chat.id),
+            where('createdBy', '==', staffName),
+            where('status', '==', 'pending'),
+            orderBy('sendAt', 'asc'),
+            limit(20),
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const list = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            setScheduledMessages(list);
+        }, (err) => console.warn('scheduled snapshot failed:', err));
+        return () => unsub();
+    }, [chat?.id, staffName]);
+
     // ── Typing indicator ──────────────────────────────────────────
     // We heartbeat into chat.typingByName[me] = serverTimestamp() on
     // each keypress; consumers filter stale entries client-side. The
@@ -270,6 +314,25 @@ export default function ChatThread({
         setTypingNames(fresh);
     }, [chat?.typingByName, staffName]);
 
+    // Pick a target to reply to. Snapshots the relevant fields so the
+    // reply survives later edits/deletes of the original. We only carry
+    // a 120-char snippet — enough to identify the message at a glance
+    // without bloating the new message doc.
+    function handleReply(message) {
+        if (!message?.id) return;
+        const snippet = (message.text || '').replace(/\s+/g, ' ').trim().slice(0, 120)
+            || (message.type === 'image' ? '📷 Photo'
+                : message.type === 'video' ? '🎬 Video'
+                : message.type === 'audio' ? '🎤 Voice'
+                : '');
+        setReplyTarget({
+            id: message.id,
+            senderName: message.senderName,
+            snippet,
+            type: message.type,
+        });
+    }
+
     // ── Send a text message ───────────────────────────────────────
     async function handleSendText() {
         const body = draft.trim();
@@ -280,8 +343,10 @@ export default function ChatThread({
                 chat, staffName, viewer, staffList,
                 type: 'text',
                 text: body,
+                replyTo: replyTarget,
             });
             setDraft('');
+            setReplyTarget(null);
         } catch (e) {
             console.warn('send text failed:', e);
             toast(tx('Send failed', 'Error al enviar'), { kind: 'error' });
@@ -329,8 +394,10 @@ export default function ChatThread({
                 mediaPath: path,
                 mediaType: file.type,
                 width, height, duration,
+                replyTo: replyTarget,
             });
             setDraft('');
+            setReplyTarget(null);
         } catch (err) {
             console.warn(`${kind} send failed:`, err);
             toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
@@ -594,6 +661,133 @@ export default function ChatThread({
         }
     }
 
+    // ── Polls ─────────────────────────────────────────────────────
+    // Create a poll message. Picks up payload from ChatPollModal; the
+    // poll content is stored inline on the message (poll.question +
+    // options + votes map). We set text = the question so search,
+    // chat-preview, and the notification body all surface something
+    // useful — the renderer hides the bubble text since the PollCard
+    // shows it more prominently.
+    async function handleCreatePoll(payload) {
+        if (!payload || pollSubmitting) return;
+        setPollSubmitting(true);
+        try {
+            await sendMessage({
+                chat, staffName, viewer, staffList,
+                type: 'poll',
+                text: '📊 ' + payload.question,
+                poll: payload,
+                replyTo: replyTarget,
+            });
+            setReplyTarget(null);
+            setShowPollModal(false);
+        } catch (e) {
+            console.warn('poll create failed:', e);
+            toast(tx('Could not post poll', 'No se pudo publicar'), { kind: 'error' });
+        } finally {
+            setPollSubmitting(false);
+        }
+    }
+
+    // Toggle a vote on a poll option. Same atomic-write pattern as
+    // reactions: dot-path arrayUnion / arrayRemove keeps simultaneous
+    // voters from clobbering each other. For multiSelect=false, we
+    // remove the voter from every OTHER option first so they end up
+    // with exactly one vote (this single dot-path-list write is
+    // atomic; a transaction would be overkill).
+    async function handleVote(message, optionId) {
+        if (!message?.id || !optionId) return;
+        const poll = message.poll;
+        if (!poll || !isPollOpen(poll)) return;
+        const ref = doc(db, 'chats', chat.id, 'messages', message.id);
+        const currentArr = Array.isArray(poll.votes?.[optionId]) ? poll.votes[optionId] : [];
+        const alreadyVoted = currentArr.includes(staffName);
+        const updates = {};
+        if (alreadyVoted) {
+            updates[`poll.votes.${optionId}`] = arrayRemove(staffName);
+        } else {
+            updates[`poll.votes.${optionId}`] = arrayUnion(staffName);
+            if (!poll.multiSelect) {
+                // Strip from every other option in the same write batch.
+                for (const o of (poll.options || [])) {
+                    if (o.id === optionId) continue;
+                    updates[`poll.votes.${o.id}`] = arrayRemove(staffName);
+                }
+            }
+        }
+        try {
+            await updateDoc(ref, updates);
+        } catch (e) {
+            console.warn('poll vote failed:', e);
+        }
+    }
+
+    // Close a poll. Only the creator or admin can close.
+    async function handleClosePoll(message) {
+        if (!message?.id) return;
+        if (!isAdmin && message.senderName !== staffName) return;
+        try {
+            await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
+                'poll.closedAt': serverTimestamp(),
+            });
+        } catch (e) {
+            console.warn('poll close failed:', e);
+        }
+    }
+
+    // ── Scheduled send ────────────────────────────────────────────
+    // Stash the draft (+ any reply target / poll) into /scheduled_messages
+    // with a future sendAt. A Cloud Function (sendScheduledChatMessages)
+    // scans every minute, delivers due messages, and marks the doc
+    // status='sent'. We never write to chats/{id}/messages directly here.
+    //
+    // Why a separate collection vs. a `scheduledFor` field on the
+    // message doc: scheduled messages aren't VISIBLE in the thread —
+    // they shouldn't show up in the normal messages subscription. A
+    // separate collection keeps the read path simple. The Cloud
+    // Function does the actual delivery so closing the app doesn't
+    // strand the message.
+    async function handleScheduleSend(sendAt) {
+        const body = draft.trim();
+        if (!body) return;
+        try {
+            await addDoc(collection(db, 'scheduled_messages'), {
+                chatId: chat.id,
+                createdBy: staffName,
+                createdById: viewer?.id || null,
+                createdAt: serverTimestamp(),
+                sendAt: Timestamp.fromDate(sendAt),
+                status: 'pending',
+                payload: {
+                    type: 'text',
+                    text: body,
+                    // mentions are re-parsed at delivery time so they
+                    // match the live staff list (someone might be added
+                    // or renamed between scheduling and sending).
+                    ...(replyTarget && replyTarget.id ? { replyTo: replyTarget } : {}),
+                },
+            });
+            setDraft('');
+            setReplyTarget(null);
+            setShowScheduleModal(false);
+            toast(tx('Scheduled', 'Programado'), { kind: 'success' });
+        } catch (e) {
+            console.warn('schedule failed:', e);
+            toast(tx('Schedule failed', 'Error al programar'), { kind: 'error' });
+        }
+    }
+
+    // Cancel a pending scheduled message before delivery. Realtime
+    // subscription removes it from the banner immediately.
+    async function handleCancelScheduled(id) {
+        try {
+            await deleteDoc(doc(db, 'scheduled_messages', id));
+        } catch (e) {
+            console.warn('cancel scheduled failed:', e);
+            toast(tx('Cancel failed', 'Error al cancelar'), { kind: 'error' });
+        }
+    }
+
     // Group messages by date for date separators ("Today", "Yesterday", date)
     const grouped = useMemo(() => groupByDate(messages, isEs), [messages, isEs]);
 
@@ -732,6 +926,7 @@ export default function ChatThread({
                                     targetLang={targetLang}
                                     autoTranslate={autoTranslate}
                                     onReact={(emoji) => handleReact(msg, emoji)}
+                                    onReply={() => handleReply(msg)}
                                     onAck={() => handleAck(msg)}
                                     onOpenAckDashboard={() => setAckDashboardMsg(msg)}
                                     onTogglePin={() => handleTogglePin(msg)}
@@ -742,6 +937,18 @@ export default function ChatThread({
                                     onApproveCoverage={() => handleApproveCoverage(msg)}
                                     onDenyCoverage={() => handleDenyCoverage(msg)}
                                     onWithdrawCoverage={() => handleWithdrawCoverage(msg)}
+                                    onVote={(optionId) => handleVote(msg, optionId)}
+                                    onClosePoll={() => handleClosePoll(msg)}
+                                    onJumpToReply={(targetId) => {
+                                        if (!targetId) return;
+                                        setHighlightMsgId(targetId);
+                                        setAtBottom(false);
+                                        setTimeout(() => {
+                                            const el = document.getElementById(`msg-${targetId}`);
+                                            el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                            setTimeout(() => setHighlightMsgId(null), 2500);
+                                        }, 60);
+                                    }}
                                 />
                             );
                         })}
@@ -811,6 +1018,23 @@ export default function ChatThread({
                 </Suspense>
             )}
 
+            {/* ── Scheduled-message banner ─────────────────── */}
+            {scheduledMessages.length > 0 && (
+                <button
+                    onClick={() => setShowScheduledDrawer(true)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 bg-dd-sage-50 border-t border-dd-green/30 hover:bg-dd-green/10 text-left shrink-0"
+                >
+                    <span className="text-dd-green-700">📅</span>
+                    <span className="flex-1 text-xs text-dd-green-700 truncate">
+                        <b>{scheduledMessages.length}</b> {tx(
+                            scheduledMessages.length === 1 ? 'scheduled' : 'scheduled',
+                            scheduledMessages.length === 1 ? 'programado' : 'programados'
+                        )} · <i>{previewScheduledList(scheduledMessages, isEs)}</i>
+                    </span>
+                    <span className="text-xs text-dd-green-700 font-bold">{tx('View →', 'Ver →')}</span>
+                </button>
+            )}
+
             {/* ── Composer ────────────────────────────────────── */}
             <Composer
                 isEs={isEs}
@@ -818,14 +1042,52 @@ export default function ChatThread({
                 setDraft={(v) => { setDraft(v); if (v) maybeSendTyping(); }}
                 sending={sending}
                 recording={recording}
+                replyTarget={replyTarget}
+                onClearReply={() => setReplyTarget(null)}
                 onSendText={handleSendText}
                 onPickImage={(e) => handleMediaPick(e, 'image')}
                 onPickVideo={(e) => handleMediaPick(e, 'video')}
                 onStartRecording={startRecording}
                 onStopRecording={() => stopRecording(false)}
                 onCancelRecording={() => stopRecording(true)}
+                onOpenPoll={() => setShowPollModal(true)}
+                onOpenSchedule={() => setShowScheduleModal(true)}
                 recordStartMs={recordStartRef.current}
             />
+
+            {/* ── Poll modal ──────────────────────────────────── */}
+            {showPollModal && (
+                <Suspense fallback={null}>
+                    <ChatPollModal
+                        language={language}
+                        chat={chat}
+                        busy={pollSubmitting}
+                        onClose={() => setShowPollModal(false)}
+                        onCreate={handleCreatePoll}
+                    />
+                </Suspense>
+            )}
+
+            {/* ── Schedule modal ─────────────────────────────── */}
+            {showScheduleModal && (
+                <Suspense fallback={null}>
+                    <ChatScheduleModal
+                        language={language}
+                        onClose={() => setShowScheduleModal(false)}
+                        onPick={handleScheduleSend}
+                    />
+                </Suspense>
+            )}
+
+            {/* ── Scheduled-list drawer ──────────────────────── */}
+            {showScheduledDrawer && (
+                <ScheduledListDrawer
+                    items={scheduledMessages}
+                    isEs={isEs}
+                    onCancel={handleCancelScheduled}
+                    onClose={() => setShowScheduledDrawer(false)}
+                />
+            )}
         </div>
     );
 }
@@ -835,8 +1097,9 @@ function MessageBubble({
     message, chat, isMine, showSender, showAvatar, isEs, staffName,
     viewer, isAdmin, isManager, myAcks, highlighted,
     targetLang, autoTranslate,
-    onReact, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
+    onReact, onReply, onAck, onOpenAckDashboard, onTogglePin, onMakeTask, onDelete, onCopy,
     onClaimCoverage, onApproveCoverage, onDenyCoverage, onWithdrawCoverage,
+    onVote, onClosePoll, onJumpToReply,
 }) {
     const tx = (en, es) => (isEs ? es : en);
     const [showActions, setShowActions] = useState(false);  // long-press menu
@@ -912,7 +1175,7 @@ function MessageBubble({
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
                         isAdmin={isAdmin} isManager={isManager} isEs={isEs}
                         onClose={() => setShowActions(false)}
-                        onReact={onReact} onTogglePin={onTogglePin}
+                        onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
                     />
                 )}
@@ -944,7 +1207,7 @@ function MessageBubble({
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
                         isAdmin={isAdmin} isManager={isManager} isEs={isEs}
                         onClose={() => setShowActions(false)}
-                        onReact={onReact} onTogglePin={onTogglePin}
+                        onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
                     />
                 )}
@@ -977,7 +1240,7 @@ function MessageBubble({
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
                         isAdmin={isAdmin} isManager={isManager} isEs={isEs}
                         onClose={() => setShowActions(false)}
-                        onReact={onReact} onTogglePin={onTogglePin}
+                        onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                         onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
                     />
                 )}
@@ -995,6 +1258,32 @@ function MessageBubble({
                     targetLang={targetLang}
                     autoTranslate={autoTranslate}
                 />
+            </div>
+        );
+    }
+    if (message.type === 'poll') {
+        return (
+            <div id={`msg-${message.id}`} className={`relative my-2 transition ${highlighted ? 'ring-2 ring-amber-400 rounded-2xl' : ''}`}>
+                <PollCard
+                    message={message}
+                    isMine={isMine}
+                    isEs={isEs}
+                    staffName={staffName}
+                    viewer={viewer}
+                    isAdmin={isAdmin}
+                    onVote={onVote}
+                    onClose={onClosePoll}
+                    onLongPress={() => setShowActions(true)}
+                />
+                {showActions && (
+                    <MessageActionMenu
+                        message={message} chat={chat} isMine={isMine} viewer={viewer}
+                        isAdmin={isAdmin} isManager={isManager} isEs={isEs}
+                        onClose={() => setShowActions(false)}
+                        onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
+                        onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                    />
+                )}
             </div>
         );
     }
@@ -1031,6 +1320,35 @@ function MessageBubble({
                                 ? 'bg-amber-50 text-dd-text border border-amber-300 rounded-bl-md'
                                 : 'bg-white text-dd-text border border-dd-line rounded-bl-md')}`}
                     >
+                        {/* Quoted reply preview — rendered ABOVE the bubble's
+                            own content so the thread context reads top-down
+                            (quote → reply body). Tap = scroll to the original
+                            (or just flash if it's outside the loaded window).
+                            Color treatment: a softer panel on top of the
+                            bubble background — slightly off-tinted for both
+                            "my" (green bubble → white-tint quote) and "their"
+                            (white bubble → grey quote) so the quote always
+                            reads as a NESTED block, not just bold text.
+                            The author is bold; the snippet is regular weight
+                            line-clamped to 2 so a long quote can't overrun
+                            the bubble. Andrew (2026-05-17) — added with the
+                            Zenzap-feature-parity batch. */}
+                        {message.replyTo && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); onJumpToReply?.(message.replyTo?.id); }}
+                                className={`block w-full text-left mb-1 -mx-1 px-2 py-1.5 rounded-lg border-l-2 ${isMine
+                                    ? 'bg-white/15 border-white/60 hover:bg-white/25'
+                                    : 'bg-dd-bg border-dd-green/60 hover:bg-dd-bg/70'} transition`}
+                                aria-label={isEs ? 'Saltar al mensaje original' : 'Jump to original message'}
+                            >
+                                <div className={`text-[10.5px] font-black uppercase tracking-wider ${isMine ? 'text-white/90' : 'text-dd-green-700'}`}>
+                                    ↩ {message.replyTo.senderName || (isEs ? 'Mensaje' : 'Message')}
+                                </div>
+                                <div className={`text-[11.5px] line-clamp-2 ${isMine ? 'text-white/85' : 'text-dd-text-2'}`}>
+                                    {message.replyTo.snippet || (isEs ? '(sin texto)' : '(no text)')}
+                                </div>
+                            </button>
+                        )}
                         {message.type === 'image' && (
                             <MediaImage url={message.mediaUrl} alt="Photo" />
                         )}
@@ -1232,8 +1550,10 @@ function AudioPlayer({ src, duration, isMine }) {
 // ── Composer ─────────────────────────────────────────────────────
 function Composer({
     isEs, draft, setDraft, sending, recording,
+    replyTarget, onClearReply,
     onSendText, onPickImage, onPickVideo,
     onStartRecording, onStopRecording, onCancelRecording,
+    onOpenPoll, onOpenSchedule,
     recordStartMs,
 }) {
     const imageInputRef = useRef(null);
@@ -1282,6 +1602,31 @@ function Composer({
     const empty = !draft.trim();
     return (
         <div className="px-2 py-2 border-t border-dd-line bg-white shrink-0">
+            {/* Reply preview pill — shown above the input row when the
+                user has tapped Reply on a message. The ✕ clears the
+                target; tapping the body does nothing (intentionally —
+                we don't want a stray tap to navigate away mid-type). */}
+            {replyTarget && (
+                <div className="flex items-stretch gap-2 mb-1 px-2 py-1.5 rounded-lg bg-dd-sage-50 border border-dd-green/30">
+                    <div className="w-1 rounded-full bg-dd-green shrink-0" />
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[10.5px] font-black uppercase tracking-wider text-dd-green-700">
+                            ↩ {isEs ? 'Respondiendo a' : 'Replying to'} {replyTarget.senderName || ''}
+                        </div>
+                        <div className="text-[12px] text-dd-text-2 truncate">
+                            {replyTarget.snippet || (isEs ? '(sin texto)' : '(no text)')}
+                        </div>
+                    </div>
+                    <button
+                        onClick={onClearReply}
+                        className="w-7 h-7 rounded-full hover:bg-white text-dd-text-2 flex items-center justify-center shrink-0"
+                        aria-label={isEs ? 'Cancelar respuesta' : 'Cancel reply'}
+                        title={isEs ? 'Cancelar' : 'Cancel'}
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
             <div className="flex items-end gap-1.5">
                 {/* Image */}
                 <input
@@ -1318,6 +1663,18 @@ function Composer({
                 >
                     🎬
                 </button>
+                {/* Poll */}
+                {onOpenPoll && (
+                    <button
+                        onClick={onOpenPoll}
+                        disabled={sending}
+                        className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
+                        aria-label={isEs ? 'Encuesta' : 'Poll'}
+                        title={isEs ? 'Encuesta' : 'Poll'}
+                    >
+                        📊
+                    </button>
+                )}
                 {/* Text input */}
                 <textarea
                     rows={1}
@@ -1329,7 +1686,7 @@ function Composer({
                     className="flex-1 min-w-0 px-3 py-2 rounded-2xl bg-dd-bg border border-dd-line text-[14.5px] text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green max-h-[120px]"
                     style={{ lineHeight: 1.4 }}
                 />
-                {/* Voice OR Send */}
+                {/* Voice OR (Schedule + Send) */}
                 {empty ? (
                     <button
                         onClick={onStartRecording}
@@ -1341,14 +1698,27 @@ function Composer({
                         🎤
                     </button>
                 ) : (
-                    <button
-                        onClick={onSendText}
-                        disabled={sending}
-                        className="w-10 h-10 rounded-full bg-dd-green text-white flex items-center justify-center font-black shrink-0 disabled:opacity-40 hover:bg-dd-green-700 active:scale-95 transition"
-                        aria-label={isEs ? 'Enviar' : 'Send'}
-                    >
-                        ➤
-                    </button>
+                    <>
+                        {onOpenSchedule && (
+                            <button
+                                onClick={onOpenSchedule}
+                                disabled={sending}
+                                className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg shrink-0 disabled:opacity-40"
+                                aria-label={isEs ? 'Programar' : 'Schedule'}
+                                title={isEs ? 'Programar envío' : 'Schedule send'}
+                            >
+                                📅
+                            </button>
+                        )}
+                        <button
+                            onClick={onSendText}
+                            disabled={sending}
+                            className="w-10 h-10 rounded-full bg-dd-green text-white flex items-center justify-center font-black shrink-0 disabled:opacity-40 hover:bg-dd-green-700 active:scale-95 transition"
+                            aria-label={isEs ? 'Enviar' : 'Send'}
+                        >
+                            ➤
+                        </button>
+                    </>
                 )}
             </div>
         </div>
@@ -1364,9 +1734,26 @@ async function sendMessage({
     chat, staffName, viewer, staffList,
     type, text = '', mediaUrl, mediaPath, mediaType,
     duration, width, height, thumbnailUrl,
+    replyTo, poll,
 }) {
     if (!chat?.id) return;
     const { mentions } = parseMentions(text, staffList);
+    // Sanitize the reply target. We carry only the four fields the
+    // bubble renderer + jump-to-message handler actually use, so the
+    // doc stays small and we don't accidentally embed unrelated
+    // message state into a reply.
+    const replyToField = (replyTo && replyTo.id) ? {
+        replyTo: {
+            id: String(replyTo.id),
+            senderName: replyTo.senderName || '',
+            snippet: String(replyTo.snippet || '').slice(0, 120),
+            type: replyTo.type || 'text',
+        },
+    } : {};
+    // Poll: stamp the payload as-is. The closesAt field is a JS Date
+    // from the modal; Firestore will store it as a Timestamp via the
+    // SDK's automatic Date→Timestamp coercion.
+    const pollField = (poll && Array.isArray(poll.options) && poll.options.length >= 2) ? { poll } : {};
     const msgDoc = {
         senderName: staffName,
         senderId: viewer?.id || null,
@@ -1377,6 +1764,8 @@ async function sendMessage({
         ...(width != null ? { width } : {}),
         ...(height != null ? { height } : {}),
         ...(thumbnailUrl ? { thumbnailUrl } : {}),
+        ...replyToField,
+        ...pollField,
         reactions: {},
         mentions,
         createdAt: serverTimestamp(),
@@ -1388,6 +1777,7 @@ async function sendMessage({
     const preview = type === 'image' ? '📷 Photo'
         : type === 'video' ? '🎬 Video'
         : type === 'audio' ? '🎤 Voice'
+        : type === 'poll' ? `📊 ${poll?.question || 'Poll'}`
         : text;
     try {
         await updateDoc(doc(db, 'chats', chat.id), {
@@ -1805,7 +2195,7 @@ function TaskHandoffCard({ message, chat, isEs, staffName, targetLang, autoTrans
 // of message actions: pin, copy, make task, delete.
 function MessageActionMenu({
     message, chat, isMine, viewer, isAdmin, isManager, isEs,
-    onClose, onReact, onTogglePin, onMakeTask, onDelete, onCopy,
+    onClose, onReact, onReply, onTogglePin, onMakeTask, onDelete, onCopy,
 }) {
     const tx = (en, es) => isEs ? es : en;
     const pinnable = canPinMessages(chat, viewer, isAdmin, isManager);
@@ -1813,6 +2203,10 @@ function MessageActionMenu({
     const canOwn = canDeleteOwnMessage(message, viewer);
     const canAny = canDeleteAnyMessage(chat, viewer, isAdmin, isManager);
     const deletable = canOwn || canAny;
+    // Reply is available on any non-deleted message — even your own.
+    // Quoting your own message threading-style is legitimate ("see my
+    // earlier point about X").
+    const replyable = !message.deleted && message.type !== 'system' && message.type !== 'system_event';
     return (
         <>
             <div className="fixed inset-0 z-40" onClick={onClose} />
@@ -1831,6 +2225,11 @@ function MessageActionMenu({
                 </div>
                 {/* Actions */}
                 <div className="flex flex-col">
+                    {replyable && (
+                        <button onClick={() => { onReply?.(); onClose(); }} className="flex items-center gap-2 px-4 py-2.5 hover:bg-dd-bg text-left text-sm">
+                            ↩️ {tx('Reply', 'Responder')}
+                        </button>
+                    )}
                     {pinnable && (
                         <button onClick={() => { onTogglePin?.(); onClose(); }} className="flex items-center gap-2 px-4 py-2.5 hover:bg-dd-bg text-left text-sm">
                             📌 {message.pinned ? tx('Unpin message', 'Quitar fijado') : tx('Pin message', 'Fijar mensaje')}
@@ -1855,6 +2254,239 @@ function MessageActionMenu({
             </div>
         </>
     );
+}
+
+// ── PollCard ─────────────────────────────────────────────────────
+// Full-width card renderer for messages of type 'poll'. Lives in its
+// own bubble shell (not the white/green default) so the poll looks
+// distinct in the thread — easier to scan past, and visually obvious
+// that it's interactive.
+//
+// Two display states:
+//   • OPEN — vote buttons; tapping toggles your vote (or single-
+//            selects for non-multiSelect polls).
+//   • CLOSED — buttons disabled, %s + bars only.
+//
+// Anonymous polls hide voter names everywhere (counts only). Non-
+// anonymous polls show a thin "voted by" line under each option with
+// up to 3 names + "+ N more".
+//
+// onLongPress lets the user open the standard action menu (react,
+// reply, pin, delete) — same pattern as AnnouncementCard.
+function PollCard({ message, isMine, isEs, staffName, viewer, isAdmin, onVote, onClose, onLongPress }) {
+    const tx = (en, es) => isEs ? es : en;
+    const poll = message.poll || {};
+    const { counts, total } = pollTally(poll);
+    const open = isPollOpen(poll);
+    const myVotes = useMemo(() => {
+        const set = new Set();
+        for (const [optId, names] of Object.entries(poll.votes || {})) {
+            if (Array.isArray(names) && names.includes(staffName)) set.add(optId);
+        }
+        return set;
+    }, [poll.votes, staffName]);
+    const canClose = open && (isAdmin || message.senderName === staffName);
+
+    // Long-press → action menu.
+    const longPressTimer = useRef(null);
+    function startLongPress() {
+        longPressTimer.current = setTimeout(() => onLongPress?.(), 400);
+    }
+    function endLongPress() {
+        if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    }
+
+    const closesAtMs = poll.closesAt?.toMillis ? poll.closesAt.toMillis()
+        : (poll.closesAt?.seconds ? poll.closesAt.seconds * 1000 : 0);
+    const closedAtMs = poll.closedAt?.toMillis ? poll.closedAt.toMillis()
+        : (poll.closedAt?.seconds ? poll.closedAt.seconds * 1000 : 0);
+    const subtitle = open
+        ? (closesAtMs
+            ? `${tx('Closes', 'Cierra')} ${relativeTime(closesAtMs, isEs)}`
+            : tx('Open · multi-select ' + (poll.multiSelect ? 'on' : 'off'),
+                 'Abierto · múltiples ' + (poll.multiSelect ? 'sí' : 'no')))
+        : tx('Closed', 'Cerrado') + (closedAtMs ? ` · ${relativeTime(closedAtMs, isEs)}` : '');
+
+    return (
+        <div
+            onTouchStart={startLongPress}
+            onTouchEnd={endLongPress}
+            onTouchCancel={endLongPress}
+            onContextMenu={(e) => { e.preventDefault(); onLongPress?.(); }}
+            className="bg-white border border-dd-line rounded-2xl shadow-sm overflow-hidden"
+        >
+            {/* Header */}
+            <div className="px-3 py-2 border-b border-dd-line/60 bg-dd-sage-50/40 flex items-start justify-between gap-2">
+                <div className="min-w-0 flex-1">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-dd-green-700">
+                        📊 {tx('Poll', 'Encuesta')} · {message.senderName}
+                    </div>
+                    <div className="text-[15px] font-black text-dd-text mt-0.5 leading-snug break-words">
+                        {poll.question || tx('Untitled poll', 'Encuesta sin título')}
+                    </div>
+                    <div className="text-[11px] text-dd-text-2 mt-0.5">
+                        {subtitle} · {total} {tx(total === 1 ? 'vote' : 'votes', total === 1 ? 'voto' : 'votos')}
+                    </div>
+                </div>
+                {canClose && (
+                    <button
+                        onClick={onClose}
+                        className="text-[11px] font-bold px-2 py-1 rounded-full bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg shrink-0"
+                        aria-label={tx('Close poll', 'Cerrar encuesta')}
+                    >
+                        {tx('Close', 'Cerrar')}
+                    </button>
+                )}
+            </div>
+            {/* Options */}
+            <div className="p-2 space-y-1.5">
+                {(poll.options || []).map(opt => {
+                    const c = counts[opt.id] || 0;
+                    const pct = total > 0 ? Math.round((c / total) * 100) : 0;
+                    const youVoted = myVotes.has(opt.id);
+                    const voters = Array.isArray(poll.votes?.[opt.id]) ? poll.votes[opt.id] : [];
+                    return (
+                        <button
+                            key={opt.id}
+                            disabled={!open}
+                            onClick={() => onVote?.(opt.id)}
+                            className={`relative w-full text-left rounded-lg border-2 transition active:scale-[0.99] ${youVoted
+                                ? 'border-dd-green bg-dd-sage-50'
+                                : 'border-dd-line bg-white hover:bg-dd-bg'} ${!open ? 'opacity-90 cursor-default' : ''}`}
+                        >
+                            {/* Progress fill */}
+                            <div
+                                className={`absolute inset-y-0 left-0 ${youVoted ? 'bg-dd-green/15' : 'bg-dd-bg'} transition-all`}
+                                style={{ width: `${pct}%` }}
+                            />
+                            {/* Content */}
+                            <div className="relative px-3 py-2 flex items-center gap-2">
+                                <span className={`w-5 h-5 rounded-full border-2 flex items-center justify-center text-[11px] font-black shrink-0 ${youVoted
+                                    ? 'border-dd-green bg-dd-green text-white'
+                                    : 'border-dd-line text-dd-text-2'}`}>
+                                    {youVoted ? '✓' : ''}
+                                </span>
+                                <span className="flex-1 min-w-0 text-sm font-bold text-dd-text break-words">{opt.label}</span>
+                                <span className="text-[11px] tabular-nums font-bold text-dd-text-2 shrink-0">
+                                    {pct}% · {c}
+                                </span>
+                            </div>
+                            {/* Voter list (if not anonymous) */}
+                            {!poll.anonymous && voters.length > 0 && (
+                                <div className="relative px-3 pb-1.5 -mt-0.5 text-[10.5px] text-dd-text-2 truncate">
+                                    {voters.slice(0, 3).map(formatChatName).join(', ')}
+                                    {voters.length > 3 && ` +${voters.length - 3}`}
+                                </div>
+                            )}
+                        </button>
+                    );
+                })}
+            </div>
+            {!open && (
+                <div className="px-3 py-1.5 border-t border-dd-line/60 bg-dd-bg/40 text-[11px] font-bold text-dd-text-2 text-center">
+                    🔒 {tx('Voting closed', 'Votación cerrada')}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// One-line preview for the scheduled-messages banner. Uses the FIRST
+// scheduled message's text + its sendAt time. Keeps the banner concise.
+function previewScheduledList(items, isEs) {
+    if (!Array.isArray(items) || items.length === 0) return '';
+    const first = items[0];
+    const text = (first?.payload?.text || '').replace(/\s+/g, ' ').trim();
+    const ts = first?.sendAt;
+    const ms = ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0);
+    if (!ms) return text.slice(0, 50);
+    const d = new Date(ms);
+    const today = new Date();
+    const sameDay = d.toDateString() === today.toDateString();
+    const tom = new Date(today.getTime() + 86400_000);
+    const isTomorrow = d.toDateString() === tom.toDateString();
+    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    const dayStr = sameDay ? (isEs ? 'hoy' : 'today')
+        : isTomorrow ? (isEs ? 'mañana' : 'tomorrow')
+        : d.toLocaleDateString(isEs ? 'es' : 'en', { month: 'short', day: 'numeric' });
+    return `${dayStr} ${timeStr} · ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`;
+}
+
+// Bottom-sheet listing pending scheduled messages with a cancel button
+// per row. Tapping cancel deletes the scheduled_messages doc; the
+// realtime subscription on the parent updates the banner instantly.
+function ScheduledListDrawer({ items, isEs, onCancel, onClose }) {
+    const tx = (en, es) => isEs ? es : en;
+    return (
+        <>
+            <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
+            <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[460px] sm:max-w-[92vw] z-50 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[85vh] flex flex-col"
+                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                <header className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
+                    <div>
+                        <h2 className="text-base font-bold text-dd-text">📅 {tx('Scheduled messages', 'Mensajes programados')}</h2>
+                        <p className="text-[11px] text-dd-text-2">
+                            {items.length} {tx(items.length === 1 ? 'pending' : 'pending', items.length === 1 ? 'pendiente' : 'pendientes')}
+                        </p>
+                    </div>
+                    <button onClick={onClose}
+                        className="w-9 h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg text-lg">×</button>
+                </header>
+                <div className="flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                    {items.length === 0 ? (
+                        <div className="p-8 text-center text-sm text-dd-text-2">
+                            {tx('No scheduled messages.', 'Sin mensajes programados.')}
+                        </div>
+                    ) : (
+                        <ul className="divide-y divide-dd-line">
+                            {items.map(it => {
+                                const ms = it.sendAt?.toMillis ? it.sendAt.toMillis()
+                                    : (it.sendAt?.seconds ? it.sendAt.seconds * 1000 : 0);
+                                const when = ms ? new Date(ms).toLocaleString(isEs ? 'es' : 'en', {
+                                    weekday: 'short', month: 'short', day: 'numeric',
+                                    hour: 'numeric', minute: '2-digit',
+                                }) : '';
+                                const text = it.payload?.text || '';
+                                return (
+                                    <li key={it.id} className="px-4 py-3">
+                                        <div className="text-[11px] font-bold text-dd-green-700 mb-1">
+                                            📅 {when}
+                                        </div>
+                                        <div className="text-sm text-dd-text whitespace-pre-wrap break-words mb-2">
+                                            {text}
+                                        </div>
+                                        <button
+                                            onClick={() => onCancel?.(it.id)}
+                                            className="text-[11px] font-bold text-red-700 hover:bg-red-50 px-2 py-1 rounded-full transition"
+                                        >
+                                            🗑 {tx('Cancel', 'Cancelar')}
+                                        </button>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    )}
+                </div>
+            </div>
+        </>
+    );
+}
+
+// Relative-time formatter for poll deadlines (short, viewer-language).
+// "in 2h", "in 3d", "1h ago" — kept inside ChatThread because nothing
+// else needs it; could lift if a second consumer appears.
+function relativeTime(ms, isEs) {
+    if (!ms) return '';
+    const diff = ms - Date.now();
+    const abs = Math.abs(diff);
+    const past = diff < 0;
+    let label;
+    if (abs < 60_000) label = isEs ? 'ahora' : 'now';
+    else if (abs < 3600_000) label = `${Math.round(abs / 60_000)}m`;
+    else if (abs < 86400_000) label = `${Math.round(abs / 3600_000)}h`;
+    else label = `${Math.round(abs / 86400_000)}d`;
+    if (label === (isEs ? 'ahora' : 'now')) return label;
+    return past ? (isEs ? `hace ${label}` : `${label} ago`) : (isEs ? `en ${label}` : `in ${label}`);
 }
 
 // Seen-by bottom sheet — shows who's read this message + when.

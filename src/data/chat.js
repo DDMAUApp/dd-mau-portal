@@ -36,7 +36,7 @@
 //   createdAt:    Timestamp
 //   reactions:    { '👍': string[], '❤️': string[] } — emoji → list of staff names
 //   mentions:     string[]              — staff names parsed from @-tokens
-//   replyTo:      { messageId, sender, snippet }? — quote-reply target (schema only, UI TODO v2)
+//   replyTo:      { id, senderName, snippet, type }? — quote-reply target (UI: pill above bubble + composer preview)
 //   edited:       boolean?
 //   deleted:      boolean?              — soft-delete; the bubble shows "deleted" placeholder
 
@@ -241,6 +241,7 @@ export function previewOf(msg) {
     if (msg.type === 'image') return who + '📷 Photo';
     if (msg.type === 'video') return who + '🎬 Video';
     if (msg.type === 'audio') return who + '🎤 Voice message';
+    if (msg.type === 'poll') return who + '📊 ' + (msg.poll?.question || 'Poll');
     if (msg.type === 'system') return msg.text || '';
     const t = (msg.text || '').replace(/\s+/g, ' ').trim();
     return who + (t.length > 60 ? t.slice(0, 57) + '…' : t);
@@ -425,8 +426,66 @@ export const MESSAGE_TYPES = {
     eighty_six_alert:   { renderer: 'eighty_six',   priority: 'emergency'},
     photo_issue:        { renderer: 'issue',        priority: 'high'     },
     task_handoff:       { renderer: 'task',         priority: 'normal'   },
+    poll:               { renderer: 'poll',         priority: 'normal'   },
     system_event:       { renderer: 'system',       priority: 'normal'   },
 };
+
+// Poll schema — stored inline on a message of type 'poll':
+//   poll: {
+//     question:    string                  — required, up to 200 chars
+//     options:     [{ id, label }]         — 2–6 options; id is "opt_0"..."opt_N"
+//     multiSelect: boolean                 — can a voter pick multiple options
+//     anonymous:   boolean                 — hide voter names (counts only)
+//     closesAt:    Timestamp | null        — optional auto-close deadline
+//     closedAt:    Timestamp | null        — set when creator manually closes
+//     votes:       { [optionId]: string[] }— map of optionId → voter names
+//   }
+//
+// Why inline on the message (not a separate collection): a poll IS the
+// message in chat-thread terms. Keeps the snapshot + render loop simple
+// and lets us reuse pin/react/seen-by infrastructure for free. Voting
+// uses arrayUnion / arrayRemove via dot-path so two voters can't clobber
+// each other (same atomic-write rationale as reactions).
+export const POLL_LIMITS = {
+    minOptions: 2,
+    maxOptions: 6,
+    maxQuestion: 200,
+    maxOption: 80,
+};
+
+// Compute vote tallies + total + winning index for poll-card rendering.
+// Returns { counts: { [id]: n }, total, leadingId }. Leading ties resolve
+// to the first option (stable, matches the order shown).
+export function pollTally(poll) {
+    const opts = Array.isArray(poll?.options) ? poll.options : [];
+    const votes = (poll && poll.votes) || {};
+    const counts = {};
+    let total = 0;
+    for (const o of opts) {
+        const arr = Array.isArray(votes[o.id]) ? votes[o.id] : [];
+        counts[o.id] = arr.length;
+        total += arr.length;
+    }
+    let leadingId = opts[0]?.id || null;
+    let max = -1;
+    for (const o of opts) {
+        if (counts[o.id] > max) { max = counts[o.id]; leadingId = o.id; }
+    }
+    return { counts, total, leadingId };
+}
+
+// Is a poll currently open for voting? Closed when poll.closedAt is set
+// OR when closesAt has elapsed.
+export function isPollOpen(poll) {
+    if (!poll) return false;
+    if (poll.closedAt) return false;
+    const c = poll.closesAt;
+    if (c) {
+        const ms = c.toMillis ? c.toMillis() : (c.seconds ? c.seconds * 1000 : 0);
+        if (ms && ms < Date.now()) return false;
+    }
+    return true;
+}
 
 // Emoji palette for quick reactions. Keep tight so the popover stays
 // thumb-sized on mobile. Order = priority (👍 first).

@@ -17,6 +17,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, collectionGroup, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import { chatDisplayName, ChatAvatar } from './ChatCenter';
+import { expandQueryTerms, buildHaystack, haystackMatches } from '../data/chatSearch';
 
 export default function ChatSearchPanel({
     chats, language = 'en', staffName, viewer, onClose, onJump,
@@ -64,9 +65,14 @@ export default function ChatSearchPanel({
         return () => unsubs.forEach(u => u && u());
     }, [chats, dateRange]);
 
+    // Pre-expand the query into [{term, expansions:Set}] once per
+    // query-input change. Each token must match SOME synonym in the
+    // message's haystack for the message to appear (AND across tokens,
+    // OR across synonyms — see chatSearch.haystackMatches).
+    const expandedTokens = useMemo(() => expandQueryTerms(q), [q]);
+
     const allResults = useMemo(() => {
         const out = [];
-        const term = q.trim().toLowerCase();
         for (const [chatId, list] of Object.entries(messagesByChat)) {
             const chat = chats.find(c => c.id === chatId);
             if (!chat) continue;
@@ -81,10 +87,16 @@ export default function ChatSearchPanel({
                 if (hasMedia && !m.mediaUrl) continue;
                 // From user
                 if (fromUser && m.senderName !== fromUser) continue;
-                // Text match (substring on text + sender)
-                if (term) {
-                    const hay = ((m.text || '') + ' ' + (m.senderName || '')).toLowerCase();
-                    if (!hay.includes(term)) continue;
+                // Smart text match — builds a normalized haystack from
+                // the message's text + sender + poll Q+options + reply
+                // snippet + type label, then checks every query token
+                // against the union of its bilingual synonyms. So
+                // searching "chicken" finds Spanish "pollo" messages,
+                // and searching "photo" finds image messages even when
+                // the caption is blank.
+                if (expandedTokens.length > 0) {
+                    const hay = buildHaystack(m);
+                    if (!haystackMatches(hay, expandedTokens)) continue;
                 }
                 out.push({ message: m, chat });
             }
@@ -95,7 +107,7 @@ export default function ChatSearchPanel({
             return bms - ams;
         });
         return out.slice(0, 200);
-    }, [messagesByChat, chats, q, fromUser, hasMedia, typeFilter]);
+    }, [messagesByChat, chats, expandedTokens, fromUser, hasMedia, typeFilter]);
 
     // Build the from-user dropdown from messages we've seen
     const senderOptions = useMemo(() => {

@@ -202,6 +202,181 @@ exports.sendShiftReminders = onSchedule(
     }
 );
 
+// ── Scheduled chat-message delivery ──────────────────────────────
+// Runs every minute. Scans /scheduled_messages for docs with
+// sendAt <= now AND status='pending', delivers them to the target
+// chat's messages subcollection (same write shape ChatThread's
+// sendMessage uses), and marks the source doc status='sent'.
+//
+// We don't delete the doc — keeping it around lets the user inspect
+// what was sent and lets us audit if a delivery fails midway. A
+// separate sweeper (purgeOldScheduledMessages, in the same file
+// region — TODO when count grows) can prune docs > 30 days old.
+//
+// Why every minute (vs every 5 like shift reminders): scheduled
+// messages are user-set deadlines — "send this at 8am" should not
+// drift 5 minutes late. Cloud Scheduler minimum granularity is 1
+// minute and the cost difference is negligible.
+exports.sendScheduledChatMessages = onSchedule(
+    {
+        schedule: "every 1 minutes",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+    },
+    async () => {
+        const now = new Date();
+        // Pull every pending doc whose sendAt has passed. We bound the
+        // page size at 100 so a backlog doesn't blow up a single tick.
+        const snap = await db
+            .collection("scheduled_messages")
+            .where("status", "==", "pending")
+            .where("sendAt", "<=", now)
+            .orderBy("sendAt", "asc")
+            .limit(100)
+            .get();
+
+        let delivered = 0;
+        for (const sDoc of snap.docs) {
+            const data = sDoc.data();
+            const { chatId, createdBy, createdById, payload } = data;
+            if (!chatId || !createdBy || !payload || !payload.type) {
+                // Malformed doc — mark error so it doesn't retry forever.
+                await sDoc.ref.update({ status: "error", error: "missing fields", deliveredAt: FieldValue.serverTimestamp() }).catch(() => {});
+                continue;
+            }
+
+            try {
+                // 1) Re-parse mentions against the CURRENT staff list so a
+                //    rename / new hire between scheduling and delivery
+                //    isn't missed.
+                const text = String(payload.text || "");
+                let mentions = [];
+                try {
+                    const staffSnap = await db.doc("config/staff").get();
+                    const list = (staffSnap.exists && Array.isArray(staffSnap.data().list)) ? staffSnap.data().list : [];
+                    mentions = parseMentionsServer(text, list);
+                } catch (e) {
+                    logger.warn(`mention parse failed for scheduled ${sDoc.id}:`, e);
+                }
+
+                // 2) Append the message to the chat's messages subcollection
+                //    using the same shape ChatThread's sendMessage uses.
+                const msgDoc = {
+                    senderName: createdBy,
+                    senderId: createdById || null,
+                    type: payload.type,
+                    text,
+                    reactions: {},
+                    mentions,
+                    createdAt: FieldValue.serverTimestamp(),
+                    scheduledSourceId: sDoc.id,
+                };
+                if (payload.replyTo && payload.replyTo.id) {
+                    msgDoc.replyTo = {
+                        id: String(payload.replyTo.id),
+                        senderName: payload.replyTo.senderName || "",
+                        snippet: String(payload.replyTo.snippet || "").slice(0, 120),
+                        type: payload.replyTo.type || "text",
+                    };
+                }
+                if (payload.poll && Array.isArray(payload.poll.options) && payload.poll.options.length >= 2) {
+                    msgDoc.poll = payload.poll;
+                }
+                const ref = await db.collection("chats").doc(chatId).collection("messages").add(msgDoc);
+
+                // 3) Denormalize chat preview + bump lastActivityAt so the
+                //    chat list reorders and unread dots light up.
+                const preview = payload.type === "image" ? "📷 Photo"
+                    : payload.type === "video" ? "🎬 Video"
+                    : payload.type === "audio" ? "🎤 Voice"
+                    : payload.type === "poll" ? `📊 ${(payload.poll && payload.poll.question) || "Poll"}`
+                    : text;
+                await db.doc(`chats/${chatId}`).set({
+                    lastMessage: {
+                        text: String(preview).slice(0, 200),
+                        sender: createdBy,
+                        ts: FieldValue.serverTimestamp(),
+                        type: payload.type,
+                    },
+                    lastActivityAt: FieldValue.serverTimestamp(),
+                    [`lastReadByName.${createdBy}`]: FieldValue.serverTimestamp(),
+                }, { merge: true });
+
+                // 4) Fan out per-recipient notification docs (chat
+                //    members minus the sender). dispatchNotification
+                //    handles the actual FCM send.
+                let members = [];
+                try {
+                    const chatSnap = await db.doc(`chats/${chatId}`).get();
+                    if (chatSnap.exists && Array.isArray(chatSnap.data().members)) {
+                        members = chatSnap.data().members;
+                    }
+                } catch (e) {
+                    logger.warn(`chat members lookup failed for ${chatId}:`, e);
+                }
+                const chatName = (await db.doc(`chats/${chatId}`).get()).data()?.name || "Chat";
+                const recipients = members.filter(n => n && n !== createdBy);
+                await Promise.all(recipients.map(async (to) => {
+                    const mentioned = mentions.includes(to);
+                    await db.collection("notifications").add({
+                        forStaff: to,
+                        type: mentioned ? "chat_mention" : "chat_message",
+                        title: mentioned ? `@${createdBy} → ${chatName}` : chatName,
+                        body: String(`${createdBy}: ${preview}`).slice(0, 140),
+                        deepLink: "chat",
+                        link: "/chat",
+                        tag: `chat:${chatId}:${to}`,
+                        priority: "high",
+                        createdAt: FieldValue.serverTimestamp(),
+                        read: false,
+                        createdBy: "system",
+                    }).catch(e => logger.warn(`scheduled notify failed for ${to}:`, e));
+                }));
+
+                // 5) Stamp success on the source doc.
+                await sDoc.ref.update({
+                    status: "sent",
+                    deliveredAt: FieldValue.serverTimestamp(),
+                    deliveredMessageId: ref.id,
+                });
+                delivered++;
+            } catch (err) {
+                logger.error(`scheduled delivery failed for ${sDoc.id}:`, err);
+                await sDoc.ref.update({
+                    status: "error",
+                    error: String(err && err.message || err).slice(0, 500),
+                    deliveredAt: FieldValue.serverTimestamp(),
+                }).catch(() => {});
+            }
+        }
+
+        logger.info(`scheduled chat messages: ${delivered} delivered (out of ${snap.size} due)`);
+    }
+);
+
+// Server-side mention parser. Mirrors src/data/chat.js's parseMentions
+// but stays here (Cloud Functions can't import the client module
+// because the SDKs differ). Returns a string[] of resolved staff names.
+function parseMentionsServer(text, staffList) {
+    if (!text || typeof text !== "string") return [];
+    const names = (Array.isArray(staffList) ? staffList : []).map(s => s && s.name).filter(Boolean);
+    const found = new Set();
+    const quoted = text.matchAll(/@"([^"]+)"/g);
+    for (const m of quoted) {
+        const target = names.find(n => n.toLowerCase() === m[1].toLowerCase());
+        if (target) found.add(target);
+    }
+    const bare = text.matchAll(/@(\p{L}[\p{L}'\-]*)/gu);
+    for (const m of bare) {
+        const lower = m[1].toLowerCase();
+        const firstNameMatch = names.find(n => n.split(" ")[0].toLowerCase() === lower);
+        const fullMatch = names.find(n => n.toLowerCase() === lower);
+        const target = fullMatch || firstNameMatch;
+        if (target) found.add(target);
+    }
+    return Array.from(found);
+}
+
 // Local helper — duplicated from src/components/Schedule.jsx
 function formatTime12h(time24) {
     if (!time24) return "";
