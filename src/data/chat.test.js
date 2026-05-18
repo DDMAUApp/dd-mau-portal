@@ -322,17 +322,21 @@ describe('isChatUnread', () => {
 });
 
 describe('getSeenByVisibility — default + roundtrip', () => {
-    it('defaults to sender_only when missing', () => {
-        expect(getSeenByVisibility({})).toBe('sender_only');
-        expect(getSeenByVisibility(null)).toBe('sender_only');
+    // Default flipped to 'admins_strict' on 2026-05-17 — Andrew wants
+    // owner-only read-receipt oversight on every chat by default.
+    it('defaults to admins_strict when missing', () => {
+        expect(getSeenByVisibility({})).toBe('admins_strict');
+        expect(getSeenByVisibility(null)).toBe('admins_strict');
     });
     it('passes through valid values', () => {
         expect(getSeenByVisibility({ seenByVisibility: 'everyone' })).toBe('everyone');
         expect(getSeenByVisibility({ seenByVisibility: 'admins_only' })).toBe('admins_only');
+        expect(getSeenByVisibility({ seenByVisibility: 'admins_strict' })).toBe('admins_strict');
+        expect(getSeenByVisibility({ seenByVisibility: 'sender_only' })).toBe('sender_only');
         expect(getSeenByVisibility({ seenByVisibility: 'off' })).toBe('off');
     });
     it('coerces invalid value back to default', () => {
-        expect(getSeenByVisibility({ seenByVisibility: 'garbage' })).toBe('sender_only');
+        expect(getSeenByVisibility({ seenByVisibility: 'garbage' })).toBe('admins_strict');
     });
 });
 
@@ -368,9 +372,27 @@ describe('canSeeReceiptsForMessage', () => {
         // Non-admin non-sender does NOT see
         expect(canSeeReceiptsForMessage(chat, otherMsg, viewerCash, false)).toBe(false);
     });
-    it('defaults to sender_only when field absent', () => {
+    it('admins_strict — ONLY admins see, sender does not', () => {
+        const chat = { seenByVisibility: 'admins_strict', admins: ['Maria Lopez'] };
+        // App admin sees regardless
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, true)).toBe(true);
+        // Co-admin (listed in chat.admins) sees
+        expect(canSeeReceiptsForMessage(chat, otherMsg, viewerMaria, false)).toBe(true);
+        // Sender does NOT see their own receipts (the strict-only diff
+        // from admins_only)
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(false);
+        // Random staff also does not see
+        expect(canSeeReceiptsForMessage(chat, otherMsg, viewerCash, false)).toBe(false);
+    });
+    it('defaults to admins_strict when field absent', () => {
+        // Post-2026-05-17 default: only admins see. The sender does
+        // NOT see their own receipts unless they ARE an admin.
         const chat = {};
-        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(true);
+        // Sender Cash is not admin → no receipts
+        expect(canSeeReceiptsForMessage(chat, msg, viewerCash, false)).toBe(false);
+        // Maria (not sender) as admin → sees
+        expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, true)).toBe(true);
+        // Maria as plain staff → no receipts
         expect(canSeeReceiptsForMessage(chat, msg, viewerMaria, false)).toBe(false);
     });
 });

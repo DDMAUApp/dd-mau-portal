@@ -268,31 +268,47 @@ export function isChatUnread(chat, viewerName) {
 // Each chat carries a `seenByVisibility` field controlling who can SEE
 // the read-receipts UI on messages:
 //
-//   'everyone'    — every chat member sees who's read each message
-//   'sender_only' — only the message's author sees who read it (default,
-//                   matches iMessage/WhatsApp expectation)
-//   'admins_only' — chat admins + the message's author see receipts
-//   'off'         — no one sees read receipts in this chat
+//   'admins_strict' — ONLY admins (app admin + chat co-admins) see
+//                     receipts. The sender does NOT see their own
+//                     message's receipts. Owner-oversight default —
+//                     staff send messages without knowing who read
+//                     them; admin retains visibility for ops.
+//                     (Andrew 2026-05-17 — "only admin can see it".)
+//   'admins_only'   — admins + the message's author see receipts.
+//                     (The author sees their own; staff sees nothing
+//                     on other people's messages.)
+//   'sender_only'   — only the message's author sees who read it
+//                     (matches iMessage/WhatsApp expectation).
+//   'everyone'      — every chat member sees who's read each message.
+//   'off'           — no one sees read receipts in this chat.
 //
 // The underlying read data (chat.lastReadByName) is ALWAYS collected
 // regardless — visibility just controls who can see the indicator.
 // Setting 'off' on a private DM means neither side knows whether the
 // other has read; flipping back to 'sender_only' resurfaces the
 // existing history.
+//
+// Default (when no field is set on a chat doc) is 'admins_strict' —
+// matches the DD Mau ops posture where the owner needs oversight on
+// whether staff have read manager-broadcast messages. Individual
+// chats can override via ChatSettingsModal.
 export const SEEN_VISIBILITY_OPTIONS = [
-    { id: 'sender_only', en: 'Sender only',   es: 'Solo el remitente' },
-    { id: 'everyone',    en: 'Everyone',       es: 'Todos' },
-    { id: 'admins_only', en: 'Admins + sender', es: 'Admins + remitente' },
-    { id: 'off',         en: 'Off (hide all)', es: 'Apagado (ocultar todos)' },
+    { id: 'admins_strict', en: 'Admins only',     es: 'Solo admins' },
+    { id: 'admins_only',   en: 'Admins + sender', es: 'Admins + remitente' },
+    { id: 'sender_only',   en: 'Sender only',     es: 'Solo el remitente' },
+    { id: 'everyone',      en: 'Everyone',        es: 'Todos' },
+    { id: 'off',           en: 'Off (hide all)',  es: 'Apagado (ocultar todos)' },
 ];
 
 // Resolve the effective visibility on a chat doc, defaulting to
-// 'sender_only' when the field hasn't been set (legacy chats from
-// before this feature shipped).
+// 'admins_strict' when the field hasn't been set. (Was 'sender_only'
+// before 2026-05-17 — flipped so owner gets read-receipt oversight on
+// every chat by default; staff don't see who's read what.)
 export function getSeenByVisibility(chat) {
     const v = chat?.seenByVisibility;
-    if (v === 'everyone' || v === 'sender_only' || v === 'admins_only' || v === 'off') return v;
-    return 'sender_only';
+    if (v === 'admins_strict' || v === 'admins_only' || v === 'sender_only'
+        || v === 'everyone' || v === 'off') return v;
+    return 'admins_strict';
 }
 
 // Returns true if the viewer is allowed to see read receipts on the
@@ -308,6 +324,13 @@ export function canSeeReceiptsForMessage(chat, message, viewer, isAdminFlag) {
         if (isSender) return true;
         if (isAdminFlag) return true;
         // Co-admin of the specific chat also counts.
+        if (Array.isArray(chat.admins) && chat.admins.includes(viewer.name)) return true;
+        return false;
+    }
+    if (v === 'admins_strict') {
+        // Strict admin-only: even the sender doesn't see their own.
+        // Only app admin OR chat co-admin can see receipts.
+        if (isAdminFlag) return true;
         if (Array.isArray(chat.admins) && chat.admins.includes(viewer.name)) return true;
         return false;
     }

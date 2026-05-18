@@ -444,7 +444,9 @@ export default function ChatSettingsModal({
                             chat). canEditChat returns false for DMs by
                             design — visibility is a UI gate, not a
                             membership-management action.
-                        Default is 'sender_only'. */}
+                        Default is 'admins_strict' (2026-05-17 flip —
+                        Andrew wants only-admin read-receipt oversight
+                        as the baseline for every chat). */}
                     {(() => {
                         const isMember = Array.isArray(members) && viewer?.name && members.includes(viewer.name);
                         const canChangeSeenBy = canEdit || (isDm && isMember);
