@@ -4831,9 +4831,23 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                     {activeTab === "inventory" && (
                         <div className="space-y-3">
-                            {/* ── TOP TOOLBAR ── */}
-                            <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5">
+                            {/* ── TOP TOOLBAR ──
+                                Layout: 2-row on mobile, 1-row on desktop.
+                                Andrew (2026-05-17): "the line of buttons
+                                that has master list, vender etc is too
+                                long in mobile version. make it 2 lines
+                                instead of one". Was a single `flex-row`
+                                cramming 8 buttons (4 view tabs + 4
+                                actions = Import CSV / Print / Compact /
+                                Edit) onto one row, which overflowed on
+                                iPhone widths. Now `flex-col` on mobile
+                                gives each group its own row; `md:flex-row`
+                                restores the original look on desktop. Both
+                                groups also have `flex-wrap` so they still
+                                degrade gracefully if a future button is
+                                added or translation gets long. */}
+                            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                                <div className="flex flex-wrap items-center gap-1.5">
                                     <button onClick={() => setInvViewMode("category")}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "category" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "📋 Lista Maestra" : "📋 Master List"}
@@ -4851,7 +4865,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         {language === "es" ? "Precios" : "Pricing"}
                                     </button>
                                 </div>
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex flex-wrap items-center gap-1.5">
                                     {currentIsAdmin && (
                                         <button onClick={() => setShowCsvImport(true)}
                                             title={language === "es" ? "Importar CSV del proveedor" : "Import vendor CSV"}
