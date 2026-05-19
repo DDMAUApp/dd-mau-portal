@@ -29,7 +29,6 @@ import {
     DOC_STATUS, DOC_STATUS_META, ONBOARDING_DOCS,
     docsForHire, isHireMinor, hireProgressCounts,
     ID_DOC_TYPES,
-    deadlineForDoc, deadlineStatus,
 } from '../data/onboarding';
 import { notifyAdmins } from '../data/notify';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
@@ -39,44 +38,6 @@ const OnboardingAcknowledgment = reactLazy(() => import('./OnboardingAcknowledgm
 const OnboardingDirectDeposit = reactLazy(() => import('./OnboardingDirectDeposit'));
 
 const INSTALL_NOTE_KEY = 'ddmau:onboardInstallSeen';
-
-// Shared deadline pill used on both the hire's portal cards and the admin
-// hire detail. Color reflects urgency, copy is plain English so the hire
-// understands without context. Returns null when there's nothing useful
-// to render (no deadline configured or doc already done).
-function renderDeadlinePill(dlInfo, isEs) {
-    if (!dlInfo || dlInfo.status === 'no-deadline') return null;
-    const d = dlInfo.daysLeft;
-    if (dlInfo.status === 'overdue') {
-        const days = Math.abs(d);
-        return (
-            <span className="text-[10px] font-black px-1.5 py-0.5 rounded border bg-red-100 text-red-800 border-red-300">
-                ⚠ {isEs
-                    ? `${days} día${days === 1 ? '' : 's'} de retraso`
-                    : `${days} day${days === 1 ? '' : 's'} overdue`}
-            </span>
-        );
-    }
-    if (dlInfo.status === 'due-today') {
-        return (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-orange-50 text-orange-800 border-orange-300">
-                ⏰ {isEs ? 'Vence hoy' : 'Due today'}
-            </span>
-        );
-    }
-    if (dlInfo.status === 'due-soon') {
-        return (
-            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-amber-50 text-amber-800 border-amber-300">
-                {isEs ? `Vence en ${d} días` : `Due in ${d} days`}
-            </span>
-        );
-    }
-    return (
-        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded border bg-gray-50 text-gray-600 border-gray-200">
-            {isEs ? `Vence en ${d} días` : `Due in ${d} days`}
-        </span>
-    );
-}
 
 export default function OnboardingPortal({ token, language = 'en' }) {
     // Hire-record preferredLanguage can override the URL/parent language
@@ -467,11 +428,6 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
 
     const isDone = status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED;
 
-    // Deadline status — drives the "Due in N days" / "Overdue" pill.
-    const deadline = deadlineForDoc(hire, doc);
-    const dlInfo = deadlineStatus(deadline);
-    const dlPill = !isDone && deadline ? renderDeadlinePill(dlInfo, isEs) : null;
-
     // Look up a reference template (admin-uploaded PDF for this doc) once.
     // Reference mode = the hire downloads the PDF, fills offline, uploads
     // back through the normal file upload flow. Independent of `kind`.
@@ -524,7 +480,6 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.tone}`}>
                             {meta.emoji} {isEs ? meta.es : meta.en}
                         </span>
-                        {dlPill}
                     </div>
                 </div>
                 <span className="text-gray-400">{expanded ? '▴' : '▾'}</span>

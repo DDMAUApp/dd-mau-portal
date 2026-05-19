@@ -56,11 +56,14 @@ export const LOCATION_INFO = {
 //                  type (passport, DL, state ID, SSN card, etc.) and uploads.
 //                  Two ID slots, hire picks whichever they have.
 //
-// `daysFromHire` (optional): deadline in days from hire start date. Used
-// for "due in N days" / "overdue" pills and reminders. Federal hard
-// deadlines: W-4 = 7 days, I-9 Section 1 = first day of work, I-9
-// docs = 3 days. Health certs vary by jurisdiction; defaults here are
-// conservative for Missouri food-service.
+// `daysFromHire` (optional): informational metadata only — the federal
+// or jurisdictional deadline in days from hire start date. NO code reads
+// this field anymore (the daily reminder scan + the "Due in N days /
+// Overdue" pills were removed 2026-05-18; admins use the manual 📧
+// Remind / ↻ Resend invite buttons instead). Kept here so the rule
+// (W-4 = 7 days, I-9 Section 1 = first day, I-9 docs = 3 days, etc.)
+// stays visible to the next person who touches this list. Easy to wire
+// automation back up later if needed.
 //
 // Templates live in /onboarding_templates/{templateId} with a `forDocId`
 // matching one of these ids. ANY doc (any kind) can have a template
@@ -423,59 +426,14 @@ export function deriveHireStatus(hire) {
     return HIRE_STATUS.IN_PROGRESS;
 }
 
-// Compute the deadline timestamp for a doc on a specific hire.
-// Returns null if no deadline applies (doc has no daysFromHire, or hire
-// has no hireDate set).
-//
-// hire.hireDate is "YYYY-MM-DD" — we treat it as midnight local time on
-// that day. Deadline = hireDate + daysFromHire * 24h.
-export function deadlineForDoc(hire, doc) {
-    if (!hire || !doc || !doc.daysFromHire) return null;
-    if (!hire.hireDate) return null;
-    const parts = String(hire.hireDate).split('-').map(Number);
-    if (parts.length !== 3 || parts.some(isNaN)) return null;
-    const [y, m, d] = parts;
-    const start = new Date(y, m - 1, d).getTime();
-    return start + doc.daysFromHire * 24 * 60 * 60 * 1000;
-}
-
-// Classify a deadline relative to "now" into a UX-friendly status.
-// Used to choose pill color + copy in the admin + hire UIs.
-//
-// Buckets:
-//   overdue        — deadline is in the past
-//   due-today      — within 24h
-//   due-soon       — within 3 days
-//   on-track       — more than 3 days away
-//   no-deadline    — null deadline
-//
-// Returns { status, daysLeft } where daysLeft is signed (negative = overdue).
-export function deadlineStatus(deadline) {
-    if (!deadline) return { status: 'no-deadline', daysLeft: null };
-    const diffMs = deadline - Date.now();
-    const daysLeft = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-    if (daysLeft < 0) return { status: 'overdue', daysLeft };
-    if (daysLeft <= 1) return { status: 'due-today', daysLeft };
-    if (daysLeft <= 3) return { status: 'due-soon', daysLeft };
-    return { status: 'on-track', daysLeft };
-}
-
-// Quick check used by the admin HireList "overdue" filter: does this hire
-// have at least one required doc past its deadline AND not yet submitted?
-export function hireHasOverdueDocs(hire) {
-    if (!hire) return false;
-    const docs = docsForHire(hire);
-    const checklist = hire.checklist || {};
-    for (const d of docs) {
-        if (!d.required) continue;
-        const st = (checklist[d.id] && checklist[d.id].status) || DOC_STATUS.NEEDED;
-        if (st === DOC_STATUS.APPROVED || st === DOC_STATUS.SUBMITTED) continue;
-        const deadline = deadlineForDoc(hire, d);
-        if (!deadline) continue;
-        if (deadline < Date.now()) return true;
-    }
-    return false;
-}
+// (Removed 2026-05-18) `deadlineForDoc`, `deadlineStatus`,
+// `hireHasOverdueDocs` and the matching admin/hire deadline pills were
+// taken out along with the `onboardingReminderScan` Cloud Function.
+// Admins now decide manually when a hire needs a nudge — via the 📧
+// Remind button (mailto with the missing-docs list) or ↻ Resend invite.
+// `daysFromHire` is still set on each doc def above as informational
+// metadata for the next person editing the list. If we ever want
+// automation back, `git log -- src/data/onboarding.js` has the helpers.
 
 // Counts {needed, started, submitted, approved} across the required docs
 // for a hire. Used by the donut/progress UI.

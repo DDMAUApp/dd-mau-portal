@@ -102,7 +102,6 @@ iOS Safari UA min-height on `<input>` overrides explicit `height: X%` — defeat
 
 ### Cloud Functions (`functions/`)
 - `sendShiftReminders` — 1-hour-before-shift FCM push
-- `onboardingReminderScan` — overdue-doc reminder emails (planned)
 - `scheduledFirestoreBackup` — daily managed export to `gs://dd-mau-staff-app-backups/YYYY-MM-DD/` at 3am Central; writes `backup_history` log
 
 Deploy: `firebase deploy --only functions`.

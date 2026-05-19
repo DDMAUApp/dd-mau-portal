@@ -25,7 +25,6 @@ import {
     HIRE_STATUS, HIRE_STATUS_META,
     INVITE_TTL_DAYS, makeInviteToken,
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
-    deadlineForDoc, deadlineStatus, hireHasOverdueDocs,
 } from '../data/onboarding';
 import {
     POSITIONS, LOCATIONS, DESIRED_HOURS,
@@ -139,22 +138,9 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
         () => hires.filter(h => h.status === HIRE_STATUS.ARCHIVED),
         [hires],
     );
-    // Active-view sub-filter: All / Overdue. Defaults to All so the page
-    // doesn't hide hires by default. "Overdue" surfaces only hires with at
-    // least one past-deadline required doc still missing.
-    const [activeFilter, setActiveFilter] = useState('all');
-    const filteredActive = useMemo(() => {
-        if (activeFilter === 'overdue') return activeHires.filter(hireHasOverdueDocs);
-        return activeHires;
-    }, [activeHires, activeFilter]);
-    const overdueCount = useMemo(
-        () => activeHires.filter(hireHasOverdueDocs).length,
-        [activeHires],
-    );
-
     const visibleList = view === 'archive' ? archivedHires
         : view === 'complete' ? completeHires
-        : filteredActive;
+        : activeHires;
     const selected = useMemo(
         () => hires.find(h => h.id === selectedId) || null,
         [hires, selectedId],
@@ -284,30 +270,6 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     </button>
                 ))}
             </div>
-
-            {/* Active sub-filter — All vs Overdue. Only meaningful on the
-                active view; hidden elsewhere. Overdue counts hires with at
-                least one past-deadline required doc still missing. */}
-            {view === 'hires' && (
-                <div className="flex gap-1.5 flex-wrap">
-                    <button onClick={() => setActiveFilter('all')}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full border transition ${
-                            activeFilter === 'all'
-                                ? 'bg-dd-text text-white border-dd-text'
-                                : 'bg-white text-dd-text-2 border-dd-line hover:border-dd-text'
-                        }`}>
-                        {tx('All', 'Todos')}
-                    </button>
-                    <button onClick={() => setActiveFilter('overdue')}
-                        className={`text-[11px] font-bold px-2.5 py-1 rounded-full border transition ${
-                            activeFilter === 'overdue'
-                                ? 'bg-red-600 text-white border-red-600'
-                                : `bg-white border-dd-line hover:border-red-300 ${overdueCount > 0 ? 'text-red-700' : 'text-dd-text-2'}`
-                        }`}>
-                        ⚠ {tx(`Overdue (${overdueCount})`, `Vencidos (${overdueCount})`)}
-                    </button>
-                </div>
-            )}
 
             {view === 'applications' ? (
                 <ApplicationsList
@@ -585,13 +547,11 @@ function HireList({ hires, selectedId, onSelect, isEs }) {
                 const meta = HIRE_STATUS_META[status];
                 const pct = counts.total === 0 ? 0 : Math.round((counts.approved / counts.total) * 100);
                 const isSel = selectedId === h.id;
-                const hasOverdue = hireHasOverdueDocs(h);
                 return (
                     <button key={h.id}
                         onClick={() => onSelect(h.id)}
                         className={`w-full text-left bg-white border-2 rounded-xl p-3 transition active:scale-[0.99] ${
                             isSel ? 'border-dd-green shadow-sm'
-                                : hasOverdue ? 'border-red-200 hover:border-red-300'
                                 : 'border-dd-line hover:border-dd-line/80'
                         }`}>
                         <div className="flex items-start gap-3">
@@ -608,11 +568,6 @@ function HireList({ hires, selectedId, onSelect, isEs }) {
                                     <span className="text-[10px] text-dd-text-2">
                                         {pct}% {isEs ? 'completo' : 'done'}
                                     </span>
-                                    {hasOverdue && (
-                                        <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-300">
-                                            ⚠ {isEs ? 'Vencido' : 'Overdue'}
-                                        </span>
-                                    )}
                                 </div>
                             </div>
                         </div>
@@ -1221,10 +1176,6 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit, forceE
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.tone}`}>
                             {meta.emoji} {isEs ? meta.es : meta.en}
                         </span>
-                        {/* Deadline pill — only when the doc isn't already
-                            submitted/approved and there's a real deadline. */}
-                        {status !== DOC_STATUS.SUBMITTED && status !== DOC_STATUS.APPROVED &&
-                            renderAdminDeadlinePill(deadlineStatus(deadlineForDoc(hire, docDef)), isEs)}
                     </div>
                     <p className="text-[11px] text-dd-text-2 mt-0.5">{docDef.description}</p>
                     {state.note && (
@@ -2270,41 +2221,6 @@ function ActionButtonsRow({ app, isEs, onConvert, onStatusChange, onDismiss }) {
     );
 }
 
-// Compact deadline pill for the admin DocReviewRow — color-coded urgency.
-// Keep this separate from the hire-portal pill so we can tune copy/colors
-// independently (admin sees more clinical, hire sees friendlier).
-function renderAdminDeadlinePill(dlInfo, isEs) {
-    if (!dlInfo || dlInfo.status === 'no-deadline') return null;
-    const d = dlInfo.daysLeft;
-    if (dlInfo.status === 'overdue') {
-        const days = Math.abs(d);
-        return (
-            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-red-100 text-red-800 border border-red-300">
-                ⚠ {isEs ? `${days}d vencido` : `${days}d overdue`}
-            </span>
-        );
-    }
-    if (dlInfo.status === 'due-today') {
-        return (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-orange-50 text-orange-800 border border-orange-300">
-                ⏰ {isEs ? 'Hoy' : 'Today'}
-            </span>
-        );
-    }
-    if (dlInfo.status === 'due-soon') {
-        return (
-            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
-                {isEs ? `En ${d}d` : `In ${d}d`}
-            </span>
-        );
-    }
-    return (
-        <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-gray-50 text-gray-500 border border-gray-200">
-            {isEs ? `En ${d}d` : `In ${d}d`}
-        </span>
-    );
-}
-
 // ── ReminderEmailButton ───────────────────────────────────────────────────
 // Builds a mailto: link pre-filled with the hire's email + a body listing
 // every required doc that's still outstanding, with deadlines. Admin
@@ -2323,14 +2239,7 @@ function ReminderEmailButton({ hire, docs, isEs, onWriteAudit, staffName }) {
     const disabled = !hire.email || missing.length === 0;
 
     const send = () => {
-        const lines = missing.map(d => {
-            const dl = deadlineForDoc(hire, d);
-            const dlInfo = deadlineStatus(dl);
-            const dlLabel = dlInfo.status === 'overdue'
-                ? `(${Math.abs(dlInfo.daysLeft)} days OVERDUE)`
-                : dl ? `(due in ${dlInfo.daysLeft} day${dlInfo.daysLeft === 1 ? '' : 's'})` : '';
-            return `• ${d.en} ${dlLabel}`.trim();
-        }).join('\n');
+        const lines = missing.map(d => `• ${d.en}`).join('\n');
         const firstName = (hire.name || '').split(' ')[0] || '';
         const subject = `DD Mau onboarding — ${missing.length} doc${missing.length === 1 ? '' : 's'} still needed`;
         const body = [
