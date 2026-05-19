@@ -112,4 +112,102 @@ describe('matchesRecipeQuery', () => {
         // "saffron" lives only in instructions — should NOT match
         expect(matchesRecipeQuery(r, 'saffron')).toBe(false);
     });
+
+    // Regression — Andrew 2026-05-18: "searched wings, didn't isolate
+    // wings". Cuts/species/category expansions are off for recipe
+    // search but bilingual base terms still work.
+    it('does NOT broaden cuts — "wings" only matches recipes literally about wings', () => {
+        const wholeChicken = {
+            id: 11, titleEn: 'Roast Chicken', titleEs: 'Pollo Rostizado',
+            ingredientsEn: ['whole chicken', 'rosemary', 'salt'],
+            ingredientsEs: ['pollo entero', 'romero', 'sal'],
+        };
+        const wings = {
+            id: 12, titleEn: 'Buffalo Wings', titleEs: 'Alitas Búfalo',
+            ingredientsEn: ['chicken wings', 'hot sauce', 'butter'],
+            ingredientsEs: ['alitas de pollo', 'salsa picante', 'mantequilla'],
+        };
+        // The bug: "wings" used to pull wholeChicken too via the
+        // chicken/wings/thigh/breast group.
+        expect(matchesRecipeQuery(wholeChicken, 'wings')).toBe(false);
+        expect(matchesRecipeQuery(wings, 'wings')).toBe(true);
+        // Sanity: chicken↔pollo translation still works (TIGHT keeps it)
+        expect(matchesRecipeQuery(wholeChicken, 'pollo')).toBe(true);
+        expect(matchesRecipeQuery(wholeChicken, 'chicken')).toBe(true);
+    });
+
+    it('does NOT broaden species — "salmon" only matches recipes with salmon', () => {
+        const tilapia = {
+            id: 13, titleEn: 'Tilapia Tacos', category: 'Fish',
+            ingredientsEn: ['tilapia fillet', 'corn tortilla'],
+        };
+        const salmon = {
+            id: 14, titleEn: 'Grilled Salmon', category: 'Fish',
+            ingredientsEn: ['salmon fillet', 'lemon'],
+        };
+        // The bug: "salmon" used to surface tilapia via fish↔salmon↔tuna
+        expect(matchesRecipeQuery(tilapia, 'salmon')).toBe(false);
+        expect(matchesRecipeQuery(salmon, 'salmon')).toBe(true);
+        // Sanity: fish↔pescado translation still hits both Fish-category recipes
+        expect(matchesRecipeQuery(tilapia, 'pescado')).toBe(true);
+        expect(matchesRecipeQuery(salmon, 'pescado')).toBe(true);
+    });
+
+    it('does NOT bridge pho↔soup↔broth — they are separate concepts in a recipe book', () => {
+        const pho = {
+            id: 15, titleEn: 'Beef Pho', ingredientsEn: ['rice noodles', 'star anise'],
+        };
+        const minestrone = {
+            id: 16, titleEn: 'Minestrone Soup', ingredientsEn: ['white beans', 'celery'],
+        };
+        // Searching "soup" should NOT surface pho (it's broth-based but
+        // not labeled soup); searching "pho" should NOT surface minestrone.
+        expect(matchesRecipeQuery(pho, 'soup')).toBe(false);
+        expect(matchesRecipeQuery(minestrone, 'pho')).toBe(false);
+        // But the literal terms still match their own recipes.
+        expect(matchesRecipeQuery(pho, 'pho')).toBe(true);
+        expect(matchesRecipeQuery(minestrone, 'soup')).toBe(true);
+    });
+
+    it('does NOT bridge tofu ↔ soy sauce — they are different ingredients', () => {
+        const pad = {
+            id: 17, titleEn: 'Pad See Ew',
+            ingredientsEn: ['rice noodles', 'soy sauce', 'chinese broccoli'],
+        };
+        const tofuDish = {
+            id: 18, titleEn: 'Mapo Tofu', ingredientsEn: ['silken tofu', 'doubanjiang'],
+        };
+        // Pad See Ew contains soy sauce but is not a tofu dish.
+        expect(matchesRecipeQuery(pad, 'tofu')).toBe(false);
+        expect(matchesRecipeQuery(tofuDish, 'tofu')).toBe(true);
+    });
+});
+
+// ── chatSearch parity assertions ────────────────────────────────────
+// Chat search must keep its BROAD behavior — typing "wings" in the
+// chat panel still surfaces every message about chicken thighs/breast,
+// which is what makes chat search useful for "anything related to X"
+// lookups. These tests guard the split: if someone re-points chat
+// search at the tight index, this catches it.
+import { expandQueryTerms } from './chatSearch';
+
+describe('chatSearch (broad) still broadens for chat use', () => {
+    const hasExpansion = (query, term) => {
+        const toks = expandQueryTerms(query);
+        return toks.some(t => t.expansions.has(term));
+    };
+    it('chat: wings → expands to chicken', () => {
+        expect(hasExpansion('wings', 'chicken')).toBe(true);
+    });
+    it('chat: salmon → expands to fish', () => {
+        expect(hasExpansion('salmon', 'fish')).toBe(true);
+    });
+    it('chat: pho → expands to soup/broth/sopa/caldo', () => {
+        expect(hasExpansion('pho', 'soup')).toBe(true);
+        expect(hasExpansion('pho', 'caldo')).toBe(true);
+    });
+    it('chat: manager → expands to boss/jefe', () => {
+        expect(hasExpansion('manager', 'boss')).toBe(true);
+        expect(hasExpansion('manager', 'jefe')).toBe(true);
+    });
 });

@@ -1,10 +1,12 @@
 // Recipe search — bilingual + accent-insensitive + synonym-expanded matching.
 //
-// Pure helpers (no React, no Firestore). Reuses normalize / expandQueryTerms /
-// haystackMatches from chatSearch so the restaurant vocabulary defined there
-// (chicken↔pollo, lime↔limón, broth↔caldo, peanut↔cacahuate, etc.) widens
-// recipe matches the same way it widens chat searches. One synonym list,
-// two surfaces.
+// Pure helpers (no React, no Firestore). Reuses normalize / haystackMatches
+// from chatSearch but expands queries via the TIGHT synonym index rather
+// than the broad one chat uses. That means translation pairs still work
+// (chicken↔pollo, lime↔limón, mint↔menta) but cut/species broadening
+// does NOT (searching "wings" no longer pulls every chicken recipe;
+// searching "salmon" no longer pulls every fish recipe). Andrew flagged
+// this 2026-05-18 — recipe search needs to isolate, not aggregate.
 //
 // ── What gets indexed ────────────────────────────────────────────────
 //   • titleEn, titleEs
@@ -28,7 +30,7 @@
 // size — no memoization needed. If the recipe book ever grows past a
 // few hundred we can move to a useMemo over a fingerprint of the list.
 
-import { normalize, expandQueryTerms, haystackMatches } from './chatSearch';
+import { normalize, expandQueryTermsTight, haystackMatches } from './chatSearch';
 import { allergenLabel } from './allergens';
 
 // Build a single normalized haystack string for a recipe.
@@ -53,7 +55,7 @@ export function buildRecipeHaystack(recipe) {
 // Convenience wrapper: does this recipe match the (possibly multi-word) query?
 // Empty/whitespace query → returns true (no filter applied).
 export function matchesRecipeQuery(recipe, query) {
-    const expanded = expandQueryTerms(query);
+    const expanded = expandQueryTermsTight(query);
     if (expanded.length === 0) return true;
     const haystack = buildRecipeHaystack(recipe);
     return haystackMatches(haystack, expanded);

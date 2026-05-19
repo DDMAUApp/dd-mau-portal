@@ -16,29 +16,29 @@
 // All concatenated, lowercased, and accent-stripped so "José" and
 // "Jose" both hit.
 //
-// ── Synonyms ──────────────────────────────────────────────────────
-// A small bilingual dictionary of restaurant-specific terms. Typing
-// "chicken" expands to ALSO search for "pollo", and vice versa. The
-// list is intentionally tight — restaurant nouns + 86/coverage/break
-// language. Wider thesaurus drift makes searches noisier.
+// ── Synonyms — two modes ─────────────────────────────────────────
+// The same restaurant vocabulary serves two different search jobs:
 //
-// Expansion is one-way per term but the map is symmetric (chicken→
-// pollo AND pollo→chicken). We expand the query, NOT the haystack —
-// keeps index building cheap and lets us tune the synonyms list
-// without re-indexing anything.
+//   BROAD (chat search, "show me anything about chicken")
+//     Groups cuts + species + cooking-broader terms together so
+//     typing "wings" pulls every chat message that mentioned thigh,
+//     breast, or just "chicken". Operational verbs (boss/cover/sick)
+//     and message-type words (photo/poll) also live here.
+//
+//   TIGHT (recipe search, "find the WINGS recipe")
+//     Strips cut/species expansion so "wings" doesn't drag in every
+//     chicken recipe. Keeps pure translation/dialect pairs only —
+//     chicken↔pollo, lime↔limón, mint↔menta. Searches stay precise.
+//
+// Andrew's bug report (2026-05-18): "searched wings, didn't isolate
+// wings". The fix is having recipe search opt into the tight index.
+//
+// We expand the query, NOT the haystack — keeps index building cheap
+// and lets us tune the synonym lists without re-indexing anything.
 
-// Restaurant-specific bilingual synonym pairs. Keep this short and
-// kitchen-relevant; broader synonyms add false positives. EN-side and
-// ES-side both included so we don't need a "direction" flag at query
-// time — both forms expand to the union of their match group.
-const SYNONYM_GROUPS = [
-    // Proteins
-    ['chicken', 'pollo', 'wing', 'wings', 'thigh', 'breast'],
-    ['beef', 'res', 'carne', 'cow', 'bone', 'hueso', 'huesos'],
-    ['pork', 'cerdo', 'puerco', 'belly', 'panceta'],
-    ['fish', 'pescado', 'salmon', 'tuna', 'atun', 'tilapia'],
-    ['shrimp', 'camaron', 'camarón', 'camarones', 'prawn'],
-    ['tofu', 'soy', 'soya', 'vegan', 'vegano', 'plant'],
+// Pure translations / dialect — identical in both modes. Tomato is
+// tomato is tomate is jitomate. No risk of false positives.
+const SHARED_TRANSLATION_GROUPS = [
     // Produce
     ['lettuce', 'lechuga'],
     ['cabbage', 'col', 'repollo'],
@@ -48,10 +48,39 @@ const SYNONYM_GROUPS = [
     ['cilantro', 'culantro', 'coriander'],
     ['lime', 'limon', 'limón'],
     ['mint', 'menta', 'hierbabuena'],
-    // Dishes
-    ['pho', 'phở', 'soup', 'sopa', 'broth', 'caldo'],
+    // Staples
     ['rice', 'arroz'],
     ['noodle', 'noodles', 'fideo', 'fideos'],
+    // Seafood — shrimp/prawn are true synonyms
+    ['shrimp', 'camaron', 'camarón', 'camarones', 'prawn'],
+];
+
+// Tight-only — proteins and dish names where ONLY the base term ↔
+// Spanish translation is interchangeable. No cuts (wing/thigh/breast),
+// no species (salmon/tuna/tilapia), no bridging (pho≠soup).
+const TIGHT_ONLY_GROUPS = [
+    ['chicken', 'pollo'],
+    ['beef', 'res', 'carne'],
+    ['pork', 'cerdo', 'puerco'],
+    ['fish', 'pescado'],
+    ['soy', 'soya'],
+    // tofu intentionally alone — typing tofu shouldn't pull soy sauce
+    ['pho', 'phở'],
+    ['soup', 'sopa'],
+    ['broth', 'caldo'],
+];
+
+// Broad-only — same protein/dish base terms but expanded to cuts,
+// species, vegan flags, and soup-family bridging. Plus operations
+// vocab and message-type words used only in chat.
+const BROAD_ONLY_GROUPS = [
+    // Proteins broadened with cuts/species
+    ['chicken', 'pollo', 'wing', 'wings', 'thigh', 'breast'],
+    ['beef', 'res', 'carne', 'cow', 'bone', 'hueso', 'huesos'],
+    ['pork', 'cerdo', 'puerco', 'belly', 'panceta'],
+    ['fish', 'pescado', 'salmon', 'tuna', 'atun', 'tilapia'],
+    ['tofu', 'soy', 'soya', 'vegan', 'vegano', 'plant'],
+    ['pho', 'phở', 'soup', 'sopa', 'broth', 'caldo'],
     // Operations / staff verbs
     ['boss', 'manager', 'gerente', 'jefe', 'owner', 'dueño', 'duena'],
     ['cover', 'cubrir', 'coverage', 'cobertura', 'sub', 'replacement'],
@@ -75,16 +104,21 @@ const SYNONYM_GROUPS = [
     ['issue', 'problema', 'problem'],
 ];
 
+const TIGHT_SYNONYM_GROUPS = [...SHARED_TRANSLATION_GROUPS, ...TIGHT_ONLY_GROUPS];
+const BROAD_SYNONYM_GROUPS = [...SHARED_TRANSLATION_GROUPS, ...BROAD_ONLY_GROUPS];
+
 // Build a fast lookup from any term → the set of all synonyms in its
-// group. Computed once at module load.
-const SYNONYM_INDEX = (() => {
+// group. Computed once at module load, once per mode.
+function buildSynonymIndex(groups) {
     const idx = new Map();
-    for (const group of SYNONYM_GROUPS) {
+    for (const group of groups) {
         const set = new Set(group.map(t => normalize(t)));
         for (const t of group) idx.set(normalize(t), set);
     }
     return idx;
-})();
+}
+const TIGHT_INDEX = buildSynonymIndex(TIGHT_SYNONYM_GROUPS);
+const BROAD_INDEX = buildSynonymIndex(BROAD_SYNONYM_GROUPS);
 
 // Strip accents, lowercase, collapse whitespace. Cheap and dependency-
 // free. Uses NFD + diacritic strip — fully supported in modern Safari/
@@ -100,18 +134,28 @@ export function normalize(s) {
         .toLowerCase();
 }
 
-// Tokenize a query into [{ originalTerm, expansions: Set<string> }].
-// Each token's expansions include the normalized form of the original
-// plus every synonym from the group it belongs to (if any). Lone words
-// not in the dictionary just expand to themselves — they still match.
-export function expandQueryTerms(query) {
+// Internal — tokenize a query against a specific synonym index.
+function expandWithIndex(query, index) {
     const raw = normalize(query);
     if (!raw) return [];
     return raw.split(/\s+/).filter(Boolean).map(term => {
-        const group = SYNONYM_INDEX.get(term);
+        const group = index.get(term);
         const expansions = group ? new Set(group) : new Set([term]);
         return { term, expansions };
     });
+}
+
+// Broad expansion — chat search default. "wings" pulls all chicken,
+// "salmon" pulls all fish, etc. Operations + message-type vocab
+// included.
+export function expandQueryTerms(query) {
+    return expandWithIndex(query, BROAD_INDEX);
+}
+
+// Tight expansion — recipe search. Translation/dialect pairs only.
+// "wings" stays literal; "chicken" still finds "pollo".
+export function expandQueryTermsTight(query) {
+    return expandWithIndex(query, TIGHT_INDEX);
 }
 
 // Build a single normalized haystack string for a message. Pulls every
