@@ -4,6 +4,7 @@ import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction,
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllergens } from '../data/allergens';
+import { matchesRecipeQuery } from '../data/recipeSearch';
 import { toast } from '../toast';
 
 // Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
@@ -193,6 +194,12 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // "what's safe for a peanut allergy?" can see at a glance which recipes
     // to avoid. Empty = no filter.
     const [avoidAllergen, setAvoidAllergen] = useState('');
+    // Free-text search across title (EN+ES), category, ingredients (EN+ES),
+    // and allergen labels (EN+ES). Live filter — no submit needed. Matching
+    // is accent-insensitive and multi-word AND-semantic, and runs through
+    // the same restaurant-vocabulary synonym list that powers chat search
+    // (chicken↔pollo, lime↔limón, broth↔caldo). See src/data/recipeSearch.js.
+    const [searchQuery, setSearchQuery] = useState('');
     // Raw text the user has typed in the per-recipe Custom multiplier input.
     // We commit (parseQuantity → setRecipeMultipliers) on blur/Enter so that
     // mid-typing characters like "1/" don't snap to a preset. Without this,
@@ -721,6 +728,13 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         return `${staffName || 'unknown'} · ${y}-${m}-${day} ${hh}:${mm}`;
     })();
 
+    // Apply the search filter. Empty/whitespace query passes everything
+    // through. matchesRecipeQuery handles accent stripping, bilingual
+    // synonyms, multi-word AND, and allergen-label matching.
+    const filteredRecipes = searchQuery.trim()
+        ? recipes.filter(r => matchesRecipeQuery(r, searchQuery))
+        : recipes;
+
     return (
         <div className="p-4 pb-bottom-nav recipe-protected" onContextMenu={e => e.preventDefault()}>
             {pinPromptOpen && (
@@ -775,10 +789,52 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                     : "CONFIDENTIAL — DD Mau property. Every view is logged (who, when, where). Screenshot attempts are also logged. Screenshots are watermarked with your name and timestamp."}
             </p>
 
+            {/* Search box. Live filter — no submit. Searches title (EN+ES),
+                category, ingredients (EN+ES), and allergen labels in both
+                languages. Multi-word queries are AND-semantic; matches are
+                accent-insensitive and run through the same restaurant
+                synonym list as chat search (chicken↔pollo, lime↔limón). */}
+            <div className="mb-3">
+                <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">🔍</span>
+                    <input
+                        type="search"
+                        inputMode="search"
+                        enterKeyHint="search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder={language === "es"
+                            ? "Buscar receta, ingrediente, alérgeno..."
+                            : "Search recipe, ingredient, allergen..."}
+                        className="w-full pl-9 pr-9 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-mint-400"
+                    />
+                    {searchQuery && (
+                        <button
+                            type="button"
+                            onClick={() => setSearchQuery('')}
+                            aria-label={language === "es" ? "Limpiar búsqueda" : "Clear search"}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center hover:bg-gray-300"
+                        >
+                            ✕
+                        </button>
+                    )}
+                </div>
+                {searchQuery.trim() && (
+                    <p className="text-[11px] text-gray-500 mt-1">
+                        {language === "es"
+                            ? `${filteredRecipes.length} de ${recipes.length} receta${recipes.length === 1 ? '' : 's'}`
+                            : `${filteredRecipes.length} of ${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`}
+                    </p>
+                )}
+            </div>
+
             {/* Allergen reverse-lookup toolbar. Cashier flow: a guest says
                 "I have a peanut allergy" → tap the 🥜 chip → every recipe
                 with peanut highlights red and shows a 🚫 banner. Tap again
-                to clear. Solves the "is X safe?" question in one tap. */}
+                to clear. Solves the "is X safe?" question in one tap.
+                When a search is also active, the count below reflects the
+                FILTERED set ("Of the recipes I'm currently looking at,
+                how many contain peanut?"). */}
             <div className="mb-4 bg-white border border-gray-200 rounded-lg p-2">
                 <div className="text-[11px] font-bold text-gray-700 mb-1">
                     🚫 {language === "es" ? "Evitar alérgeno (toca para resaltar):" : "Avoid allergen (tap to highlight):"}
@@ -802,7 +858,7 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                     )}
                 </div>
                 {avoidAllergen && (() => {
-                    const flagged = recipes.filter(r => Array.isArray(r.allergens) && r.allergens.includes(avoidAllergen));
+                    const flagged = filteredRecipes.filter(r => Array.isArray(r.allergens) && r.allergens.includes(avoidAllergen));
                     return (
                         <p className="text-[10px] text-red-700 font-bold mt-2">
                             {language === "es"
@@ -813,7 +869,23 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 })()}
             </div>
 
-            {recipes.map(recipe => {
+            {filteredRecipes.length === 0 && searchQuery.trim() && (
+                <div className="text-center py-10">
+                    <div className="text-4xl mb-2">🔍</div>
+                    <p className="text-sm font-bold text-gray-700">
+                        {language === "es"
+                            ? `No hay recetas que coincidan con "${searchQuery}"`
+                            : `No recipes match "${searchQuery}"`}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                        {language === "es"
+                            ? "Intenta con título, ingrediente o alérgeno."
+                            : "Try a title, ingredient, or allergen."}
+                    </p>
+                </div>
+            )}
+
+            {filteredRecipes.map(recipe => {
                 const isExpanded = expandedRecipe === recipe.id;
                 // Reverse-lookup hit: this recipe contains the allergen the
                 // user is filtering against. Card gets a red border + a 🚫
