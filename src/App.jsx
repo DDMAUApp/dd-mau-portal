@@ -688,6 +688,16 @@ export default function App() {
     // propagate without requiring the staffer to re-sign-in.
     const [requiredTaskTick, setRequiredTaskTick] = useState(0);
     const [pendingBlockingCount, setPendingBlockingCount] = useState(null); // null = unchecked
+    // gateBypassed: temporary pass-through when a task component fires
+    // a navigate event with { fromRequiredTask: true }. Lets the user
+    // reach the destination tab (e.g. Schedule for availability) to
+    // actually do the work that satisfies the task. Bypass is per-
+    // session — resets every staffName change (sign-in/out), so the
+    // gate re-evaluates fresh on the next login. (Bug 2026-05-20 —
+    // before this, tapping "Open availability editor" did nothing
+    // because the gate kept rendering over Schedule.)
+    const [gateBypassed, setGateBypassed] = useState(false);
+    useEffect(() => { setGateBypassed(false); }, [staffName]);
     useEffect(() => {
         if (!staffName) {
             setPendingBlockingCount(null);
@@ -725,6 +735,11 @@ export default function App() {
         const handler = (ev) => {
             const tab = ev?.detail?.tab;
             if (tab) setActiveTab(tab);
+            // Required-task escape hatch: when a task component asks
+            // us to navigate to do the work elsewhere, drop the gate
+            // for the rest of this session so the user can complete
+            // the task in context (e.g. fill availability in Schedule).
+            if (ev?.detail?.fromRequiredTask) setGateBypassed(true);
         };
         window.addEventListener('ddmau:navigate', handler);
         return () => window.removeEventListener('ddmau:navigate', handler);
@@ -846,7 +861,7 @@ export default function App() {
     if (pendingBlockingCount === null) {
         return <div className="min-h-screen bg-dd-bg" />;
     }
-    if (pendingBlockingCount > 0) {
+    if (pendingBlockingCount > 0 && !gateBypassed) {
         return (
             <Suspense fallback={<div className="min-h-screen bg-dd-bg" />}>
                 <RequiredTaskFlow
@@ -945,7 +960,13 @@ export default function App() {
         // gets no wrapper.
         const isHome = activeTab === 'home';
         return (
-            <Suspense fallback={<div className="min-h-screen bg-dd-sage" />}>
+            // Outer Suspense covers the AppShellV2 lazy() chunk (shell +
+            // sidebar + header). On cold load it was flashing a plain
+            // sage rectangle — TabLoading shows the same spinner the
+            // inner per-tab Suspense uses so the loading state is
+            // visually consistent. (Inner Suspense still catches per-tab
+            // chunks once the shell is mounted.)
+            <Suspense fallback={<TabLoading language={language} />}>
                 <ChunkReloadFlagReset />
                 <AppShellV2
                     language={language}

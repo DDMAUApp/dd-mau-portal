@@ -89,7 +89,7 @@ export default function ChatNotifSettings({
                 <div className="md:hidden flex justify-center pt-2 pb-1">
                     <div className="w-10 h-1 bg-dd-line rounded-full" />
                 </div>
-                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
+                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between safe-top">
                     <h2 className="text-lg font-black text-dd-text">🔔 {tx('Notification settings', 'Notificaciones')}</h2>
                     <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center">✕</button>
                 </div>

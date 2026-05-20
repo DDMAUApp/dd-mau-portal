@@ -31,6 +31,7 @@ import {
     setDoc, serverTimestamp, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
+import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
@@ -5448,6 +5449,39 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             {isEn ? 'Today' : 'Hoy'}
                                         </div>
                                     )}
+                                    {/* 2026-05-20 — Andrew: "above or below
+                                        the days i dont see the calenders.
+                                        things like hoidays, today is national
+                                        wings day". Tiny chip per day with up
+                                        to 2 events (federal holidays + food
+                                        observance days). Stays compact so the
+                                        header doesn't grow. Title tooltip
+                                        carries the full label. */}
+                                    {(() => {
+                                        const events = getEventsForDate(d);
+                                        if (events.length === 0) return null;
+                                        return (
+                                            <div className="mt-1 flex flex-wrap gap-0.5 justify-center">
+                                                {events.slice(0, 2).map((ev, ei) => {
+                                                    const tone = EVENT_KIND_TONES[ev.kind] || EVENT_KIND_TONES.observance;
+                                                    const label = isEn ? ev.en : ev.es;
+                                                    return (
+                                                        <span key={ei}
+                                                            title={label}
+                                                            className={`inline-flex items-center gap-0.5 px-1 py-0.5 rounded ${tone.bg} ${tone.border} ${tone.text} text-[9px] font-bold border leading-tight max-w-full truncate`}>
+                                                            <span>{ev.icon}</span>
+                                                            <span className="truncate">{label}</span>
+                                                        </span>
+                                                    );
+                                                })}
+                                                {events.length > 2 && (
+                                                    <span className="text-[9px] text-dd-text-2 font-bold" title={events.slice(2).map(e => isEn ? e.en : e.es).join(' · ')}>
+                                                        +{events.length - 2}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
                                     {closed && (
                                         <div className="mt-1 space-y-1">
                                             {/* 2026-05-16 — show the reason prominently
@@ -6721,6 +6755,11 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
 function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefill, weekStart, dateClosed, existingShifts, timeOff = [], canEditFOH = true, canEditBOH = true }) {
     const today = toDateStr(new Date());
     const tx = (en, es) => (isEn ? en : es);
+    // Audit 2026-05-20 — guard against double-submit. Without this, a
+    // rapid double-tap on Save (real on iPad with imprecise touch)
+    // creates two shift docs before handleAddShift closes the modal.
+    // Manager then has to find and delete the duplicate.
+    const [saving, setSaving] = useState(false);
 
     const [form, setForm] = useState({
         staffName: prefill?.staffName || '',
@@ -7062,16 +7101,25 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                 <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2 shadow-[0_-4px_8px_-4px_rgba(15,23,42,0.06)]">
                     <button onClick={onClose}
                         className="flex-1 py-2.5 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg transition">{tx('Cancel', 'Cancelar')}</button>
-                    <button onClick={() => {
-                        if (!canSubmit) return;
+                    <button onClick={async () => {
+                        if (!canSubmit || saving) return;
                         // If the manager never tapped the side toggle, default to
                         // the staff's home side. This way every saved shift carries
                         // an explicit side field.
                         const finalSide = form.side || staffDefaultSide || 'foh';
-                        onSave({ ...form, side: finalSide });
-                    }} disabled={!canSubmit}
-                        className={`flex-1 py-2.5 rounded-lg font-bold text-white shadow-sm transition ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-dd-text-2/30 cursor-not-allowed'}`}>
-                        {tx('Save Shift', 'Guardar Turno')}
+                        setSaving(true);
+                        try {
+                            // onSave is async (handleAddShift in parent). Await so
+                            // we stay disabled until the Firestore write resolves.
+                            // If parent throws / silently returns without closing,
+                            // finally clears saving so user can retry.
+                            await onSave({ ...form, side: finalSide });
+                        } finally {
+                            setSaving(false);
+                        }
+                    }} disabled={!canSubmit || saving}
+                        className={`flex-1 py-2.5 rounded-lg font-bold text-white shadow-sm transition ${(canSubmit && !saving) ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-dd-text-2/30 cursor-not-allowed'}`}>
+                        {saving ? tx('Saving…', 'Guardando…') : tx('Save Shift', 'Guardar Turno')}
                     </button>
                 </div>
             </div>

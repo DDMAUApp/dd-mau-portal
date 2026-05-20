@@ -38,6 +38,7 @@ import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
 import { claimCoverage, approveCoverage, denyCoverage, withdrawCoverage } from '../data/coverage';
 import { toast } from '../toast';
+import { fixText as aiFixText } from '../data/aiFixText';
 import TranslatableText, { renderWithMentions } from './TranslatableText';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
@@ -1271,10 +1272,20 @@ export default function ChatThread({
                 actually scrolls INSIDE the bounded box. min-w-0 is the
                 same gotcha on the horizontal axis (kept defensively
                 for long inline content like raw URLs). */}
+            {/* Andrew 2026-05-20 — "if i pull up again it brings the
+                text window up off of the bottom and stays up even when
+                i scroll back down". iOS over-scroll on the message list
+                was propagating the bounce up to the parent, which
+                detached the sticky composer at the bottom. overscroll-
+                behavior: contain stops the bounce from bubbling up so
+                the composer stays anchored regardless of how hard the
+                user pulls. WebkitOverflowScrolling keeps the momentum
+                scroll feeling on iOS. */}
             <div
                 ref={scrollRef}
                 onScroll={handleScroll}
-                className="flex-1 min-h-0 min-w-0 overflow-y-auto px-3 py-2 space-y-1"
+                className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain px-3 py-2 space-y-1"
+                style={{ WebkitOverflowScrolling: 'touch' }}
             >
                 {/* Load-older button — only when we haven't reached the
                     bottom of the message history yet. Bumps the limit
@@ -2092,6 +2103,44 @@ function Composer({
     const textareaRef = useRef(null);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [elapsed, setElapsed] = useState(0);
+    // 2026-05-20 — Andrew: "make the staff chat page text bar have ai
+    // to help with spelling and grammer too." One-tap ✨ button calls
+    // the aiFixText Cloud Function (Claude Haiku) and replaces the
+    // draft in place. Original is buffered for the Undo button on the
+    // success toast so an unwanted "fix" is one tap away from revert.
+    const [fixing, setFixing] = useState(false);
+    const handleFixGrammar = async () => {
+        const original = draft;
+        const text = original.trim();
+        if (!text || fixing || sending) return;
+        if (text.length > 1000) {
+            toast(isEs ? 'Mensaje muy largo para corregir.' : 'Message too long to fix.', { kind: 'warn' });
+            return;
+        }
+        setFixing(true);
+        try {
+            const { fixed, changed } = await aiFixText({
+                text,
+                language: isEs ? 'es' : 'en',
+            });
+            if (!changed) {
+                toast(isEs ? '✓ Ya está bien' : '✓ Looks good', { kind: 'success' });
+            } else {
+                setDraft(fixed);
+                toast(isEs ? '✨ Corregido' : '✨ Fixed', {
+                    kind: 'success',
+                    actionLabel: isEs ? 'Deshacer' : 'Undo',
+                    onAction: () => setDraft(original),
+                    duration: 6000,
+                });
+            }
+        } catch (e) {
+            console.warn('aiFixText failed:', e);
+            toast(isEs ? 'IA no disponible' : 'AI unavailable', { kind: 'error' });
+        } finally {
+            setFixing(false);
+        }
+    };
 
     // Insert an emoji at the textarea's current cursor position.
     // Falls back to "append at end" if the textarea isn't mounted
@@ -2311,6 +2360,23 @@ function Composer({
                 >
                     😀
                 </button>
+                {/* ✨ Spell / grammar fix — only shows when there's text
+                    in the draft. One-tap correction via aiFixText Cloud
+                    Function. Loading spinner on the button while in
+                    flight; Undo offered via toast for 6s after a fix. */}
+                {!empty && (
+                    <button
+                        onClick={handleFixGrammar}
+                        disabled={sending || fixing}
+                        className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shrink-0 disabled:opacity-40 transition ${fixing ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
+                        aria-label={isEs ? 'Corregir ortografía y gramática' : 'Fix spelling & grammar'}
+                        title={isEs ? '✨ Corregir ortografía y gramática (IA)' : '✨ Fix spelling & grammar (AI)'}
+                    >
+                        {fixing
+                            ? <span className="inline-block w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                            : '✨'}
+                    </button>
+                )}
                 {/* Text input */}
                 <textarea
                     ref={textareaRef}

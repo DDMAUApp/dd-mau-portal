@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, deleteDoc, writeBatch, query, orderBy, limit, where, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -657,6 +657,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [savedMsg, setSavedMsg] = useState(null);
             const [confirmRemoveId, setConfirmRemoveId] = useState(null);
             const [staffExpanded, setStaffExpanded] = useState(false);
+            // Ref to the staff list section so the top-of-page search bar
+            // can scroll it into view + auto-expand when the admin types.
+            const staffSectionRef = useRef(null);
             const [maintenanceRequests, setMaintenanceRequests] = useState([]);
             const [maintenanceExpanded, setMaintenanceExpanded] = useState(true);
             const [selectedRequest, setSelectedRequest] = useState(null);
@@ -675,15 +678,36 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Locations" is showing, the side filter is hidden but kept in
             // state so toggling locations preserves the user's choice.
             const [staffSideFilter, setStaffSideFilter] = useState("all"); // 'all' | 'foh' | 'boh'
+            // 2026-05-20 — Andrew: "lets add a search bar in the staff
+            // page". Free-text filter that runs across name / role /
+            // email / phone, accent-insensitive. Composes WITH the
+            // location + side filters above (intersection).
+            const [staffSearch, setStaffSearch] = useState("");
             // Resolve a person's effective side: explicit scheduleSide if set,
             // else infer from BOH-tagged role list. Same logic the schedule
             // uses, kept consistent so the count chips match.
             const personSide = (s) => s.scheduleSide || (BULK_BOH_ROLES.includes(s.role) ? 'boh' : 'foh');
+            // Tiny inline normalize — drops diacritics + lowercases. Mirrors
+            // chatSearch.normalize() but kept inline so we don't drag the
+            // module in. Stable across staff names like "José" / "Jose".
+            const normalizeStr = (s) => String(s || '')
+                .normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
             const filteredStaff = (() => {
                 let out = staffList;
                 if (staffFilter !== "all") out = out.filter(s => s.location === staffFilter || s.location === "both");
                 if (staffSideFilter !== "all" && staffFilter !== "all") {
                     out = out.filter(s => personSide(s) === staffSideFilter);
+                }
+                const q = normalizeStr(staffSearch).trim();
+                if (q) {
+                    const tokens = q.split(/\s+/).filter(Boolean);
+                    out = out.filter(s => {
+                        const hay = normalizeStr([
+                            s.name, s.role, s.email, s.phone, s.phoneE164,
+                            s.location, s.scheduleSide,
+                        ].filter(Boolean).join(' '));
+                        return tokens.every(t => hay.includes(t));
+                    });
                 }
                 return out;
             })();
@@ -1051,11 +1075,61 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             return (
                 <div className="p-4 pb-bottom-nav">
                     <h2 className="text-2xl font-bold text-mint-700 mb-2">⚙️ {t("adminPanel", language)}</h2>
-                    <p className="text-xs text-gray-500 mb-4 bg-mint-50 border border-mint-200 rounded-lg p-2">
+                    <p className="text-xs text-gray-500 mb-3 bg-mint-50 border border-mint-200 rounded-lg p-2">
                         🔐 {language === "es"
                             ? "Solo Andrew Shih y Julie Shih pueden acceder a este panel."
                             : "Only Andrew Shih and Julie Shih can access this panel."}
                     </p>
+
+                    {/* 2026-05-20 — Andrew: "put a search in the first
+                        staff page too". Quick-find pinned at the very
+                        top of the admin panel so typing a name jumps
+                        straight to the staff list (auto-expanded +
+                        scrolled into view), without having to scroll
+                        past Onboarding / Maintenance / Todos first.
+                        Same state as the inner staff-list search; typing
+                        in either keeps both in sync. */}
+                    <div className="relative mb-4">
+                        <input
+                            type="search"
+                            inputMode="search"
+                            enterKeyHint="search"
+                            value={staffSearch}
+                            onChange={(e) => {
+                                setStaffSearch(e.target.value);
+                                if (e.target.value.trim()) {
+                                    // Open the staff list so results show
+                                    // immediately, and bring it onscreen.
+                                    setStaffExpanded(true);
+                                    requestAnimationFrame(() => {
+                                        try {
+                                            staffSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                        } catch {}
+                                    });
+                                }
+                            }}
+                            placeholder={language === "es"
+                                ? "🔍 Buscar personal (nombre, puesto, email, teléfono)…"
+                                : "🔍 Find staff (name, role, email, phone)…"}
+                            className="w-full pl-3 pr-10 py-3 border-2 border-blue-300 rounded-xl text-sm font-bold bg-white focus:outline-none focus:border-blue-500 placeholder:font-normal placeholder:text-blue-400 shadow-sm"
+                        />
+                        {staffSearch && (
+                            <button onClick={() => setStaffSearch("")}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-blue-100 text-blue-700 text-sm font-bold flex items-center justify-center hover:bg-blue-200">
+                                ✕
+                            </button>
+                        )}
+                        {staffSearch.trim() && (
+                            <p className="mt-1.5 text-[11px] text-blue-700 font-bold pl-1">
+                                {filteredStaff.length}{' '}
+                                {language === "es"
+                                    ? `coincidencia${filteredStaff.length === 1 ? '' : 's'}`
+                                    : `match${filteredStaff.length === 1 ? '' : 'es'}`}
+                                {' '}
+                                {language === "es" ? '— ver abajo ↓' : '— see below ↓'}
+                            </p>
+                        )}
+                    </div>
 
                     {savedMsg && (
                         <div className="mb-3 p-2 bg-green-100 border border-green-300 rounded-lg text-center text-green-700 font-bold text-sm">
@@ -1250,7 +1324,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     />
 
                     {/* ── STAFF LIST (collapsible) ── */}
-                    <div className="mb-6">
+                    <div className="mb-6" ref={staffSectionRef}>
                         <button onClick={() => setStaffExpanded(!staffExpanded)}
                             className="w-full flex items-center justify-between bg-blue-50 border-2 border-blue-200 rounded-xl p-4 hover:bg-blue-100 transition">
                             <div className="flex items-center gap-2">
@@ -1291,6 +1365,28 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         </button>
                                     </div>
                                 )}
+                                {/* Search bar — composes with the location +
+                                    side chips below. Andrew 2026-05-20. */}
+                                <div className="relative mb-2">
+                                    <input
+                                        type="search"
+                                        inputMode="search"
+                                        enterKeyHint="search"
+                                        value={staffSearch}
+                                        onChange={(e) => setStaffSearch(e.target.value)}
+                                        placeholder={language === "es"
+                                            ? "Buscar por nombre, puesto, email, teléfono…"
+                                            : "Search by name, role, email, phone…"}
+                                        className="w-full pl-9 pr-9 py-2 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:border-blue-400"
+                                    />
+                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-400 text-sm pointer-events-none">🔍</span>
+                                    {staffSearch && (
+                                        <button onClick={() => setStaffSearch("")}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-blue-100 text-blue-600 text-xs font-bold flex items-center justify-center hover:bg-blue-200">
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
                                 <div className="flex gap-1 justify-center mb-2 flex-wrap">
                                     {[{k:"all",en:"All",es:"Todos"},{k:"webster",en:"Webster",es:"Webster"},{k:"maryland",en:"MD Heights",es:"MD Heights"}].map(f => (
                                         <button key={f.k} onClick={() => setStaffFilter(f.k)}
@@ -2112,19 +2208,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     the bottom + the X in the (now scrolling)
                                     header are both reachable. */}
                                 <div className="bg-white w-full sm:max-w-3xl lg:max-w-5xl xl:max-w-6xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[92vh] overflow-y-auto">
-                                    <div className="border-b border-gray-200 p-4 sticky top-0 bg-white z-10">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <h3 className="text-lg font-bold text-purple-700">🏷 {language === "es" ? "Etiquetar Personal en Lote" : "Bulk Tag Staff"}</h3>
+                                    {/* Andrew 2026-05-20 — "in the bulk edit in
+                                        the mobile version the scrolling needs a
+                                        done up at the top that floats. its too
+                                        long to scroll to the bottom to exit."
+                                        Sticky header now carries a prominent
+                                        Done button (was a tiny ×) so the exit
+                                        affordance is reachable from any scroll
+                                        position. Bottom Done stays as a
+                                        secondary tap target. */}
+                                    <div className="border-b border-gray-200 p-3 sm:p-4 sticky top-0 bg-white z-10 safe-top">
+                                        <div className="flex items-center justify-between gap-2">
+                                            <h3 className="text-base sm:text-lg font-bold text-purple-700 truncate">🏷 {language === "es" ? "Etiquetar Personal" : "Bulk Tag Staff"}</h3>
                                             <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
-                                                className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
+                                                className="flex-shrink-0 px-4 py-2 rounded-full bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                                                ✓ {language === "es" ? "Listo" : "Done"}
+                                            </button>
                                         </div>
                                     </div>
                                     <div className="p-4">
-                                        <div className="flex items-center justify-between mb-2">
-                                            <h3 className="text-lg font-bold text-purple-700">🏷 {language === "es" ? "Etiquetar Personal en Lote" : "Bulk Tag Staff"}</h3>
-                                            <button onClick={() => { setShowBulkTag(false); setBulkSearch(""); }}
-                                                className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 text-lg">×</button>
-                                        </div>
                                         <p className="text-xs text-gray-500 mb-2">
                                             {language === "es"
                                                 ? "Toca para alternar. Los cambios se guardan al instante."

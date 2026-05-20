@@ -268,7 +268,11 @@ function ListsGrid({ lists, tx, language, onEdit, onActivate, onDuplicate, onRen
 // ── New-list modal — pick a starting source ──────────────────────────
 function NewListModal({ tx, language, staffName, existingLists, onClose, onCreated }) {
     const [name, setName] = useState('');
-    const [source, setSource] = useState('master');
+    // Default to empty — Andrew 2026-05-20: "with the new list i want to
+    // start with nothing in it." The new split-pane editor + sub-cat
+    // grouping makes building from scratch fast, so empty is the right
+    // starting point.
+    const [source, setSource] = useState('empty');
     const [sourceListId, setSourceListId] = useState('');
     const [busy, setBusy] = useState(false);
 
@@ -318,6 +322,9 @@ function NewListModal({ tx, language, staffName, existingLists, onClose, onCreat
                 <div>
                     <span className="block text-[10px] font-bold uppercase text-dd-text-2 mb-1">{tx('Start from', 'Comenzar desde')}</span>
                     <div className="space-y-1.5">
+                        <SourceOption value="empty" current={source} setSource={setSource}
+                            label={tx('Empty (recommended)', 'Vacía (recomendado)')}
+                            help={tx('Build from scratch — click items on the left to add them', 'Construye desde cero — haz clic en los artículos a la izquierda')} />
                         <SourceOption value="master" current={source} setSource={setSource}
                             label={tx('Master list (factory default)', 'Lista maestra (predeterminada)')}
                             help={tx('Full catalog from inventory.js', 'Catálogo completo')} />
@@ -329,9 +336,6 @@ function NewListModal({ tx, language, staffName, existingLists, onClose, onCreat
                                 label={tx('Clone an existing list', 'Clonar lista existente')}
                                 help={tx('Make a copy and edit independently', 'Hacer una copia editable')} />
                         )}
-                        <SourceOption value="empty" current={source} setSource={setSource}
-                            label={tx('Empty', 'Vacía')}
-                            help={tx('Build from scratch (no categories or items)', 'Construir desde cero')} />
                     </div>
                     {source === 'fromList' && (
                         <select value={sourceListId} onChange={e => setSourceListId(e.target.value)}
@@ -496,9 +500,16 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
     }, [cats]);
 
     // Click an item on the left → toggle in the right list.
-    // ADD: find the master category by NAME on the right. If
-    //   present, append the item. If absent, create it (using the
-    //   master category's structure) and append the item.
+    //
+    // Andrew 2026-05-20 — "i want to be able to make lists to the sub
+    // category." Bucket the new entry by the item's SUBCAT, not the
+    // top-level master category. So clicking "Chicken Wings" lands in
+    // a "Chicken" bucket instead of a giant "Proteins" bucket. Items
+    // without a subcat fall back to the master category name.
+    //
+    // ADD: find the bucket on the right by NAME. If present, append.
+    //   If absent, create it (id = max id + 1 across existing buckets
+    //   so it never collides with an auto-generated one).
     // REMOVE: walk every category on the right, drop matching id.
     const toggleItem = (masterCat, item) => {
         setCats(prev => {
@@ -506,19 +517,22 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                 return prev
                     .map(c => ({ ...c, items: (c.items || []).filter(it => it.id !== item.id) }));
             }
-            const targetIdx = prev.findIndex(c => c.name === masterCat.name);
+            const targetName = (item.subcat && item.subcat.trim()) || masterCat.name;
+            const targetIdx = prev.findIndex(c => c.name === targetName);
             if (targetIdx >= 0) {
                 const next = [...prev];
                 const items = [...(next[targetIdx].items || []), { ...item }];
                 next[targetIdx] = { ...next[targetIdx], items };
                 return next;
             }
-            // Create the category on the right, preserving id+nameEs
-            // from the master so renders look identical.
+            const maxId = prev.reduce((m, c) => Math.max(m, c.id || 0), 0);
             return [...prev, {
-                id: masterCat.id,
-                name: masterCat.name,
-                nameEs: masterCat.nameEs,
+                id: maxId + 1,
+                name: targetName,
+                // Sub-cats in inventory.js are English-only; copy the
+                // English label as the Spanish so the bucket isn't
+                // blank in ES mode.
+                nameEs: targetName,
                 items: [{ ...item }],
             }];
         });
@@ -669,38 +683,78 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                             </div>
                         )}
                     </div>
+                    {/* Andrew 2026-05-20 — left pane groups items by SUB-
+                        CATEGORY within each top-level category. Items
+                        STAY in their original position when added (no
+                        movement) — Andrew's revised request was "put
+                        numbers on the subcatigorys so that the number i
+                        see them on the list instead of moving them.
+                        makes it easier". So each sub-cat header carries
+                        a "{added}/{total}" counter when any are added,
+                        and added items gray out + line-through in place.
+                        Stable positions = muscle memory survives. */}
                     <div className="flex-1 overflow-y-auto p-2 space-y-2">
                         {INVENTORY_CATEGORIES.map(masterCat => {
                             const itemsMatching = (masterCat.items || []).filter(it => itemMatchesUnion(it, masterCat.name));
                             if (hasQuery && itemsMatching.length === 0) return null;
+
+                            // Group by sub-cat, preserving first-seen order so
+                            // ES/EN renderings stay stable across edits.
+                            const subcatOrder = [];
+                            const subcatItems = {};
+                            for (const it of itemsMatching) {
+                                const sc = (it.subcat && it.subcat.trim()) || tx('Other', 'Otros');
+                                if (!subcatItems[sc]) { subcatItems[sc] = []; subcatOrder.push(sc); }
+                                subcatItems[sc].push(it);
+                            }
+                            // Top-level "X/Y added" count across the whole
+                            // category — gives the at-a-glance read.
+                            const totalInCat = itemsMatching.length;
+                            const addedInCat = itemsMatching.reduce(
+                                (s, it) => s + (presentIds.has(it.id) ? 1 : 0), 0);
+
                             return (
                                 <div key={masterCat.id} className="border border-dd-line/70 rounded-lg overflow-hidden">
                                     <div className="px-2 py-1 bg-dd-bg/50 flex items-center justify-between">
                                         <span className="text-[11px] font-black text-dd-text">
                                             {isEs ? (masterCat.nameEs || masterCat.name) : masterCat.name}
                                         </span>
-                                        <span className="text-[10px] text-dd-text-2">{itemsMatching.length}</span>
+                                        <span className={`text-[10px] font-bold ${addedInCat > 0 ? 'text-dd-green' : 'text-dd-text-2'}`}>
+                                            {addedInCat > 0 ? `${addedInCat}/${totalInCat}` : totalInCat}
+                                        </span>
                                     </div>
-                                    <div>
-                                        {itemsMatching.map(item => {
-                                            const inList = presentIds.has(item.id);
-                                            return (
-                                                <button key={item.id}
-                                                    onClick={() => toggleItem(masterCat, item)}
-                                                    className={`w-full text-left px-2 py-1.5 flex items-center gap-2 text-xs border-t border-dd-line/40 transition ${inList ? 'bg-dd-green-50 hover:bg-dd-green-50/80' : 'bg-white hover:bg-dd-bg'}`}>
-                                                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] font-black flex-shrink-0 ${inList ? 'bg-dd-green border-dd-green text-white' : 'border-dd-line bg-white text-transparent'}`}>
-                                                        ✓
+                                    {subcatOrder.map(sc => {
+                                        const totalInSub = subcatItems[sc].length;
+                                        const addedInSub = subcatItems[sc].reduce(
+                                            (s, it) => s + (presentIds.has(it.id) ? 1 : 0), 0);
+                                        return (
+                                            <div key={sc}>
+                                                <div className="px-2 py-0.5 bg-dd-bg/30 border-t border-dd-line/40 flex items-center justify-between">
+                                                    <span className="text-[10px] font-bold uppercase tracking-wide text-dd-text-2">
+                                                        {sc}
                                                     </span>
-                                                    <span className="flex-1 min-w-0 truncate">
-                                                        {isEs ? (item.nameEs || item.name) : item.name}
-                                                        {item.subcat && (
-                                                            <span className="text-[9px] text-dd-text-2 ml-1">· {item.subcat}</span>
-                                                        )}
+                                                    <span className={`text-[10px] font-bold ${addedInSub > 0 ? 'text-dd-green' : 'text-dd-text-2/60'}`}>
+                                                        {addedInSub > 0 ? `${addedInSub}/${totalInSub}` : totalInSub}
                                                     </span>
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
+                                                </div>
+                                                {subcatItems[sc].map(item => {
+                                                    const inList = presentIds.has(item.id);
+                                                    return (
+                                                        <button key={item.id}
+                                                            onClick={() => toggleItem(masterCat, item)}
+                                                            className={`w-full text-left px-2 py-1.5 flex items-center gap-2 text-xs border-t border-dd-line/40 transition ${inList ? 'opacity-50 bg-gray-50 hover:bg-gray-100' : 'bg-white hover:bg-dd-bg'}`}>
+                                                            <span className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] font-black flex-shrink-0 ${inList ? 'bg-dd-green border-dd-green text-white' : 'border-dd-line bg-white text-transparent'}`}>
+                                                                ✓
+                                                            </span>
+                                                            <span className={`flex-1 min-w-0 truncate ${inList ? 'line-through' : ''}`}>
+                                                                {isEs ? (item.nameEs || item.name) : item.name}
+                                                            </span>
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        );
+                                    })}
                                 </div>
                             );
                         })}

@@ -168,7 +168,7 @@ export default function ChatPhotoIssueModal({
                 <div className="md:hidden flex justify-center pt-2 pb-1">
                     <div className="w-10 h-1 bg-dd-line rounded-full" />
                 </div>
-                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
+                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between safe-top">
                     <div>
                         <h2 className="text-lg font-black text-dd-text">📸 {tx('Report Issue', 'Reportar Problema')}</h2>
                         <p className="text-[11px] text-dd-text-2">{tx('Snap a photo, pick urgency, post', 'Foto, urgencia, publicar')}</p>

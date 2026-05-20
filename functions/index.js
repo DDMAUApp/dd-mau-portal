@@ -162,6 +162,13 @@ exports.dispatchNotification = onDocumentCreated(
         // coverage approvals, etc.) ignore this gate entirely — they
         // are operationally urgent or directly addressed.
         const ALWAYS_DELIVER_TYPES = new Set([
+            // 2026-05-20 — Andrew: "lets keep all chat group chat
+            // groups on, not silenced give the staff the option to
+            // salience it." Routine chat now pierces the off-shift
+            // gate; the per-channel mute (checked just below) is the
+            // opt-out path for staff who don't want pushes from a
+            // specific channel.
+            "chat_message",            // group / DM message
             "chat_mention",            // @-tagged, directly addressed
             "chat_nudge",              // manager explicitly reminding YOU to read
             "eighty_six_alert",        // operational emergency
@@ -173,6 +180,47 @@ exports.dispatchNotification = onDocumentCreated(
             "task_handoff",            // assigned to YOU
             "invite_sent",             // onboarding
         ]);
+
+        // ── Per-channel mute gate ───────────────────────────────────
+        // Runs BEFORE the off-shift gate so even always-deliver chat
+        // types respect a user's explicit mute. Reads
+        // /chat_prefs/{forStaff}.channelPrefs[chatId]:
+        //   'all'      → push (default when no entry exists)
+        //   'mentions' → push only when notif.type === 'chat_mention'
+        //   'none'     → suppress all pushes for this channel
+        // chatId is parsed from notif.tag (`chat:{id}:{to}`) which
+        // both the client (ChatThread) and the scheduled-chat pump
+        // set. Non-chat notifs are never muted this way.
+        if ((notif.type === "chat_message" || notif.type === "chat_mention")
+            && typeof notif.tag === "string" && notif.tag.startsWith("chat:")) {
+            const chatId = notif.tag.split(":")[1];
+            if (chatId) {
+                try {
+                    const prefsSnap = await db.doc(`chat_prefs/${forStaff}`).get();
+                    const channelPref = prefsSnap.exists
+                        ? (prefsSnap.data()?.channelPrefs || {})[chatId]
+                        : null;
+                    if (channelPref === "none"
+                        || (channelPref === "mentions" && notif.type !== "chat_mention")) {
+                        logger.info(`channel-mute gate: suppressing ${notif.type} for ${forStaff} in ${chatId} (pref=${channelPref})`);
+                        try {
+                            await snap.ref.update({
+                                pushSuppressed: true,
+                                pushSuppressedReason: channelPref === "none" ? "channel_muted" : "channel_mentions_only",
+                            });
+                        } catch (e) {
+                            logger.warn(`could not stamp pushSuppressed for ${event.params.id}:`, e);
+                        }
+                        return;
+                    }
+                } catch (e) {
+                    // Fail open — push goes through. Better to over-notify
+                    // than to drop a chat because of a prefs read failure.
+                    logger.warn(`channel-mute check failed for ${forStaff}:`, e);
+                }
+            }
+        }
+
         const isManagerOrOwner = (() => {
             if (me.id === 40 || me.id === 41) return true; // owners
             return !!me.role && /manager|owner/i.test(me.role);
@@ -2209,6 +2257,110 @@ exports.aiSearch = onCall(
             queryLen: query.length,
             itemsCount: items.length,
         };
+    }
+);
+
+// ── 2026-05-20 — aiFixText: spelling + grammar helper for chat ────
+// Andrew: "make the staff chat page text bar have ai to help with
+// spelling and grammer too". Takes a draft message + optional
+// language hint, returns the same text with spelling / grammar /
+// basic clarity issues fixed. Tone-preserving — does NOT rewrite
+// for style, doesn't formalize casual messages, doesn't add words
+// that change the meaning. Caps text length at 1000 chars (chat
+// messages aren't novels) and rate-limits per IP same as aiSearch.
+// Cost: ~$0.0005-$0.001 per fix at Haiku rates.
+exports.aiFixText = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        maxInstances: 5,
+        secrets: [ANTHROPIC_API_KEY],
+    },
+    async (request) => {
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({
+            ip,
+            namespace: "aiFixText",
+            limit: 120,
+            windowMs: 5 * 60_000,
+        });
+
+        const data = request.data || {};
+        const text = String(data.text || "").trim();
+        const language = String(data.language || "").trim().toLowerCase();
+        if (!text) throw new HttpsError("invalid-argument", "text required");
+        if (text.length > 1000) {
+            throw new HttpsError("invalid-argument", "text too long (max 1000 chars)");
+        }
+
+        // System prompt — kept terse and example-anchored. The key
+        // constraint is "preserve voice" so a casual "lol im on my way"
+        // doesn't come back as "I am en route." The model is told to
+        // return ONLY the fixed text — no commentary, no quote marks,
+        // no "Here's the fix:" preamble.
+        const langLine = language === "es"
+            ? "The text is in Spanish. Keep it in Spanish."
+            : language === "en"
+                ? "The text is in English. Keep it in English."
+                : "Detect the language and keep the output in the SAME language as the input. Do not translate.";
+        const system = [
+            "You are a chat-message spelling and grammar helper for restaurant staff.",
+            "Fix spelling, capitalization, punctuation, and clear grammar mistakes.",
+            "PRESERVE the writer's voice and tone — casual stays casual, terse stays terse, slang stays slang.",
+            "Do NOT add new information, do NOT rewrite for style, do NOT formalize informal messages.",
+            "Keep emojis and @-mentions exactly as written.",
+            "Keep line breaks where the writer placed them.",
+            langLine,
+            "",
+            "If the input is already correct, return it UNCHANGED.",
+            "Respond with ONLY the fixed text. No prose, no commentary, no quotation marks around the result, no markdown.",
+        ].join("\n");
+
+        let body;
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: "claude-haiku-4-5",
+                    max_tokens: 1500,
+                    system,
+                    messages: [{ role: "user", content: text }],
+                }),
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                logger.error("aiFixText anthropic error", resp.status, errText.slice(0, 500));
+                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+            }
+            body = await resp.json();
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("aiFixText fetch failed:", e?.message || e);
+            throw new HttpsError("unavailable", "ai fix unavailable");
+        }
+
+        const textBlock = (body?.content || []).find(c => c?.type === "text");
+        let fixed = String(textBlock?.text || "").trim();
+        // Strip code fences or accidental wrapping quotes — defense
+        // against the model adding "Here is the fix:" or backticks.
+        fixed = fixed.replace(/^```[\w]*\n?/i, "").replace(/```$/i, "").trim();
+        // Strip a single wrapping pair of double quotes if the model
+        // wrapped the result. Don't strip quotes inside the text.
+        if (fixed.length >= 2 && fixed.startsWith('"') && fixed.endsWith('"')) {
+            const inner = fixed.slice(1, -1);
+            if (!inner.includes('"')) fixed = inner;
+        }
+        if (!fixed) fixed = text; // fail-safe: never return empty
+
+        const changed = fixed !== text;
+        return { fixed, changed, originalLength: text.length, fixedLength: fixed.length };
     }
 );
 

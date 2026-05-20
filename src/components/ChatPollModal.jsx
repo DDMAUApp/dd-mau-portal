@@ -87,7 +87,7 @@ export default function ChatPollModal({
                 <div className="md:hidden flex justify-center pt-2 pb-1">
                     <div className="w-10 h-1 bg-dd-line rounded-full" />
                 </div>
-                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between">
+                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between safe-top">
                     <div>
                         <h2 className="text-lg font-black text-dd-text">📊 {tx('New poll', 'Nueva encuesta')}</h2>
                         <p className="text-[11px] text-dd-text-2">{tx('Ask the team a quick question', 'Haz una pregunta rápida al equipo')}</p>

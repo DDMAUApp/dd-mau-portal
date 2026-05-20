@@ -383,7 +383,7 @@ export default function ChatSettingsModal({
                     <div className="w-10 h-1 bg-dd-line rounded-full" />
                 </div>
                 {/* Header */}
-                <div className="px-4 py-3 border-b border-dd-line flex items-center gap-3">
+                <div className="px-4 py-3 border-b border-dd-line flex items-center gap-3 safe-top">
                     <ChatAvatar chat={chat} viewerName={staffName} size={42} />
                     <div className="flex-1 min-w-0">
                         <div className="text-lg font-black text-dd-text truncate">

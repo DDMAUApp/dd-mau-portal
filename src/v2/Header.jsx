@@ -100,11 +100,18 @@ export default function Header({
                         {language === 'es' ? 'ES' : 'EN'}
                     </button>
                     {onLogout && (
+                        // 2026-05-20 — Andrew asked for an explicit word
+                        // next to the 🔒 because staff don't recognize
+                        // the lock icon as "log out". Compact pill: icon
+                        // + word, still tap-friendly (44×44 min target).
                         <button onClick={onLogout}
-                            className="min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-red-50 hover:text-red-700 active:bg-red-100 active:scale-95 transition"
+                            className="min-h-[44px] md:h-9 px-2 md:px-2.5 rounded-lg flex items-center gap-1 text-dd-text-2 hover:bg-red-50 hover:text-red-700 active:bg-red-100 active:scale-95 transition"
                             title={isEs ? 'Bloquear / Salir' : 'Lock / Log out'}
                             aria-label={isEs ? 'Bloquear / Salir' : 'Lock / Log out'}>
                             <span className="text-[15px] md:text-base">🔒</span>
+                            <span className="text-[11px] md:text-xs font-bold">
+                                {isEs ? 'Salir' : 'Log out'}
+                            </span>
                         </button>
                     )}
                     {/* Enable-notifications pill — only renders when

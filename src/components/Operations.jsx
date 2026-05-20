@@ -3205,19 +3205,34 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const found = src.find(([k]) => k === vendorId);
                     return found ? found[1] : null;
                 };
+                // 2026-05-20 — Mirror the cart-modal build so the print
+                // sheet shows everything the cart shows. Walk every counted
+                // id, not just the active list.
                 const rows = [];
-                customInventory.forEach((cat) => {
-                    cat.items.forEach(item => {
-                        const qty = inventory[item.id] || 0;
-                        if (qty <= 0) return;
-                        rows.push({
-                            kind: "master",
-                            name: item.name,
-                            category: cat.name,
-                            qty,
-                            vendorPrices: invToVendorPrices[item.id] || [],
-                            pack: item.pack,
-                        });
+                const itemLookup = new Map();
+                for (const cat of INVENTORY_CATEGORIES) {
+                    for (const item of (cat.items || [])) {
+                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                    }
+                }
+                for (const cat of customInventory) {
+                    for (const item of (cat.items || [])) {
+                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                    }
+                }
+                Object.entries(inventory).forEach(([id, rawQty]) => {
+                    const qty = Number(rawQty) || 0;
+                    if (qty <= 0) return;
+                    const lookup = itemLookup.get(id);
+                    if (!lookup) return;
+                    const { item, categoryName } = lookup;
+                    rows.push({
+                        kind: "master",
+                        name: item.name,
+                        category: categoryName,
+                        qty,
+                        vendorPrices: invToVendorPrices[item.id] || [],
+                        pack: item.pack,
                     });
                 });
                 Object.entries(vendorCounts).forEach(([key, qty]) => {
@@ -5114,24 +5129,52 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     return found ? found[1] : null;
                                 };
 
-                                // 1. Build cart rows (master items with counts + vendor-only items with counts)
+                                // 1. Build cart rows. 2026-05-20 — Andrew:
+                                //    "i wan tto make sure that all inventory
+                                //    list all end up in the same cart". Walk
+                                //    every counted id in `inventory`, NOT just
+                                //    the active list's items — that way if the
+                                //    user switches lists between counts, every
+                                //    counted item still lands in one cart.
+                                //
+                                //    Lookup precedence: active customInventory
+                                //    first (so per-list overrides win), then
+                                //    the master INVENTORY_CATEGORIES catalog
+                                //    as a fallback for items not in the active
+                                //    list. Items unknown to both are skipped
+                                //    rather than crashing — defensive against
+                                //    stale ids in /inventory.
                                 const rows = [];
-                                customInventory.forEach((cat) => {
-                                    cat.items.forEach(item => {
-                                        const qty = inventory[item.id] || 0;
-                                        if (qty <= 0) return;
-                                        rows.push({
-                                            kind: "master",
-                                            id: item.id,
-                                            name: language === "es" && item.nameEs ? item.nameEs : item.name,
-                                            altName: item.name,
-                                            category: cat.name,
-                                            qty,
-                                            vendorPrices: invToVendorPrices[item.id] || [],
-                                            preferredVendor: item.preferredVendor || item.vendor || "",
-                                            pack: item.pack,
-                                            addedFromVendor: item.addedFromVendor,
-                                        });
+                                const itemLookup = new Map();
+                                for (const cat of INVENTORY_CATEGORIES) {
+                                    for (const item of (cat.items || [])) {
+                                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                                    }
+                                }
+                                for (const cat of customInventory) {
+                                    for (const item of (cat.items || [])) {
+                                        // Active list wins — it may have
+                                        // overrides for vendor / pack / price.
+                                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                                    }
+                                }
+                                Object.entries(inventory).forEach(([id, rawQty]) => {
+                                    const qty = Number(rawQty) || 0;
+                                    if (qty <= 0) return;
+                                    const lookup = itemLookup.get(id);
+                                    if (!lookup) return; // unknown id — skip
+                                    const { item, categoryName } = lookup;
+                                    rows.push({
+                                        kind: "master",
+                                        id: item.id,
+                                        name: language === "es" && item.nameEs ? item.nameEs : item.name,
+                                        altName: item.name,
+                                        category: categoryName,
+                                        qty,
+                                        vendorPrices: invToVendorPrices[item.id] || [],
+                                        preferredVendor: item.preferredVendor || item.vendor || "",
+                                        pack: item.pack,
+                                        addedFromVendor: item.addedFromVendor,
                                     });
                                 });
                                 Object.entries(vendorCounts).forEach(([key, qty]) => {

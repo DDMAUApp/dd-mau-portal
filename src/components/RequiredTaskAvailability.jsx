@@ -100,13 +100,21 @@ export default function RequiredTaskAvailability({
             </div>
 
             {/* Open the schedule tab and route to the availability
-                editor. We surface a tab switch via window.dispatchEvent
-                — App.jsx's tab router listens for it. Simpler than
-                threading a callback through three layers. */}
+                editor. Two-part dispatch:
+                  1. sessionStorage key — Schedule's mount effect reads
+                     this to auto-open the MyAvailabilityModal.
+                  2. CustomEvent — App.jsx switches the active tab AND
+                     temporarily bypasses the required-task gate so the
+                     user actually lands on Schedule instead of being
+                     bounced back to this screen. Gate re-evaluates on
+                     next sign-in / staffName change. (Bug 2026-05-20:
+                     this button did nothing because the gate didn't
+                     yield even though setActiveTab fired.) */}
             <button
                 onClick={() => {
+                    try { sessionStorage.setItem('ddmau:scheduleOpenModal', 'availability'); } catch {}
                     window.dispatchEvent(new CustomEvent('ddmau:navigate', {
-                        detail: { tab: 'schedule', sub: 'availability' },
+                        detail: { tab: 'schedule', sub: 'availability', fromRequiredTask: true },
                     }));
                 }}
                 className="w-full py-3 rounded-xl bg-dd-green text-white font-black text-base active:scale-95 transition mb-2">

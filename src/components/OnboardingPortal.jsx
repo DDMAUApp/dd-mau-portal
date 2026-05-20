@@ -301,6 +301,31 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     // something (e.g. direct deposit bank change).
     const isLocked = hire.status === 'complete';
 
+    // Andrew 2026-05-20 — "when new hire is done filling out the docs
+    // the page says its all done but there is no done button that
+    // appears so they can exit that page. there is sensitive data that
+    // should be closed and a new window should something."
+    //
+    // Once the hire has signed the final certification, replace the
+    // whole portal with a clean "you're done" exit screen. The doc
+    // cards (which contain SSN-less but still sensitive PII — DOB,
+    // address, signature copies, etc.) are hidden so a hire who hands
+    // their phone to a manager or leaves the tab open isn't exposing
+    // anything. A clear Done button tries window.close() first
+    // (works when the tab was opened by JS like Apply → portal),
+    // falls back to a hard navigation to '/' which hits the PIN lock
+    // screen and clears any cached state.
+    if (allDone && hire?.finalCertification?.signedAt) {
+        return (
+            <CompletedExitCard
+                isEs={isEs}
+                hireName={hire.name?.split(' ')[0] || ''}
+                signedAt={hire.finalCertification.signedAt}
+                typedSignature={hire.finalCertification.typedSignature}
+            />
+        );
+    }
+
     return (
         <div className="min-h-screen bg-dd-sage">
             {/* Mobile-first column (max-w-lg = 512px) is right for the
@@ -413,6 +438,64 @@ function CenterCard({ children }) {
         <div className="min-h-screen flex items-center justify-center bg-dd-sage p-4">
             <div className="max-w-sm w-full bg-white rounded-2xl border border-gray-200 shadow-sm p-6 text-center">
                 {children}
+            </div>
+        </div>
+    );
+}
+
+// CompletedExitCard — shown to a hire AFTER they sign final cert.
+// Hides all doc data + provides an explicit Done button. The button
+// tries window.close() (works when the portal was opened from a JS
+// window.open, e.g. Apply → portal handoff) and otherwise navigates
+// to '/' which lands on the PIN lock screen and clears the visible
+// sensitive data. Either way the hire isn't left staring at their
+// own paperwork.
+function CompletedExitCard({ isEs, hireName, signedAt, typedSignature }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const handleDone = () => {
+        // window.close() is a no-op on tabs not opened by JS — modern
+        // browsers block it for security. We still attempt it (covers
+        // tabs that WERE opened by JS), then immediately fall back to
+        // a hard navigation. Using location.replace() so the back
+        // button can't return to the sensitive paperwork view.
+        try { window.close(); } catch {}
+        try { window.location.replace('/'); } catch { window.location.href = '/'; }
+    };
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-dd-sage p-4 safe-top safe-bottom">
+            <div className="max-w-md w-full bg-white rounded-3xl border-2 border-dd-green shadow-xl p-6 sm:p-8 text-center space-y-4">
+                <p className="text-6xl">🎉</p>
+                <h1 className="text-2xl font-black text-dd-green-700">
+                    {tx(`Thanks ${hireName || ''}!`, `¡Gracias ${hireName || ''}!`).trim()}
+                </h1>
+                <p className="text-base font-bold text-dd-text">
+                    {tx('Your onboarding is complete.', '¡Tu onboarding está completo!')}
+                </p>
+                <p className="text-sm text-gray-700">
+                    {tx(
+                        'Everything you signed has been sent to DD Mau. Your manager will reach out about your start date.',
+                        'Todo lo que firmaste se envió a DD Mau. Tu gerente te contactará sobre tu fecha de inicio.',
+                    )}
+                </p>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-left">
+                    <p className="text-[11px] text-amber-800 font-bold">
+                        🔒 {tx('Why this page is now hidden', 'Por qué esta página ya no se ve')}
+                    </p>
+                    <p className="text-[11px] text-amber-700 mt-0.5 leading-snug">
+                        {tx(
+                            "Your personal info (W-4, I-9, ID, bank info) is no longer visible here. If you leave your phone behind or hand it to someone, your paperwork stays private.",
+                            "Tu información personal (W-4, I-9, ID, banco) ya no se muestra aquí. Si dejas el teléfono o se lo das a alguien, tu papeleo se queda privado.",
+                        )}
+                    </p>
+                </div>
+                <button
+                    onClick={handleDone}
+                    className="w-full py-3.5 rounded-xl bg-dd-green text-white font-black text-base hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
+                    ✓ {tx('Done — close this page', 'Listo — cerrar esta página')}
+                </button>
+                <p className="text-[10px] text-gray-400 italic">
+                    {tx('Signed', 'Firmado')} {signedAt?.slice(0, 10)} · {typedSignature}
+                </p>
             </div>
         </div>
     );

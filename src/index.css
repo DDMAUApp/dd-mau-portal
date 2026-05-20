@@ -109,6 +109,25 @@ button, a, [role="button"], input, select, textarea, label {
     .pb-bottom-nav { padding-bottom: 6rem; }
 }
 
+/* ── Safe-area utility classes ─────────────────────────────────────────
+ * 2026-05-20 — Andrew: "some of the mobile pages have the x to exit too
+ * high where its on the iphone behind the speaker and cant tap." Audit
+ * found `safe-top` was used in 5+ components but never defined — so the
+ * places that LOOKED safe were actually still being clipped by the
+ * iPhone notch / Dynamic Island on PWA installs.
+ *
+ * These utilities ADD safe-area padding to fixed/sticky modal headers
+ * (top) and bottom bars (bottom). The env(..., 0px) fallback resolves
+ * to 0 on desktop / non-notched screens, so applying these is a no-op
+ * outside iPhone/iPad-with-notch PWAs.
+ */
+.safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+}
+.safe-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 @keyframes flash-yellow {
     0%, 100% { background-color: #fef9c3; border-color: #facc15; }
     50% { background-color: #fef08a; border-color: #eab308; }
