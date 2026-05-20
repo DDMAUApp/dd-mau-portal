@@ -20,12 +20,14 @@ import {
     createOrderSession,
     subscribeOpenSession,
     updateSessionItem,
+    splitItemForPartial,
     setCurrentVendor,
     submitSession,
     cancelSession,
     subscribeVendorConfig,
     addVendorName,
     removeVendorName,
+    renameVendorName,
     deriveVendorsFromInventory,
 } from '../data/orderSession';
 import { toast } from '../toast';
@@ -173,7 +175,17 @@ function StartScreen({ tx, cartCount, creating, onStart, onClose }) {
 // ── Session view — vendor toggle + item rows + submit footer ─────────
 function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEditor, onClose }) {
     const [submitting, setSubmitting] = useState(false);
-    const [hideDone, setHideDone] = useState(false);
+    // Status filter — clickable bubbles in the totals strip. 'all'
+    // shows everything; clicking a status bubble filters to just that
+    // one. Click the active bubble again to clear back to 'all'.
+    // (Andrew 2026-05-19 — "I want the bubbles to be clickable so say
+    // the partial button is clicked it pulls up all partial".)
+    const [statusFilter, setStatusFilter] = useState('all');
+    // Partial-qty dialog — opens when admin clicks the Partial button
+    // on an item. Captures the actual fulfilled quantity and splits
+    // the row (Andrew 2026-05-19 — "wanted 6 but they only have 3 ...
+    // in partial I can click 3 and that leaves 3 to be ordered").
+    const [partialDialog, setPartialDialog] = useState(null); // { itemId, originalQty }
     const sessionId = session.id;
     const currentVendor = session.currentVendor || '';
     const items = session.items || {};
@@ -223,6 +235,36 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         });
     };
 
+    // Partial flow: open the qty dialog instead of marking directly.
+    // The dialog calls splitItemForPartial on save, which handles the
+    // three outcomes (zero → OOS, full → ordered, in-between → split).
+    const openPartialDialog = (itemId) => {
+        const orig = items[itemId];
+        if (!orig) return;
+        setPartialDialog({
+            itemId,
+            originalQty: Number(orig.qty) || 0,
+            itemName: orig.itemName,
+        });
+    };
+
+    const applyPartial = async (fulfilledQty) => {
+        if (!partialDialog) return;
+        const { itemId } = partialDialog;
+        try {
+            await splitItemForPartial({
+                sessionId, itemId,
+                fulfilledQty,
+                vendor: currentVendor || null,
+                byName: staffName,
+            });
+            setPartialDialog(null);
+        } catch (e) {
+            console.error('splitItemForPartial failed:', e);
+            toast(tx('Could not save partial', 'No se pudo guardar parcial'), { kind: 'error' });
+        }
+    };
+
     const editQty = async (itemId, newQty) => {
         await updateSessionItem({ sessionId, itemId, qty: newQty });
     };
@@ -263,9 +305,9 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         }
     };
 
-    const visibleEntries = hideDone
-        ? sortedEntries.filter(([, it]) => it.status === ITEM_STATUS.PENDING)
-        : sortedEntries;
+    const visibleEntries = statusFilter === 'all'
+        ? sortedEntries
+        : sortedEntries.filter(([, it]) => it.status === statusFilter);
 
     return (
         <>
@@ -299,26 +341,59 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                 </div>
             </div>
 
-            {/* Totals strip + filter */}
-            <div className="border-b border-dd-line px-3 py-2 flex flex-wrap items-center gap-2 text-[11px]">
-                <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-bold">⏳ {totals.pending} {tx('pending', 'pendientes')}</span>
-                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">✓ {totals.ordered} {tx('ordered', 'pedidos')}</span>
-                {totals.partial > 0 && <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-bold">◐ {totals.partial} {tx('partial', 'parciales')}</span>}
-                {totals.oos > 0 && <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">🚫 {totals.oos} {tx('out', 'agotados')}</span>}
-                <label className="ml-auto inline-flex items-center gap-1 text-dd-text-2 cursor-pointer">
-                    <input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)}
-                        className="accent-amber-600" />
-                    {tx('Hide finished', 'Ocultar terminados')}
-                </label>
+            {/* Totals strip — every bubble is a clickable filter. Click
+                a bubble to show only that status; click again to clear
+                back to 'all'. The active bubble inverts colors. */}
+            <div className="border-b border-dd-line px-3 py-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+                <StatusBubble
+                    label={tx('All', 'Todos')} emoji="▦"
+                    count={totals.pending + totals.ordered + totals.partial + totals.oos}
+                    active={statusFilter === 'all'}
+                    activeCls="bg-dd-text text-white"
+                    inactiveCls="bg-white text-dd-text-2 border border-dd-line"
+                    onClick={() => setStatusFilter('all')}
+                />
+                <StatusBubble
+                    label={tx('Pending', 'Pendientes')} emoji="⏳"
+                    count={totals.pending}
+                    active={statusFilter === ITEM_STATUS.PENDING}
+                    activeCls="bg-gray-600 text-white"
+                    inactiveCls="bg-gray-100 text-gray-700"
+                    onClick={() => setStatusFilter(statusFilter === ITEM_STATUS.PENDING ? 'all' : ITEM_STATUS.PENDING)}
+                />
+                <StatusBubble
+                    label={tx('Ordered', 'Pedidos')} emoji="✓"
+                    count={totals.ordered}
+                    active={statusFilter === ITEM_STATUS.ORDERED}
+                    activeCls="bg-green-700 text-white"
+                    inactiveCls="bg-green-100 text-green-700"
+                    onClick={() => setStatusFilter(statusFilter === ITEM_STATUS.ORDERED ? 'all' : ITEM_STATUS.ORDERED)}
+                />
+                <StatusBubble
+                    label={tx('Partial', 'Parciales')} emoji="◐"
+                    count={totals.partial}
+                    active={statusFilter === ITEM_STATUS.PARTIAL}
+                    activeCls="bg-amber-600 text-white"
+                    inactiveCls="bg-amber-100 text-amber-700"
+                    onClick={() => setStatusFilter(statusFilter === ITEM_STATUS.PARTIAL ? 'all' : ITEM_STATUS.PARTIAL)}
+                />
+                <StatusBubble
+                    label={tx('Out', 'Agotados')} emoji="🚫"
+                    count={totals.oos}
+                    active={statusFilter === ITEM_STATUS.OOS}
+                    activeCls="bg-red-700 text-white"
+                    inactiveCls="bg-red-100 text-red-700"
+                    onClick={() => setStatusFilter(statusFilter === ITEM_STATUS.OOS ? 'all' : ITEM_STATUS.OOS)}
+                />
             </div>
 
             {/* Item rows */}
             <div className="flex-1 overflow-y-auto">
                 {visibleEntries.length === 0 ? (
                     <div className="p-6 text-center text-sm text-dd-text-2 italic">
-                        {hideDone
-                            ? tx('All items finished ✓', 'Todo listo ✓')
-                            : tx('No items in this session.', 'Sin artículos.')}
+                        {statusFilter === 'all'
+                            ? tx('No items in this session.', 'Sin artículos.')
+                            : tx('No items match this filter.', 'Sin artículos en este filtro.')}
                     </div>
                 ) : visibleEntries.map(([itemId, it]) => (
                     <OrderItemRow
@@ -329,7 +404,7 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                         tx={tx}
                         currentVendor={currentVendor}
                         onOrdered={() => markItem(itemId, ITEM_STATUS.ORDERED)}
-                        onPartial={() => markItem(itemId, ITEM_STATUS.PARTIAL)}
+                        onPartial={() => openPartialDialog(itemId)}
                         onOos={() => markItem(itemId, ITEM_STATUS.OOS)}
                         onPending={() => markItem(itemId, ITEM_STATUS.PENDING)}
                         onEditQty={(q) => editQty(itemId, q)}
@@ -356,7 +431,135 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                         : tx(`✓ Submit order (${totals.ordered + totals.partial})`, `✓ Enviar (${totals.ordered + totals.partial})`)}
                 </button>
             </div>
+
+            {partialDialog && (
+                <PartialQtyDialog
+                    tx={tx}
+                    itemName={partialDialog.itemName}
+                    originalQty={partialDialog.originalQty}
+                    currentVendor={currentVendor}
+                    onClose={() => setPartialDialog(null)}
+                    onSave={applyPartial}
+                />
+            )}
         </>
+    );
+}
+
+// ── StatusBubble — clickable filter pill ────────────────────────────
+// Used in the totals strip. When active, the bubble inverts to a
+// strong status color; when inactive, it's a soft tint. Click again
+// to clear back to 'all'.
+function StatusBubble({ label, emoji, count, active, activeCls, inactiveCls, onClick }) {
+    return (
+        <button
+            onClick={onClick}
+            className={`px-2 py-0.5 rounded font-bold border transition active:scale-95 ${
+                active ? `${activeCls} border-transparent` : `${inactiveCls} border-transparent hover:opacity-90`
+            }`}
+        >
+            {emoji} {count} {label}
+        </button>
+    );
+}
+
+// ── PartialQtyDialog ───────────────────────────────────────────────
+// Shown when admin clicks the Partial button on a row. Captures the
+// actual fulfilled quantity (i.e. how many the vendor really had).
+// On save:
+//   • 0 → treated as OOS for that vendor (split helper handles this)
+//   • >= original → treated as fully ordered (no split)
+//   • in-between → original row becomes partial with the fulfilled
+//     qty, a new pending remainder row appears at the bottom of the
+//     list so admin can try another vendor for the rest
+function PartialQtyDialog({ tx, itemName, originalQty, currentVendor, onClose, onSave }) {
+    const [qtyDraft, setQtyDraft] = useState(() => String(Math.max(0, originalQty - 1)));
+    const [busy, setBusy] = useState(false);
+    const parsed = Number(qtyDraft);
+    const isValid = Number.isFinite(parsed) && parsed >= 0 && parsed <= originalQty;
+    const remaining = isValid ? Math.max(0, originalQty - parsed) : null;
+
+    const save = async () => {
+        if (!isValid || busy) return;
+        setBusy(true);
+        await onSave(parsed);
+        // dialog closes via parent on success; if it errored, we
+        // re-enable so the user can retry without re-typing.
+        setBusy(false);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3"
+             onClick={onClose}>
+            <div className="bg-white w-full sm:max-w-sm p-5 rounded-t-2xl sm:rounded-2xl space-y-3"
+                 onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between">
+                    <h3 className="text-base font-black text-dd-text">
+                        ◐ {tx('Partial fill', 'Cumplimiento parcial')}
+                    </h3>
+                    <button onClick={onClose} className="text-2xl text-gray-500 leading-none">×</button>
+                </div>
+                <p className="text-sm text-dd-text-2 leading-relaxed">
+                    <span className="font-bold">{itemName}</span>
+                    {currentVendor && (
+                        <> · <span className="text-amber-700">{currentVendor}</span></>
+                    )}
+                    <br />
+                    {tx(
+                        `You asked for ${originalQty}. How many did they actually have?`,
+                        `Pediste ${originalQty}. ¿Cuántos tenían en realidad?`,
+                    )}
+                </p>
+                <div className="flex items-center gap-3">
+                    <input
+                        type="number"
+                        inputMode="decimal"
+                        autoFocus
+                        value={qtyDraft}
+                        onChange={e => setQtyDraft(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter' && isValid) save(); }}
+                        min="0"
+                        max={originalQty}
+                        className="flex-1 px-3 py-2 text-2xl font-black text-center border-2 border-amber-300 rounded-lg"
+                    />
+                    <div className="text-xs text-dd-text-2">
+                        / {originalQty}
+                    </div>
+                </div>
+                {/* Preview of the resulting split */}
+                {isValid && (
+                    <div className="bg-dd-bg border border-dd-line rounded-md p-2 text-[11px] leading-relaxed">
+                        {parsed === 0 ? (
+                            <>🚫 {tx(
+                                `Will mark out-of-stock at ${currentVendor || 'this vendor'}.`,
+                                `Marcará agotado en ${currentVendor || 'este proveedor'}.`,
+                            )}</>
+                        ) : parsed >= originalQty ? (
+                            <>✓ {tx(
+                                `Will mark fully ordered from ${currentVendor || 'this vendor'}.`,
+                                `Marcará pedido completo de ${currentVendor || 'este proveedor'}.`,
+                            )}</>
+                        ) : (
+                            <>
+                                <div>◐ {tx(`Ordered`, `Pedidos`)} <b>{parsed}</b> {tx(`from ${currentVendor || 'this vendor'}`, `de ${currentVendor || 'este proveedor'}`)}.</div>
+                                <div className="text-amber-700">⏳ {tx(`${remaining} remaining`, `${remaining} restantes`)} — {tx('moves to pending so you can try another vendor', 'pasa a pendiente para probar otro proveedor')}.</div>
+                            </>
+                        )}
+                    </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                    <button onClick={onClose} disabled={busy}
+                        className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold">
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
+                    <button onClick={save}
+                        disabled={!isValid || busy}
+                        className="flex-1 py-2 rounded-lg bg-amber-600 text-white text-sm font-black disabled:opacity-40">
+                        {busy ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }
 
@@ -548,13 +751,12 @@ function VendorEditor({ tx, configVendors, derivedVendors, staffName, onClose })
                         ) : (
                             <div className="space-y-1">
                                 {configVendors.map(v => (
-                                    <div key={v} className="flex items-center justify-between px-2 py-1.5 bg-white border border-dd-line rounded">
-                                        <span className="text-sm">{v}</span>
-                                        <button onClick={() => handleRemove(v)}
-                                            className="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-bold">
-                                            {tx('Remove', 'Quitar')}
-                                        </button>
-                                    </div>
+                                    <VendorRow key={v}
+                                        name={v}
+                                        tx={tx}
+                                        staffName={staffName}
+                                        onRemove={() => handleRemove(v)}
+                                    />
                                 ))}
                             </div>
                         )}
@@ -589,6 +791,80 @@ function VendorEditor({ tx, configVendors, derivedVendors, staffName, onClose })
                         {tx('Done', 'Listo')}
                     </button>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ── VendorRow — single admin-added vendor with inline rename + remove ──
+// Click "✏️" to switch the label into an editable input; save with
+// Enter or the green ✓ button; cancel with Escape. The rename only
+// touches the /config/vendors entry — historical order_logs keep the
+// old name as a snapshot (renaming doesn't rewrite history).
+function VendorRow({ name, tx, staffName, onRemove }) {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(name);
+    const [busy, setBusy] = useState(false);
+
+    useEffect(() => { if (!editing) setDraft(name); }, [name, editing]);
+
+    const startEdit = () => {
+        setDraft(name);
+        setEditing(true);
+    };
+    const saveEdit = async () => {
+        const trimmed = draft.trim();
+        if (!trimmed || trimmed === name) { setEditing(false); return; }
+        setBusy(true);
+        try {
+            await renameVendorName(name, trimmed, staffName);
+            setEditing(false);
+        } catch (e) {
+            console.error('renameVendorName failed:', e);
+            toast(tx('Rename failed', 'Error al renombrar'), { kind: 'error' });
+        } finally {
+            setBusy(false);
+        }
+    };
+    const cancelEdit = () => { setEditing(false); setDraft(name); };
+
+    if (editing) {
+        return (
+            <div className="flex items-center gap-1 px-2 py-1.5 bg-amber-50 border border-amber-300 rounded">
+                <input
+                    type="text"
+                    value={draft}
+                    autoFocus
+                    onChange={e => setDraft(e.target.value)}
+                    onKeyDown={e => {
+                        if (e.key === 'Enter') saveEdit();
+                        if (e.key === 'Escape') cancelEdit();
+                    }}
+                    className="flex-1 px-2 py-0.5 rounded border border-dd-line text-sm"
+                />
+                <button onClick={saveEdit} disabled={busy || !draft.trim() || draft.trim() === name}
+                    className="text-[11px] px-2 py-1 rounded bg-green-600 text-white font-bold disabled:opacity-40">
+                    ✓
+                </button>
+                <button onClick={cancelEdit} disabled={busy}
+                    className="text-[11px] px-2 py-1 rounded bg-white border border-dd-line text-dd-text-2 font-bold">
+                    ✕
+                </button>
+            </div>
+        );
+    }
+    return (
+        <div className="flex items-center justify-between px-2 py-1.5 bg-white border border-dd-line rounded">
+            <span className="text-sm">{name}</span>
+            <div className="flex items-center gap-1">
+                <button onClick={startEdit}
+                    className="text-[10px] px-2 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200 font-bold hover:bg-amber-100">
+                    ✏️ {tx('Rename', 'Renombrar')}
+                </button>
+                <button onClick={onRemove}
+                    className="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-bold">
+                    {tx('Remove', 'Quitar')}
+                </button>
             </div>
         </div>
     );

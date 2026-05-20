@@ -144,6 +144,102 @@ export async function updateSessionItem({
     await updateDoc(doc(db, 'order_sessions', sessionId), patch);
 }
 
+// Partial-fulfillment split. Use case Andrew flagged 2026-05-19:
+// "I wanted 6 but they only have 3 — partial click 3, leaves 3
+// to be ordered."
+//
+// What it does:
+//   1. Looks up the current item, validates fulfilledQty against
+//      the original qty
+//   2. Updates the original row: qty = fulfilledQty,
+//      status='partial', vendor=current, note carries the original
+//      request quantity for the audit trail
+//   3. If remaining > 0, creates a NEW pending row with the same
+//      item meta + qty=remaining + a derived id (`${itemId}_r{n}`)
+//      so admin can toggle a different vendor and try to fill the
+//      rest. If fulfilledQty === original, no split is made —
+//      effectively the same as marking 'ordered'.
+//
+// Edge cases:
+//   • fulfilledQty <= 0 → fall through to OOS-style status
+//   • fulfilledQty >= original → status='ordered', no split
+//   • the split id must not collide with an existing remainder
+//     from an earlier partial — we walk _r1, _r2, ... until free
+export async function splitItemForPartial({
+    sessionId, itemId, fulfilledQty, vendor, byName,
+}) {
+    if (!sessionId || !itemId) throw new Error('sessionId + itemId required');
+    const ref = doc(db, 'order_sessions', sessionId);
+    const snap = await getDoc(ref);
+    if (!snap.exists()) throw new Error('session not found');
+    const data = snap.data();
+    const items = data.items || {};
+    const orig = items[itemId];
+    if (!orig) throw new Error('item not found in session');
+
+    const originalQty = Number(orig.qty) || 0;
+    const fulfilled = Math.max(0, Number(fulfilledQty) || 0);
+
+    // Out-of-stock equivalent — they said they have none.
+    if (fulfilled === 0) {
+        await updateSessionItem({
+            sessionId, itemId,
+            status: ITEM_STATUS.OOS,
+            vendor: vendor || null,
+            byName,
+        });
+        return;
+    }
+
+    // Full fulfillment — just mark ordered, no split.
+    if (fulfilled >= originalQty) {
+        await updateSessionItem({
+            sessionId, itemId,
+            status: ITEM_STATUS.ORDERED,
+            vendor: vendor || null,
+            byName,
+        });
+        return;
+    }
+
+    // Genuine partial — split the row. Derive a non-colliding
+    // remainder id.
+    const remaining = originalQty - fulfilled;
+    let n = 1;
+    while (items[`${itemId}_r${n}`]) n++;
+    const remainderId = `${itemId}_r${n}`;
+    const noteSuffix = `(originally ${originalQty}, ${vendor || 'vendor'} only had ${fulfilled})`;
+    const existingNote = orig.note ? `${orig.note} ` : '';
+
+    const patch = {
+        // Original row → partial with the actual fulfilled qty.
+        [`items.${itemId}.qty`]: fulfilled,
+        [`items.${itemId}.status`]: ITEM_STATUS.PARTIAL,
+        [`items.${itemId}.vendor`]: vendor || null,
+        [`items.${itemId}.note`]: `${existingNote}${noteSuffix}`,
+        [`items.${itemId}.checkedAt`]: serverTimestamp(),
+        [`items.${itemId}.checkedBy`]: byName || null,
+        [`items.${itemId}.originalQty`]: originalQty,
+        // New remainder row → pending, same meta, qty=remaining.
+        [`items.${remainderId}`]: {
+            itemName: orig.itemName,
+            itemNameEs: orig.itemNameEs || null,
+            qty: remaining,
+            category: orig.category || '',
+            subcat: orig.subcat || '',
+            pack: orig.pack || '',
+            preferredVendor: orig.preferredVendor || null,
+            status: ITEM_STATUS.PENDING,
+            vendor: null,
+            note: `remaining from partial fill of ${originalQty}`,
+            checkedAt: null,
+            checkedBy: null,
+            splitFromItemId: itemId,
+        },
+    };
+    await updateDoc(ref, patch);
+}
+
 // Set / clear the currently-toggled vendor at the top of the order
 // screen. Doesn't touch items — the item-level update is what
 // associates a vendor with each row.
@@ -299,6 +395,39 @@ export async function addVendorName(name, byName) {
     const trimmed = name.trim();
     if (current.includes(trimmed)) return;
     const next = [...current, trimmed].sort((a, b) => a.localeCompare(b));
+    await setDoc(ref, {
+        names: next,
+        updatedAt: serverTimestamp(),
+        updatedBy: byName || null,
+    }, { merge: true });
+}
+
+// Rename an admin-added vendor. Replaces the old name with the new
+// one in the config list. Does NOT migrate vendor attributions on
+// historical order_logs — those keep the old name as a snapshot.
+// Auto-derived vendors (from inventory items) can't be renamed
+// here; edit them through the inventory item data.
+export async function renameVendorName(oldName, newName, byName) {
+    if (!oldName || !newName) return;
+    const trimmed = String(newName).trim();
+    if (!trimmed || trimmed === oldName) return;
+    const ref = doc(db, 'config', 'vendors');
+    const snap = await getDoc(ref);
+    const current = (snap.exists() && Array.isArray(snap.data().names))
+        ? snap.data().names : [];
+    if (!current.includes(oldName)) return;
+    if (current.includes(trimmed)) {
+        // Renaming to an existing name = effectively a remove of old.
+        const next = current.filter(n => n !== oldName);
+        await setDoc(ref, {
+            names: next,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || null,
+        }, { merge: true });
+        return;
+    }
+    const next = current.map(n => n === oldName ? trimmed : n)
+        .sort((a, b) => a.localeCompare(b));
     await setDoc(ref, {
         names: next,
         updatedAt: serverTimestamp(),
