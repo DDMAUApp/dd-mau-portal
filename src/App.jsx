@@ -45,6 +45,7 @@ const ChatCenter = lazy(() => import('./components/ChatCenter'));
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
+const RequiredTaskFlow = lazy(() => import('./components/RequiredTaskFlow'));
 
 // Pre-warmed chunk fetchers. React.lazy() above only fetches a chunk
 // when the component first renders. Calling these import() URLs
@@ -664,6 +665,71 @@ export default function App() {
         if (target === 'recipes' && !hasRecipesAccess) return;
         setActiveTab(target);
     }, [activeTab, currentStaffRecord?.homeView, hasOpsAccess, hasRecipesAccess]);
+
+    // ── Required-task interceptor ───────────────────────────────────────
+    // After PIN unlock, check if the current staffer has any BLOCKING
+    // required tasks in /required_tasks. If so, the v2 shell is replaced
+    // by the full-screen RequiredTaskFlow until each task is completed
+    // or skipped (where allowed).
+    //
+    // Two effect responsibilities:
+    //   1. Auto-resolve tasks whose autoComplete predicate passes against
+    //      the current staff record. This catches the case where a staffer
+    //      sets availability via the Schedule tab AFTER the task was
+    //      pushed but before they hit the gate — the task closes itself
+    //      so we don't make them stare at "set your availability" when
+    //      they already did.
+    //   2. Fetch the remaining pending+blocking tasks and stash the
+    //      count + a re-fetch trigger so the conditional render below
+    //      knows whether to show the flow.
+    //
+    // We refetch on staffName change and on every staffList update so
+    // that admin actions (push a new campaign, cancel a pending task)
+    // propagate without requiring the staffer to re-sign-in.
+    const [requiredTaskTick, setRequiredTaskTick] = useState(0);
+    const [pendingBlockingCount, setPendingBlockingCount] = useState(null); // null = unchecked
+    useEffect(() => {
+        if (!staffName) {
+            setPendingBlockingCount(null);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                // Resolve in two steps; the imports are scoped inside the
+                // effect so the requiredTasks module is only loaded when
+                // we actually need it (post-PIN).
+                const mod = await import('./data/requiredTasks');
+                if (cancelled) return;
+                if (currentStaffRecord) {
+                    await mod.autoResolveTasksFor(currentStaffRecord);
+                }
+                if (cancelled) return;
+                const pending = await mod.fetchPendingTasksFor(staffName);
+                if (cancelled) return;
+                const blocking = pending.filter(t => t.blockApp === true).length;
+                setPendingBlockingCount(blocking);
+            } catch (e) {
+                console.warn('required-task check failed:', e);
+                setPendingBlockingCount(0); // fail-open: don't brick the app
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [staffName, currentStaffRecord, requiredTaskTick]);
+
+    // Listen for in-app navigation events from task components.
+    // RequiredTaskAvailability dispatches one when the user taps
+    // "Open availability editor" — we switch the active tab and
+    // close out of the flow.
+    useEffect(() => {
+        const handler = (ev) => {
+            const tab = ev?.detail?.tab;
+            if (tab) setActiveTab(tab);
+        };
+        window.addEventListener('ddmau:navigate', handler);
+        return () => window.removeEventListener('ddmau:navigate', handler);
+    }, []);
+
     // Onboarding deep links (handled before auth):
     //   /?onboard=TOKEN → token-gated public new-hire portal
     //   /?apply=1       → public job-application form
@@ -727,6 +793,31 @@ export default function App() {
             staffList={staffList}
         />;
     }
+
+    // ── Required-task gate ──────────────────────────────────────────────
+    // pendingBlockingCount === null means we haven't finished the first
+    // check yet — render a neutral placeholder so we don't flash the
+    // normal app + a flow for the same frame. pendingBlockingCount > 0
+    // means hard-gate: replace the v2 shell entirely with the flow.
+    if (pendingBlockingCount === null) {
+        return <div className="min-h-screen bg-dd-bg" />;
+    }
+    if (pendingBlockingCount > 0) {
+        return (
+            <Suspense fallback={<div className="min-h-screen bg-dd-bg" />}>
+                <RequiredTaskFlow
+                    staffName={staffName}
+                    staff={currentStaffRecord}
+                    staffList={staffList}
+                    setStaffList={setStaffList}
+                    language={language}
+                    onAllDone={() => setRequiredTaskTick(t => t + 1)}
+                    onSignOut={() => { setStaffName(null); setActiveTab('home'); }}
+                />
+            </Suspense>
+        );
+    }
+
     // ── v2 shell (the only shell) ────────────────────────────────────────
     // Renders the active tab's component inside the v2 shell. Same data
     // paths, same gates, same race fixes as the deleted v1 — just a

@@ -20,6 +20,8 @@ import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
 import { toast, undoToast } from '../toast';
 import { enableFcmPush } from '../messaging';
+import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
+const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -189,6 +191,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // normalized form mid-typing.
             const [phoneDrafts, setPhoneDrafts] = useState({});
             const [showBulkTag, setShowBulkTag] = useState(false);
+            const [showRequiredTaskAdmin, setShowRequiredTaskAdmin] = useState(false);
             // Staff Import flow — paste names or upload CSV, diff against
             // current staff list, configure new records (role / location /
             // PIN / flags), commit as a batch. Lives in ImportStaffModal.
@@ -1236,6 +1239,16 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                         className="px-3 py-1 rounded-full text-xs font-bold border bg-green-600 text-white border-green-600 hover:bg-green-700 transition">
                                         📋 {language === "es" ? "Exportar SMS" : "Export SMS log"}
                                     </button>
+                                    {/* Required-task admin — push a task type (SMS opt-in,
+                                        availability, etc.) to selected staff. They see the
+                                        gate on next login. Mounts as a modal. */}
+                                    <button onClick={() => setShowRequiredTaskAdmin(true)}
+                                        title={language === "es"
+                                            ? "Pedir a personal que complete una acción (SMS opt-in, disponibilidad…)"
+                                            : "Ask staff to complete an action (SMS opt-in, availability…)"}
+                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-amber-600 text-white border-amber-600 hover:bg-amber-700 transition">
+                                        📌 {language === "es" ? "Tareas requeridas" : "Required tasks"}
+                                    </button>
                                 </div>
                                 {/* Side sub-tabs — only meaningful when a specific
                                     location is selected. Hidden under "All Locations"
@@ -1935,6 +1948,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                 }
                             }}
                         />
+                    )}
+
+                    {/* ── Required-task admin modal ── */}
+                    {showRequiredTaskAdmin && (
+                        <ReactSuspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                            <RequiredTaskAdmin
+                                staffList={staffList}
+                                staffName={staffName}
+                                language={language}
+                                onClose={() => setShowRequiredTaskAdmin(false)}
+                            />
+                        </ReactSuspense>
                     )}
 
                     {/* ── Bulk Tag Modal — fast scheduleSide / isMinor tagging ── */}
