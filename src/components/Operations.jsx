@@ -6,6 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
+const OrderMode = lazy(() => import('./OrderMode'));
 import { escapeHtml as escH } from '../data/htmlEscape';
 // Lazy-loaded sub-views — these are 500-1000+ line components that only
 // render when their specific sub-tab is active. Eager-importing them
@@ -394,6 +395,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            // Order Mode — full-screen workflow for placing real vendor
+            // orders (Andrew 2026-05-19). Triggered from inside the cart
+            // modal via a "📞 Place order" button. Snapshots the current
+            // cart rows into an /order_sessions doc and walks the manager
+            // through ordering each item, vendor by vendor.
+            const [orderModeRows, setOrderModeRows] = useState(null);
             // (echo from local writes is now suppressed via snapshot.metadata.hasPendingWrites in the inventory listener)
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
@@ -5230,6 +5237,30 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 <button onClick={printInventory} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-95 transition">
                                                     {"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir" : "Print"}
                                                 </button>
+                                                {/* Place order — opens OrderMode. Snapshot the
+                                                    rows we just built so the order session has
+                                                    the same items the admin is looking at, even
+                                                    if inventory changes mid-session. */}
+                                                <button onClick={() => {
+                                                    if (rows.length === 0) {
+                                                        toast(language === "es" ? "El carrito está vacío." : "Cart is empty.");
+                                                        return;
+                                                    }
+                                                    setOrderModeRows(rows.map(r => ({
+                                                        id: r.id,
+                                                        name: r.altName || r.name,
+                                                        nameEs: r.name !== r.altName ? r.name : null,
+                                                        qty: r.qty,
+                                                        category: r.category,
+                                                        subcat: r.subcat || '',
+                                                        pack: r.pack,
+                                                        vendor: r.preferredVendor,
+                                                        preferredVendor: r.preferredVendor,
+                                                    })));
+                                                    setShowCart(false);
+                                                }} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold text-sm hover:bg-amber-700 active:scale-95 transition">
+                                                    📞 {language === "es" ? "Hacer pedido" : "Place order"}
+                                                </button>
                                                 <button onClick={() => setShowCart(false)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-300 active:scale-95 transition">
                                                     {"\u{2715}"} {language === "es" ? "Cerrar" : "Close"}
                                                 </button>
@@ -5238,6 +5269,20 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     </div>
                                 );
                             })()}
+
+                            {/* ── Order Mode modal ── */}
+                            {orderModeRows && (
+                                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-[55]" />}>
+                                    <OrderMode
+                                        language={language}
+                                        storeLocation={storeLocation}
+                                        staffName={staffName}
+                                        customInventory={customInventory}
+                                        cartItems={orderModeRows}
+                                        onClose={() => setOrderModeRows(null)}
+                                    />
+                                </Suspense>
+                            )}
 
                             {/* ── CATEGORY VIEW ── */}
                             {invViewMode === "category" && customInventory.map((category, catIdx) => {

@@ -1,0 +1,595 @@
+// Order Mode — full-screen workflow for placing real vendor orders.
+//
+// Opened from the cart modal via a "📞 Place order" button. The cart
+// payload becomes the starting item list; from here the manager:
+//   1. Toggles a vendor at the top — every check-off becomes
+//      attributed to that vendor
+//   2. Walks the item list with the vendor on the phone
+//   3. ✓ marks an item ordered, 🚫 marks out-of-stock, ✎ takes a note
+//      ("only 5 available"), can edit qty if vendor doesn't have full
+//   4. Toggles a different vendor to attribute remaining items
+//   5. Hits Submit → creates an immutable /order_logs row + closes
+//      the session
+//
+// Multi-device safe: the session lives in Firestore, so two managers
+// can co-pilot from different devices (rare but supported).
+
+import { useState, useEffect, useMemo } from 'react';
+import {
+    ITEM_STATUS, ORDER_STATUS,
+    createOrderSession,
+    subscribeOpenSession,
+    updateSessionItem,
+    setCurrentVendor,
+    submitSession,
+    cancelSession,
+    subscribeVendorConfig,
+    addVendorName,
+    removeVendorName,
+    deriveVendorsFromInventory,
+} from '../data/orderSession';
+import { toast } from '../toast';
+
+export default function OrderMode({
+    language = 'en',
+    storeLocation,
+    staffName,
+    customInventory,
+    cartItems,                // [{ id, name, qty, category, pack, ... }]
+    onClose,
+}) {
+    const isEs = language === 'es';
+    const tx = (en, es) => isEs ? es : en;
+
+    const [session, setSession] = useState(null);
+    const [creating, setCreating] = useState(false);
+    const [showVendorEditor, setShowVendorEditor] = useState(false);
+    const [configVendors, setConfigVendors] = useState([]);
+
+    // Subscribe to the open session for this location.
+    useEffect(() => {
+        if (!storeLocation) return;
+        return subscribeOpenSession(storeLocation, setSession);
+    }, [storeLocation]);
+
+    // Subscribe to admin-curated vendor list.
+    useEffect(() => subscribeVendorConfig(setConfigVendors), []);
+
+    // Combined vendor list — admin additions + derived from inventory.
+    const vendorList = useMemo(() => {
+        const derived = deriveVendorsFromInventory(customInventory);
+        const all = new Set([...derived, ...configVendors]);
+        return Array.from(all).sort((a, b) => a.localeCompare(b));
+    }, [customInventory, configVendors]);
+
+    // First-time entry: if no open session, offer to start one from
+    // the cart payload.
+    const startSession = async () => {
+        if (creating) return;
+        setCreating(true);
+        try {
+            await createOrderSession({
+                storeLocation,
+                cartItems: cartItems || [],
+                createdBy: staffName || 'admin',
+            });
+        } catch (e) {
+            console.error('createOrderSession failed:', e);
+            toast(tx('Could not start order', 'No se pudo iniciar el pedido'), { kind: 'error' });
+        } finally {
+            setCreating(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[55] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3">
+            <div className="bg-white w-full sm:max-w-3xl max-h-[100dvh] sm:max-h-[95vh] sm:rounded-2xl flex flex-col overflow-hidden">
+                {/* Header */}
+                <div className="bg-amber-600 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-2">
+                        <span className="text-2xl">📞</span>
+                        <div>
+                            <div className="font-black text-sm sm:text-base">
+                                {tx('Order mode', 'Modo pedido')}
+                            </div>
+                            <div className="text-[11px] opacity-90">
+                                {storeLocation === 'webster' ? 'Webster' : storeLocation === 'maryland' ? 'Maryland Heights' : storeLocation}
+                                {session ? ` · ${Object.keys(session.items || {}).length} ${tx('items', 'artículos')}` : ''}
+                            </div>
+                        </div>
+                    </div>
+                    <button onClick={onClose}
+                        className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 transition flex items-center justify-center font-bold">✕</button>
+                </div>
+
+                {!session && (
+                    <StartScreen
+                        tx={tx}
+                        cartCount={(cartItems || []).length}
+                        creating={creating}
+                        onStart={startSession}
+                        onClose={onClose}
+                    />
+                )}
+
+                {session && (
+                    <SessionView
+                        session={session}
+                        tx={tx}
+                        isEs={isEs}
+                        staffName={staffName}
+                        vendorList={vendorList}
+                        onOpenVendorEditor={() => setShowVendorEditor(true)}
+                        onClose={onClose}
+                    />
+                )}
+
+                {showVendorEditor && (
+                    <VendorEditor
+                        tx={tx}
+                        configVendors={configVendors}
+                        derivedVendors={deriveVendorsFromInventory(customInventory)}
+                        staffName={staffName}
+                        onClose={() => setShowVendorEditor(false)}
+                    />
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ── Start screen ─────────────────────────────────────────────────────
+function StartScreen({ tx, cartCount, creating, onStart, onClose }) {
+    return (
+        <div className="flex-1 overflow-y-auto p-6 flex flex-col items-center justify-center text-center">
+            <div className="text-5xl mb-3">📞</div>
+            <h3 className="text-lg font-black text-dd-text mb-2">
+                {tx('Start an order session', 'Iniciar pedido')}
+            </h3>
+            <p className="text-sm text-dd-text-2 mb-4 max-w-sm">
+                {tx(
+                    'Walks you through the cart while you are on the phone with a vendor. Check off what you ordered, mark out-of-stocks, add notes. Submit when done — every item is timestamped and saved to the order log.',
+                    'Te guía por el carrito mientras hablas con el proveedor. Marca lo que pediste, lo agotado, añade notas. Al enviar, todo queda registrado con hora.',
+                )}
+            </p>
+            <p className="text-sm font-bold text-dd-text mb-3">
+                {tx(`${cartCount} items in your cart`, `${cartCount} artículos en el carrito`)}
+            </p>
+            <div className="flex gap-2 w-full max-w-xs">
+                <button onClick={onClose}
+                    className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-bold text-sm">
+                    {tx('Cancel', 'Cancelar')}
+                </button>
+                <button onClick={onStart}
+                    disabled={creating || cartCount === 0}
+                    className="flex-1 py-3 rounded-xl bg-amber-600 text-white font-bold text-sm hover:bg-amber-700 disabled:opacity-50">
+                    {creating ? tx('Starting…', 'Iniciando…') : tx('Start ordering', 'Empezar')}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+// ── Session view — vendor toggle + item rows + submit footer ─────────
+function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEditor, onClose }) {
+    const [submitting, setSubmitting] = useState(false);
+    const [hideDone, setHideDone] = useState(false);
+    const sessionId = session.id;
+    const currentVendor = session.currentVendor || '';
+    const items = session.items || {};
+
+    // Sort items: pending first, then ordered/partial, then OOS at
+    // bottom. Within a group, alphabetical by name. Keeps the active
+    // work at the top of the list as the manager goes down it.
+    const sortedEntries = useMemo(() => {
+        const entries = Object.entries(items);
+        const rank = (s) => {
+            if (s === ITEM_STATUS.PENDING) return 0;
+            if (s === ITEM_STATUS.ORDERED) return 1;
+            if (s === ITEM_STATUS.PARTIAL) return 2;
+            if (s === ITEM_STATUS.OOS)     return 3;
+            return 4;
+        };
+        return entries.sort((a, b) => {
+            const ra = rank(a[1].status);
+            const rb = rank(b[1].status);
+            if (ra !== rb) return ra - rb;
+            return (a[1].itemName || '').localeCompare(b[1].itemName || '');
+        });
+    }, [items]);
+
+    const totals = useMemo(() => {
+        let pending = 0, ordered = 0, oos = 0, partial = 0;
+        for (const [, it] of Object.entries(items)) {
+            if (it.status === ITEM_STATUS.ORDERED) ordered++;
+            else if (it.status === ITEM_STATUS.OOS) oos++;
+            else if (it.status === ITEM_STATUS.PARTIAL) partial++;
+            else pending++;
+        }
+        return { pending, ordered, oos, partial };
+    }, [items]);
+
+    const onToggleVendor = async (v) => {
+        await setCurrentVendor({ sessionId, vendor: v === currentVendor ? null : v });
+    };
+
+    const markItem = async (itemId, status) => {
+        // When marking ordered/partial, attribute to the current vendor.
+        // When marking OOS, also attach the current vendor — that's WHO
+        // told us it was out (so we know not to re-ask the same vendor).
+        const vendor = currentVendor || null;
+        await updateSessionItem({
+            sessionId, itemId, status, vendor, byName: staffName,
+        });
+    };
+
+    const editQty = async (itemId, newQty) => {
+        await updateSessionItem({ sessionId, itemId, qty: newQty });
+    };
+
+    const editNote = async (itemId, newNote) => {
+        await updateSessionItem({ sessionId, itemId, note: newNote });
+    };
+
+    const submit = async () => {
+        if (submitting) return;
+        if (totals.pending > 0 && !window.confirm(tx(
+            `You still have ${totals.pending} pending items. Submit anyway? They will be logged as not-ordered.`,
+            `Aún tienes ${totals.pending} pendientes. ¿Enviar de todos modos?`,
+        ))) return;
+        setSubmitting(true);
+        try {
+            await submitSession({ sessionId, byName: staffName });
+            toast(tx('✓ Order submitted', '✓ Pedido enviado'));
+            onClose();
+        } catch (e) {
+            console.error('submitSession failed:', e);
+            toast(tx('Submit failed', 'Error al enviar'), { kind: 'error' });
+            setSubmitting(false);
+        }
+    };
+
+    const cancel = async () => {
+        if (!window.confirm(tx(
+            'Cancel this order session? Nothing will be saved to the order log.',
+            '¿Cancelar el pedido? Nada se guardará en el registro.',
+        ))) return;
+        try {
+            await cancelSession({ sessionId, byName: staffName });
+            toast(tx('Cancelled', 'Cancelado'));
+            onClose();
+        } catch (e) {
+            console.error('cancelSession failed:', e);
+        }
+    };
+
+    const visibleEntries = hideDone
+        ? sortedEntries.filter(([, it]) => it.status === ITEM_STATUS.PENDING)
+        : sortedEntries;
+
+    return (
+        <>
+            {/* Vendor toggle strip — sticky */}
+            <div className="border-b border-dd-line bg-dd-bg px-3 py-2 sticky top-0 z-10">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                    {tx('Ordering from:', 'Pedido a:')} {currentVendor
+                        ? <span className="text-amber-700">{currentVendor}</span>
+                        : <span className="text-dd-text-2 italic">{tx('pick a vendor', 'elige un proveedor')}</span>}
+                </div>
+                <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {vendorList.length === 0 ? (
+                        <span className="text-xs text-dd-text-2 italic">
+                            {tx('No vendors yet. Add one →', 'Sin proveedores. Añade uno →')}
+                        </span>
+                    ) : vendorList.map(v => {
+                        const sel = v === currentVendor;
+                        return (
+                            <button key={v} onClick={() => onToggleVendor(v)}
+                                className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${sel
+                                    ? 'bg-amber-600 text-white border-amber-700'
+                                    : 'bg-white text-dd-text-2 border-dd-line hover:border-amber-300'}`}>
+                                {v}
+                            </button>
+                        );
+                    })}
+                    <button onClick={onOpenVendorEditor}
+                        className="flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg">
+                        ✏️ {tx('Edit vendors', 'Editar')}
+                    </button>
+                </div>
+            </div>
+
+            {/* Totals strip + filter */}
+            <div className="border-b border-dd-line px-3 py-2 flex flex-wrap items-center gap-2 text-[11px]">
+                <span className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded font-bold">⏳ {totals.pending} {tx('pending', 'pendientes')}</span>
+                <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded font-bold">✓ {totals.ordered} {tx('ordered', 'pedidos')}</span>
+                {totals.partial > 0 && <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded font-bold">◐ {totals.partial} {tx('partial', 'parciales')}</span>}
+                {totals.oos > 0 && <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded font-bold">🚫 {totals.oos} {tx('out', 'agotados')}</span>}
+                <label className="ml-auto inline-flex items-center gap-1 text-dd-text-2 cursor-pointer">
+                    <input type="checkbox" checked={hideDone} onChange={e => setHideDone(e.target.checked)}
+                        className="accent-amber-600" />
+                    {tx('Hide finished', 'Ocultar terminados')}
+                </label>
+            </div>
+
+            {/* Item rows */}
+            <div className="flex-1 overflow-y-auto">
+                {visibleEntries.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-dd-text-2 italic">
+                        {hideDone
+                            ? tx('All items finished ✓', 'Todo listo ✓')
+                            : tx('No items in this session.', 'Sin artículos.')}
+                    </div>
+                ) : visibleEntries.map(([itemId, it]) => (
+                    <OrderItemRow
+                        key={itemId}
+                        itemId={itemId}
+                        item={it}
+                        isEs={isEs}
+                        tx={tx}
+                        currentVendor={currentVendor}
+                        onOrdered={() => markItem(itemId, ITEM_STATUS.ORDERED)}
+                        onPartial={() => markItem(itemId, ITEM_STATUS.PARTIAL)}
+                        onOos={() => markItem(itemId, ITEM_STATUS.OOS)}
+                        onPending={() => markItem(itemId, ITEM_STATUS.PENDING)}
+                        onEditQty={(q) => editQty(itemId, q)}
+                        onEditNote={(n) => editNote(itemId, n)}
+                    />
+                ))}
+            </div>
+
+            {/* Footer */}
+            <div className="border-t border-dd-line bg-white px-3 py-2 flex gap-2 flex-shrink-0">
+                <button onClick={cancel}
+                    className="px-3 py-2.5 rounded-xl bg-white border-2 border-red-200 text-red-700 text-sm font-bold">
+                    🗑 {tx('Cancel', 'Cancelar')}
+                </button>
+                <button onClick={onClose}
+                    className="px-3 py-2.5 rounded-xl bg-gray-100 text-gray-700 text-sm font-bold">
+                    {tx('Close (resume later)', 'Cerrar (continuar)')}
+                </button>
+                <button onClick={submit}
+                    disabled={submitting}
+                    className="flex-1 px-3 py-2.5 rounded-xl bg-amber-600 text-white text-sm font-black hover:bg-amber-700 disabled:opacity-50">
+                    {submitting
+                        ? tx('Submitting…', 'Enviando…')
+                        : tx(`✓ Submit order (${totals.ordered + totals.partial})`, `✓ Enviar (${totals.ordered + totals.partial})`)}
+                </button>
+            </div>
+        </>
+    );
+}
+
+// ── Item row ────────────────────────────────────────────────────────
+function OrderItemRow({ itemId, item, isEs, tx, currentVendor, onOrdered, onPartial, onOos, onPending, onEditQty, onEditNote }) {
+    const [noteDraft, setNoteDraft] = useState(item.note || '');
+    const [qtyDraft, setQtyDraft] = useState(String(item.qty ?? ''));
+
+    // Sync drafts when the underlying item refreshes from the server.
+    useEffect(() => { setNoteDraft(item.note || ''); }, [item.note]);
+    useEffect(() => { setQtyDraft(String(item.qty ?? '')); }, [item.qty]);
+
+    const statusBadge = (() => {
+        if (item.status === ITEM_STATUS.ORDERED) return { label: tx('Ordered', 'Pedido'), cls: 'bg-green-100 text-green-800 border-green-300', emoji: '✓' };
+        if (item.status === ITEM_STATUS.PARTIAL) return { label: tx('Partial', 'Parcial'), cls: 'bg-amber-100 text-amber-800 border-amber-300', emoji: '◐' };
+        if (item.status === ITEM_STATUS.OOS)     return { label: tx('Out', 'Agotado'), cls: 'bg-red-100 text-red-800 border-red-300', emoji: '🚫' };
+        return { label: tx('Pending', 'Pendiente'), cls: 'bg-gray-100 text-gray-600 border-gray-200', emoji: '⏳' };
+    })();
+
+    const isDone = item.status !== ITEM_STATUS.PENDING;
+
+    return (
+        <div className={`border-b border-dd-line px-3 py-2 ${isDone ? 'bg-dd-bg/40' : 'bg-white'}`}>
+            <div className="flex items-start gap-2">
+                {/* Name + meta */}
+                <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-sm font-bold ${isDone ? 'text-dd-text-2 line-through' : 'text-dd-text'}`}>
+                            {isEs ? (item.itemNameEs || item.itemName) : item.itemName}
+                        </span>
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${statusBadge.cls}`}>
+                            {statusBadge.emoji} {statusBadge.label}
+                        </span>
+                        {item.vendor && (
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200">
+                                📞 {item.vendor}
+                            </span>
+                        )}
+                    </div>
+                    <div className="text-[10px] text-dd-text-2 mt-0.5">
+                        {item.category}
+                        {item.subcat && ` · ${item.subcat}`}
+                        {item.pack && ` · ${item.pack}`}
+                        {item.preferredVendor && ` · pref ${item.preferredVendor}`}
+                    </div>
+                </div>
+
+                {/* Qty input */}
+                <div className="flex flex-col items-end gap-0.5 flex-shrink-0">
+                    <input
+                        type="number"
+                        inputMode="decimal"
+                        value={qtyDraft}
+                        onChange={e => setQtyDraft(e.target.value)}
+                        onBlur={() => {
+                            const n = Number(qtyDraft);
+                            if (Number.isFinite(n) && n !== item.qty) onEditQty(n);
+                        }}
+                        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                        className="w-14 text-center px-1 py-0.5 border border-dd-line rounded text-sm font-bold"
+                    />
+                    <div className="text-[9px] text-dd-text-2 uppercase">{tx('qty', 'cant.')}</div>
+                </div>
+            </div>
+
+            {/* Action buttons */}
+            <div className="mt-2 flex gap-1 flex-wrap">
+                {item.status === ITEM_STATUS.PENDING ? (
+                    <>
+                        <button onClick={onOrdered}
+                            disabled={!currentVendor}
+                            title={!currentVendor ? tx('Pick a vendor first', 'Elige un proveedor primero') : ''}
+                            className="flex-1 min-w-[70px] py-1.5 rounded-md bg-green-600 text-white text-xs font-bold hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                            ✓ {tx('Ordered', 'Pedido')}
+                        </button>
+                        <button onClick={onPartial}
+                            disabled={!currentVendor}
+                            className="flex-1 min-w-[70px] py-1.5 rounded-md bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed">
+                            ◐ {tx('Partial', 'Parcial')}
+                        </button>
+                        <button onClick={onOos}
+                            disabled={!currentVendor}
+                            className="flex-1 min-w-[70px] py-1.5 rounded-md bg-red-600 text-white text-xs font-bold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                            🚫 {tx('Out', 'Agotado')}
+                        </button>
+                    </>
+                ) : (
+                    <button onClick={onPending}
+                        className="px-3 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 text-xs font-bold hover:bg-dd-bg">
+                        ↺ {tx('Undo', 'Deshacer')}
+                    </button>
+                )}
+            </div>
+
+            {/* Note — useful for any status (e.g. "only 5 available
+                so we partially ordered") */}
+            <input
+                type="text"
+                value={noteDraft}
+                onChange={e => setNoteDraft(e.target.value)}
+                onBlur={() => {
+                    if (noteDraft !== (item.note || '')) onEditNote(noteDraft);
+                }}
+                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                placeholder={tx('Note (e.g. "only 5 available")', 'Nota (ej. "solo 5 disponibles")')}
+                className="w-full mt-1.5 px-2 py-1 border border-dd-line rounded text-xs"
+            />
+
+            {item.checkedAt && (
+                <div className="text-[9px] text-dd-text-2 mt-1">
+                    {tx('Logged', 'Registrado')}: {item.checkedAt.toDate
+                        ? item.checkedAt.toDate().toLocaleString(isEs ? 'es' : 'en', { hour: 'numeric', minute: '2-digit' })
+                        : '—'}
+                    {item.checkedBy && ` · ${item.checkedBy}`}
+                </div>
+            )}
+        </div>
+    );
+}
+
+// ── Vendor editor — admin-managed names ─────────────────────────────
+function VendorEditor({ tx, configVendors, derivedVendors, staffName, onClose }) {
+    const [newName, setNewName] = useState('');
+    const [busy, setBusy] = useState(false);
+
+    const handleAdd = async () => {
+        const trimmed = newName.trim();
+        if (!trimmed) return;
+        setBusy(true);
+        try {
+            await addVendorName(trimmed, staffName);
+            setNewName('');
+            toast(tx('✓ Added', '✓ Añadido'));
+        } catch (e) {
+            console.error(e);
+            toast(tx('Add failed', 'Error al añadir'), { kind: 'error' });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleRemove = async (name) => {
+        if (!window.confirm(tx(`Remove "${name}" from the vendor list?`, `¿Quitar "${name}"?`))) return;
+        try {
+            await removeVendorName(name, staffName);
+            toast(tx('Removed', 'Quitado'));
+        } catch (e) {
+            console.error(e);
+            toast(tx('Remove failed', 'Error al quitar'), { kind: 'error' });
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[65] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3">
+            <div className="bg-white w-full sm:max-w-md max-h-[90vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden">
+                <div className="border-b border-dd-line p-3 flex items-center justify-between">
+                    <h3 className="text-base font-black text-dd-text">
+                        ✏️ {tx('Edit vendor list', 'Editar proveedores')}
+                    </h3>
+                    <button onClick={onClose} className="text-2xl text-gray-500 leading-none">×</button>
+                </div>
+
+                <div className="p-3 space-y-3 overflow-y-auto">
+                    <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                            {tx('Add a vendor', 'Añadir proveedor')}
+                        </div>
+                        <div className="flex gap-2">
+                            <input type="text" value={newName}
+                                onChange={e => setNewName(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+                                placeholder={tx('e.g. Jays, Pan Asia', 'ej. Jays, Pan Asia')}
+                                className="flex-1 px-2 py-1.5 rounded-lg border border-dd-line text-sm" />
+                            <button onClick={handleAdd} disabled={busy || !newName.trim()}
+                                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white text-sm font-bold disabled:opacity-50">
+                                + {tx('Add', 'Añadir')}
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                            {tx('Admin-added (removable)', 'Añadidos (removibles)')}
+                        </div>
+                        {configVendors.length === 0 ? (
+                            <p className="text-xs text-dd-text-2 italic">
+                                {tx('None yet. Add one above.', 'Ninguno todavía.')}
+                            </p>
+                        ) : (
+                            <div className="space-y-1">
+                                {configVendors.map(v => (
+                                    <div key={v} className="flex items-center justify-between px-2 py-1.5 bg-white border border-dd-line rounded">
+                                        <span className="text-sm">{v}</span>
+                                        <button onClick={() => handleRemove(v)}
+                                            className="text-[10px] px-2 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 font-bold">
+                                            {tx('Remove', 'Quitar')}
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                            {tx('From inventory (auto, not removable)', 'Desde inventario (auto)')}
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                            {derivedVendors.length === 0 ? (
+                                <span className="text-xs text-dd-text-2 italic">{tx('None', 'Ninguno')}</span>
+                            ) : derivedVendors.map(v => (
+                                <span key={v}
+                                    className="text-[11px] px-2 py-0.5 rounded-full bg-dd-bg border border-dd-line text-dd-text-2">
+                                    {v}
+                                </span>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-dd-text-2 mt-1 italic">
+                            {tx(
+                                'These come from your inventory item data. Edit them via Operations or the inventory-list editor.',
+                                'Provienen del inventario. Edítalos en Operaciones o el editor de listas.',
+                            )}
+                        </p>
+                    </div>
+                </div>
+
+                <div className="border-t border-dd-line p-3">
+                    <button onClick={onClose}
+                        className="w-full py-2 rounded-xl bg-amber-600 text-white font-bold text-sm">
+                        {tx('Done', 'Listo')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
