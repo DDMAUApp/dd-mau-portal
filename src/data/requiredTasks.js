@@ -92,6 +92,31 @@ export const TASK_TYPES = {
         descriptionEn: 'Tell us which days and hours you can work. Managers use this to build the schedule.',
         descriptionEs: 'Dinos qué días y horas puedes trabajar. Los gerentes usan esto para hacer el horario.',
     },
+    install_pwa: {
+        labelEn: 'Add DD Mau to your home screen',
+        labelEs: 'Agrega DD Mau a tu pantalla de inicio',
+        icon: '📲',
+        defaultBlockApp: true,
+        defaultAllowSkip: false,
+        // Auto-resolves once staff.pwaInstalled is true. App.jsx
+        // writes that flag on every cold-start when running in
+        // standalone display mode — so any staffer who has the app
+        // on their home screen on ANY of their devices has the flag
+        // set, and the gate closes.
+        //
+        // Why this task exists: on iPhone, web push notifications
+        // ONLY work when the app is installed to the home screen.
+        // Plain-Safari iPhone users get zero notifications. Forcing
+        // installation closes that gap. (Andrew 2026-05-19 — "the
+        // whole point was to enable notifications to staff without
+        // the app installed".)
+        autoComplete: (staff) => {
+            if (!staff) return false;
+            return staff.pwaInstalled === true;
+        },
+        descriptionEn: 'On iPhone, notifications only work when the app is added to your home screen. Takes 30 seconds.',
+        descriptionEs: 'En iPhone, las notificaciones solo funcionan al agregar la app a tu pantalla. Toma 30 segundos.',
+    },
 };
 
 // All known task types — useful for the admin picker.

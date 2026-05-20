@@ -730,6 +730,50 @@ export default function App() {
         return () => window.removeEventListener('ddmau:navigate', handler);
     }, []);
 
+    // ── PWA install auto-detection ─────────────────────────────────────
+    // When the app boots in standalone display mode (i.e. opened from
+    // a home-screen icon, not a browser tab), stamp pwaInstalled=true
+    // on the current staffer's record. The required-task framework's
+    // install_pwa autoComplete predicate reads this flag, so any
+    // staffer who has the app on their home screen on ANY device gets
+    // the install gate to close itself automatically.
+    //
+    // Why this matters: on iPhone, web push notifications ONLY fire
+    // when the PWA is installed to the home screen. The gate forces
+    // that install; this effect closes the gate as soon as it has
+    // happened, so staff don't see "install the app" after they
+    // already did.
+    //
+    // Idempotent: writes only on the false→true transition. Subsequent
+    // standalone-mode launches are no-ops (no Firestore write).
+    useEffect(() => {
+        if (!staffName || !currentStaffRecord) return;
+        if (currentStaffRecord.pwaInstalled === true) return;
+        const isStandalone = (
+            (typeof window !== 'undefined') && (
+                (window.matchMedia?.('(display-mode: standalone)')?.matches === true)
+                || (window.navigator?.standalone === true)
+            )
+        );
+        if (!isStandalone) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const ref = doc(db, 'config', 'staff');
+                const snap = await getDoc(ref);
+                if (cancelled) return;
+                const list = (snap.exists() ? snap.data().list : []) || [];
+                const next = list.map(s => s && s.name === staffName
+                    ? { ...s, pwaInstalled: true, pwaInstalledAt: new Date().toISOString(), pwaInstalledMethod: 'auto' }
+                    : s);
+                await setDoc(ref, { list: next });
+            } catch (e) {
+                console.warn('pwa install auto-detect write failed:', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [staffName, currentStaffRecord?.pwaInstalled]);
+
     // Onboarding deep links (handled before auth):
     //   /?onboard=TOKEN → token-gated public new-hire portal
     //   /?apply=1       → public job-application form

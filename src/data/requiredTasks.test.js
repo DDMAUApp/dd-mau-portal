@@ -2,9 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { TASK_TYPES, TASK_TYPE_IDS, TASK_STATUS } from './requiredTasks';
 
 describe('TASK_TYPES registry', () => {
-    it('has at least sms_optin and availability', () => {
+    it('has at least sms_optin, availability, and install_pwa', () => {
         expect(TASK_TYPES.sms_optin).toBeDefined();
         expect(TASK_TYPES.availability).toBeDefined();
+        expect(TASK_TYPES.install_pwa).toBeDefined();
     });
 
     it('every type has labelEn, labelEs, icon, autoComplete', () => {
@@ -94,5 +95,33 @@ describe('defaults for known task types', () => {
     it('availability defaults: blockApp=true, allowSkip=false', () => {
         expect(TASK_TYPES.availability.defaultBlockApp).toBe(true);
         expect(TASK_TYPES.availability.defaultAllowSkip).toBe(false);
+    });
+    it('install_pwa defaults: blockApp=true, allowSkip=false', () => {
+        expect(TASK_TYPES.install_pwa.defaultBlockApp).toBe(true);
+        expect(TASK_TYPES.install_pwa.defaultAllowSkip).toBe(false);
+    });
+});
+
+describe('install_pwa.autoComplete', () => {
+    const def = TASK_TYPES.install_pwa;
+    it('false when pwaInstalled is undefined (never confirmed)', () => {
+        expect(def.autoComplete({ name: 'x' })).toBe(false);
+    });
+    it('false when pwaInstalled is explicitly false', () => {
+        expect(def.autoComplete({ name: 'x', pwaInstalled: false })).toBe(false);
+    });
+    it('true when pwaInstalled is true', () => {
+        expect(def.autoComplete({ name: 'x', pwaInstalled: true })).toBe(true);
+    });
+    it('false when pwaInstalled is truthy but not strictly true', () => {
+        // Defensive: a corrupted record with pwaInstalled: 1 or "yes"
+        // shouldn't silently close the gate. Only the strict boolean
+        // true (which is what the auto-detect effect writes) closes it.
+        expect(def.autoComplete({ name: 'x', pwaInstalled: 1 })).toBe(false);
+        expect(def.autoComplete({ name: 'x', pwaInstalled: 'yes' })).toBe(false);
+    });
+    it('false when staff is missing', () => {
+        expect(def.autoComplete(null)).toBe(false);
+        expect(def.autoComplete(undefined)).toBe(false);
     });
 });

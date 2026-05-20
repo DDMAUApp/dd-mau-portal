@@ -31,10 +31,12 @@ import { TASK_TYPES, completeTask, skipTask, fetchPendingTasksFor } from '../dat
 // when the user has finished their interaction.
 const TaskSmsOptIn = lazy(() => import('./RequiredTaskSmsOptIn'));
 const TaskAvailability = lazy(() => import('./RequiredTaskAvailability'));
+const TaskInstallPwa = lazy(() => import('./RequiredTaskInstallPwa'));
 
 const COMPONENTS = {
     sms_optin: TaskSmsOptIn,
     availability: TaskAvailability,
+    install_pwa: TaskInstallPwa,
 };
 
 export default function RequiredTaskFlow({
