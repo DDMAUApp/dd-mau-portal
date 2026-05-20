@@ -428,10 +428,24 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
 
     const isDone = status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED;
 
-    // Look up a reference template (admin-uploaded PDF for this doc) once.
-    // Reference mode = the hire downloads the PDF, fills offline, uploads
-    // back through the normal file upload flow. Independent of `kind`.
+    // Look up BOTH kinds of admin-uploaded templates for this doc:
+    //
+    //   • mode='fillable' — admin placed fields on the PDF; hire fills
+    //     them in-browser. If one exists, it OVERRIDES the built-in
+    //     handler for this doc.kind. Admin upload always wins so that
+    //     a custom Direct Deposit (or anything else) PDF the admin
+    //     uploaded is what the hire actually sees — not the generic
+    //     built-in form. (Andrew 2026-05-19 — "I added a Direct
+    //     Deposit form and when I send out the onboarding it's just
+    //     a fill out for not my actual doc. the template edit is
+    //     not working.")
+    //
+    //   • mode='reference' — admin uploads a PDF for the hire to
+    //     download/print/fill offline + upload back. Independent of
+    //     kind; renders as a download chip above whatever input the
+    //     hire normally uses.
     const [refTemplate, setRefTemplate] = useState(null);
+    const [fillableTemplate, setFillableTemplate] = useState(null);
     useEffect(() => {
         let alive = true;
         (async () => {
@@ -439,20 +453,33 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
                 const q = query(
                     collection(db, 'onboarding_templates'),
                     where('forDocId', '==', doc.id),
-                    where('mode', '==', 'reference'),
                 );
                 const snap = await getDocs(q);
                 if (!alive || snap.empty) return;
-                let chosen = null;
+                // Pick the most-recently-updated template per mode.
+                let bestRef = null;
+                let bestFill = null;
                 snap.forEach(d => {
                     const data = { id: d.id, ...d.data() };
-                    if (!chosen || (data.updatedAt || '') > (chosen.updatedAt || '')) chosen = data;
+                    const ts = data.updatedAt || '';
+                    if (data.mode === 'reference') {
+                        if (!bestRef || (bestRef.updatedAt || '') < ts) bestRef = data;
+                    } else if (data.mode === 'fillable' || !data.mode) {
+                        // Default to 'fillable' if mode is missing — templates
+                        // created before the mode field existed.
+                        if (!bestFill || (bestFill.updatedAt || '') < ts) bestFill = data;
+                    }
                 });
-                if (chosen) {
+                if (bestRef) {
                     try {
-                        const url = await getDownloadURL(sref(storage, chosen.storagePath));
-                        if (alive) setRefTemplate({ ...chosen, url });
+                        const url = await getDownloadURL(sref(storage, bestRef.storagePath));
+                        if (alive) setRefTemplate({ ...bestRef, url });
                     } catch {}
+                }
+                if (bestFill && alive) {
+                    // No URL fetch — OnboardingFillablePdf opens the storage
+                    // path itself via getBytes (its existing pattern).
+                    setFillableTemplate(bestFill);
                 }
             } catch {}
         })();
@@ -510,7 +537,24 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
                             <p className="text-[11px] text-red-700">{state.note}</p>
                         </div>
                     )}
-                    {doc.kind === 'form' ? (
+                    {/* Admin-uploaded fillable template ALWAYS overrides
+                        the kind-specific built-in handler. If an admin
+                        uploaded a custom PDF for this doc with field
+                        positions, that's what the hire sees — not the
+                        generic form / DirectDeposit / Acknowledgment
+                        component the doc.kind would otherwise route to. */}
+                    {fillableTemplate ? (
+                        <ReactSuspense fallback={<p className="text-xs text-gray-500 italic">Loading template…</p>}>
+                            <OnboardingFillablePdf
+                                docDef={doc}
+                                hire={hire}
+                                hireId={hireId}
+                                isEs={isEs}
+                                isLocked={isLocked}
+                                onSubmitted={() => onSetStatus(doc.id, DOC_STATUS.SUBMITTED, { submittedAt: new Date().toISOString() })}
+                                onStart={() => onSetStatus(doc.id, DOC_STATUS.STARTED)} />
+                        </ReactSuspense>
+                    ) : doc.kind === 'form' ? (
                         <FormInputs
                             docId={doc.id}
                             initial={
