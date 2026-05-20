@@ -326,8 +326,14 @@ try {
 try { if (typeof localStorage !== 'undefined') localStorage.removeItem('ddmau:v2_optout'); } catch {}
 
 // Detect digital-signage TV mode at mount. URL form:
-//   ?tv=webster   → Webster menu board
-//   ?tv=maryland  → MD Heights menu board
+//   ?tv=<tvId>
+// Where tvId is either a reserved default ('webster' / 'maryland')
+// or any admin-defined slug from /tv_configs (e.g. 'webster-foh',
+// 'webster-drivethru', 'maryland-bar'). MenuDisplay subscribes to
+// the config doc and renders accordingly; if the slug doesn't
+// exist and isn't a reserved default, MenuDisplay shows a friendly
+// "no config for this TV" message.
+//
 // Bypasses the PIN entirely (it's a public-facing menu, not staff
 // data). Set on the Fire TV Stick / kiosk browser as the start URL.
 // Andrew 2026-05-20.
@@ -335,10 +341,12 @@ function readTvMode() {
     if (typeof window === 'undefined') return null;
     try {
         const params = new URLSearchParams(window.location.search);
-        const loc = String(params.get('tv') || '').toLowerCase().trim();
-        if (loc === 'webster' || loc === 'maryland') {
-            return { location: loc };
-        }
+        const raw = String(params.get('tv') || '').toLowerCase().trim();
+        // URL-safe slug: keep [a-z0-9-]. Reject empty/garbage so the
+        // PWA's normal lock screen still loads if someone hits a bare
+        // ?tv=.
+        const tvId = raw.replace(/[^a-z0-9-]+/g, '').slice(0, 48);
+        if (tvId) return { tvId };
     } catch {}
     return null;
 }
@@ -822,7 +830,7 @@ export default function App() {
     if (tvMode) {
         return (
             <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
-                <MenuDisplay location={tvMode.location} />
+                <MenuDisplay tvId={tvMode.tvId} />
             </Suspense>
         );
     }

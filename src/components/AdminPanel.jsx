@@ -23,6 +23,8 @@ import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
 const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
+const MenuEditor = reactLazy(() => import('./MenuEditor'));
+const TvConfigsEditor = reactLazy(() => import('./TvConfigsEditor'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -3880,6 +3882,21 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         DD Mau app (browser) sends labels directly to the
                         printer's HTTP server — no middleware, no driver. */}
                     <PrintersConfigSection language={language} byName={staffName} />
+
+                    {/* ── Menu TV editors ─────────────────────────────────────────
+                        MenuEditor — admin-editable overlay on top of MENU_DATA.
+                        Lets owners change prices, descriptions, photos, add
+                        custom items, and hide items WITHOUT editing code.
+                        TvConfigsEditor — per-TV settings (label, location,
+                        layout, photos, category filter) + kiosk URL copy.
+                        Both lazy-loaded; heavy components don't enter the
+                        chunk graph until admin opens this section. */}
+                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading menu editor…</div>}>
+                        <MenuEditor language={language} byName={staffName} />
+                    </ReactSuspense>
+                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading TV displays…</div>}>
+                        <TvConfigsEditor language={language} byName={staffName} />
+                    </ReactSuspense>
 
                     {/* ── DANGER ZONE — System Refresh broadcast ────────────────────
                         Writes a timestamp to /config/forceRefresh. Every active
