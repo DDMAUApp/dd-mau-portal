@@ -84,51 +84,103 @@ export function resolveShelfLifeDays(recipe) {
 }
 
 // ── Config CRUD ───────────────────────────────────────────────
-export async function getPrinterConfig(location) {
-    if (!location) throw new Error('location required');
-    const snap = await getDoc(doc(db, 'config', `printers_${location}`));
-    if (!snap.exists()) return null;
-    return { id: location, ...snap.data() };
+//
+// 2026-05-20 — Andrew: "add the option to print off the office
+// printer or off the kitchen printer". Each location now supports
+// multiple "slots": 'kitchen' (default) and 'office'. Per-slot
+// docs live at /config/printers_{location}_{slot}. The legacy
+// /config/printers_{location} doc is still read as a fallback
+// when slot='kitchen' so existing setups keep working without a
+// migration step.
+export const PRINTER_SLOTS = Object.freeze(['kitchen', 'office']);
+export const DEFAULT_PRINTER_SLOT = 'kitchen';
+
+function printerDocPath(location, slot) {
+    const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
+    return `printers_${location}_${safeSlot}`;
 }
 
-// Live subscription — feeds the Print Label modal so a fresh
-// admin-side IP change propagates without a tab reload.
-export function subscribePrinterConfig(location, cb) {
+export async function getPrinterConfig(location, slot = DEFAULT_PRINTER_SLOT) {
+    if (!location) throw new Error('location required');
+    const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
+    const primary = await getDoc(doc(db, 'config', printerDocPath(location, safeSlot)));
+    if (primary.exists()) {
+        return { id: location, slot: safeSlot, ...primary.data() };
+    }
+    // Backward-compat: the legacy single-printer-per-location doc
+    // counts as the kitchen printer.
+    if (safeSlot === 'kitchen') {
+        const legacy = await getDoc(doc(db, 'config', `printers_${location}`));
+        if (legacy.exists()) {
+            return { id: location, slot: 'kitchen', legacy: true, ...legacy.data() };
+        }
+    }
+    return null;
+}
+
+// Live subscription per (location, slot). Feeds the print modals.
+export function subscribePrinterConfig(location, cb, slot = DEFAULT_PRINTER_SLOT) {
     if (!location) { cb(null); return () => {}; }
-    return onSnapshot(doc(db, 'config', `printers_${location}`), (snap) => {
-        cb(snap.exists() ? { id: location, ...snap.data() } : null);
+    const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
+    let primaryHit = false;
+    const unsubPrimary = onSnapshot(doc(db, 'config', printerDocPath(location, safeSlot)), (snap) => {
+        if (snap.exists()) {
+            primaryHit = true;
+            cb({ id: location, slot: safeSlot, ...snap.data() });
+        } else if (safeSlot !== 'kitchen') {
+            // Office slot with no doc → no legacy fallback exists.
+            primaryHit = false;
+            cb(null);
+        } else if (!primaryHit) {
+            // Wait for the legacy listener below to fire.
+        }
     }, (err) => {
-        console.warn('subscribePrinterConfig failed:', err);
+        console.warn('subscribePrinterConfig (primary) failed:', err);
         cb(null);
     });
+    let unsubLegacy = () => {};
+    if (safeSlot === 'kitchen') {
+        unsubLegacy = onSnapshot(doc(db, 'config', `printers_${location}`), (snap) => {
+            // Legacy fallback only if the primary slot doc isn't there.
+            if (primaryHit) return;
+            cb(snap.exists()
+                ? { id: location, slot: 'kitchen', legacy: true, ...snap.data() }
+                : null);
+        }, (err) => {
+            console.warn('subscribePrinterConfig (legacy) failed:', err);
+        });
+    }
+    return () => { unsubPrimary(); unsubLegacy(); };
 }
 
-export async function savePrinterConfig({ location, name, ip, port, deviceId, model, enabled, byName }) {
+export async function savePrinterConfig({
+    location, slot = DEFAULT_PRINTER_SLOT,
+    name, ip, port, deviceId, model, enabled, byName,
+}) {
     if (!location) throw new Error('location required');
+    const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
     const trimmedIp = String(ip || '').trim();
-    // Lightweight sanity: IPv4-shaped or non-empty hostname. Don't
-    // block exotic configs — the print attempt itself will surface
-    // network errors better than a regex.
     if (trimmedIp && !/^[0-9a-zA-Z.\-:]+$/.test(trimmedIp)) {
         throw new Error('printer ip looks malformed');
     }
     const payload = {
-        name: String(name || '').slice(0, 100) || `${location} printer`,
+        name: String(name || '').slice(0, 100) || `${location} ${safeSlot} printer`,
         ip: trimmedIp,
         port: Number.isFinite(Number(port)) ? Number(port) : DEFAULT_PRINTER_PORT,
         deviceId: String(deviceId || DEFAULT_DEVICE_ID).slice(0, 64),
         model: String(model || 'TM-L100').slice(0, 64),
+        slot: safeSlot,
         enabled: enabled !== false,
         updatedAt: serverTimestamp(),
         updatedBy: byName || null,
     };
-    await setDoc(doc(db, 'config', `printers_${location}`), payload, { merge: true });
+    await setDoc(doc(db, 'config', printerDocPath(location, safeSlot)), payload, { merge: true });
     recordAudit({
         action: 'printer.config.update',
         actorName: byName || 'admin',
         targetType: 'printer_config',
-        targetId: location,
-        details: { name: payload.name, ip: payload.ip, model: payload.model, enabled: payload.enabled },
+        targetId: `${location}_${safeSlot}`,
+        details: { slot: safeSlot, name: payload.name, ip: payload.ip, enabled: payload.enabled },
     });
 }
 
@@ -453,12 +505,13 @@ export function renderFreeTextXml(freePayload) {
 // admins can see what was printed without full content (privacy +
 // log volume).
 export async function printFreeText({
-    location, text, size, bold, align, copies = 1,
+    location, slot = DEFAULT_PRINTER_SLOT,
+    text, size, bold, align, copies = 1,
     stampDate = false, stampSignature = false, signature, footer,
     byName,
 }) {
     try {
-        const printer = await getPrinterConfig(location);
+        const printer = await getPrinterConfig(location, slot);
         if (!printer || !printer.ip) {
             return { ok: false, error: 'no_printer_configured' };
         }
@@ -476,9 +529,10 @@ export async function printFreeText({
             action: 'print.freetext',
             actorName: byName || 'unknown',
             targetType: 'printer',
-            targetId: location,
+            targetId: `${location}_${slot}`,
             details: {
                 location,
+                slot,
                 preview: trimmed.slice(0, 80),
                 size, bold, align, copies,
                 printerOk: res.ok,
@@ -555,11 +609,12 @@ export async function sendToPrinter(printer, eposXml) {
 // are caught and surfaced as { ok: false, error: '<message>' }
 // so the UI can toast cleanly.
 export async function printPrepLabel({
-    location, recipe, preppedBy, shelfLifeDays, language = 'en',
+    location, slot = DEFAULT_PRINTER_SLOT,
+    recipe, preppedBy, shelfLifeDays, language = 'en',
     notes, byName, copies = 1, source = 'recipe',
 }) {
     try {
-        const printer = await getPrinterConfig(location);
+        const printer = await getPrinterConfig(location, slot);
         if (!printer || !printer.ip) {
             return { ok: false, error: 'no_printer_configured' };
         }
@@ -589,6 +644,7 @@ export async function printPrepLabel({
             targetId: recipe?.id || recipe?.titleEn || 'unknown',
             details: {
                 location,
+                slot,
                 itemName: recipe?.titleEn,
                 shelfLifeDays: days,
                 copies: c,
@@ -635,9 +691,9 @@ function locationLabel(loc) {
 // ── Test print ────────────────────────────────────────────────
 // Simple fixed-content label so admin can verify a freshly-
 // configured printer works before staff start hitting Print.
-export async function testPrint({ location, byName }) {
+export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName }) {
     try {
-        const printer = await getPrinterConfig(location);
+        const printer = await getPrinterConfig(location, slot);
         if (!printer || !printer.ip) return { ok: false, error: 'no_printer_configured' };
         const payload = buildLabelPayload({
             itemName: 'Printer Test',
@@ -652,10 +708,10 @@ export async function testPrint({ location, byName }) {
         });
         const xml = renderEposXml(payload);
         const res = await sendToPrinter(printer, xml);
-        // Stamp the printer doc with the test result. Admin UI
-        // reads this to show a green ✓ / red ✕ next to the IP.
+        // Stamp the printer doc (per slot) with the test result.
         try {
-            await setDoc(doc(db, 'config', `printers_${location}`), {
+            const slotPath = printerDocPath(location, slot);
+            await setDoc(doc(db, 'config', slotPath), {
                 lastTestedAt: serverTimestamp(),
                 lastTestOk: res.ok === true,
                 lastTestBy: byName || null,
@@ -667,8 +723,8 @@ export async function testPrint({ location, byName }) {
             action: 'print.test',
             actorName: byName || 'admin',
             targetType: 'printer_config',
-            targetId: location,
-            details: { printerOk: res.ok, printerStatus: res.status },
+            targetId: `${location}_${slot}`,
+            details: { location, slot, printerOk: res.ok, printerStatus: res.status },
         });
         return res.ok
             ? { ok: true }

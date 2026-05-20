@@ -40,6 +40,7 @@ import { subscribeAllCustomItems } from '../data/customItems';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
+const PrintCenter = lazy(() => import('./PrintCenter'));
 
 export default function DateStickerPrinter({
     language = 'en',
@@ -260,6 +261,10 @@ export default function DateStickerPrinter({
 
     // 🆕 New custom item button state.
     const [newItemModal, setNewItemModal] = useState(false);
+    // 🖨 Custom on-the-spot print modal (PrintCenter). Andrew
+    // 2026-05-20: "add a custom print button so we can make custom
+    // stickers on the spot".
+    const [customPrintOpen, setCustomPrintOpen] = useState(false);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
@@ -345,14 +350,20 @@ export default function DateStickerPrinter({
                     </button>
                 </div>
 
-                {/* Admin: add a brand-new custom item (prep, drink,
-                    house sauce — anything not in the public menu) */}
-                {adminUser && (
-                    <button onClick={() => setNewItemModal(true)}
-                        className="w-full mb-2 py-2 rounded-lg border-2 border-dashed border-purple-300 text-purple-700 hover:bg-purple-50 font-bold text-sm">
-                        🆕 {tx('New custom item (prep / drink / sauce)', 'Nuevo artículo personalizado')}
+                {/* Action row — Custom Print (everyone) +
+                    New custom item (admin-only). */}
+                <div className="flex gap-2 mb-2">
+                    <button onClick={() => setCustomPrintOpen(true)}
+                        className="flex-1 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                        🖨 {tx('Custom print (any text)', 'Imprimir personalizado')}
                     </button>
-                )}
+                    {adminUser && (
+                        <button onClick={() => setNewItemModal(true)}
+                            className="flex-1 py-2.5 rounded-lg border-2 border-dashed border-purple-300 text-purple-700 hover:bg-purple-50 font-bold text-sm">
+                            🆕 {tx('New custom item', 'Nuevo artículo')}
+                        </button>
+                    )}
+                </div>
 
                 {/* AI status strip — shows during a query */}
                 {hasQuery && aiOn && (
@@ -529,6 +540,21 @@ export default function DateStickerPrinter({
                         language={language}
                         onClose={() => setEditingItem(null)}
                         onSaved={() => { /* live subscription refreshes the view */ }}
+                    />
+                </Suspense>
+            )}
+
+            {/* 🖨 Custom Print — on-the-spot free-form sticker
+                (Word-style composer). Uses the same PrintCenter
+                modal home + Operations already use. */}
+            {customPrintOpen && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <PrintCenter
+                        location={storeLocation}
+                        staffName={staffName}
+                        language={language}
+                        isAdmin={adminUser}
+                        onClose={() => setCustomPrintOpen(false)}
                     />
                 </Suspense>
             )}

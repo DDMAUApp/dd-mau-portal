@@ -54,10 +54,20 @@ export default function PrintCenter({
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location]);
 
+    // Slot selector — kitchen vs office. Persisted per-user.
+    const [printSlot, setPrintSlot] = useState(() => {
+        try { return localStorage.getItem('ddmau:printerSlot') || 'kitchen'; }
+        catch { return 'kitchen'; }
+    });
+    const setSlotPersistent = (s) => {
+        setPrintSlot(s);
+        try { localStorage.setItem('ddmau:printerSlot', s); } catch {}
+    };
+
     const [printer, setPrinter] = useState(null);
     useEffect(() => {
-        return subscribePrinterConfig(printLocation, setPrinter);
-    }, [printLocation]);
+        return subscribePrinterConfig(printLocation, setPrinter, printSlot);
+    }, [printLocation, printSlot]);
 
     const [text, setText] = useState('');
     const [size, setSize] = useState('large');
@@ -110,6 +120,7 @@ export default function PrintCenter({
         setPrinting(true);
         const res = await printFreeText({
             location: printLocation,
+            slot: printSlot,
             text,
             size, bold, align, copies,
             stampDate, stampSignature, signature: staffName,
@@ -354,6 +365,27 @@ export default function PrintCenter({
                                 </div>
                             </div>
                         )}
+
+                        {/* Slot — kitchen vs office. Always visible. */}
+                        <div>
+                            <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                                {tx('Printer slot', 'Impresora')}
+                            </span>
+                            <div className="flex gap-1">
+                                {[
+                                    { k: 'kitchen', en: '🍳 Kitchen', es: '🍳 Cocina' },
+                                    { k: 'office',  en: '🏢 Office',  es: '🏢 Oficina' },
+                                ].map(s => (
+                                    <button key={s.k}
+                                        onClick={() => setSlotPersistent(s.k)}
+                                        className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${printSlot === s.k
+                                            ? 'bg-dd-text text-white border-dd-text'
+                                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
+                                        {isEs ? s.es : s.en}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
 
                         {/* Recent prints */}
                         {recents.length > 0 && (

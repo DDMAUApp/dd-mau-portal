@@ -60,14 +60,22 @@ function PrintersConfigSection({ language, byName }) {
                     'Epson TM-L100 (80mm sin liner). Configura la IP local de cada restaurante y haz una prueba. La app imprime directo por la red Wi-Fi de la cocina — sin PC ni driver.',
                 )}
             </p>
-            <div className="space-y-2">
+            <div className="space-y-3">
                 {LOCATIONS.map(loc => (
-                    <PrinterConfigRow key={loc}
-                        location={loc}
-                        locationLabel={LOC_LABEL[loc]}
-                        tx={tx}
-                        byName={byName}
-                    />
+                    <div key={loc} className="space-y-1.5">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-purple-700 pl-1">
+                            {LOC_LABEL[loc]}
+                        </div>
+                        {['kitchen', 'office'].map(slot => (
+                            <PrinterConfigRow key={`${loc}-${slot}`}
+                                location={loc}
+                                slot={slot}
+                                locationLabel={`${LOC_LABEL[loc]} · ${slot === 'kitchen' ? tx('Kitchen', 'Cocina') : tx('Office', 'Oficina')}`}
+                                tx={tx}
+                                byName={byName}
+                            />
+                        ))}
+                    </div>
                 ))}
             </div>
             <p className="text-[10px] text-purple-700/70 italic mt-2">
@@ -226,7 +234,7 @@ function PrintHistorySection({ tx }) {
 // Single printer row — loads its config doc, lets admin edit IP /
 // port / enabled, fires a test print. Stamps lastTestedAt /
 // lastTestOk so the next admin to land here sees the state.
-function PrinterConfigRow({ location, locationLabel, tx, byName }) {
+function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byName }) {
     const [cfg, setCfg] = useState(null);
     const [loading, setLoading] = useState(true);
     const [ipDraft, setIpDraft] = useState('');
@@ -240,11 +248,11 @@ function PrinterConfigRow({ location, locationLabel, tx, byName }) {
         (async () => {
             try {
                 const mod = await import('../data/labelPrinting');
-                const got = await mod.getPrinterConfig(location);
+                const got = await mod.getPrinterConfig(location, slot);
                 if (!mounted) return;
                 setCfg(got);
                 setIpDraft(got?.ip || '');
-                setNameDraft(got?.name || `${locationLabel} Kitchen`);
+                setNameDraft(got?.name || `${locationLabel}`);
                 setEnabled(got?.enabled !== false);
             } catch (e) {
                 console.warn('printer config load failed:', e);
@@ -253,7 +261,7 @@ function PrinterConfigRow({ location, locationLabel, tx, byName }) {
             }
         })();
         return () => { mounted = false; };
-    }, [location, locationLabel]);
+    }, [location, slot, locationLabel]);
 
     const save = async () => {
         if (saving) return;
@@ -261,13 +269,13 @@ function PrinterConfigRow({ location, locationLabel, tx, byName }) {
         try {
             const mod = await import('../data/labelPrinting');
             await mod.savePrinterConfig({
-                location,
+                location, slot,
                 name: nameDraft,
                 ip: ipDraft.trim(),
                 enabled,
                 byName,
             });
-            const fresh = await mod.getPrinterConfig(location);
+            const fresh = await mod.getPrinterConfig(location, slot);
             setCfg(fresh);
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
         } catch (e) {
@@ -283,13 +291,13 @@ function PrinterConfigRow({ location, locationLabel, tx, byName }) {
         setTesting(true);
         try {
             const mod = await import('../data/labelPrinting');
-            const res = await mod.testPrint({ location, byName });
+            const res = await mod.testPrint({ location, slot, byName });
             if (res.ok) {
                 toast(tx('✓ Test label sent', '✓ Etiqueta de prueba enviada'), { kind: 'success' });
             } else {
                 toast(tx('Test failed: ', 'Prueba falló: ') + res.error, { kind: 'error' });
             }
-            const fresh = await mod.getPrinterConfig(location);
+            const fresh = await mod.getPrinterConfig(location, slot);
             setCfg(fresh);
         } finally {
             setTesting(false);

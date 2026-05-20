@@ -67,6 +67,18 @@ export default function PrintLabelModal({
     // Prep labels can print N at once, stitched into one envelope so
     // the printer batches them as one job (no round-trips per copy).
     const [copies, setCopies] = useState(1);
+    // Slot selector — kitchen vs office printer. Andrew 2026-05-20:
+    // "add the option to print off the office printer or off the
+    // kitchen printer". Persisted per-user in localStorage so the
+    // last choice sticks across opens.
+    const [slot, setSlot] = useState(() => {
+        try { return localStorage.getItem('ddmau:printerSlot') || 'kitchen'; }
+        catch { return 'kitchen'; }
+    });
+    const setSlotPersistent = (s) => {
+        setSlot(s);
+        try { localStorage.setItem('ddmau:printerSlot', s); } catch {}
+    };
     const [printer, setPrinter] = useState(null);
     const [printing, setPrinting] = useState(false);
 
@@ -100,10 +112,12 @@ export default function PrintLabelModal({
         : recipe;
 
     // Live config so a fresh admin edit takes effect without reload.
+    // Resubscribes when the slot toggles so the "Printer ready /
+    // missing" strip reflects the chosen target.
     useEffect(() => {
         if (!location) return;
-        return subscribePrinterConfig(location, setPrinter);
-    }, [location]);
+        return subscribePrinterConfig(location, setPrinter, slot);
+    }, [location, slot]);
 
     // Build the preview payload — same builder the print path uses,
     // so what the user sees IS what prints. In editable mode this
@@ -139,6 +153,7 @@ export default function PrintLabelModal({
         setPrinting(true);
         const res = await printPrepLabel({
             location,
+            slot,
             recipe: effectiveRecipe,
             preppedBy: staffName,
             shelfLifeDays,
@@ -326,6 +341,30 @@ export default function PrintLabelModal({
                         </div>
                     </div>
 
+                    {/* Slot selector — Kitchen vs Office printer.
+                        Andrew 2026-05-20. Defaults to last choice from
+                        localStorage. Resubscribes the printer state
+                        strip when toggled. */}
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                            {tx('Print to', 'Imprimir en')}
+                        </label>
+                        <div className="flex gap-1">
+                            {[
+                                { k: 'kitchen', en: '🍳 Kitchen', es: '🍳 Cocina' },
+                                { k: 'office',  en: '🏢 Office',  es: '🏢 Oficina' },
+                            ].map(s => (
+                                <button key={s.k}
+                                    onClick={() => setSlotPersistent(s.k)}
+                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold border-2 transition ${slot === s.k
+                                        ? 'bg-dd-text text-white border-dd-text'
+                                        : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
+                                    {isEs ? s.es : s.en}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
                     {/* Printer state strip */}
                     <div className={`rounded-lg p-2.5 text-[11px] ${
                         printerReady
@@ -340,8 +379,8 @@ export default function PrintLabelModal({
                         ) : (
                             <>
                                 ⚠ {tx(
-                                    'No printer set up for this location. Ask an admin to configure one in Admin → Printers.',
-                                    'No hay impresora para esta ubicación. Pídele a un admin que la configure.',
+                                    `No ${slot} printer set up for this location. Ask admin to configure it.`,
+                                    `Sin impresora de ${slot === 'kitchen' ? 'cocina' : 'oficina'}. Pídele a un admin.`,
                                 )}
                             </>
                         )}
