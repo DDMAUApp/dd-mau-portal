@@ -42,6 +42,12 @@ const TWILIO_ACCOUNT_SID = defineSecret("TWILIO_ACCOUNT_SID");
 const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
 const TWILIO_FROM_NUMBER = defineSecret("TWILIO_FROM_NUMBER");
 
+// Anthropic API key — powers aiSearch (semantic search) below.
+// Set with: firebase functions:secrets:set ANTHROPIC_API_KEY
+// Aim a Claude Haiku-class model — fast + cheap; queries are
+// roughly $0.0015 each at restaurant-scale inventory size.
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+
 const smsHelpers = require("./sms");
 const {
     renderSmsTemplate,
@@ -2042,6 +2048,168 @@ exports.validateOnboardingInvite = onCall(
 
         return { hireId, hire };
     },
+);
+
+// ── aiSearch ───────────────────────────────────────────────────────
+// Semantic search via Anthropic Claude. The client posts a free-text
+// query plus a list of items (id + name + category + subcategory)
+// and gets back the IDs that semantically match — useful for things
+// the substring matcher misses, e.g. "dry" → spices/rice/noodles,
+// "things for pho" → beef bones, rice noodles, star anise, mint, lime.
+//
+// Why a server function (and not direct from the client): the API
+// key has to live somewhere not-the-client-bundle. We also benefit
+// from shared rate-limiting + a single audit-able call surface.
+//
+// Cost: input ~5-8K tokens for DD Mau's full inventory, output ~50
+// tokens. Claude Haiku-class pricing puts each call around $0.001-
+// $0.002. Even with heavy use the spend is dollars per month.
+exports.aiSearch = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        maxInstances: 5,
+        secrets: [ANTHROPIC_API_KEY],
+    },
+    async (request) => {
+        // Same IP rate-limit shape as translateMessage.
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({
+            ip,
+            namespace: "aiSearch",
+            limit: 60,
+            windowMs: 5 * 60_000,
+        });
+
+        const data = request.data || {};
+        const query = String(data.query || "").trim();
+        const items = Array.isArray(data.items) ? data.items : [];
+        if (!query) throw new HttpsError("invalid-argument", "query required");
+        if (items.length === 0) {
+            return { matchingIds: [], note: "no items" };
+        }
+        if (query.length > 200) {
+            throw new HttpsError("invalid-argument", "query too long");
+        }
+        if (items.length > 2000) {
+            // Cost guard. DD Mau's inventory is < 500 items; anything
+            // bigger is misuse.
+            throw new HttpsError("invalid-argument", "too many items in one call");
+        }
+
+        // Build a compact "items dossier" for the LLM. Format:
+        //   id=<id> name=<name> cat=<category> sub=<subcat>
+        // Truncated fields keep the prompt under the model's
+        // efficient input window. We DON'T include vendor / price /
+        // pack — they confuse semantic matching without adding signal.
+        const dossier = items.map(it => {
+            const id = String(it.id || "").slice(0, 32);
+            const name = String(it.name || "").slice(0, 80);
+            const cat = String(it.category || "").slice(0, 40);
+            const sub = String(it.subcat || "").slice(0, 40);
+            return `id=${id} name=${name} cat=${cat} sub=${sub}`;
+        }).join("\n");
+
+        // System prompt — directly tells Claude what to do, with
+        // examples to anchor the matching style.
+        const system = [
+            "You are a search assistant for a restaurant inventory list.",
+            "Given a free-text query and a list of items (id, name, category, subcategory), return the IDs of items that semantically match.",
+            "",
+            "Match generously — include items related, similar, or commonly grouped with the query term, even if the literal word does NOT appear.",
+            "",
+            "Examples:",
+            '- "dry" → spices, dried herbs, rice, noodles, beans, vinegar, soy sauce, fish sauce',
+            '- "green" → green vegetables (green onion, green beans, broccoli, cilantro, mint, basil, lettuce, cabbage)',
+            '- "things for pho" → beef bones, beef brisket, rice noodles, star anise, white onion, ginger, lime, mint, basil, hoisin, sriracha',
+            '- "spicy" → jalapeño, sriracha, chili oil, gochujang, hot sauce, sambal',
+            '- "vegan" → tofu, vegan chicken, vegan beef, vegan shrimp, plant-based items',
+            "",
+            "Respond with ONLY a JSON array of matching item IDs. No prose, no explanation, no markdown code fences.",
+            'Format: ["1-0", "2-3", "5-7"]',
+            "",
+            "If nothing matches, respond with: []",
+        ].join("\n");
+
+        const userMessage = `Query: ${JSON.stringify(query)}\n\nItems:\n${dossier}`;
+
+        // Call Anthropic Messages API.
+        let body;
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    // Claude Haiku-class — fast + cheap. If this model
+                    // name 404s, set the secret to point at whichever
+                    // current Haiku-class model is live (e.g. haiku-4-5,
+                    // haiku-3-5, etc.). The model is encoded here, not
+                    // in a secret, so a rename means a one-line code
+                    // change + redeploy.
+                    model: "claude-haiku-4-5",
+                    max_tokens: 1024,
+                    system,
+                    messages: [{ role: "user", content: userMessage }],
+                }),
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                logger.error("anthropic API error", resp.status, errText.slice(0, 500));
+                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+            }
+            body = await resp.json();
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("aiSearch fetch failed:", e?.message || e);
+            throw new HttpsError("unavailable", "ai search unavailable");
+        }
+
+        // Parse Claude's response. Expected shape:
+        //   { content: [{ type: 'text', text: '["1-0", "2-3"]' }], ... }
+        const textBlock = (body?.content || []).find(c => c?.type === "text");
+        const raw = textBlock?.text || "";
+        let matchingIds = [];
+        try {
+            // Be permissive with the parse — Claude usually returns
+            // a clean JSON array, but if it sneaks in a code fence or
+            // a "Here's the result:" preamble, fall back to extracting
+            // the first array-shaped substring.
+            const trimmed = raw.trim().replace(/^```(?:json)?\n?/i, "").replace(/```$/i, "").trim();
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+                matchingIds = parsed.map(String).slice(0, 500);
+            }
+        } catch {
+            const bracketed = raw.match(/\[[^\]]*\]/);
+            if (bracketed) {
+                try {
+                    const parsed = JSON.parse(bracketed[0]);
+                    if (Array.isArray(parsed)) {
+                        matchingIds = parsed.map(String).slice(0, 500);
+                    }
+                } catch {
+                    logger.warn("aiSearch: could not parse model output:", raw.slice(0, 200));
+                }
+            }
+        }
+
+        // Filter to ids that were actually in the request — guards
+        // against the model hallucinating extra ids.
+        const validIds = new Set(items.map(it => String(it.id)));
+        matchingIds = matchingIds.filter(id => validIds.has(id));
+
+        return {
+            matchingIds,
+            queryLen: query.length,
+            itemsCount: items.length,
+        };
+    }
 );
 
 exports.translateMessage = onCall(

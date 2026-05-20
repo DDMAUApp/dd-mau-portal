@@ -27,6 +27,7 @@ import {
 } from '../data/inventoryLists';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
+import { useAiSearch } from '../data/aiSearch';
 import { toast } from '../toast';
 
 export default function InventoryListsAdmin({
@@ -394,6 +395,12 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
     const [origJson, setOrigJson] = useState(() => JSON.stringify(list.categories || []));
     const [saving, setSaving] = useState(false);
     const [search, setSearch] = useState('');
+    // AI search toggle. When ON, queries are sent to the aiSearch
+    // Cloud Function (Anthropic Claude under the hood). Substring +
+    // synonym match keeps running locally — the AI ids are MERGED
+    // INTO that result set, never replacing it. So if Claude takes
+    // 200ms to respond, the user already sees instant substring
+    // matches and the AI just adds the semantic ones on top.
 
     // If the underlying list changes (e.g. admin renamed it via the
     // grid before opening the editor), reset our baseline. We only
@@ -511,6 +518,29 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
         });
     };
 
+    // AI toggle. Default ON — fast + free of the substring's literal-
+    // matching limits. User can flip OFF if AI is slow or unavailable.
+    const [aiOn, setAiOn] = useState(true);
+
+    // Flat list of all master items (with cat name baked in) — fed
+    // to both the substring matcher and the AI search. Memoized so
+    // the AI cache key stays stable across renders.
+    const allItemsFlat = useMemo(() => {
+        const out = [];
+        for (const cat of INVENTORY_CATEGORIES) {
+            for (const it of (cat.items || [])) {
+                out.push({
+                    id: it.id,
+                    name: it.name,
+                    nameEs: it.nameEs,
+                    category: cat.name,
+                    subcat: it.subcat || '',
+                });
+            }
+        }
+        return out;
+    }, []);
+
     // Search filter for the left pane. Tight synonyms +
     // accent-stripped substring across name/nameEs/category/subcat.
     // "chicken" expands to "pollo"; "limón" matches "lime"; etc.
@@ -525,6 +555,27 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
             item.subcat || '',
         ].join(' '));
         return haystackMatches(hay, queryTokens);
+    };
+
+    // AI semantic match — runs in parallel with the substring matcher
+    // and merges into the visible set. When aiOn=false, the hook
+    // immediately returns null and we render substring-only.
+    const { loading: aiLoading, matchingIds: aiIds, error: aiError } = useAiSearch({
+        query: search,
+        items: allItemsFlat,
+        enabled: aiOn && hasQuery,
+    });
+    const aiIdSet = useMemo(
+        () => (aiIds ? new Set(aiIds) : null),
+        [aiIds],
+    );
+    // Final per-item match function: substring OR ai. If AI hasn't
+    // responded yet (aiIdSet is null), we render substring matches
+    // only — the AI ids slot in once they arrive.
+    const itemMatchesUnion = (item, catName) => {
+        if (!hasQuery) return true;
+        if (itemMatches(item, catName)) return true;
+        return aiIdSet ? aiIdSet.has(item.id) : false;
     };
 
     return (
@@ -559,32 +610,62 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 min-h-0">
                 {/* LEFT — Available items + search */}
                 <div className="flex flex-col min-h-0 border border-dd-line rounded-xl bg-white overflow-hidden">
-                    <div className="px-2 py-2 border-b border-dd-line bg-dd-bg flex items-center gap-2">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 flex-shrink-0">
-                            {tx('Available', 'Disponibles')}
-                        </span>
-                        <div className="relative flex-1">
-                            <input
-                                type="search"
-                                inputMode="search"
-                                enterKeyHint="search"
-                                value={search}
-                                onChange={e => setSearch(e.target.value)}
-                                placeholder={tx('Search (e.g. "green", "chicken", "lime")', 'Buscar (ej. "verde", "pollo", "limón")')}
-                                className="w-full pl-7 pr-7 py-1.5 border border-dd-line rounded-md text-xs"
-                            />
-                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-dd-text-2 text-xs pointer-events-none">🔍</span>
-                            {search && (
-                                <button onClick={() => setSearch('')}
-                                    className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-[10px] font-bold flex items-center justify-center">
-                                    ✕
-                                </button>
-                            )}
+                    <div className="px-2 py-2 border-b border-dd-line bg-dd-bg flex flex-col gap-1.5">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 flex-shrink-0">
+                                {tx('Available', 'Disponibles')}
+                            </span>
+                            <div className="relative flex-1">
+                                <input
+                                    type="search"
+                                    inputMode="search"
+                                    enterKeyHint="search"
+                                    value={search}
+                                    onChange={e => setSearch(e.target.value)}
+                                    placeholder={aiOn
+                                        ? tx('Search anything ("dry", "things for pho", "spicy")', 'Buscar ("seco", "cosas para pho", "picante")')
+                                        : tx('Search (e.g. "green", "chicken", "lime")', 'Buscar (ej. "verde", "pollo", "limón")')}
+                                    className="w-full pl-7 pr-7 py-1.5 border border-dd-line rounded-md text-xs"
+                                />
+                                <span className="absolute left-2 top-1/2 -translate-y-1/2 text-dd-text-2 text-xs pointer-events-none">🔍</span>
+                                {search && (
+                                    <button onClick={() => setSearch('')}
+                                        className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-[10px] font-bold flex items-center justify-center">
+                                        ✕
+                                    </button>
+                                )}
+                            </div>
+                            {/* AI toggle — flips between substring-only and
+                                substring ∪ AI semantic match. AI adds ~200ms
+                                latency + small per-query cost, so it's a
+                                deliberate opt-in (default ON). */}
+                            <button onClick={() => setAiOn(v => !v)}
+                                title={aiOn
+                                    ? tx('AI search ON — click to use plain search', 'Búsqueda IA activada — clic para apagar')
+                                    : tx('Plain search — click to enable AI', 'Búsqueda básica — clic para activar IA')}
+                                className={`flex-shrink-0 px-2 py-1 rounded-md text-[10px] font-bold border transition ${aiOn
+                                    ? 'bg-purple-600 text-white border-purple-700'
+                                    : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
+                                ✨ {tx('AI', 'IA')}
+                            </button>
                         </div>
+                        {/* Status strip — shows AI loading / error / hit-count
+                            when active. Stays out of the way otherwise. */}
+                        {hasQuery && aiOn && (
+                            <div className="text-[10px] text-dd-text-2 flex items-center gap-2">
+                                {aiLoading && <span className="text-purple-700 font-bold">✨ {tx('thinking…', 'pensando…')}</span>}
+                                {!aiLoading && aiError && (
+                                    <span className="text-amber-700">⚠ {tx('AI unavailable — showing plain matches', 'IA no disponible — mostrando coincidencias básicas')}</span>
+                                )}
+                                {!aiLoading && !aiError && aiIds && (
+                                    <span>✨ {tx(`AI added ${aiIds.length} semantic ${aiIds.length === 1 ? 'match' : 'matches'}`, `IA añadió ${aiIds.length} coincidencias`)}</span>
+                                )}
+                            </div>
+                        )}
                     </div>
                     <div className="flex-1 overflow-y-auto p-2 space-y-2">
                         {INVENTORY_CATEGORIES.map(masterCat => {
-                            const itemsMatching = (masterCat.items || []).filter(it => itemMatches(it, masterCat.name));
+                            const itemsMatching = (masterCat.items || []).filter(it => itemMatchesUnion(it, masterCat.name));
                             if (hasQuery && itemsMatching.length === 0) return null;
                             return (
                                 <div key={masterCat.id} className="border border-dd-line/70 rounded-lg overflow-hidden">
@@ -617,7 +698,7 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                                 </div>
                             );
                         })}
-                        {hasQuery && INVENTORY_CATEGORIES.every(c => (c.items || []).filter(it => itemMatches(it, c.name)).length === 0) && (
+                        {hasQuery && INVENTORY_CATEGORIES.every(c => (c.items || []).filter(it => itemMatchesUnion(it, c.name)).length === 0) && (
                             <p className="text-xs text-dd-text-2 text-center py-6 italic">
                                 {tx('No items match. Try a different search.', 'Sin coincidencias.')}
                             </p>
