@@ -251,6 +251,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [invAuditDateK, setInvAuditDateK] = useState('week');    // 'all' | 'today' | 'yest' | 'week'
             const [invAuditStaff, setInvAuditStaff] = useState('');        // staffName filter, empty = all
             const [invAuditSearch, setInvAuditSearch] = useState('');      // item-name substring
+
+            // ── Order log panel state ───────────────────────────────────
+            // Same on-demand subscription pattern as the inventory audit
+            // panel. /order_logs accumulates one row per submitted Order
+            // Mode session — captures who placed the order, when, vendor
+            // breakdown, and every item with its final status + note.
+            const [orderLogs, setOrderLogs] = useState([]);
+            const [orderLogExpanded, setOrderLogExpanded] = useState(false);
+            const [orderLogDateK, setOrderLogDateK] = useState('month');  // 'all' | 'today' | 'week' | 'month'
+            const [orderLogVendor, setOrderLogVendor] = useState('');     // exact vendor name, empty=all
+            const [expandedOrderId, setExpandedOrderId] = useState(null);
             // FIX (review 2026-05-14, perf): subscription gated by an
             // expand toggle. Recipe-views grow as a 200-doc-cap descending
             // query — every recipe open re-fires the snapshot. With the
@@ -708,6 +719,25 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 );
                 return () => unsub();
             }, [recipeAuditExpanded]);
+
+            // Order log subscription — on-demand. /order_logs is flat
+            // (not per-location-suffixed); we filter by storeLocation
+            // client-side. When admin is on 'both', we show everything;
+            // when pinned to webster or maryland, only that location's
+            // orders.
+            useEffect(() => {
+                if (!orderLogExpanded) return;
+                const q = query(
+                    collection(db, 'order_logs'),
+                    orderBy('submittedAt', 'desc'),
+                    limit(200),
+                );
+                return onSnapshot(q, (snap) => {
+                    const arr = [];
+                    snap.forEach(d => arr.push({ id: d.id, ...d.data() }));
+                    setOrderLogs(arr);
+                }, (err) => { console.warn('order_logs subscribe failed:', err); });
+            }, [orderLogExpanded]);
 
             // Inventory audit subscription — only fires when the panel
             // is expanded. Pulls the most recent 500 rows for the
@@ -2914,6 +2944,198 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                 ? (language === 'es' ? 'Mostrar menos' : 'Show less')
                                                 : (language === 'es' ? `Ver todas (${filtered.length})` : `View all (${filtered.length})`)}
                                         </button>
+                                    )}
+                                </>)}
+                            </div>
+                        );
+                    })()}
+
+                    {/* ── ORDER LOG — every submitted Order Mode session ─────────────
+                        Reads /order_logs (written by OrderMode on Submit). Cross-
+                        references with the Inventory audit panel above so admins
+                        can answer "we counted X at 10am, when did it actually
+                        get ordered and from whom?" */}
+                    {(() => {
+                        const now = Date.now();
+                        const todayMs = now - (now % 86400_000);
+                        const weekAgoMs = now - 7 * 86400_000;
+                        const monthAgoMs = now - 30 * 86400_000;
+
+                        // Filter by date + location + vendor.
+                        const filtered = orderLogs.filter(o => {
+                            // Location filter: if admin pinned to one store,
+                            // hide orders from the other. 'both' shows
+                            // everything.
+                            if (storeLocation && storeLocation !== 'both'
+                                && o.storeLocation && o.storeLocation !== storeLocation) return false;
+                            const at = o.submittedAt?.toMillis?.() ?? 0;
+                            if (orderLogDateK === 'today' && at < todayMs) return false;
+                            if (orderLogDateK === 'week'  && at < weekAgoMs) return false;
+                            if (orderLogDateK === 'month' && at < monthAgoMs) return false;
+                            if (orderLogVendor) {
+                                const vs = Object.keys(o.vendorTotals || {});
+                                if (!vs.includes(orderLogVendor)) return false;
+                            }
+                            return true;
+                        });
+
+                        // Collect all unique vendor names that appear in logs
+                        // for the vendor filter dropdown.
+                        const vendorSet = new Set();
+                        for (const o of orderLogs) {
+                            for (const v of Object.keys(o.vendorTotals || {})) vendorSet.add(v);
+                        }
+                        const vendorOptions = Array.from(vendorSet).filter(v => v && v !== '(unassigned)').sort();
+
+                        const fmtTime = (ts) => {
+                            if (!ts) return '—';
+                            try {
+                                const d = ts.toDate ? ts.toDate() : new Date(ts);
+                                return d.toLocaleString(language === 'es' ? 'es' : 'en', {
+                                    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                                });
+                            } catch { return '—'; }
+                        };
+
+                        return (
+                            <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                                <button onClick={() => setOrderLogExpanded(s => !s)}
+                                    className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xl">📞</span>
+                                        <h3 className="text-base font-bold text-gray-800">
+                                            {language === 'es' ? 'Historial de pedidos' : 'Order log'}
+                                        </h3>
+                                    </div>
+                                    <span className="text-gray-400 text-sm">{orderLogExpanded ? '▼' : '▶'}</span>
+                                </button>
+                                {orderLogExpanded && (<>
+                                    <p className="text-[11px] text-gray-500 mb-3">
+                                        {language === 'es'
+                                            ? 'Cada pedido enviado desde Modo Pedido queda registrado: quién, qué, cuándo, a qué proveedor y con qué notas.'
+                                            : 'Every order submitted through Order Mode is logged: who, what, when, vendor, and per-item notes.'}
+                                    </p>
+
+                                    {/* Filter bar */}
+                                    <div className="flex flex-wrap gap-1.5 mb-3 text-[11px]">
+                                        <div className="inline-flex border border-dd-line rounded-md overflow-hidden">
+                                            {[
+                                                { k: 'today', en: 'Today', es: 'Hoy' },
+                                                { k: 'week',  en: 'Week',  es: 'Semana' },
+                                                { k: 'month', en: 'Month', es: 'Mes' },
+                                                { k: 'all',   en: 'All',   es: 'Todo' },
+                                            ].map(f => (
+                                                <button key={f.k} onClick={() => setOrderLogDateK(f.k)}
+                                                    className={`px-2 py-1 font-bold ${orderLogDateK === f.k ? 'bg-amber-700 text-white' : 'bg-white text-dd-text-2 hover:bg-dd-bg'}`}>
+                                                    {language === 'es' ? f.es : f.en}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        <select value={orderLogVendor} onChange={e => setOrderLogVendor(e.target.value)}
+                                            className="border border-dd-line rounded-md px-2 py-1 bg-white font-bold">
+                                            <option value="">{language === 'es' ? 'Todos los proveedores' : 'All vendors'}</option>
+                                            {vendorOptions.map(v => <option key={v} value={v}>{v}</option>)}
+                                        </select>
+                                        <span className="ml-auto bg-gray-50 text-gray-600 border border-gray-200 px-2 py-0.5 rounded font-bold">
+                                            {filtered.length} {language === 'es' ? 'pedidos' : 'orders'}
+                                        </span>
+                                    </div>
+
+                                    {filtered.length === 0 ? (
+                                        <p className="text-xs text-gray-400 italic">
+                                            {language === 'es' ? 'No hay pedidos en este filtro.' : 'No orders match this filter.'}
+                                        </p>
+                                    ) : (
+                                        <div className="space-y-1.5">
+                                            {filtered.map(o => {
+                                                const isExpanded = expandedOrderId === o.id;
+                                                const items = o.items || {};
+                                                const itemEntries = Object.entries(items);
+                                                const vendorTotals = o.vendorTotals || {};
+                                                return (
+                                                    <div key={o.id} className="border border-dd-line rounded-lg overflow-hidden">
+                                                        <button onClick={() => setExpandedOrderId(isExpanded ? null : o.id)}
+                                                            className="w-full p-2.5 text-left hover:bg-dd-bg flex items-center gap-3">
+                                                            <span className="text-xl flex-shrink-0">📞</span>
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-center gap-1.5 flex-wrap">
+                                                                    <span className="text-sm font-bold text-gray-800">{fmtTime(o.submittedAt)}</span>
+                                                                    <span className="text-[10px] font-bold text-gray-500">·</span>
+                                                                    <span className="text-[11px] text-dd-text-2">
+                                                                        {o.submittedBy || '—'}
+                                                                    </span>
+                                                                    {o.storeLocation && (
+                                                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${o.storeLocation === 'webster' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                                                                            {o.storeLocation === 'webster' ? 'WG' : 'MD'}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                                <div className="text-[10px] text-dd-text-2 mt-0.5">
+                                                                    {Object.keys(vendorTotals).filter(v => v && v !== '(unassigned)').join(' · ') || (language === 'es' ? '(sin proveedor)' : '(no vendor)')}
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex flex-col items-end flex-shrink-0">
+                                                                <div className="text-sm font-black text-green-700">
+                                                                    ✓ {o.totalOrdered || 0}
+                                                                </div>
+                                                                <div className="text-[9px] text-dd-text-2">
+                                                                    {o.totalPartial ? `◐${o.totalPartial} ` : ''}
+                                                                    {o.totalOos ? `🚫${o.totalOos}` : ''}
+                                                                </div>
+                                                            </div>
+                                                        </button>
+                                                        {isExpanded && (
+                                                            <div className="border-t border-dd-line bg-dd-bg/30 p-2.5">
+                                                                {/* Vendor totals strip */}
+                                                                <div className="flex flex-wrap gap-1 mb-2">
+                                                                    {Object.entries(vendorTotals).map(([v, t]) => (
+                                                                        <span key={v} className="text-[10px] font-bold px-2 py-0.5 rounded bg-white border border-dd-line text-dd-text-2">
+                                                                            {v}: {t.items} {language === 'es' ? 'artículos' : 'items'}
+                                                                            {t.partialCount ? ` · ${t.partialCount} ◐` : ''}
+                                                                            {t.oosCount ? ` · ${t.oosCount} 🚫` : ''}
+                                                                        </span>
+                                                                    ))}
+                                                                </div>
+                                                                {/* Item list */}
+                                                                <div className="bg-white border border-dd-line rounded divide-y divide-dd-line/50 max-h-80 overflow-y-auto">
+                                                                    {itemEntries.length === 0 ? (
+                                                                        <div className="p-2 text-center text-[11px] text-dd-text-2 italic">
+                                                                            {language === 'es' ? 'Sin artículos' : 'No items'}
+                                                                        </div>
+                                                                    ) : itemEntries.map(([itemId, it]) => {
+                                                                        const sCls = it.status === 'ordered' ? 'text-green-700'
+                                                                            : it.status === 'partial' ? 'text-amber-700'
+                                                                            : it.status === 'oos' ? 'text-red-700'
+                                                                            : 'text-gray-400';
+                                                                        const sIcon = it.status === 'ordered' ? '✓'
+                                                                            : it.status === 'partial' ? '◐'
+                                                                            : it.status === 'oos' ? '🚫'
+                                                                            : '⏳';
+                                                                        return (
+                                                                            <div key={itemId} className="px-2 py-1.5 flex items-start gap-2 text-[11px]">
+                                                                                <span className={`font-bold flex-shrink-0 ${sCls}`}>{sIcon}</span>
+                                                                                <div className="flex-1 min-w-0">
+                                                                                    <div className="text-dd-text font-medium">{it.itemName || itemId}</div>
+                                                                                    <div className="text-[10px] text-dd-text-2">
+                                                                                        {language === 'es' ? 'Cant.' : 'Qty'}: {it.qty}
+                                                                                        {it.vendor && ` · ${it.vendor}`}
+                                                                                        {it.checkedBy && ` · ${it.checkedBy}`}
+                                                                                        {it.checkedAt && ` · ${fmtTime(it.checkedAt)}`}
+                                                                                    </div>
+                                                                                    {it.note && (
+                                                                                        <div className="text-[10px] text-amber-700 mt-0.5 italic">"{it.note}"</div>
+                                                                                    )}
+                                                                                </div>
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
                                     )}
                                 </>)}
                             </div>
