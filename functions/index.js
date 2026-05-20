@@ -386,9 +386,14 @@ exports.dispatchSms = onDocumentCreated(
         });
 
         // Update staff record with last-send timestamp + status.
+        // NOTE: staff list lives inside /config/staff.list[] (array).
+        // Firestore rejects FieldValue.serverTimestamp() sentinels
+        // INSIDE arrays — they're only valid on top-level fields.
+        // Use a plain ISO string instead; the audit collections
+        // (sms_delivery_logs) still carry the precise server time.
         try {
             await smsHelpers.updateStaffSmsState(db, forStaff, {
-                smsLastSentAt: FieldValue.serverTimestamp(),
+                smsLastSentAt: new Date().toISOString(),
                 smsLastDeliveryStatus: sid ? (twilioStatus || "queued") : "failed",
                 ...(errorMessage ? { smsLastFailureReason: errorMessage.slice(0, 200) } : {}),
             });
@@ -482,10 +487,14 @@ exports.twilioInbound = onRequest(
             // but we mirror it on the staff record so our own
             // eligibility check matches what Twilio will accept.
             if (staffName) {
+                // Note on the timestamp: same array-sentinel issue as
+                // dispatchSms's staff update — use ISO string inside
+                // /config/staff.list[]. The compliance evidence row
+                // in sms_opt_in_events still gets serverTimestamp().
                 await smsHelpers.updateStaffSmsState(db, staffName, {
                     smsOptIn: false,
                     smsStopped: true,
-                    smsStoppedAt: FieldValue.serverTimestamp(),
+                    smsStoppedAt: new Date().toISOString(),
                 });
                 try {
                     await smsHelpers.writeOptInEvent(db, {
@@ -506,10 +515,11 @@ exports.twilioInbound = onRequest(
 
         if (kind === "start") {
             if (staffName) {
+                // Same array-sentinel rule as STOP path above.
                 await smsHelpers.updateStaffSmsState(db, staffName, {
                     smsOptIn: true,
                     smsStopped: false,
-                    smsOptInAt: FieldValue.serverTimestamp(),
+                    smsOptInAt: new Date().toISOString(),
                     smsOptInBy: staffName,
                     smsOptInSource: "sms_start_reply",
                 });
