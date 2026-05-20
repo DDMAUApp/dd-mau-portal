@@ -95,6 +95,42 @@ export function resolveShelfLifeDays(recipe) {
 export const PRINTER_SLOTS = Object.freeze(['kitchen', 'office']);
 export const DEFAULT_PRINTER_SLOT = 'kitchen';
 
+// 2026-05-20 (later same day) — Andrew also asked about non-
+// linerless alternatives because linerless thermal might not stick
+// to freezer surfaces. So each slot can now be one of two TYPES:
+//
+//   • epson_linerless — Epson TM-L100 (existing path). Browser
+//     POSTs ePOS-Print XML straight to the printer's HTTP server
+//     over the LAN. Fully unattended — no dialog, no human in the
+//     loop. Best for high-volume kitchen prep where every second
+//     matters.
+//
+//   • brother_ql      — Brother QL-820NWB or similar AirPrint
+//     printer using DK adhesive labels (with liner). The browser
+//     renders the label as HTML, then calls window.print() in a
+//     hidden iframe. The OS print dialog opens and the user picks
+//     the Brother via AirPrint discovery. One extra tap vs Epson
+//     but supports freezer-safe DK rolls, no bridge or driver
+//     install, and zero CORS configuration because the print
+//     dialog is the OS, not the printer's HTTP server.
+//
+// Why expose both: linerless thermal doesn't always grab on cold/
+// wet surfaces (deli containers in the walk-in / freezer). DK
+// rolls with permanent acrylic adhesive do. Andrew runs both so we
+// can pick the right tool per use case (kitchen pass = Epson fast,
+// office/walk-in tagging = Brother sticks-to-anything).
+export const PRINTER_TYPES = Object.freeze({
+    EPSON_LINERLESS: 'epson_linerless',
+    BROTHER_QL:      'brother_ql',
+});
+export const DEFAULT_PRINTER_TYPE = PRINTER_TYPES.EPSON_LINERLESS;
+
+// Brother DK roll defaults — DK-2205 (62mm continuous tape) with a
+// 90mm cut length. Admin can change in AdminPanel to match whatever
+// roll is loaded (DK-1201 29×90, DK-1247 103×164, etc.).
+export const DEFAULT_BROTHER_LABEL_WIDTH_MM  = 62;
+export const DEFAULT_BROTHER_LABEL_HEIGHT_MM = 90;
+
 function printerDocPath(location, slot) {
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
     return `printers_${location}_${safeSlot}`;
@@ -156,31 +192,45 @@ export function subscribePrinterConfig(location, cb, slot = DEFAULT_PRINTER_SLOT
 export async function savePrinterConfig({
     location, slot = DEFAULT_PRINTER_SLOT,
     name, ip, port, deviceId, model, enabled, byName,
+    type = DEFAULT_PRINTER_TYPE,
+    labelWidthMm, labelHeightMm,
 }) {
     if (!location) throw new Error('location required');
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
+    const safeType = Object.values(PRINTER_TYPES).includes(type) ? type : DEFAULT_PRINTER_TYPE;
     const trimmedIp = String(ip || '').trim();
     if (trimmedIp && !/^[0-9a-zA-Z.\-:]+$/.test(trimmedIp)) {
         throw new Error('printer ip looks malformed');
     }
+    const defaultModel = safeType === PRINTER_TYPES.BROTHER_QL ? 'QL-820NWB' : 'TM-L100';
     const payload = {
         name: String(name || '').slice(0, 100) || `${location} ${safeSlot} printer`,
         ip: trimmedIp,
         port: Number.isFinite(Number(port)) ? Number(port) : DEFAULT_PRINTER_PORT,
         deviceId: String(deviceId || DEFAULT_DEVICE_ID).slice(0, 64),
-        model: String(model || 'TM-L100').slice(0, 64),
+        model: String(model || defaultModel).slice(0, 64),
         slot: safeSlot,
+        type: safeType,
         enabled: enabled !== false,
         updatedAt: serverTimestamp(),
         updatedBy: byName || null,
     };
+    // Brother needs DK roll dimensions so the @page CSS matches the
+    // physical label. Epson reads these too (default), but the field
+    // is only meaningful for the browser-print path.
+    if (safeType === PRINTER_TYPES.BROTHER_QL) {
+        const w = Number(labelWidthMm);
+        const h = Number(labelHeightMm);
+        payload.labelWidthMm  = Number.isFinite(w) && w > 0 ? w : DEFAULT_BROTHER_LABEL_WIDTH_MM;
+        payload.labelHeightMm = Number.isFinite(h) && h > 0 ? h : DEFAULT_BROTHER_LABEL_HEIGHT_MM;
+    }
     await setDoc(doc(db, 'config', printerDocPath(location, safeSlot)), payload, { merge: true });
     recordAudit({
         action: 'printer.config.update',
         actorName: byName || 'admin',
         targetType: 'printer_config',
         targetId: `${location}_${safeSlot}`,
-        details: { slot: safeSlot, name: payload.name, ip: payload.ip, enabled: payload.enabled },
+        details: { slot: safeSlot, type: safeType, name: payload.name, ip: payload.ip, enabled: payload.enabled },
     });
 }
 
@@ -397,6 +447,186 @@ function wrapSoapEnvelope(innerEposPrintBody) {
     ].join('');
 }
 
+// ── Brother / AirPrint renderer ───────────────────────────────
+// Linerless thermal is great for high-volume kitchen labels but
+// can lose grip on freezer surfaces. Brother QL-820NWB with DK
+// adhesive rolls fills that gap. Instead of speaking the Brother
+// raster protocol (binary, browser-hostile, no CORS), we render
+// the SAME payload shape as the Epson path into print-ready HTML
+// and let the OS print dialog do the routing. The user picks the
+// Brother via AirPrint discovery; the OS handles the binary
+// translation. One extra tap per print, zero infrastructure.
+function escapeHtml(s) {
+    return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+// One prep label as HTML body. Layout mirrors the Epson version
+// (PREPPED date HUGE at top, item title, meta, allergens, etc.).
+function renderPrepLabelHtmlBody(payload) {
+    const allergens = (payload.allergens || []).join(', ');
+    const metaHtml = (payload.metaLines || []).map(escapeHtml).join('<br>');
+    const titleHtml = (payload.titleLines || []).map(escapeHtml).join('<br>');
+    const ingredientsHtml = (payload.ingredients && payload.ingredients.length)
+        ? payload.ingredients.map(i => '&bull; ' + escapeHtml(i)).join('<br>')
+        : '';
+    return [
+        '<div class="label">',
+        `<div class="prep-date">${escapeHtml(payload.prepDateBig || '')}</div>`,
+        payload.prepTimeBig ? `<div class="prep-time">${escapeHtml(payload.prepTimeBig)}</div>` : '',
+        '<div class="divider"></div>',
+        `<div class="title">${titleHtml}</div>`,
+        '<div class="divider thin"></div>',
+        `<div class="meta">${metaHtml}</div>`,
+        allergens ? `<div class="allergens">ALLERGENS: ${escapeHtml(allergens)}</div>` : '',
+        ingredientsHtml ? `<div class="ingredients">${ingredientsHtml}</div>` : '',
+        payload.notes ? `<div class="notes">${escapeHtml(payload.notes)}</div>` : '',
+        `<div class="footer">${escapeHtml(payload.footer || 'DD MAU')}</div>`,
+        '</div>',
+    ].join('');
+}
+
+// One free-text label as HTML body. Honors size/bold/align/stamps
+// the same way renderFreeTextBody does for Epson.
+function renderFreeTextHtmlBody(freePayload) {
+    const sizeClass = ['small', 'normal', 'large', 'huge'].includes(freePayload.size)
+        ? freePayload.size : 'normal';
+    const align = ['left', 'center', 'right'].includes(freePayload.align)
+        ? freePayload.align : 'center';
+    const boldClass = freePayload.bold ? ' bold' : '';
+    const textLines = String(freePayload.text || '').split(/\r?\n/);
+    const bodyLines = textLines.map(t => t
+        ? `<div>${escapeHtml(t)}</div>`
+        : '<div>&nbsp;</div>').join('');
+
+    const footerLines = [];
+    if (freePayload.stampDate) {
+        const d = new Date();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const yy = String(d.getFullYear()).slice(-2);
+        let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
+        h = h % 12 || 12;
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        footerLines.push(`${mm}/${dd}/${yy} ${h}:${mi}${ampm}`);
+    }
+    if (freePayload.stampSignature && freePayload.signature) {
+        footerLines.push(`— ${freePayload.signature}`);
+    }
+    if (freePayload.footer != null) {
+        footerLines.push(String(freePayload.footer).slice(0, 30));
+    } else if (footerLines.length > 0) {
+        footerLines.push('DD MAU');
+    }
+    const footerHtml = footerLines.length > 0
+        ? `<div class="freetext-footer">${footerLines.map(l => `<div>${escapeHtml(l)}</div>`).join('')}</div>`
+        : '';
+    return `<div class="freetext ${sizeClass}${boldClass}" style="text-align:${align}">${bodyLines}</div>${footerHtml}`;
+}
+
+// Wrap label HTML body(s) in a self-printing HTML document. @page
+// size matches the configured DK roll dimensions; typography scales
+// proportionally to label width so the layout reads on a 29mm
+// address roll just as cleanly as a 102mm shipping roll.
+function buildBrotherPrintDoc({ widthMm, heightMm, bodyHtml, copies = 1 }) {
+    const w = Math.max(20, Math.min(200, Number(widthMm) || DEFAULT_BROTHER_LABEL_WIDTH_MM));
+    const h = Math.max(20, Math.min(300, Number(heightMm) || DEFAULT_BROTHER_LABEL_HEIGHT_MM));
+    const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+    const pages = Array.from({ length: c },
+        () => `<section class="page">${bodyHtml}</section>`).join('');
+    const mm = (x) => `${(Math.max(0, x)).toFixed(2)}mm`;
+    return `<!doctype html>
+<html><head><meta charset="utf-8"><title>DD Mau Label</title>
+<style>
+@page { size: ${w}mm ${h}mm; margin: 0; }
+* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color: #000; background: #fff; }
+.page { width: ${w}mm; height: ${h}mm; padding: ${mm(Math.min(2, w * 0.04))}; page-break-after: always; overflow: hidden; }
+.page:last-child { page-break-after: auto; }
+.label { display: flex; flex-direction: column; height: 100%; gap: ${mm(w * 0.015)}; }
+.prep-date { font-size: ${mm(w * 0.16)}; font-weight: 900; text-align: center; letter-spacing: -0.5px; line-height: 1.05; }
+.prep-time { font-size: ${mm(w * 0.10)}; text-align: center; }
+.divider { border-top: 1.5px dashed #000; margin: ${mm(w * 0.01)} 0; }
+.divider.thin { border-top-style: solid; border-top-width: 0.5px; }
+.title { font-size: ${mm(w * 0.09)}; font-weight: 700; text-align: center; line-height: 1.1; }
+.meta { font-size: ${mm(w * 0.055)}; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.allergens { font-size: ${mm(w * 0.055)}; font-weight: 700; }
+.ingredients { font-size: ${mm(w * 0.05)}; }
+.notes { font-size: ${mm(w * 0.05)}; font-style: italic; }
+.footer { font-size: ${mm(w * 0.055)}; font-weight: 700; text-align: center; margin-top: auto; padding-top: ${mm(w * 0.01)}; }
+.freetext { white-space: pre-wrap; word-break: break-word; }
+.freetext.small  { font-size: ${mm(w * 0.06)}; }
+.freetext.normal { font-size: ${mm(w * 0.10)}; }
+.freetext.large  { font-size: ${mm(w * 0.14)}; }
+.freetext.huge   { font-size: ${mm(w * 0.18)}; }
+.freetext.bold   { font-weight: 800; }
+.freetext-footer { margin-top: ${mm(w * 0.02)}; padding-top: ${mm(w * 0.01)}; border-top: 0.5px solid #999; text-align: center; font-size: ${mm(w * 0.045)}; color: #333; }
+@media print { html, body { background: #fff !important; } }
+</style></head>
+<body>${pages}
+<script>
+(function(){
+  function go(){ try { window.focus(); window.print(); } catch(e){} }
+  if (document.readyState === 'complete') setTimeout(go, 120);
+  else window.addEventListener('load', function(){ setTimeout(go, 120); });
+})();
+</script></body></html>`;
+}
+
+// Brother transport. Render the label HTML inside a hidden iframe
+// and trigger window.print(). User picks the Brother via AirPrint
+// in the system dialog. We can't read the result (print dialog is
+// opaque to JS) — we treat "iframe wrote successfully" as ok.
+//
+// Must be called from a user gesture (button click), because some
+// browsers block window.print() outside of one. All our call sites
+// are click-handlers so this is fine.
+async function sendToBrowserPrintDialog(htmlString) {
+    if (typeof document === 'undefined') {
+        return { ok: false, status: 0, responseXml: 'no_document' };
+    }
+    return new Promise((resolve) => {
+        const iframe = document.createElement('iframe');
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.style.opacity = '0';
+        iframe.style.pointerEvents = 'none';
+        document.body.appendChild(iframe);
+        let resolved = false;
+        const finish = (result) => {
+            if (resolved) return;
+            resolved = true;
+            // Keep iframe around long enough for the OS print dialog
+            // to grab the document, then clean up. 90s = plenty of
+            // time for a user to pick a printer and confirm.
+            setTimeout(() => { try { document.body.removeChild(iframe); } catch {} }, 90_000);
+            resolve(result);
+        };
+        try {
+            const innerDoc = iframe.contentWindow.document;
+            innerDoc.open();
+            innerDoc.write(htmlString);
+            innerDoc.close();
+            // The embedded <script> calls print() once the document
+            // is loaded. Give it a moment to fire before we resolve.
+            setTimeout(() => finish({ ok: true, status: 200, responseXml: 'browser_print_dialog' }), 350);
+        } catch (e) {
+            console.warn('browser print dialog failed:', e);
+            try { document.body.removeChild(iframe); } catch {}
+            finish({ ok: false, status: 0, responseXml: 'iframe_write_failed' });
+        }
+    });
+}
+
 // ── Free-text "Print Center" renderer ─────────────────────────
 // Andrew 2026-05-20 — Word-style mini print app. Builds an ePOS-
 // Print body for arbitrary multi-line text with optional global
@@ -512,19 +742,40 @@ export async function printFreeText({
 }) {
     try {
         const printer = await getPrinterConfig(location, slot);
-        if (!printer || !printer.ip) {
+        if (!printer) return { ok: false, error: 'no_printer_configured' };
+        const type = printer.type || DEFAULT_PRINTER_TYPE;
+        // Epson needs a reachable IP. Brother goes through the OS
+        // print dialog (AirPrint), so it works even with no IP.
+        if (type !== PRINTER_TYPES.BROTHER_QL && !printer.ip) {
             return { ok: false, error: 'no_printer_configured' };
+        }
+        if (printer.enabled === false) {
+            return { ok: false, error: 'printer_disabled' };
         }
         const trimmed = String(text || '').trim();
         if (!trimmed) return { ok: false, error: 'empty_text' };
         if (trimmed.length > 2000) {
             return { ok: false, error: 'text_too_long' };
         }
-        const xml = renderFreeTextXml({
+        const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+        const freePayload = {
             text: trimmed, size, bold, align,
-            copies, stampDate, stampSignature, signature, footer,
-        });
-        const res = await sendToPrinter(printer, xml);
+            copies: c, stampDate, stampSignature, signature, footer,
+        };
+
+        let res;
+        if (type === PRINTER_TYPES.BROTHER_QL) {
+            const html = buildBrotherPrintDoc({
+                widthMm: printer.labelWidthMm || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                heightMm: printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                bodyHtml: renderFreeTextHtmlBody(freePayload),
+                copies: c,
+            });
+            res = await sendToBrowserPrintDialog(html);
+        } else {
+            const xml = renderFreeTextXml(freePayload);
+            res = await sendToPrinter(printer, xml);
+        }
         recordAudit({
             action: 'print.freetext',
             actorName: byName || 'unknown',
@@ -533,8 +784,9 @@ export async function printFreeText({
             details: {
                 location,
                 slot,
+                type,
                 preview: trimmed.slice(0, 80),
-                size, bold, align, copies,
+                size, bold, align, copies: c,
                 printerOk: res.ok,
                 printerStatus: res.status,
             },
@@ -615,8 +867,15 @@ export async function printPrepLabel({
 }) {
     try {
         const printer = await getPrinterConfig(location, slot);
-        if (!printer || !printer.ip) {
+        if (!printer) return { ok: false, error: 'no_printer_configured' };
+        const type = printer.type || DEFAULT_PRINTER_TYPE;
+        // Epson needs a reachable IP. Brother goes through the OS
+        // print dialog (AirPrint), so it works even with no IP.
+        if (type !== PRINTER_TYPES.BROTHER_QL && !printer.ip) {
             return { ok: false, error: 'no_printer_configured' };
+        }
+        if (printer.enabled === false) {
+            return { ok: false, error: 'printer_disabled' };
         }
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
@@ -635,8 +894,20 @@ export async function printPrepLabel({
             language,
             notes,
         });
-        const xml = renderEposXml(payload, c);
-        const res = await sendToPrinter(printer, xml);
+
+        let res;
+        if (type === PRINTER_TYPES.BROTHER_QL) {
+            const html = buildBrotherPrintDoc({
+                widthMm: printer.labelWidthMm || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                heightMm: printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                bodyHtml: renderPrepLabelHtmlBody(payload),
+                copies: c,
+            });
+            res = await sendToBrowserPrintDialog(html);
+        } else {
+            const xml = renderEposXml(payload, c);
+            res = await sendToPrinter(printer, xml);
+        }
         recordAudit({
             action: 'print.label',
             actorName: byName || 'unknown',
@@ -645,6 +916,7 @@ export async function printPrepLabel({
             details: {
                 location,
                 slot,
+                type,
                 itemName: recipe?.titleEn,
                 shelfLifeDays: days,
                 copies: c,
@@ -694,7 +966,11 @@ function locationLabel(loc) {
 export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName }) {
     try {
         const printer = await getPrinterConfig(location, slot);
-        if (!printer || !printer.ip) return { ok: false, error: 'no_printer_configured' };
+        if (!printer) return { ok: false, error: 'no_printer_configured' };
+        const type = printer.type || DEFAULT_PRINTER_TYPE;
+        if (type !== PRINTER_TYPES.BROTHER_QL && !printer.ip) {
+            return { ok: false, error: 'no_printer_configured' };
+        }
         const payload = buildLabelPayload({
             itemName: 'Printer Test',
             prepDate: new Date(),
@@ -706,8 +982,20 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
             language: 'en',
             notes: 'Test print from DD Mau app',
         });
-        const xml = renderEposXml(payload);
-        const res = await sendToPrinter(printer, xml);
+
+        let res;
+        if (type === PRINTER_TYPES.BROTHER_QL) {
+            const html = buildBrotherPrintDoc({
+                widthMm: printer.labelWidthMm || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                heightMm: printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                bodyHtml: renderPrepLabelHtmlBody(payload),
+                copies: 1,
+            });
+            res = await sendToBrowserPrintDialog(html);
+        } else {
+            const xml = renderEposXml(payload);
+            res = await sendToPrinter(printer, xml);
+        }
         // Stamp the printer doc (per slot) with the test result.
         try {
             const slotPath = printerDocPath(location, slot);
@@ -724,7 +1012,7 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
             actorName: byName || 'admin',
             targetType: 'printer_config',
             targetId: `${location}_${slot}`,
-            details: { location, slot, printerOk: res.ok, printerStatus: res.status },
+            details: { location, slot, type, printerOk: res.ok, printerStatus: res.status },
         });
         return res.ok
             ? { ok: true }

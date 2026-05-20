@@ -135,7 +135,14 @@ export default function PrintLabelModal({
         notes,
     }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes]);
 
-    const printerReady = !!(printer && printer.ip && printer.enabled !== false);
+    // "Ready" = enabled and (Brother [browser print dialog, no IP needed]
+    // OR Epson with an IP filled in). The slot's type comes from the
+    // printer config; default unset = epson_linerless for backward compat.
+    const printerType = printer?.type || 'epson_linerless';
+    const isBrotherPrinter = printerType === 'brother_ql';
+    const printerReady = !!(printer
+        && (isBrotherPrinter || printer.ip)
+        && printer.enabled !== false);
 
     const handlePrint = async () => {
         if (printing) return;
@@ -374,7 +381,11 @@ export default function PrintLabelModal({
                         {printerReady ? (
                             <>
                                 <span className="font-bold">🖨 {printer.name || tx('Printer ready', 'Impresora lista')}</span>
-                                <span className="ml-1.5 opacity-70">— {printer.ip}</span>
+                                {isBrotherPrinter ? (
+                                    <span className="ml-1.5 opacity-70">— {tx('Brother (AirPrint dialog)', 'Brother (diálogo AirPrint)')}</span>
+                                ) : (
+                                    <span className="ml-1.5 opacity-70">— {printer.ip}</span>
+                                )}
                             </>
                         ) : (
                             <>

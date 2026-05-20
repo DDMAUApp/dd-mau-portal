@@ -56,8 +56,8 @@ function PrintersConfigSection({ language, byName }) {
             </div>
             <p className="text-[11px] text-purple-700 mb-3">
                 {tx(
-                    'Epson TM-L100 (linerless 80mm). Set the printer\'s local IP for each restaurant, then test. The DD Mau app prints directly to the printer over the kitchen Wi-Fi — no PC or driver needed.',
-                    'Epson TM-L100 (80mm sin liner). Configura la IP local de cada restaurante y haz una prueba. La app imprime directo por la red Wi-Fi de la cocina — sin PC ni driver.',
+                    'Two printer types supported: Epson TM-L100 (linerless 80mm, prints directly via Wi-Fi — no driver, no dialog) and Brother QL-820NWB (DK adhesive rolls, prints through the OS print dialog via AirPrint — one extra tap, but the labels stick to freezer/walk-in surfaces). Set one or both per location.',
+                    'Dos tipos de impresoras: Epson TM-L100 (sin liner 80mm, imprime directo por Wi-Fi — sin driver, sin diálogo) y Brother QL-820NWB (rollos DK con adhesivo, imprime por el diálogo del sistema vía AirPrint — un toque extra, pero las etiquetas se pegan en superficies de congelador/walk-in). Configura una o ambas por ubicación.',
                 )}
             </p>
             <div className="space-y-3">
@@ -80,8 +80,8 @@ function PrintersConfigSection({ language, byName }) {
             </div>
             <p className="text-[10px] text-purple-700/70 italic mt-2">
                 {tx(
-                    'If a test print times out: confirm the printer is on the restaurant Wi-Fi, its local IP matches, and CORS is set to allow ddmauapp.github.io in the printer\'s web UI.',
-                    'Si la prueba falla: confirma que la impresora esté en la Wi-Fi del restaurante, que la IP coincida, y que el CORS permita ddmauapp.github.io.',
+                    'Epson troubleshooting: if a test print times out, confirm the printer is on the restaurant Wi-Fi, its local IP matches, and CORS is set to allow ddmauapp.github.io in the printer\'s web UI. Brother troubleshooting: if the Brother doesn\'t show up in the AirPrint list, confirm the printer is on the same Wi-Fi as the iPad and Bonjour/mDNS is allowed on the network.',
+                    'Epson: si la prueba falla, confirma que la impresora esté en la Wi-Fi del restaurante, que la IP coincida, y que el CORS permita ddmauapp.github.io. Brother: si no aparece en la lista de AirPrint, confirma que esté en la misma Wi-Fi que el iPad y que Bonjour/mDNS esté permitido.',
                 )}
             </p>
 
@@ -231,17 +231,23 @@ function PrintHistorySection({ tx }) {
     );
 }
 
-// Single printer row — loads its config doc, lets admin edit IP /
-// port / enabled, fires a test print. Stamps lastTestedAt /
-// lastTestOk so the next admin to land here sees the state.
+// Single printer row — loads its config doc, lets admin edit type
+// (Epson vs Brother) / IP / DK label size / enabled, fires a test
+// print. Stamps lastTestedAt / lastTestOk so the next admin to
+// land here sees the state.
 function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byName }) {
     const [cfg, setCfg] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [typeDraft, setTypeDraft] = useState('epson_linerless');
     const [ipDraft, setIpDraft] = useState('');
     const [nameDraft, setNameDraft] = useState('');
+    const [labelWMm, setLabelWMm] = useState(62);
+    const [labelHMm, setLabelHMm] = useState(90);
     const [enabled, setEnabled] = useState(true);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
+
+    const isBrother = typeDraft === 'brother_ql';
 
     useEffect(() => {
         let mounted = true;
@@ -251,8 +257,11 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 const got = await mod.getPrinterConfig(location, slot);
                 if (!mounted) return;
                 setCfg(got);
+                setTypeDraft(got?.type || 'epson_linerless');
                 setIpDraft(got?.ip || '');
                 setNameDraft(got?.name || `${locationLabel}`);
+                setLabelWMm(Number(got?.labelWidthMm) || 62);
+                setLabelHMm(Number(got?.labelHeightMm) || 90);
                 setEnabled(got?.enabled !== false);
             } catch (e) {
                 console.warn('printer config load failed:', e);
@@ -270,8 +279,11 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
             const mod = await import('../data/labelPrinting');
             await mod.savePrinterConfig({
                 location, slot,
+                type: typeDraft,
                 name: nameDraft,
                 ip: ipDraft.trim(),
+                labelWidthMm: labelWMm,
+                labelHeightMm: labelHMm,
                 enabled,
                 byName,
             });
@@ -308,6 +320,12 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
         return <div className="text-[11px] text-purple-700/70 px-2 py-1.5">{tx('Loading…', 'Cargando…')}</div>;
     }
 
+    // Test enabled when: enabled toggle on, AND either Brother (no IP
+    // required) OR Epson with an IP filled in. Save uses the same
+    // gate so we never write a config that can't actually print.
+    const canTest = enabled && (isBrother || !!ipDraft.trim());
+    const canSave = isBrother || !!ipDraft.trim();
+
     return (
         <div className="border border-purple-200 rounded-lg p-3 bg-purple-50/40">
             <div className="flex items-center justify-between mb-2">
@@ -320,25 +338,95 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                 </label>
             </div>
             <div className="space-y-2">
+                {/* ── Type selector ─────────────────────────────── */}
+                <div>
+                    <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-1">
+                        {tx('Printer type', 'Tipo de impresora')}
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
+                        {[
+                            { val: 'epson_linerless', en: '🧾 Epson Linerless',  es: '🧾 Epson sin liner', sub: 'TM-L100 / direct Wi-Fi' },
+                            { val: 'brother_ql',      en: '🏷 Brother QL (DK)',  es: '🏷 Brother QL (DK)', sub: 'QL-820NWB / AirPrint dialog' },
+                        ].map(t => (
+                            <button key={t.val}
+                                onClick={() => setTypeDraft(t.val)}
+                                type="button"
+                                className={`text-left px-2.5 py-1.5 rounded-lg border-2 text-[11px] font-bold transition ${
+                                    typeDraft === t.val
+                                        ? 'border-purple-600 bg-purple-600 text-white'
+                                        : 'border-purple-200 bg-white text-purple-800 hover:bg-purple-50'
+                                }`}>
+                                <div className="leading-tight">{tx(t.en, t.es)}</div>
+                                <div className={`text-[9px] font-normal mt-0.5 ${typeDraft === t.val ? 'text-purple-100' : 'text-purple-500'}`}>
+                                    {t.sub}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 <label className="block">
                     <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
                         {tx('Name (any label)', 'Nombre (cualquier etiqueta)')}
                     </span>
                     <input type="text" value={nameDraft}
                         onChange={(e) => setNameDraft(e.target.value)}
-                        placeholder={`${locationLabel} Kitchen`}
+                        placeholder={`${locationLabel} ${isBrother ? 'Brother' : 'Epson'}`}
                         className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
                 </label>
-                <label className="block">
-                    <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
-                        {tx('Printer IP on local Wi-Fi', 'IP de impresora en Wi-Fi')}
-                    </span>
-                    <input type="text" value={ipDraft}
-                        onChange={(e) => setIpDraft(e.target.value)}
-                        placeholder="192.168.1.42"
-                        inputMode="decimal"
-                        className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
-                </label>
+
+                {/* ── Epson-specific: IP ─────────────────────────── */}
+                {!isBrother && (
+                    <label className="block">
+                        <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                            {tx('Printer IP on local Wi-Fi', 'IP de impresora en Wi-Fi')}
+                        </span>
+                        <input type="text" value={ipDraft}
+                            onChange={(e) => setIpDraft(e.target.value)}
+                            placeholder="192.168.1.42"
+                            inputMode="decimal"
+                            className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                    </label>
+                )}
+
+                {/* ── Brother-specific: DK label dimensions ──────── */}
+                {isBrother && (
+                    <>
+                        <div className="grid grid-cols-2 gap-2">
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                    {tx('Label width (mm)', 'Ancho (mm)')}
+                                </span>
+                                <input type="number" value={labelWMm}
+                                    min={20} max={200} step={1}
+                                    onChange={(e) => setLabelWMm(Number(e.target.value) || 62)}
+                                    className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                            </label>
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                    {tx('Label height (mm)', 'Alto (mm)')}
+                                </span>
+                                <input type="number" value={labelHMm}
+                                    min={20} max={300} step={1}
+                                    onChange={(e) => setLabelHMm(Number(e.target.value) || 90)}
+                                    className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                            </label>
+                        </div>
+                        <div className="text-[10px] text-purple-700/80 leading-snug bg-white/60 border border-purple-200 rounded-md px-2 py-1.5">
+                            <div className="font-bold text-purple-800 mb-0.5">
+                                {tx('Common DK rolls', 'Rollos DK comunes')}:
+                            </div>
+                            <div>DK-2205 (62 × cut length) · DK-1201 (29 × 90) · DK-1247 (103 × 164)</div>
+                            <div className="mt-1 italic text-purple-600">
+                                {tx(
+                                    'Brother goes through the OS print dialog. Tap "Test print" → pick the Brother in AirPrint → confirm.',
+                                    'Brother imprime por el diálogo del sistema. Toca "Probar" → elige Brother en AirPrint → confirma.',
+                                )}
+                            </div>
+                        </div>
+                    </>
+                )}
+
                 {cfg?.lastTestedAt && (
                     <div className={`text-[10px] font-bold ${cfg.lastTestOk ? 'text-emerald-700' : 'text-red-700'}`}>
                         {cfg.lastTestOk ? '✓ ' : '✕ '}
@@ -347,11 +435,11 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                     </div>
                 )}
                 <div className="flex gap-2 pt-1">
-                    <button onClick={save} disabled={saving || !ipDraft.trim()}
+                    <button onClick={save} disabled={saving || !canSave}
                         className="flex-1 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 disabled:opacity-40">
                         {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
                     </button>
-                    <button onClick={runTest} disabled={testing || !ipDraft.trim() || !enabled}
+                    <button onClick={runTest} disabled={testing || !canTest}
                         className="flex-1 py-1.5 rounded-lg bg-white border-2 border-purple-600 text-purple-700 text-xs font-bold hover:bg-purple-50 disabled:opacity-40">
                         {testing ? tx('Testing…', 'Probando…') : '🏷 ' + tx('Test print', 'Probar')}
                     </button>

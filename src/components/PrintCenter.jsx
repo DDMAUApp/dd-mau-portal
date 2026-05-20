@@ -102,7 +102,14 @@ export default function PrintCenter({
         });
     };
 
-    const printerReady = !!(printer && printer.ip && printer.enabled !== false);
+    // "Ready" = enabled and (Brother [browser print dialog, no IP needed]
+    // OR Epson with an IP filled in). Default type unset = epson_linerless
+    // for backward compat with pre-Brother printer config docs.
+    const printerType = printer?.type || 'epson_linerless';
+    const isBrotherPrinter = printerType === 'brother_ql';
+    const printerReady = !!(printer
+        && (isBrotherPrinter || printer.ip)
+        && printer.enabled !== false);
 
     const handlePrint = async () => {
         if (printing) return;
@@ -449,7 +456,11 @@ export default function PrintCenter({
                             {printerReady ? (
                                 <>
                                     <span className="font-bold">🖨 {printer.name || tx('Printer ready', 'Lista')}</span>
-                                    <span className="ml-1.5 opacity-70">— {printer.ip}</span>
+                                    {isBrotherPrinter ? (
+                                        <span className="ml-1.5 opacity-70">— {tx('Brother (AirPrint dialog)', 'Brother (diálogo AirPrint)')}</span>
+                                    ) : (
+                                        <span className="ml-1.5 opacity-70">— {printer.ip}</span>
+                                    )}
                                 </>
                             ) : (
                                 <>
