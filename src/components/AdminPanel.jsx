@@ -76,6 +76,121 @@ function PrintersConfigSection({ language, byName }) {
                     'Si la prueba falla: confirma que la impresora esté en la Wi-Fi del restaurante, que la IP coincida, y que el CORS permita ddmauapp.github.io.',
                 )}
             </p>
+
+            <PrintHistorySection tx={tx} />
+        </div>
+    );
+}
+
+// ── PrintHistorySection ───────────────────────────────────────────
+// Recent label-print history pulled from /audit. Helps admin verify
+// that the feature is actually being used and which staff/location
+// is printing the most. Inspector-friendly trail — every print
+// (success OR failure) is logged.
+function PrintHistorySection({ tx }) {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(false);
+    const [expanded, setExpanded] = useState(false);
+
+    const load = async () => {
+        setLoading(true);
+        try {
+            // Action prefix filter: print.label + print.test. Firestore
+            // doesn't support startsWith natively — we use a range
+            // query on `action` (>= 'print.' < 'print/') which works
+            // because '/' sorts after any letter in ASCII.
+            const q = query(
+                collection(db, 'audit'),
+                where('action', '>=', 'print.'),
+                where('action', '<', 'print/'),
+                orderBy('action'),
+                orderBy('createdAt', 'desc'),
+                limit(25),
+            );
+            const snap = await getDocs(q);
+            const list = [];
+            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            // Re-sort client-side by createdAt desc (the query already
+            // does this within an action, but across actions we want
+            // pure recency).
+            list.sort((a, b) => {
+                const ta = a.createdAt?.toMillis?.() ?? 0;
+                const tb = b.createdAt?.toMillis?.() ?? 0;
+                return tb - ta;
+            });
+            setRows(list);
+        } catch (e) {
+            console.warn('print history load failed:', e);
+            setRows([]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        if (expanded && rows.length === 0) load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [expanded]);
+
+    return (
+        <div className="mt-3 pt-3 border-t border-purple-200">
+            <button onClick={() => setExpanded(v => !v)}
+                className="w-full flex items-center justify-between text-purple-800 text-xs font-bold hover:bg-purple-50 rounded-md px-2 py-1.5 transition">
+                <span>📜 {tx('Recent label prints', 'Impresiones recientes')}</span>
+                <span className="text-purple-500">{expanded ? '▼' : '▶'}</span>
+            </button>
+            {expanded && (
+                <div className="mt-2">
+                    <button onClick={load}
+                        className="text-[10px] text-purple-700 underline hover:no-underline mb-2">
+                        {loading ? tx('Loading…', 'Cargando…') : tx('Refresh', 'Actualizar')}
+                    </button>
+                    {loading && rows.length === 0 ? (
+                        <p className="text-[11px] text-purple-700/70 italic px-2">
+                            {tx('Loading…', 'Cargando…')}
+                        </p>
+                    ) : rows.length === 0 ? (
+                        <p className="text-[11px] text-purple-700/70 italic px-2 py-3">
+                            {tx(
+                                'No prints yet. Once staff start using the 🏷 buttons, every print lands here.',
+                                'Aún no hay impresiones. Cuando el personal use los botones 🏷, aparecerán aquí.',
+                            )}
+                        </p>
+                    ) : (
+                        <div className="space-y-1 max-h-72 overflow-y-auto">
+                            {rows.map(r => {
+                                const ts = r.createdAt?.toDate?.() || null;
+                                const ok = r.action === 'print.test'
+                                    ? r.details?.printerOk === true
+                                    : r.details?.printerOk !== false;
+                                return (
+                                    <div key={r.id}
+                                        className={`px-2 py-1.5 rounded-md text-[11px] border ${ok ? 'border-emerald-200 bg-emerald-50/40' : 'border-red-200 bg-red-50/40'}`}>
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className={ok ? 'text-emerald-700' : 'text-red-700'}>
+                                                {ok ? '✓' : '✕'}
+                                            </span>
+                                            <span className="font-bold text-dd-text">
+                                                {r.action === 'print.test' ? tx('Test', 'Prueba') : (r.details?.itemName || tx('Label', 'Etiqueta'))}
+                                            </span>
+                                            <span className="text-dd-text-2 truncate">
+                                                · {r.actorName || '—'}
+                                                {r.details?.location && <> · {r.details.location}</>}
+                                                {r.details?.shelfLifeDays && <> · {r.details.shelfLifeDays}d</>}
+                                            </span>
+                                            {ts && (
+                                                <span className="text-dd-text-2/70 ml-auto whitespace-nowrap">
+                                                    {ts.toLocaleString()}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

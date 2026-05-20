@@ -27,6 +27,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
+import { ALLERGEN_ORDER, allergenLabel } from '../data/allergens';
 import {
     buildLabelPayload,
     resolveShelfLifeDays,
@@ -34,8 +35,22 @@ import {
     printPrepLabel,
 } from '../data/labelPrinting';
 
+// Props:
+//   recipe       — recipe-shaped object (titleEn, titleEs, allergens,
+//                  ingredientsEn). Used for the label content when
+//                  editable=false.
+//   editable     — when true, the title field becomes an editable
+//                  input and allergens become checkboxes. Lets the
+//                  same modal handle ad-hoc inventory labels ("opened
+//                  case of lettuce") without needing a recipe upstream.
+//                  Andrew 2026-05-20.
+//   location     — 'webster' | 'maryland'. Picks the printer.
+//   staffName    — viewer name, stamped onto "By: ..."
+//   language     — 'en' | 'es' for the bilingual label content.
+//   onClose      — close callback.
 export default function PrintLabelModal({
     recipe,
+    editable = false,
     location,
     staffName,
     language = 'en',
@@ -50,6 +65,35 @@ export default function PrintLabelModal({
     const [printer, setPrinter] = useState(null);
     const [printing, setPrinting] = useState(false);
 
+    // ── Editable-mode state ─────────────────────────────────────
+    // Only used when editable=true. We seed from the (possibly
+    // empty) recipe object so a caller can pre-fill a name +
+    // allergens and still let the user adjust before printing.
+    const [editTitle, setEditTitle] = useState(recipe?.titleEn || '');
+    const [editTitleEs, setEditTitleEs] = useState(recipe?.titleEs || '');
+    const [editAllergens, setEditAllergens] = useState(
+        Array.isArray(recipe?.allergens) ? recipe.allergens : []
+    );
+    const toggleAllergen = (code) => {
+        setEditAllergens(prev => prev.includes(code)
+            ? prev.filter(c => c !== code)
+            : [...prev, code]);
+    };
+
+    // The recipe-shaped object we feed downstream. In editable mode
+    // we synthesize it from local state so the preview + the final
+    // print payload both reflect the user's edits.
+    const effectiveRecipe = editable
+        ? {
+            titleEn: editTitle || tx('Untitled', 'Sin título'),
+            titleEs: editTitleEs || editTitle || tx('Untitled', 'Sin título'),
+            allergens: editAllergens,
+            ingredientsEn: [],
+            ingredientsEs: [],
+            category: recipe?.category || 'Other',
+        }
+        : recipe;
+
     // Live config so a fresh admin edit takes effect without reload.
     useEffect(() => {
         if (!location) return;
@@ -57,19 +101,20 @@ export default function PrintLabelModal({
     }, [location]);
 
     // Build the preview payload — same builder the print path uses,
-    // so what the user sees IS what prints.
+    // so what the user sees IS what prints. In editable mode this
+    // pulls from the local edit state via effectiveRecipe.
     const previewPayload = useMemo(() => buildLabelPayload({
-        itemName: recipe?.titleEn || recipe?.title || 'Item',
-        itemNameEs: recipe?.titleEs,
+        itemName: effectiveRecipe?.titleEn || effectiveRecipe?.title || 'Item',
+        itemNameEs: effectiveRecipe?.titleEs,
         prepDate: new Date(),
         shelfLifeDays,
         preppedBy: staffName,
         location: locationLabel(location),
-        allergens: recipe?.allergens || [],
-        ingredients: pickIngredientsForLabel(recipe, language),
+        allergens: effectiveRecipe?.allergens || [],
+        ingredients: pickIngredientsForLabel(effectiveRecipe, language),
         language,
         notes,
-    }), [recipe, shelfLifeDays, staffName, location, language, notes]);
+    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes]);
 
     const printerReady = !!(printer && printer.ip && printer.enabled !== false);
 
@@ -82,10 +127,14 @@ export default function PrintLabelModal({
             ), { kind: 'error' });
             return;
         }
+        if (editable && !editTitle.trim()) {
+            toast(tx('Enter an item name first.', 'Ingresa un nombre primero.'), { kind: 'error' });
+            return;
+        }
         setPrinting(true);
         const res = await printPrepLabel({
             location,
-            recipe,
+            recipe: effectiveRecipe,
             preppedBy: staffName,
             shelfLifeDays,
             language,
@@ -118,6 +167,60 @@ export default function PrintLabelModal({
 
                 {/* Body */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {/* Editable item identity — only in quick-label mode.
+                        Lets a receiver / cook print a date label for any
+                        item without needing a recipe entry. Title becomes
+                        an input; allergens become tappable chips. */}
+                    {editable && (
+                        <div className="space-y-2 pb-3 border-b border-dd-line">
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                                    {tx('Item name', 'Nombre del artículo')}
+                                </span>
+                                <input
+                                    type="text"
+                                    value={editTitle}
+                                    onChange={(e) => setEditTitle(e.target.value.slice(0, 60))}
+                                    placeholder={tx('e.g. "Romaine Lettuce", "Beef Stock"', 'ej. "Lechuga romana"')}
+                                    autoFocus
+                                    className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm font-bold focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                                />
+                            </label>
+                            {isEs && (
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                                        {tx('Nombre en inglés (opcional)', 'English name (optional)')}
+                                    </span>
+                                    <input
+                                        type="text"
+                                        value={editTitleEs}
+                                        onChange={(e) => setEditTitleEs(e.target.value.slice(0, 60))}
+                                        className="w-full px-3 py-2 rounded-lg border border-dd-line text-sm focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                                    />
+                                </label>
+                            )}
+                            <div>
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                                    {tx('Allergens (tap to toggle)', 'Alérgenos (tocar para alternar)')}
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                    {ALLERGEN_ORDER.map(code => {
+                                        const on = editAllergens.includes(code);
+                                        return (
+                                            <button key={code}
+                                                onClick={() => toggleAllergen(code)}
+                                                className={`px-2 py-1 rounded-full text-[11px] font-bold border transition ${on
+                                                    ? 'bg-amber-100 border-amber-400 text-amber-900'
+                                                    : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}>
+                                                {allergenLabel(code, language)}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Shelf life — quick chips + step buttons */}
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">

@@ -8,6 +8,10 @@ import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
 const OrderMode = lazy(() => import('./OrderMode'));
+// 2026-05-20 — date-code label printing on Epson TM-L100. Lazy so the
+// ePOS-Print XML helper + preview only enter the Operations chunk
+// when a staffer actually opens the quick-label modal.
+const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 import { escapeHtml as escH } from '../data/htmlEscape';
 // Lazy-loaded sub-views — these are 500-1000+ line components that only
 // render when their specific sub-tab is active. Eager-importing them
@@ -401,6 +405,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            // 2026-05-20 — Quick date-code label printing. Opens an
+            // editable PrintLabelModal so the receiver / cook can stick
+            // a date label on ANY container without needing a recipe.
+            // Closes on print / cancel.
+            const [showQuickLabel, setShowQuickLabel] = useState(false);
             // Order Mode — full-screen workflow for placing real vendor
             // orders (Andrew 2026-05-19). Triggered from inside the cart
             // modal via a "📞 Place order" button. Snapshots the current
@@ -4985,6 +4994,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         className="w-9 h-9 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center hover:bg-blue-50 hover:text-blue-700 transition text-lg">
                                         {"\u{1F5A8}"}
                                     </button>
+                                    {/* 🏷 Quick label — Andrew 2026-05-20.
+                                        Opens PrintLabelModal in editable mode
+                                        so a receiver can stick a date label
+                                        on a freshly-opened case without
+                                        going through Recipes. Available to
+                                        all staff (not admin-gated) — the
+                                        labeling task is a cook/receiver
+                                        responsibility, not management. */}
+                                    <button onClick={() => setShowQuickLabel(true)}
+                                        title={language === "es" ? "Etiqueta rápida (fecha)" : "Quick date label"}
+                                        className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition">
+                                        🏷 {language === "es" ? "Etiqueta" : "Label"}
+                                    </button>
                                     {/* Density toggle — flips master list rows
                                         between the rich detailed view (current
                                         default) and a stripped-down NAME +
@@ -5401,6 +5423,26 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         customInventory={customInventory}
                                         cartItems={orderModeRows}
                                         onClose={() => setOrderModeRows(null)}
+                                    />
+                                </Suspense>
+                            )}
+
+                            {/* 🏷 Quick date-code label — opens the same
+                                PrintLabelModal Recipes uses, but in
+                                editable mode so the staffer types the
+                                item name and toggles allergens by hand.
+                                Used for inventory items, opened cases,
+                                special prep — anything that doesn't
+                                have a recipe entry. */}
+                            {showQuickLabel && (
+                                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                                    <PrintLabelModal
+                                        editable={true}
+                                        recipe={{ titleEn: '', titleEs: '', allergens: [], ingredientsEn: [] }}
+                                        location={storeLocation}
+                                        staffName={staffName}
+                                        language={language}
+                                        onClose={() => setShowQuickLabel(false)}
                                     />
                                 </Suspense>
                             )}
