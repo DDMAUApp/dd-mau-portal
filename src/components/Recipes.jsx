@@ -561,6 +561,47 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         return () => unsubscribe();
     }, []);
 
+    // ── AI search hooks ─────────────────────────────────────────────
+    // 2026-05-20 BUGFIX (Andrew: "in recipes the edit button isnt
+    // working" — React error #300 / "Rendered more hooks than during
+    // the previous render"). These hooks were previously declared
+    // AFTER the early returns at lines 679 / 698 / 710. When editMode
+    // flipped truthy (clicking Edit), the editMode early return fired
+    // and these three hooks stopped being called — hook count
+    // changed across renders — React crashed and the ErrorBoundary
+    // caught it. Same crash hit when geofence tripped or
+    // recipesAccess was off. Hooks MUST be declared before any
+    // conditional return so React can match them positionally
+    // across renders.
+    //
+    // Builds a flat items array for the AI search Cloud Function.
+    // The aiSearch function expects { id, name, category, subcat }.
+    // We pack the recipe title into `name`, the recipe category into
+    // `category`, and join allergen codes + the first few ingredient
+    // words into `subcat` — that gives Claude enough signal to reason
+    // about "vegan", "spicy", "things with shrimp" without blowing
+    // up token cost.
+    const aiItems = useMemo(() => {
+        return recipes.map(r => {
+            const allergens = Array.isArray(r.allergens) ? r.allergens.join(',') : '';
+            const ing = Array.isArray(r.ingredientsEn)
+                ? r.ingredientsEn.slice(0, 6).join(', ').slice(0, 120)
+                : '';
+            return {
+                id: String(r.id),
+                name: r.titleEn || r.titleEs || String(r.id),
+                category: r.category || '',
+                subcat: [allergens, ing].filter(Boolean).join(' | ').slice(0, 180),
+            };
+        });
+    }, [recipes]);
+    const { loading: aiLoading, matchingIds: aiIds, error: aiError } = useAiSearch({
+        query: searchQuery,
+        items: aiItems,
+        enabled: aiOn && searchQuery.trim().length > 0,
+    });
+    const aiIdSet = useMemo(() => (aiIds ? new Set(aiIds) : null), [aiIds]);
+
     // Edit/delete is admin-only. The previous flow had a shared hardcoded
     // password client-side which is unsafe; admins now don't need any
     // password (their PIN already authenticated them on the home screen).
@@ -744,33 +785,10 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         return `${staffName || 'unknown'} · ${y}-${m}-${day} ${hh}:${mm}`;
     })();
 
-    // Build a flat items array for the AI search Cloud Function.
-    // The aiSearch function expects { id, name, category, subcat }.
-    // We pack the recipe title into `name`, the recipe category into
-    // `category`, and join allergen codes + the first few ingredient
-    // words into `subcat` — that gives Claude enough signal to reason
-    // about "vegan", "spicy", "things with shrimp" without blowing
-    // up token cost.
-    const aiItems = useMemo(() => {
-        return recipes.map(r => {
-            const allergens = Array.isArray(r.allergens) ? r.allergens.join(',') : '';
-            const ing = Array.isArray(r.ingredientsEn)
-                ? r.ingredientsEn.slice(0, 6).join(', ').slice(0, 120)
-                : '';
-            return {
-                id: String(r.id),
-                name: r.titleEn || r.titleEs || String(r.id),
-                category: r.category || '',
-                subcat: [allergens, ing].filter(Boolean).join(' | ').slice(0, 180),
-            };
-        });
-    }, [recipes]);
-    const { loading: aiLoading, matchingIds: aiIds, error: aiError } = useAiSearch({
-        query: searchQuery,
-        items: aiItems,
-        enabled: aiOn && searchQuery.trim().length > 0,
-    });
-    const aiIdSet = useMemo(() => (aiIds ? new Set(aiIds) : null), [aiIds]);
+    // (aiItems / useAiSearch / aiIdSet were moved up to before the
+    // early returns to fix a React #300 hook-count mismatch — see
+    // the comment block where they now live. Caller variables below
+    // — aiLoading, aiIds, aiError, aiIdSet — are still in scope.)
 
     // Apply the search filter. Empty/whitespace query passes everything
     // through. matchesRecipeQuery handles accent stripping, bilingual
