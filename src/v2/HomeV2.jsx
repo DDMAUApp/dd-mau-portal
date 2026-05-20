@@ -9,13 +9,16 @@
 // Stat cards + alerts row + upcoming shifts list + publish-week CTA.
 // Fully responsive; cards stack 1-up on mobile, 2/4-up on larger.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
-import { canViewLabor } from '../data/staff';
+import { canViewLabor, isAdmin as isAdminFn } from '../data/staff';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
+// 2026-05-20 — Print Center on the home screen. Lazy so the chunk
+// only loads when admin/staff actually taps Print.
+const PrintCenter = lazy(() => import('../components/PrintCenter'));
 
 // ── Primitives ─────────────────────────────────────────────────────────
 function Card({ className = '', children, hover = false, ...rest }) {
@@ -134,6 +137,12 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
     // Resolve effective location for queries (multi-location admins might be 'both').
     const queryLoc = storeLocation === 'both' ? 'webster' : storeLocation;
 
+    // 2026-05-20 — Print Center modal state. The Print pill in the
+    // top-right of HomeV2 opens this; mounts as a full-screen overlay.
+    const [showPrintCenter, setShowPrintCenter] = useState(false);
+    // Resolve admin status for the Print Center location selector.
+    const viewerIsAdmin = isAdminFn(staffName, staffList);
+
     // FIX (review 2026-05-14, perf): read from the shared AppDataContext
     // instead of four component-local Firestore subscriptions. The
     // loading flags are kept in the same shape consumers rely on, just
@@ -192,19 +201,25 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
 
     return (
         <div className="space-y-6">
-            {/* Welcome — tighter, more confident. The previous subtitle was a
-                full sentence that restated the obvious ("Here's what's
-                happening at DD Mau Webster Groves today.") and pushed the
-                stat row down the page. Replaced with a compact metadata line
-                that reads at a glance: weekday · date · location. */}
-            <div>
-                <h1 className="text-2xl font-black text-dd-text tracking-tight">
-                    {greeting}, {staffName?.split(' ')[0] || tx('there', '')}
-                </h1>
-                <p className="text-sm text-dd-text-2 mt-1 capitalize">
-                    {todayLong} <span className="text-dd-text-2/50 mx-1">·</span>
-                    <span className="text-dd-text font-semibold normal-case">DD Mau {locName}</span>
-                </p>
+            {/* Welcome + top-right Print pill. Andrew 2026-05-20 — the
+                home screen now carries a dedicated Print Center
+                affordance because the Operations-only entry point
+                was too buried. The pill sits as a quiet companion
+                action to the right of the greeting. */}
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                    <h1 className="text-2xl font-black text-dd-text tracking-tight">
+                        {greeting}, {staffName?.split(' ')[0] || tx('there', '')}
+                    </h1>
+                    <p className="text-sm text-dd-text-2 mt-1 capitalize">
+                        {todayLong} <span className="text-dd-text-2/50 mx-1">·</span>
+                        <span className="text-dd-text font-semibold normal-case">DD Mau {locName}</span>
+                    </p>
+                </div>
+                <button onClick={() => setShowPrintCenter(true)}
+                    className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                    🖨 {tx('Print', 'Imprimir')}
+                </button>
             </div>
 
             {/* Enable-notifications banner — first-sign-in nudge.
@@ -397,6 +412,20 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         onClick={() => onNavigate?.('schedule')} />
                 </div>
             </section>
+
+            {/* 🖨 Print Center modal — top-right pill opens this. Lazy
+                chunk so desktop home pays no cost until a user prints. */}
+            {showPrintCenter && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <PrintCenter
+                        location={storeLocation}
+                        staffName={staffName}
+                        language={language}
+                        isAdmin={viewerIsAdmin}
+                        onClose={() => setShowPrintCenter(false)}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }

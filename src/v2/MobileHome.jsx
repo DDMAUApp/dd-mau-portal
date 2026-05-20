@@ -24,7 +24,7 @@
 //     every tappable surface so the app feels responsive even on mid-tier
 //     Android.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
@@ -32,6 +32,11 @@ import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
+// 2026-05-20 — Print Center tile on the home screen. Andrew: "lets
+// make a printer button on the home screen and also has all the
+// same features." Lazy so the chunk only downloads when a staffer
+// actually taps Print.
+const PrintCenter = lazy(() => import('../components/PrintCenter'));
 
 function todayKey() {
     const d = new Date();
@@ -111,6 +116,11 @@ export default function MobileHome({
     const labor = useMemo(() => canSeeLabor ? laborByLoc[queryLoc] : null, [canSeeLabor, laborByLoc, queryLoc]);
 
     // Pending lock-screen apply submissions — drives the badge on the
+    // 2026-05-20 — Print Center modal state. The home tile opens the
+    // PrintCenter as a full-screen modal overlay (it is not a tab/
+    // route), so we manage its open/close locally here.
+    const [showPrintCenter, setShowPrintCenter] = useState(false);
+
     // Onboarding tile. This one stays as a local subscription because
     // /onboarding_applications isn't shared by any other v2 consumer.
     const [pendingApplications, setPendingApplications] = useState(0);
@@ -202,6 +212,12 @@ export default function MobileHome({
         ...(hasOpsAccess     ? [{ tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', primary: true }] : []),
         ...(hasRecipesAccess ? [{ tab: 'recipes',    icon: '📖', en: 'Recipes',    es: 'Recetas',     primary: true }] : []),
         { tab: 'eighty6',    icon: '🚫', en: '86 Board',     es: 'Tablero 86',    badge: eighty6Count, badgeTone: 'danger' },
+        // 2026-05-20 — Print Center tile. tab='print' is a virtual id
+        // (not a real route); the onTap below is what fires when the
+        // tile is tapped, opening the PrintCenter modal in place. All
+        // staff get this — labeling is a kitchen responsibility, not
+        // an admin one.
+        { tab: 'print',      icon: '🖨', en: 'Print',        es: 'Imprimir',       primary: true,  onTap: () => setShowPrintCenter(true) },
         { tab: 'menu',       icon: '🍜', en: 'Menu',         es: 'Menú' },
         { tab: 'training',   icon: '📚', en: 'Training',     es: 'Capacitación' },
         { tab: 'catering',   icon: '🥘', en: 'Orders',       es: 'Pedidos' },
@@ -327,7 +343,9 @@ export default function MobileHome({
                 </div>
                 <div className="grid grid-cols-2 gap-2.5">
                     {allTiles.filter(t => !hiddenPages.includes(t.tab)).map(t => (
-                        <Tile key={t.tab} {...t} onTap={() => onNavigate?.(t.tab)} isEs={isEs} />
+                        // Tile fires t.onTap when present (modal tiles like
+                        // Print), otherwise navigates to the named tab.
+                        <Tile key={t.tab} {...t} onTap={t.onTap || (() => onNavigate?.(t.tab))} isEs={isEs} />
                     ))}
                 </div>
                 {/* Build version footer — tappable, opens version-info modal.
@@ -337,6 +355,21 @@ export default function MobileHome({
                     <AppVersion language={isEs ? 'es' : 'en'} />
                 </div>
             </div>
+
+            {/* 🖨 Print Center modal — mounted at the root of the home
+                screen so it overlays everything cleanly. Lazy import
+                means the chunk only loads on first tap. */}
+            {showPrintCenter && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <PrintCenter
+                        location={storeLocation}
+                        staffName={staffName}
+                        language={isEs ? 'es' : 'en'}
+                        isAdmin={isAdmin}
+                        onClose={() => setShowPrintCenter(false)}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }
