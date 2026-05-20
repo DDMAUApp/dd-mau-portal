@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { isAdmin } from '../data/staff';
 import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllergens } from '../data/allergens';
 import { matchesRecipeQuery } from '../data/recipeSearch';
+import { useAiSearch } from '../data/aiSearch';
 import { toast } from '../toast';
 
 // Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
@@ -200,6 +201,13 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // the same restaurant-vocabulary synonym list that powers chat search
     // (chicken↔pollo, lime↔limón, broth↔caldo). See src/data/recipeSearch.js.
     const [searchQuery, setSearchQuery] = useState('');
+    // AI semantic search toggle. When ON, the search query is ALSO
+    // sent to the aiSearch Cloud Function (Claude-backed). The
+    // substring matcher keeps running locally — AI results are
+    // UNIONed into the substring set so users get instant feedback
+    // and Claude fills in the semantic extras (e.g. "vegan",
+    // "spicy", "things with shrimp") ~300ms later. Defaults ON.
+    const [aiOn, setAiOn] = useState(true);
     // Raw text the user has typed in the per-recipe Custom multiplier input.
     // We commit (parseQuantity → setRecipeMultipliers) on blur/Enter so that
     // mid-typing characters like "1/" don't snap to a preset. Without this,
@@ -728,11 +736,45 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         return `${staffName || 'unknown'} · ${y}-${m}-${day} ${hh}:${mm}`;
     })();
 
+    // Build a flat items array for the AI search Cloud Function.
+    // The aiSearch function expects { id, name, category, subcat }.
+    // We pack the recipe title into `name`, the recipe category into
+    // `category`, and join allergen codes + the first few ingredient
+    // words into `subcat` — that gives Claude enough signal to reason
+    // about "vegan", "spicy", "things with shrimp" without blowing
+    // up token cost.
+    const aiItems = useMemo(() => {
+        return recipes.map(r => {
+            const allergens = Array.isArray(r.allergens) ? r.allergens.join(',') : '';
+            const ing = Array.isArray(r.ingredientsEn)
+                ? r.ingredientsEn.slice(0, 6).join(', ').slice(0, 120)
+                : '';
+            return {
+                id: String(r.id),
+                name: r.titleEn || r.titleEs || String(r.id),
+                category: r.category || '',
+                subcat: [allergens, ing].filter(Boolean).join(' | ').slice(0, 180),
+            };
+        });
+    }, [recipes]);
+    const { loading: aiLoading, matchingIds: aiIds, error: aiError } = useAiSearch({
+        query: searchQuery,
+        items: aiItems,
+        enabled: aiOn && searchQuery.trim().length > 0,
+    });
+    const aiIdSet = useMemo(() => (aiIds ? new Set(aiIds) : null), [aiIds]);
+
     // Apply the search filter. Empty/whitespace query passes everything
     // through. matchesRecipeQuery handles accent stripping, bilingual
     // synonyms, multi-word AND, and allergen-label matching.
+    // When AI is on, the AI ids are UNIONed into the substring set
+    // — substring matches always show; AI adds semantic extras.
     const filteredRecipes = searchQuery.trim()
-        ? recipes.filter(r => matchesRecipeQuery(r, searchQuery))
+        ? recipes.filter(r => {
+            if (matchesRecipeQuery(r, searchQuery)) return true;
+            if (aiIdSet && aiIdSet.has(String(r.id))) return true;
+            return false;
+        })
         : recipes;
 
     return (
@@ -795,36 +837,75 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                 accent-insensitive and run through the same restaurant
                 synonym list as chat search (chicken↔pollo, lime↔limón). */}
             <div className="mb-3">
-                <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">🔍</span>
-                    <input
-                        type="search"
-                        inputMode="search"
-                        enterKeyHint="search"
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        placeholder={language === "es"
-                            ? "Buscar receta, ingrediente, alérgeno..."
-                            : "Search recipe, ingredient, allergen..."}
-                        className="w-full pl-9 pr-9 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-mint-400"
-                    />
-                    {searchQuery && (
-                        <button
-                            type="button"
-                            onClick={() => setSearchQuery('')}
-                            aria-label={language === "es" ? "Limpiar búsqueda" : "Clear search"}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center hover:bg-gray-300"
-                        >
-                            ✕
-                        </button>
-                    )}
+                <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none">🔍</span>
+                        <input
+                            type="search"
+                            inputMode="search"
+                            enterKeyHint="search"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder={aiOn
+                                ? (language === "es"
+                                    ? 'Buscar lo que quieras ("vegano", "picante", "con camarón")'
+                                    : 'Search anything ("vegan", "spicy", "with shrimp")')
+                                : (language === "es"
+                                    ? "Buscar receta, ingrediente, alérgeno..."
+                                    : "Search recipe, ingredient, allergen...")}
+                            className="w-full pl-9 pr-9 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-mint-400"
+                        />
+                        {searchQuery && (
+                            <button
+                                type="button"
+                                onClick={() => setSearchQuery('')}
+                                aria-label={language === "es" ? "Limpiar búsqueda" : "Clear search"}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full bg-gray-200 text-gray-600 text-xs flex items-center justify-center hover:bg-gray-300"
+                            >
+                                ✕
+                            </button>
+                        )}
+                    </div>
+                    {/* AI semantic search toggle. ON (default) calls the
+                        aiSearch Cloud Function alongside the local
+                        substring matcher; the two result sets are
+                        UNIONed. ~$0.001 per query. Toggle OFF if AI is
+                        slow or unavailable — substring keeps working. */}
+                    <button onClick={() => setAiOn(v => !v)}
+                        title={aiOn
+                            ? (language === "es" ? "Búsqueda IA activada — clic para apagar" : "AI search ON — click to use plain search")
+                            : (language === "es" ? "Búsqueda básica — clic para activar IA" : "Plain search — click to enable AI")}
+                        className={`flex-shrink-0 px-2.5 py-2 rounded-lg text-xs font-bold border transition ${aiOn
+                            ? 'bg-purple-600 text-white border-purple-700'
+                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'}`}>
+                        ✨ {language === "es" ? "IA" : "AI"}
+                    </button>
                 </div>
                 {searchQuery.trim() && (
-                    <p className="text-[11px] text-gray-500 mt-1">
-                        {language === "es"
-                            ? `${filteredRecipes.length} de ${recipes.length} receta${recipes.length === 1 ? '' : 's'}`
-                            : `${filteredRecipes.length} of ${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 mt-1">
+                        <p className="text-[11px] text-gray-500">
+                            {language === "es"
+                                ? `${filteredRecipes.length} de ${recipes.length} receta${recipes.length === 1 ? '' : 's'}`
+                                : `${filteredRecipes.length} of ${recipes.length} recipe${recipes.length === 1 ? '' : 's'}`}
+                        </p>
+                        {aiOn && aiLoading && (
+                            <span className="text-[11px] text-purple-700 font-bold">
+                                ✨ {language === "es" ? "pensando…" : "thinking…"}
+                            </span>
+                        )}
+                        {aiOn && !aiLoading && aiError && (
+                            <span className="text-[11px] text-amber-700">
+                                ⚠ {language === "es" ? "IA no disponible" : "AI unavailable"}
+                            </span>
+                        )}
+                        {aiOn && !aiLoading && !aiError && aiIds && aiIds.length > 0 && (
+                            <span className="text-[11px] text-purple-700">
+                                ✨ {language === "es"
+                                    ? `IA añadió ${aiIds.length}`
+                                    : `AI added ${aiIds.length}`}
+                            </span>
+                        )}
+                    </div>
                 )}
             </div>
 

@@ -6,6 +6,7 @@ import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
+import { useAiSearch } from '../data/aiSearch';
 const OrderMode = lazy(() => import('./OrderMode'));
 import { escapeHtml as escH } from '../data/htmlEscape';
 // Lazy-loaded sub-views — these are 500-1000+ line components that only
@@ -388,6 +389,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [inventoryAudits, setInventoryAudits] = useState([]);
             const [showInventoryAudits, setShowInventoryAudits] = useState(false);
             const [invSearch, setInvSearch] = useState("");
+            // AI semantic search toggle for the inventory tab. ON sends
+            // queries to the aiSearch Cloud Function (~$0.001 each)
+            // alongside the local substring matcher; results are
+            // UNIONed. OFF falls back to substring only.
+            const [invAiOn, setInvAiOn] = useState(true);
             const [writeInValues, setWriteInValues] = useState({});
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
@@ -771,6 +777,49 @@ export default function Operations({ language, staffList, staffName, storeLocati
             useEffect(() => {
                 if (!invSearch) { setCollapsedCats({}); }
             }, [invSearch]);
+
+            // ── AI semantic search wiring ─────────────────────────────
+            // Flat items array from customInventory — fed to the
+            // aiSearch Cloud Function. Memoized so the cache key
+            // inside aiSearch stays stable across renders.
+            const aiInvItems = useMemo(() => {
+                const out = [];
+                for (const cat of customInventory) {
+                    for (const it of (cat.items || [])) {
+                        out.push({
+                            id: it.id,
+                            name: it.name,
+                            category: cat.name,
+                            subcat: it.subcat || '',
+                        });
+                    }
+                }
+                return out;
+            }, [customInventory]);
+            const {
+                loading: invAiLoading,
+                matchingIds: invAiIds,
+                error: invAiError,
+            } = useAiSearch({
+                query: invSearch,
+                items: aiInvItems,
+                enabled: invAiOn && invSearch.trim().length > 0,
+            });
+            const invAiIdSet = useMemo(
+                () => (invAiIds ? new Set(invAiIds) : null),
+                [invAiIds],
+            );
+            // Substring OR AI-id membership. Falls back to substring-
+            // only when AI is off / loading / errored. Used at every
+            // customInventory render site (category / vendor / split
+            // views). Pricing views keep plain substring because
+            // their data isn't in customInventory and wouldn't have
+            // any AI ids in scope.
+            const itemMatchesSearchAi = useCallback((item, searchLower) => {
+                if (itemMatchesSearch(item, searchLower)) return true;
+                if (invAiIdSet && invAiIdSet.has(item.id)) return true;
+                return false;
+            }, [invAiIdSet]);
 
             // Search/filter happens inline in each view (category, vendor, split, pricing) — same
             // pattern across all four. We previously had a memo here for the category view but it
@@ -4986,15 +5035,44 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                             {/* ── SEARCH BAR ── */}
                             {!invEditMode && (
-                                <div className="relative">
-                                    <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
-                                        placeholder={language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items..."}
-                                        className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
-                                    {invSearch && (
-                                        <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats({}); }}
-                                            className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
-                                    )}
+                                <>
+                                <div className="flex items-center gap-2">
+                                    <div className="relative flex-1">
+                                        <input type="text" value={invSearch} onChange={e => setInvSearch(e.target.value)}
+                                            placeholder={invAiOn
+                                                ? (language === "es" ? "\u{1F50D} Buscar cualquier cosa (\"seco\", \"verde\", \"vegano\")" : "\u{1F50D} Search anything (\"dry\", \"green\", \"vegan\")")
+                                                : (language === "es" ? "\u{1F50D} Buscar artículo..." : "\u{1F50D} Search items...")}
+                                            className={`w-full px-4 py-2.5 border-2 border-gray-200 rounded-xl text-sm focus:outline-none focus:border-mint-700 bg-white ${invSearch ? "pr-12" : ""}`} />
+                                        {invSearch && (
+                                            <button type="button" onClick={() => { setInvSearch(""); setCollapsedCats({}); }}
+                                                className="absolute right-2 top-1/2 -translate-y-1/2 w-8 h-8 flex items-center justify-center rounded-full bg-gray-200 text-gray-600 active:bg-gray-300 text-base font-bold">{"\u{2715}"}</button>
+                                        )}
+                                    </div>
+                                    {/* AI semantic search toggle — ON sends queries
+                                        to the aiSearch Cloud Function in parallel
+                                        with the local substring matcher. ~$0.001
+                                        per call. Toggle OFF if AI is slow or
+                                        unwanted; substring keeps working. */}
+                                    <button onClick={() => setInvAiOn(v => !v)}
+                                        title={invAiOn
+                                            ? (language === "es" ? "Búsqueda IA activada — clic para apagar" : "AI search ON — click to use plain search")
+                                            : (language === "es" ? "Búsqueda básica — clic para activar IA" : "Plain search — click to enable AI")}
+                                        className={`flex-shrink-0 px-3 py-2.5 rounded-xl text-sm font-bold border-2 transition ${invAiOn
+                                            ? 'bg-purple-600 text-white border-purple-700'
+                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
+                                        ✨ {language === "es" ? "IA" : "AI"}
+                                    </button>
                                 </div>
+                                {invSearch.trim() && invAiOn && (
+                                    <div className="text-[11px] mt-1">
+                                        {invAiLoading && <span className="text-purple-700 font-bold">✨ {language === "es" ? "pensando…" : "thinking…"}</span>}
+                                        {!invAiLoading && invAiError && <span className="text-amber-700">⚠ {language === "es" ? "IA no disponible" : "AI unavailable"}</span>}
+                                        {!invAiLoading && !invAiError && invAiIds && invAiIds.length > 0 && (
+                                            <span className="text-purple-700">✨ {language === "es" ? `IA añadió ${invAiIds.length}` : `AI added ${invAiIds.length}`}</span>
+                                        )}
+                                    </div>
+                                )}
+                                </>
                             )}
 
                             {/* ── CART SUMMARY ── */}
@@ -5289,7 +5367,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 // Same filter pattern used by vendor / split / pricing views.
                                 const searchLower = (invSearch || "").toLowerCase().trim();
                                 let filteredItems = searchLower
-                                    ? category.items.filter(item => itemMatchesSearch(item, searchLower))
+                                    ? category.items.filter(item => itemMatchesSearchAi(item, searchLower))
                                     : category.items;
                                 if (invShowOnlyCounted) {
                                     filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
@@ -5851,7 +5929,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         const v = item.vendor || item.supplier || "Other";
                                         if (!vendorGroups[v]) vendorGroups[v] = [];
                                         const matchesCounted = !invShowOnlyCounted || (inventory[item.id] || 0) > 0;
-                                        if (itemMatchesSearch(item, searchLower) && matchesCounted) {
+                                        if (itemMatchesSearchAi(item, searchLower) && matchesCounted) {
                                             vendorGroups[v].push({ ...item, catIdx, itemIdx: iIdx, catName: cat.name, catNameEs: cat.nameEs });
                                         }
                                     });
@@ -6041,7 +6119,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             {!isCollapsed && (<>
                                                 {catList.map((category, catIdx) => {
                                                     let filteredItems = searchLower
-                                                        ? category.items.filter(item => itemMatchesSearch(item, searchLower))
+                                                        ? category.items.filter(item => itemMatchesSearchAi(item, searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
                                                     if (filteredItems.length === 0) return null;
