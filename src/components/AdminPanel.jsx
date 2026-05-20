@@ -4,6 +4,15 @@ import { doc, collection, onSnapshot, setDoc, getDoc, getDocs, updateDoc, delete
 import { t } from '../data/translations';
 import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/staff';
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
+import {
+    normalizeToE164,
+    isValidPhone,
+    formatE164ForDisplay,
+    smsStatusPill,
+    writeClientOptInEvent,
+    CONSENT_TEXT,
+    CONSENT_TEXT_VERSION,
+} from '../data/sms';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
 import ImportStaffModal from './ImportStaffModal';
@@ -173,6 +182,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // can't accidentally publish over BOH shifts and vice versa.
             const [editCanEditScheduleFOH, setEditCanEditScheduleFOH] = useState(false);
             const [editCanEditScheduleBOH, setEditCanEditScheduleBOH] = useState(false);
+            // SMS — per-staff phone draft. Map of staffId → raw input
+            // string. The input field commits its value via
+            // setPhoneForStaff on blur or Enter; while editing, the
+            // raw typed string lives here so we don't snap to the
+            // normalized form mid-typing.
+            const [phoneDrafts, setPhoneDrafts] = useState({});
             const [showBulkTag, setShowBulkTag] = useState(false);
             // Staff Import flow — paste names or upload CSV, diff against
             // current staff list, configure new records (role / location /
@@ -308,6 +323,247 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Generic bulk-update helper — sweep a subset of staff records
             // to the same value for the same field. Used by every "Sweep N
             // visible to ON/OFF" button in the bulk-toggle section.
+            // ── SMS opt-in helpers ────────────────────────────────────
+            //
+            // Every flip of `smsOptIn` writes a row to `sms_opt_in_events`
+            // capturing WHEN, by WHO, from WHAT source, and the verbatim
+            // consent text snapshot + version. That collection is the
+            // legal evidence trail — exported as CSV via the "Export SMS
+            // opt-in log" button. Without this audit, a carrier or
+            // attorney asking "prove she agreed" leaves us empty-handed.
+            //
+            // Skips no-ops (current value == new value) so we don't
+            // pollute the event log with phantom rows.
+            //
+            // applyOptInToList — pure transform: returns a new list with
+            // the staff's SMS fields updated. Pulled out so the bulk
+            // path can stack many updates in one setStaffList call.
+            const applyOptInToList = (list, staffName, value) => {
+                const nowIso = new Date().toISOString();
+                return list.map(s => {
+                    if (s.name !== staffName) return s;
+                    if (s.smsOptIn === value) return s;
+                    return value
+                        ? {
+                            ...s,
+                            smsOptIn: true,
+                            smsOptInAt: nowIso,
+                            smsOptInBy: staffName || 'admin',          // current admin doing the toggle
+                            smsOptInSource: 'admin_panel',
+                        }
+                        : {
+                            ...s,
+                            smsOptIn: false,
+                            // We do NOT clear smsStopped here — that flag is
+                            // server-only (set by inbound STOP reply) and
+                            // only an inbound START reply can clear it.
+                            // Admin opt-out is a separate concept from a
+                            // STOP-reply opt-out.
+                        };
+                });
+            };
+
+            // setSmsOptInForStaff — flip a single staff's smsOptIn and
+            // write the matching audit row. Used by the per-staff toggle
+            // in the Settings row. Returns true if a change happened.
+            const setSmsOptInForStaff = async (staff, value) => {
+                if (!staff || !staff.name) return false;
+                if (staff.smsOptIn === value) return false;
+                let latest = null;
+                setStaffList(prev => {
+                    latest = applyOptInToList(prev, staff.name, value);
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
+                // Log the consent change. The byName is the current admin
+                // — staffName is hoisted from the AdminPanelInner props.
+                await writeClientOptInEvent({
+                    staffId: staff.id ?? null,
+                    staffName: staff.name,
+                    phoneE164: staff.phoneE164 || null,
+                    action: value ? 'opt_in' : 'opt_out',
+                    source: 'admin_panel',
+                    byName: staffName || 'admin',
+                    byId: null,
+                });
+                showSaved();
+                return true;
+            };
+
+            // bulkSmsOptIn — set smsOptIn for many staff in one go.
+            // Each individual change still produces its own audit row
+            // (one row per staff, not one row per batch) so the export
+            // remains useful for per-person compliance review.
+            const bulkSmsOptIn = async (ids, value) => {
+                if (!ids || ids.length === 0) return;
+                const idSet = new Set(ids);
+                // Snapshot the targets BEFORE the state update so we can
+                // write per-staff audit rows after persistence.
+                const targets = staffList.filter(s => idSet.has(s.id) && s.smsOptIn !== value);
+                if (targets.length === 0) return;
+                let latest = null;
+                setStaffList(prev => {
+                    let next = prev;
+                    for (const t of targets) {
+                        next = applyOptInToList(next, t.name, value);
+                    }
+                    latest = next;
+                    return next;
+                });
+                if (latest) await saveStaffToFirestore(latest);
+                // Write one audit row per staff. Done in parallel —
+                // writeClientOptInEvent is best-effort + handles its
+                // own error logging.
+                await Promise.all(targets.map(s => writeClientOptInEvent({
+                    staffId: s.id ?? null,
+                    staffName: s.name,
+                    phoneE164: s.phoneE164 || null,
+                    action: value ? 'opt_in' : 'opt_out',
+                    source: 'admin_panel',
+                    byName: staffName || 'admin',
+                    byId: null,
+                    note: `bulk: ${targets.length} staff`,
+                })));
+                showSaved();
+            };
+
+            // Update a single staff's phoneE164. Validates + normalizes.
+            // Returns the new value (or null on invalid). When the new
+            // number differs from the prior one and the staff is currently
+            // opted in, we re-stamp smsOptInAt with the new phone — the
+            // consent attaches to the number, so a number change should
+            // be visible in the audit trail.
+            const setPhoneForStaff = async (staff, rawInput) => {
+                if (!staff || !staff.name) return null;
+                const normalized = rawInput ? normalizeToE164(rawInput) : '';
+                if (rawInput && !normalized) {
+                    toast(language === 'es'
+                        ? 'Número inválido. Usa 10 dígitos o formato +1...'
+                        : 'Invalid number. Use 10 digits or +1... format',
+                        { kind: 'error' });
+                    return null;
+                }
+                if (staff.phoneE164 === normalized) return normalized;
+                let latest = null;
+                setStaffList(prev => {
+                    latest = prev.map(s => s.name === staff.name
+                        ? { ...s, phoneE164: normalized || null }
+                        : s);
+                    return latest;
+                });
+                if (latest) await saveStaffToFirestore(latest);
+                // Number-change audit. We log this as a 'phone_change'
+                // event with the same shape as opt-in events — it's
+                // information the compliance reviewer needs in case the
+                // current opt-in row references the OLD number.
+                if (staff.smsOptIn === true) {
+                    await writeClientOptInEvent({
+                        staffId: staff.id ?? null,
+                        staffName: staff.name,
+                        phoneE164: normalized || null,
+                        action: 'opt_in',                       // still opted in, but on a new number
+                        source: 'admin_panel',
+                        byName: staffName || 'admin',
+                        byId: null,
+                        note: `phone updated from ${staff.phoneE164 || '(none)'} to ${normalized || '(none)'}`,
+                    });
+                }
+                showSaved();
+                return normalized;
+            };
+
+            // exportSmsOptInLog — pulls every row from /sms_opt_in_events
+            // (timestamps + staff + phone + action + source + verbatim
+            // consent text snapshot + version), formats as CSV, triggers
+            // a download. This is the compliance evidence file —
+            // carriers/attorneys asking for proof of consent get this CSV.
+            //
+            // We DON'T paginate or summarize — the full event history is
+            // the point. Restaurant-scale rows are in the hundreds, not
+            // millions; a single page download is fine.
+            const exportSmsOptInLog = async () => {
+                try {
+                    const snap = await getDocs(query(
+                        collection(db, 'sms_opt_in_events'),
+                        orderBy('at', 'desc'),
+                    ));
+                    if (snap.empty) {
+                        toast(language === 'es' ? 'No hay eventos de SMS aún' : 'No SMS opt-in events yet');
+                        return;
+                    }
+                    const rows = [];
+                    // Header row. Keep column names stable — downstream
+                    // tools (Excel, Google Sheets, legal review) expect
+                    // these names.
+                    rows.push([
+                        'at',
+                        'staffId',
+                        'staffName',
+                        'phoneE164',
+                        'action',
+                        'source',
+                        'byName',
+                        'byId',
+                        'consentTextVersion',
+                        'consentTextEn',
+                        'consentTextEs',
+                        'ipAddress',
+                        'userAgent',
+                        'twilioMessageSid',
+                        'note',
+                    ]);
+                    for (const d of snap.docs) {
+                        const r = d.data() || {};
+                        const at = r.at && r.at.toDate ? r.at.toDate().toISOString() : (r.at || '');
+                        rows.push([
+                            at,
+                            r.staffId ?? '',
+                            r.staffName || '',
+                            r.phoneE164 || '',
+                            r.action || '',
+                            r.source || '',
+                            r.byName || '',
+                            r.byId ?? '',
+                            r.consentTextVersion || '',
+                            r.consentTextEn || '',
+                            r.consentTextEs || '',
+                            r.ipAddress || '',
+                            r.userAgent || '',
+                            r.twilioMessageSid || '',
+                            r.note || '',
+                        ]);
+                    }
+                    // CSV escape: wrap any cell containing comma, quote,
+                    // or newline in double quotes; double up inner quotes.
+                    const csvEscape = (val) => {
+                        const s = String(val == null ? '' : val);
+                        if (/[",\r\n]/.test(s)) {
+                            return '"' + s.replace(/"/g, '""') + '"';
+                        }
+                        return s;
+                    };
+                    const csv = rows.map(row => row.map(csvEscape).join(',')).join('\n');
+                    // Trigger download via blob URL — works on all
+                    // mobile browsers, no extra deps.
+                    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    const today = new Date().toISOString().slice(0, 10);
+                    a.href = url;
+                    a.download = `dd-mau-sms-optin-log-${today}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    toast(language === 'es'
+                        ? `✓ Exportado: ${snap.docs.length} eventos`
+                        : `✓ Exported ${snap.docs.length} events`);
+                } catch (e) {
+                    console.error('exportSmsOptInLog failed:', e);
+                    toast(language === 'es' ? 'Error al exportar' : 'Export failed', { kind: 'error' });
+                }
+            };
+
             const bulkSetField = async (ids, field, value) => {
                 if (!ids || ids.length === 0) return;
                 const idSet = new Set(ids);
@@ -967,6 +1223,18 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                     <button onClick={() => setShowImportStaff(true)}
                                         className="px-3 py-1 rounded-full text-xs font-bold border bg-blue-600 text-white border-blue-600 hover:bg-blue-700 transition">
                                         📥 {language === "es" ? "Importar Personal" : "Import Staff"}
+                                    </button>
+                                    {/* Export the full SMS opt-in/opt-out audit log as CSV.
+                                        Pulls every row from /sms_opt_in_events with timestamp,
+                                        staff, phone, action, source, who triggered it, and the
+                                        verbatim consent text version. This is the compliance
+                                        evidence file for any carrier review or legal hold. */}
+                                    <button onClick={exportSmsOptInLog}
+                                        title={language === "es"
+                                            ? "Exportar registro de aceptaciones de SMS (CSV)"
+                                            : "Export SMS opt-in audit log (CSV)"}
+                                        className="px-3 py-1 rounded-full text-xs font-bold border bg-green-600 text-white border-green-600 hover:bg-green-700 transition">
+                                        📋 {language === "es" ? "Exportar SMS" : "Export SMS log"}
                                     </button>
                                 </div>
                                 {/* Side sub-tabs — only meaningful when a specific
@@ -1815,6 +2083,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     { field: "canEditScheduleBOH",   labelEn: "BOH editor",   labelEs: "Editor BOH",   emoji: "📅", onColor: "bg-orange-600", offColor: "bg-gray-300" },
                                                     { field: "canViewOnboarding",    labelEn: "Onboarding (PII)", labelEs: "Onboarding (PII)", emoji: "🪪", onColor: "bg-rose-700",   offColor: "bg-gray-300" },
                                                     { field: "canReceive86Alerts",   labelEn: "86 alerts (push)", labelEs: "Alertas 86 (push)", emoji: "🚫", onColor: "bg-red-700", offColor: "bg-gray-300" },
+                                                    // smsOptIn intentionally NOT here — its bulk
+                                                    // path needs the audit-event side-effect that
+                                                    // bulkSetField doesn't provide. A dedicated
+                                                    // SMS row sits just below this table.
                                                 ].map(t => (
                                                     <div key={t.field} className="flex items-center gap-1 mb-1">
                                                         <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
@@ -1832,6 +2104,26 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                         </button>
                                                     </div>
                                                 ))}
+                                                {/* SMS opt-in sweep — separate from the generic ON/OFF
+                                                    rows above because flipping smsOptIn must ALSO write
+                                                    a row to sms_opt_in_events (compliance audit). The
+                                                    bulk handler captures one row per staff. */}
+                                                <div className="flex items-center gap-1 mb-1">
+                                                    <div className="flex-1 text-[10px] font-bold text-gray-700 truncate">
+                                                        📱 {language === "es" ? "SMS solo para urgente" : "SMS for urgent only"}
+                                                    </div>
+                                                    <button onClick={() => bulkSmsOptIn(visibleIds, true)}
+                                                        className="px-2 py-1 rounded text-[9px] font-bold text-white bg-green-700 hover:opacity-90"
+                                                        title={language === "es" ? `Activar SMS para ${visible.length}` : `Opt IN ${visible.length} to SMS`}>
+                                                        ON
+                                                    </button>
+                                                    <button onClick={() => bulkSmsOptIn(visibleIds, false)}
+                                                        className="px-2 py-1 rounded text-[9px] font-bold text-white bg-gray-300 hover:opacity-90"
+                                                        title={language === "es" ? `Desactivar SMS para ${visible.length}` : `Opt OUT ${visible.length} from SMS`}>
+                                                        OFF
+                                                    </button>
+                                                </div>
+
                                                 {/* Language sweep — set ALL visible to a single language at once.
                                                     Two buttons (EN / ES) instead of ON/OFF since this is a value
                                                     not a flag. */}
@@ -2106,6 +2398,93 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                                 🗓 {language === "es" ? "Disponib." : "Avail"}
                                                             </button>
                                                         </div>
+
+                                                        {/* SMS row — phone number, status pill, opt-in toggle.
+                                                            Live edit: typing in the phone field commits on blur
+                                                            (or Enter) via setPhoneForStaff which normalizes to
+                                                            E.164 and rejects bad input with a toast. Toggle calls
+                                                            setSmsOptInForStaff which writes an audit event row. */}
+                                                        {(() => {
+                                                            const pill = smsStatusPill(s);
+                                                            const phoneDraftKey = `phoneDraft_${s.id}`;
+                                                            const draft = phoneDrafts[phoneDraftKey];
+                                                            const displayValue = draft !== undefined
+                                                                ? draft
+                                                                : formatE164ForDisplay(s.phoneE164 || '');
+                                                            const isStopped = s.smsStopped === true;
+                                                            return (
+                                                                <div className="mt-2 pt-2 border-t border-dd-line/40">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        <span className="text-[10px] font-bold text-dd-text-2 uppercase tracking-wider">
+                                                                            📱 SMS
+                                                                        </span>
+                                                                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${pill.tone}`}>
+                                                                            {language === "es" ? pill.label.es : pill.label.en}
+                                                                        </span>
+                                                                        <input
+                                                                            type="tel"
+                                                                            inputMode="tel"
+                                                                            placeholder={language === "es" ? "(314) 555-1234" : "(314) 555-1234"}
+                                                                            value={displayValue}
+                                                                            onChange={e => setPhoneDrafts(prev => ({ ...prev, [phoneDraftKey]: e.target.value }))}
+                                                                            onBlur={async () => {
+                                                                                const raw = phoneDrafts[phoneDraftKey];
+                                                                                if (raw === undefined) return;
+                                                                                await setPhoneForStaff(s, raw);
+                                                                                setPhoneDrafts(prev => {
+                                                                                    const next = { ...prev };
+                                                                                    delete next[phoneDraftKey];
+                                                                                    return next;
+                                                                                });
+                                                                            }}
+                                                                            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                                                                            className="flex-1 min-w-[150px] max-w-[200px] text-xs border border-dd-line rounded-md px-2 py-1 font-mono text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50"
+                                                                        />
+                                                                        <button
+                                                                            onClick={() => setSmsOptInForStaff(s, !s.smsOptIn)}
+                                                                            disabled={isStopped || !s.phoneE164}
+                                                                            title={isStopped
+                                                                                ? (language === "es"
+                                                                                    ? "El staffer respondió STOP. Solo START por SMS puede reactivar."
+                                                                                    : "Staffer replied STOP. Only an inbound START can re-enable.")
+                                                                                : !s.phoneE164
+                                                                                    ? (language === "es" ? "Agrega un teléfono primero" : "Add a phone first")
+                                                                                    : (language === "es"
+                                                                                        ? (s.smsOptIn ? "Desactivar SMS" : "Activar SMS")
+                                                                                        : (s.smsOptIn ? "Opt OUT of SMS" : "Opt IN to SMS"))}
+                                                                            className={`px-2.5 py-1 rounded-md text-[11px] font-bold border transition ${
+                                                                                isStopped
+                                                                                    ? 'bg-red-50 text-red-600 border-red-200 cursor-not-allowed'
+                                                                                : !s.phoneE164
+                                                                                    ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
+                                                                                : s.smsOptIn
+                                                                                    ? 'bg-green-100 text-green-700 border-green-300 hover:bg-green-200'
+                                                                                    : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
+                                                                            }`}>
+                                                                            {s.smsOptIn
+                                                                                ? (language === "es" ? "✓ Activo" : "✓ Opted in")
+                                                                                : (language === "es" ? "Activar" : "Opt in")}
+                                                                        </button>
+                                                                    </div>
+                                                                    {s.smsLastSentAt && (
+                                                                        <div className="text-[10px] text-dd-text-2 mt-1">
+                                                                            {language === "es" ? "Último envío: " : "Last sent: "}
+                                                                            {(() => {
+                                                                                try {
+                                                                                    const ts = typeof s.smsLastSentAt === 'string'
+                                                                                        ? new Date(s.smsLastSentAt)
+                                                                                        : (s.smsLastSentAt.toDate ? s.smsLastSentAt.toDate() : new Date(s.smsLastSentAt));
+                                                                                    return ts.toLocaleString(language === 'es' ? 'es' : 'en', {
+                                                                                        month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                                                                                    });
+                                                                                } catch { return '—'; }
+                                                                            })()}
+                                                                            {s.smsLastDeliveryStatus && ` · ${s.smsLastDeliveryStatus}`}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                     </div>
                                                 </div>
                                             );
