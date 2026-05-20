@@ -25,6 +25,7 @@ import {
     createOffsiteShift,
     cancelOffsiteShift,
     forceClockOut,
+    editShiftTimes,
     subscribeAllOffsite,
     formatOffsiteWhen,
 } from '../data/offsiteClock';
@@ -151,6 +152,10 @@ export default function OffsiteClockSection({
             toast(tx('Force clock-out failed', 'Error al cerrar turno'), { kind: 'error' });
         }
     }
+
+    // Edit-times modal state. Holds the shift currently being edited.
+    // null = modal closed.
+    const [editingShift, setEditingShift] = useState(null);
 
     return (
         <div className="mb-6">
@@ -282,6 +287,7 @@ export default function OffsiteClockSection({
                                     locale={locale}
                                     onCancel={() => handleCancel(shift)}
                                     onForceOut={() => handleForceOut(shift)}
+                                    onEdit={() => setEditingShift(shift)}
                                 />
                             ))}
                         </div>
@@ -312,6 +318,7 @@ export default function OffsiteClockSection({
                                             isEs={isEs}
                                             locale={locale}
                                             readOnly
+                                            onEdit={() => setEditingShift(shift)}
                                         />
                                     ))}
                                 </div>
@@ -320,11 +327,27 @@ export default function OffsiteClockSection({
                     )}
                 </div>
             )}
+
+            {/* Edit-times modal — opens when admin clicks "Edit times"
+                on any active or historical shift row. Lets admin retype
+                clockedInAt and clockedOutAt with a reason; saves via
+                editShiftTimes which writes the audit row + before/after. */}
+            {editingShift && (
+                <EditTimesModal
+                    shift={editingShift}
+                    isEs={isEs}
+                    locale={locale}
+                    onClose={() => setEditingShift(null)}
+                    onSaved={() => setEditingShift(null)}
+                    adminName={staffName}
+                    adminId={viewer?.id}
+                />
+            )}
         </div>
     );
 }
 
-function ShiftRow({ shift, isEs, locale, onCancel, onForceOut, readOnly }) {
+function ShiftRow({ shift, isEs, locale, onCancel, onForceOut, onEdit, readOnly }) {
     const tx = (en, es) => (isEs ? es : en);
     const status = shift.status;
     const badge = {
@@ -338,6 +361,11 @@ function ShiftRow({ shift, isEs, locale, onCancel, onForceOut, readOnly }) {
     const outMs = shift.clockedOutAt?.toMillis ? shift.clockedOutAt.toMillis() : null;
     const minutes = (inMs && outMs) ? Math.max(0, Math.round((outMs - inMs) / 60_000)) : null;
 
+    // Edit Times is allowed on shifts that actually have a clock-in
+    // timestamp (active OR completed). Pending shifts have nothing to
+    // edit yet; cancelled shifts shouldn't be rewritten.
+    const canEditTimes = onEdit && (status === 'active' || status === 'completed');
+
     return (
         <div className="px-3 py-2 flex items-start gap-2">
             <div className="flex-1 min-w-0">
@@ -346,6 +374,12 @@ function ShiftRow({ shift, isEs, locale, onCancel, onForceOut, readOnly }) {
                     <span className={`text-[10px] font-black uppercase px-1.5 py-0.5 rounded-full border ${badge.cls}`}>
                         {badge.label}
                     </span>
+                    {shift.editedTimesAt && (
+                        <span title={shift.editedTimesBy ? tx(`Edited by ${shift.editedTimesBy}`, `Editado por ${shift.editedTimesBy}`) : tx('Edited', 'Editado')}
+                            className="text-[10px] font-black px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200">
+                            ✏️ {tx('edited', 'editado')}
+                        </span>
+                    )}
                 </div>
                 <div className="text-xs text-gray-600 truncate mt-0.5">
                     📍 {shift.location}
@@ -368,30 +402,243 @@ function ShiftRow({ shift, isEs, locale, onCancel, onForceOut, readOnly }) {
                         )}
                     </div>
                 )}
+                {shift.editedTimesReason && (
+                    <div className="text-[10px] text-amber-700 mt-0.5">
+                        {tx('Edit reason:', 'Motivo:')} "{shift.editedTimesReason}"
+                    </div>
+                )}
                 {shift.notes && (
                     <div className="text-[11px] text-gray-700 italic mt-0.5">"{shift.notes}"</div>
                 )}
             </div>
-            {!readOnly && (
-                <div className="flex flex-col gap-1 shrink-0">
-                    {status === 'pending' && onCancel && (
-                        <button
-                            onClick={onCancel}
-                            className="px-2 py-1 rounded-full text-[10px] font-bold bg-white text-red-700 border border-red-300 hover:bg-red-50"
-                        >
-                            {tx('Cancel', 'Cancelar')}
-                        </button>
-                    )}
-                    {status === 'active' && onForceOut && (
-                        <button
-                            onClick={onForceOut}
-                            className="px-2 py-1 rounded-full text-[10px] font-bold bg-white text-orange-700 border border-orange-300 hover:bg-orange-50"
-                        >
-                            {tx('Force out', 'Cerrar turno')}
-                        </button>
-                    )}
+            <div className="flex flex-col gap-1 shrink-0">
+                {/* Action buttons. Edit Times is always shown (even on
+                    history rows) because retroactive payroll corrections
+                    are the main use case for editing — Andrew flagged
+                    "say a staff clocks in late and I need to fix it". */}
+                {!readOnly && status === 'pending' && onCancel && (
+                    <button
+                        onClick={onCancel}
+                        className="px-2 py-1 rounded-full text-[10px] font-bold bg-white text-red-700 border border-red-300 hover:bg-red-50"
+                    >
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
+                )}
+                {!readOnly && status === 'active' && onForceOut && (
+                    <button
+                        onClick={onForceOut}
+                        className="px-2 py-1 rounded-full text-[10px] font-bold bg-white text-orange-700 border border-orange-300 hover:bg-orange-50"
+                    >
+                        {tx('Force out', 'Cerrar turno')}
+                    </button>
+                )}
+                {canEditTimes && (
+                    <button
+                        onClick={onEdit}
+                        title={tx('Fix the clock-in / clock-out times', 'Corregir hora de entrada / salida')}
+                        className="px-2 py-1 rounded-full text-[10px] font-bold bg-white text-amber-700 border border-amber-300 hover:bg-amber-50"
+                    >
+                        ✏️ {tx('Edit times', 'Editar horas')}
+                    </button>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// EditTimesModal — admin-side retroactive time correction.
+//
+// Use case Andrew flagged: staff clocked in 15 min late (or forgot to
+// tap clock-in until they remembered an hour later). Admin wants to
+// set the actual time the staff started working so payroll is right.
+// Same idea for clock-out — someone leaves at 5pm but didn't tap until
+// 5:30, admin trims the recorded time.
+//
+// Inputs are <input type="datetime-local"> which expects "YYYY-MM-DDTHH:MM"
+// format. We convert to/from Date objects on the boundary. The current
+// stored values prefill so the admin can nudge a single field instead
+// of re-typing both.
+function EditTimesModal({ shift, isEs, locale, onClose, onSaved, adminName, adminId }) {
+    const tx = (en, es) => (isEs ? es : en);
+    // datetime-local input format: YYYY-MM-DDTHH:MM (no TZ — interpreted
+    // as local time, which is what payroll wants).
+    const dateToLocalInput = (ms) => {
+        if (!ms) return '';
+        const d = new Date(ms);
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    };
+    const inMsOriginal = shift.clockedInAt?.toMillis?.() ?? null;
+    const outMsOriginal = shift.clockedOutAt?.toMillis?.() ?? null;
+
+    const [inStr, setInStr] = useState(dateToLocalInput(inMsOriginal));
+    const [outStr, setOutStr] = useState(dateToLocalInput(outMsOriginal));
+    const [reason, setReason] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [err, setErr] = useState('');
+
+    const inDirty = inStr !== dateToLocalInput(inMsOriginal);
+    const outDirty = outStr !== dateToLocalInput(outMsOriginal);
+    const hasChange = inDirty || outDirty;
+
+    const formatPreview = (str) => {
+        if (!str) return '—';
+        try {
+            const d = new Date(str);
+            if (isNaN(d.getTime())) return tx('invalid', 'inválido');
+            return d.toLocaleString(locale, {
+                weekday: 'short', month: 'short', day: 'numeric',
+                hour: 'numeric', minute: '2-digit',
+            });
+        } catch { return tx('invalid', 'inválido'); }
+    };
+
+    const save = async () => {
+        setErr('');
+        if (!hasChange) {
+            setErr(tx('No changes to save.', 'Sin cambios para guardar.'));
+            return;
+        }
+        // Convert local-time strings to Date objects, only for fields
+        // the admin touched. Untouched fields stay null so editShiftTimes
+        // leaves them alone.
+        const inDate  = inDirty  && inStr  ? new Date(inStr)  : null;
+        const outDate = outDirty && outStr ? new Date(outStr) : null;
+        if (inDate && isNaN(inDate.getTime())) { setErr(tx('Invalid clock-in.', 'Entrada inválida.')); return; }
+        if (outDate && isNaN(outDate.getTime())) { setErr(tx('Invalid clock-out.', 'Salida inválida.')); return; }
+        setBusy(true);
+        try {
+            await editShiftTimes({
+                id: shift.id,
+                clockedInAt: inDate,
+                clockedOutAt: outDate,
+                reason: reason.trim() || null,
+                adminName,
+                adminId,
+            });
+            onSaved && onSaved();
+        } catch (e) {
+            console.warn('editShiftTimes failed:', e);
+            setErr(e?.message || tx('Save failed.', 'Error al guardar.'));
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
+            <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-3 modal-scroll-lock">
+                <div className="flex items-center justify-between mb-1">
+                    <h3 className="text-lg font-black text-amber-700">
+                        ✏️ {tx('Edit clock times', 'Editar horas')}
+                    </h3>
+                    <button onClick={onClose} className="text-gray-500 text-2xl leading-none">×</button>
                 </div>
-            )}
+                <p className="text-xs text-gray-600 leading-relaxed">
+                    <span className="font-bold">{shift.staffName}</span>
+                    {' · '}
+                    {shift.location}
+                </p>
+
+                <div className="grid grid-cols-1 gap-3">
+                    {/* Clock-in time */}
+                    <label className="block">
+                        <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-[10px] font-bold uppercase text-gray-500">
+                                {tx('Clock-in', 'Entrada')}
+                            </span>
+                            {inDirty && (
+                                <span className="text-[9px] font-bold text-amber-700">
+                                    {tx('changed', 'modificado')}
+                                </span>
+                            )}
+                        </div>
+                        <input
+                            type="datetime-local"
+                            value={inStr}
+                            onChange={e => setInStr(e.target.value)}
+                            className={`w-full px-2 py-1.5 rounded-lg border text-sm ${inDirty ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`}
+                        />
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                            {tx('Was', 'Antes')}: {formatPreview(dateToLocalInput(inMsOriginal))}
+                            {inDirty && (
+                                <>
+                                    {' → '}
+                                    <span className="font-bold text-amber-700">{formatPreview(inStr)}</span>
+                                </>
+                            )}
+                        </div>
+                    </label>
+
+                    {/* Clock-out time — disabled with hint if no clock-out yet */}
+                    <label className="block">
+                        <div className="flex items-center justify-between mb-0.5">
+                            <span className="text-[10px] font-bold uppercase text-gray-500">
+                                {tx('Clock-out', 'Salida')}
+                            </span>
+                            {outDirty && (
+                                <span className="text-[9px] font-bold text-amber-700">
+                                    {tx('changed', 'modificado')}
+                                </span>
+                            )}
+                        </div>
+                        <input
+                            type="datetime-local"
+                            value={outStr}
+                            onChange={e => setOutStr(e.target.value)}
+                            className={`w-full px-2 py-1.5 rounded-lg border text-sm ${outDirty ? 'border-amber-400 bg-amber-50' : 'border-gray-300'}`}
+                        />
+                        <div className="text-[10px] text-gray-500 mt-0.5">
+                            {outMsOriginal == null
+                                ? tx('No clock-out recorded yet.', 'Aún no hay salida registrada.')
+                                : <>
+                                    {tx('Was', 'Antes')}: {formatPreview(dateToLocalInput(outMsOriginal))}
+                                    {outDirty && (
+                                        <>
+                                            {' → '}
+                                            <span className="font-bold text-amber-700">{formatPreview(outStr)}</span>
+                                        </>
+                                    )}
+                                </>}
+                        </div>
+                    </label>
+
+                    {/* Reason — optional but recommended for the audit trail */}
+                    <label className="block">
+                        <span className="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">
+                            {tx('Reason (optional)', 'Motivo (opcional)')}
+                        </span>
+                        <input
+                            type="text"
+                            value={reason}
+                            onChange={e => setReason(e.target.value)}
+                            maxLength={300}
+                            placeholder={tx('e.g. "forgot to clock in, started at 9"', 'ej. "se le olvidó marcar, empezó a las 9"')}
+                            className="w-full px-2 py-1.5 rounded-lg border border-gray-300 text-sm"
+                        />
+                    </label>
+                </div>
+
+                {err && (
+                    <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">{err}</div>
+                )}
+
+                <div className="flex gap-2 pt-1">
+                    <button
+                        onClick={onClose}
+                        disabled={busy}
+                        className="flex-1 py-2 rounded-lg bg-gray-100 text-gray-700 text-sm font-bold disabled:opacity-50"
+                    >
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
+                    <button
+                        onClick={save}
+                        disabled={busy || !hasChange}
+                        className="flex-1 py-2 rounded-lg bg-amber-600 text-white text-sm font-bold hover:bg-amber-700 disabled:opacity-40"
+                    >
+                        {busy ? tx('Saving…', 'Guardando…') : tx('Save changes', 'Guardar')}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

@@ -53,7 +53,7 @@
 import { db } from '../firebase';
 import {
     collection, doc, addDoc, updateDoc, query, where, onSnapshot,
-    serverTimestamp, Timestamp, getDocs, orderBy, limit,
+    serverTimestamp, Timestamp, getDoc, getDocs, orderBy, limit,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
 
@@ -185,6 +185,102 @@ export async function forceClockOut({ id, adminName, adminId }) {
         targetType: 'offsite_shift',
         targetId: id,
         details: { forcedOut: true },
+    });
+}
+
+// Admin override — manually correct the clock-in / clock-out times
+// on a shift after the fact. Use case Andrew flagged: a staff member
+// clocks in 15 minutes late (or forgets to tap clock-in until they
+// remember an hour later) and admin wants to set the actual time
+// they started working. Same idea for clock-out — someone leaves at
+// 5pm but doesn't tap until 5:30, admin trims the recorded time.
+//
+// Inputs:
+//   id              — shift doc id
+//   clockedInAt     — Date | null. null leaves the field unchanged.
+//                     Pass a Date to overwrite.
+//   clockedOutAt    — Date | null. Same semantics.
+//   reason          — optional free-text recorded on the audit row
+//   adminName, adminId — who made the edit (required for audit)
+//
+// Validation: if both are set, clockedOutAt must be after clockedInAt.
+// The audit log captures BEFORE + AFTER for every edited timestamp so
+// payroll review can reconstruct the original numbers if needed.
+//
+// Distinct from forceClockOut: that ends an active shift and uses
+// server time. This edits stored times (in-or-out) on any shift,
+// regardless of status. Editing does NOT change shift status — a
+// 'completed' shift stays 'completed'; an 'active' shift stays
+// 'active' (use forceClockOut to end it).
+export async function editShiftTimes({
+    id, clockedInAt, clockedOutAt, reason, adminName, adminId,
+}) {
+    if (!id) throw new Error('id required');
+    if (!adminName) throw new Error('adminName required');
+    if (clockedInAt == null && clockedOutAt == null) {
+        throw new Error('no times to edit');
+    }
+    // Validate types + ordering.
+    const toTs = (v, label) => {
+        if (v == null) return null;
+        if (v instanceof Timestamp) return v;
+        if (v instanceof Date) {
+            if (isNaN(v.getTime())) throw new Error(`invalid ${label}`);
+            return Timestamp.fromDate(v);
+        }
+        if (typeof v === 'number') return Timestamp.fromMillis(v);
+        if (typeof v === 'string') {
+            const d = new Date(v);
+            if (isNaN(d.getTime())) throw new Error(`invalid ${label}`);
+            return Timestamp.fromDate(d);
+        }
+        throw new Error(`invalid ${label}`);
+    };
+    const newInTs = toTs(clockedInAt, 'clockedInAt');
+    const newOutTs = toTs(clockedOutAt, 'clockedOutAt');
+
+    // Read current values so we can:
+    //   1. Validate ordering against whichever side is being changed
+    //      (if admin only edits clockedOutAt, compare against existing
+    //      clockedInAt)
+    //   2. Record both BEFORE and AFTER in the audit row
+    const docRef = doc(db, 'offsite_shifts', id);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) throw new Error('shift not found');
+    const existing = snap.data();
+    const existingInMs = existing.clockedInAt?.toMillis?.() ?? null;
+    const existingOutMs = existing.clockedOutAt?.toMillis?.() ?? null;
+
+    const finalInMs = newInTs ? newInTs.toMillis() : existingInMs;
+    const finalOutMs = newOutTs ? newOutTs.toMillis() : existingOutMs;
+    if (finalInMs != null && finalOutMs != null && finalOutMs <= finalInMs) {
+        throw new Error('clockedOutAt must be after clockedInAt');
+    }
+
+    const updates = { updatedAt: serverTimestamp() };
+    if (newInTs)  updates.clockedInAt = newInTs;
+    if (newOutTs) updates.clockedOutAt = newOutTs;
+    // Stamp the edit on the doc so the UI can show a "✏️ edited" badge.
+    // editedTimesAt is server-stamped; editedTimesBy + editedTimesReason
+    // are admin-supplied. We always overwrite — the latest edit wins,
+    // and full edit history lives in the audit log.
+    updates.editedTimesAt = serverTimestamp();
+    updates.editedTimesBy = adminName;
+    if (reason) updates.editedTimesReason = String(reason).slice(0, 300);
+
+    await updateDoc(docRef, updates);
+
+    recordAudit({
+        action: 'offsite.edit_times',
+        actorName: adminName,
+        actorId: adminId ?? null,
+        targetType: 'offsite_shift',
+        targetId: id,
+        details: {
+            before: { clockedInAt: existingInMs, clockedOutAt: existingOutMs },
+            after:  { clockedInAt: finalInMs,    clockedOutAt: finalOutMs    },
+            reason: reason || null,
+        },
     });
 }
 
