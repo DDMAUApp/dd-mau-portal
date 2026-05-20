@@ -5,7 +5,7 @@
 // this editor lets admin add/edit/remove TV configs, generate the
 // kiosk URL for each TV, and pick layout + category filter.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { MENU_DATA } from '../data/menu';
 import {
     subscribeTvConfigs, saveTvConfig, deleteTvConfig,
@@ -15,6 +15,10 @@ import {
 } from '../data/tvConfigs';
 import { uploadMenuFile } from '../data/menuImageUpload';
 import { toast } from '../toast';
+
+// Lazy because the hit-zone editor pulls in a fair amount of UI
+// state + per-zone rendering that most admin views don't need.
+const HitZoneEditor = lazy(() => import('./HitZoneEditor'));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -184,6 +188,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // Image-mode state
     const [imageUrls, setImageUrls] = useState(Array.isArray(initial?.imageUrls) ? initial.imageUrls : []);
     const [imageRotateSeconds, setImageRotateSeconds] = useState(Number(initial?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS);
+    const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
+    const [hitZoneEditorOpen, setHitZoneEditorOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);
@@ -251,6 +257,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.imageRotateSeconds = imageUrls.length > 1
                     ? Math.max(3, Math.min(60, Number(imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS))
                     : null;
+                payload.imageHitZones = imageHitZones;
                 // Clear menu-mode fields on the saved doc to avoid stale data.
                 payload.layout = null;
                 payload.showPhotos = null;
@@ -265,6 +272,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.includeCategories = includeAll ? null : includeCategories;
                 payload.imageUrls = null;
                 payload.imageRotateSeconds = null;
+                payload.imageHitZones = null;
             }
             await saveTvConfig({ tvId: finalId, payload, byName });
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
@@ -441,6 +449,26 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                             className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
                                     </label>
                                 )}
+
+                                {/* Hit zone editor entry — only available after at least one image is uploaded */}
+                                {imageUrls.length > 0 && (
+                                    <div className="pt-1.5">
+                                        <button onClick={() => setHitZoneEditorOpen(true)} type="button"
+                                            className="w-full px-3 py-2 rounded-lg bg-white border-2 border-sky-600 text-sky-700 text-xs font-bold hover:bg-sky-100 transition flex items-center justify-center gap-1.5">
+                                            🎯 {imageHitZones.length > 0
+                                                ? tx(`Edit SOLD OUT zones (${imageHitZones.length} mapped)`, `Editar zonas SOLD OUT (${imageHitZones.length})`)
+                                                : tx('Map items for SOLD OUT overlays', 'Mapear items para tachados')}
+                                        </button>
+                                        {imageHitZones.length === 0 && (
+                                            <p className="text-[10px] text-sky-700/70 mt-1 italic leading-snug">
+                                                {tx(
+                                                    'Optional. Map each item on the image to its menu name so SOLD OUT stickers can overlay automatically when 86\'d. Without zones, the TV just shows the menu image as-is.',
+                                                    'Opcional. Mapea cada item en la imagen para que aparezca SOLD OUT cuando se acabe.',
+                                                )}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 leading-snug">
                                 ⚠️ {tx(
@@ -571,6 +599,18 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                     </button>
                 </footer>
             </div>
+
+            {/* Hit zone editor — opened from the image-mode panel */}
+            {hitZoneEditorOpen && (
+                <Suspense fallback={null}>
+                    <HitZoneEditor
+                        imageUrls={imageUrls}
+                        initialZones={imageHitZones}
+                        language={tx('en', 'es') === 'es' ? 'es' : 'en'}
+                        onSave={(zones) => setImageHitZones(zones)}
+                        onClose={() => setHitZoneEditorOpen(false)} />
+                </Suspense>
+            )}
         </div>
     );
 }

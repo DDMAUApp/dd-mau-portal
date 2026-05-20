@@ -75,6 +75,7 @@ export default function MenuDisplay({ tvId = 'webster' }) {
     const rotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.rotateSeconds) || DEFAULT_ROTATE_SECONDS));
     const imageRotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS));
     const imageUrls = Array.isArray(tvConfig?.imageUrls) ? tvConfig.imageUrls : [];
+    const imageHitZones = Array.isArray(tvConfig?.imageHitZones) ? tvConfig.imageHitZones : [];
     const includeCategories = Array.isArray(tvConfig?.includeCategories) && tvConfig.includeCategories.length > 0
         ? new Set(tvConfig.includeCategories) : null;
     const spotlightCategory = tvConfig?.spotlightCategory || null;
@@ -173,6 +174,8 @@ export default function MenuDisplay({ tvId = 'webster' }) {
             <ImageModeLayout
                 imageUrls={imageUrls}
                 imageRotateSeconds={imageRotateSeconds}
+                imageHitZones={imageHitZones}
+                sixed={sixed}
                 now={now}
                 label={tvConfig?.label || LOC_LABEL[location] || location}
             />
@@ -198,8 +201,29 @@ export default function MenuDisplay({ tvId = 'webster' }) {
 // Full-bleed image fill. If multiple pages, fades between them
 // every `rotateSeconds`. Minimal corner indicator (live dot +
 // clock) for staff confidence that the feed is running.
-function ImageModeLayout({ imageUrls, imageRotateSeconds, now, label }) {
+//
+// SOLD OUT overlays:
+//   When `imageHitZones` is configured, each zone is a rectangle
+//   (fractions of the natural image dims) tied to a MENU_DATA
+//   item name. When that item is in the 86 list, we render a
+//   semi-transparent red sticker at the zone's coordinates so
+//   customers see SOLD OUT directly on the menu image. The image
+//   itself is untouched — the overlay sits on top in a layer
+//   that's positioned identically to the image area.
+//
+//   Trick for getting overlay alignment right with object-contain
+//   letterboxing: we render the image inside a container whose
+//   aspect-ratio is locked to the image's natural aspect ratio.
+//   The container fits the screen via max-w / max-h, and the
+//   image fills the container exactly (no letterbox inside the
+//   container). Overlays are positioned absolute inside the
+//   container at fractional coordinates — they always land on
+//   the right pixels regardless of TV size.
+function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], sixed, now, label }) {
     const [idx, setIdx] = useState(0);
+    // Track natural dims per page so we can size each container to
+    // its image's aspect ratio. Updated on each img's onLoad.
+    const [naturalDims, setNaturalDims] = useState({});
     const safeUrls = Array.isArray(imageUrls) ? imageUrls : [];
 
     useEffect(() => {
@@ -221,23 +245,103 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, now, label }) {
         );
     }
 
+    // Resolve which hit zones, on the current page, should render.
+    const activeZonesOnPage = imageHitZones.filter(z => {
+        if ((z.page ?? 0) !== idx) return false;
+        if (!z.itemName) return false;
+        // Fuzzy name match against the 86 set (same normalize() used
+        // for data-mode matching above).
+        const candidates = [
+            z.itemName,
+            `${z.itemName} ${z.category || ''}`,
+            `${z.category || ''} ${z.itemName}`,
+        ].map(normalizeName);
+        return candidates.some(n => n && sixed.has(n));
+    });
+
     return (
-        <div className="fixed inset-0 bg-white overflow-hidden font-sans">
-            {/* Stacked images so the fade looks smooth instead of a hard cut */}
-            {safeUrls.map((url, i) => (
-                <img key={url + i}
-                    src={url}
-                    alt=""
-                    className="absolute inset-0 w-full h-full object-contain transition-opacity duration-700"
-                    style={{ opacity: i === idx ? 1 : 0 }} />
-            ))}
-            {/* Corner live indicator — small + low-contrast, doesn't compete with menu */}
-            <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/40 backdrop-blur-sm text-white text-[10px] font-bold">
+        <div className="fixed inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center">
+            {/* Each page is its own container, sized to its image's
+                aspect ratio. Overlays inside the container align
+                perfectly with the image regardless of TV resolution. */}
+            {safeUrls.map((url, i) => {
+                const dims = naturalDims[i];
+                const aspect = dims ? (dims.w / dims.h) : null;
+                // Until the image's onLoad fires we don't know its
+                // aspect; render a placeholder full-screen frame.
+                return (
+                    <div key={url + i}
+                        className="absolute transition-opacity duration-700"
+                        style={{
+                            opacity: i === idx ? 1 : 0,
+                            // Outer wrapper fills the viewport so the
+                            // image-aspect inner can center itself.
+                            inset: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            pointerEvents: i === idx ? 'auto' : 'none',
+                        }}>
+                        <div className="relative"
+                            style={aspect
+                                ? { aspectRatio: aspect, maxWidth: '100vw', maxHeight: '100vh', width: '100%', height: '100%' }
+                                : { width: '100vw', height: '100vh' }}>
+                            <img src={url} alt=""
+                                onLoad={(e) => {
+                                    const img = e.currentTarget;
+                                    setNaturalDims(prev => prev[i]
+                                        ? prev
+                                        : { ...prev, [i]: { w: img.naturalWidth, h: img.naturalHeight } });
+                                }}
+                                className="block w-full h-full object-contain"
+                                draggable={false} />
+
+                            {/* Overlays — only render on the active page */}
+                            {i === idx && activeZonesOnPage.map((zone, zi) => (
+                                <SoldOutSticker key={zi} zone={zone} />
+                            ))}
+                        </div>
+                    </div>
+                );
+            })}
+
+            {/* Corner live indicator */}
+            <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/40 backdrop-blur-sm text-white text-[10px] font-bold z-10">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span className="tabular-nums">{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
                 {safeUrls.length > 1 && (
                     <span className="opacity-60">· {idx + 1}/{safeUrls.length}</span>
                 )}
+                {activeZonesOnPage.length > 0 && (
+                    <span className="opacity-70 ml-1">· {activeZonesOnPage.length} sold out</span>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ── SOLD OUT sticker — rendered on top of a hit zone ─────────
+// Semi-transparent red overlay sized to fully cover the zone, with
+// a centered "SOLD OUT" label. Drop-shadow + rotation make it feel
+// like a physical stamp rather than a polite UI badge.
+function SoldOutSticker({ zone }) {
+    return (
+        <div className="absolute pointer-events-none"
+            style={{
+                left: `${zone.x * 100}%`,
+                top: `${zone.y * 100}%`,
+                width: `${zone.width * 100}%`,
+                height: `${zone.height * 100}%`,
+            }}>
+            {/* Background block — partial-transparency red so the
+                item name underneath still reads ghosted */}
+            <div className="absolute inset-0 bg-red-600/55 border-2 border-red-700 rounded shadow-lg" />
+            {/* Diagonal strike band */}
+            <div className="absolute inset-0 flex items-center justify-center">
+                <div className="bg-red-700 text-white px-2 py-0.5 text-[clamp(10px,2vw,18px)] font-black uppercase tracking-widest shadow-2xl"
+                    style={{ transform: 'rotate(-8deg)' }}>
+                    Sold&nbsp;Out
+                </div>
             </div>
         </div>
     );

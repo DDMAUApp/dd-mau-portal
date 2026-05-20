@@ -28,6 +28,25 @@
 //   // For mode='image':
 //   imageUrls:        string[]?         // Firebase Storage URLs, one per page
 //   imageRotateSeconds: number?         // if multiple pages, rotate every N sec
+//   imageHitZones:    HitZone[]?        // SOLD OUT overlay regions; see below
+
+// HitZone — Andrew 2026-05-20: "will i be able to keep the look of
+// the menu the exact same — Image + overlay 'SOLD OUT' stickers on
+// items". Admin clicks the menu image once per item to map a
+// rectangle to a menu-item name. When that item appears in the
+// location's 86 list, MenuDisplay overlays a red "SOLD OUT"
+// sticker at the rectangle, preserving the original menu design.
+//
+// Coordinates are fractions of the image's natural width/height
+// (0..1) so the same hit zones work at any TV resolution.
+// Shape:
+//   {
+//     page:        number   // index into imageUrls (0-based)
+//     x, y:        number   // top-left in 0..1
+//     width, height: number // size in 0..1
+//     itemName:    string   // matches MENU_DATA item nameEn (after normalize())
+//     category:    string?  // hint for the admin UI; not used by 86 matching
+//   }
 //
 //   updatedAt:    serverTimestamp
 //   updatedBy:    string
