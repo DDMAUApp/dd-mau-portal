@@ -2364,6 +2364,191 @@ exports.aiFixText = onCall(
     }
 );
 
+// ── 2026-05-20 — aiExtractMenu: PDF/image → structured menu data ──
+// Andrew: "if the menu comes in as pdf or jpeg how can you make
+// edits". The client uploads a PDF/JPEG to Storage (handled by
+// menuImageUpload.js — PDFs are split into one PNG per page) and
+// then calls this function with the list of image URLs. We fetch
+// each image, base64-encode it, send the lot to Claude with vision,
+// and parse a structured menu JSON back. The client shows the
+// result in a review UI and writes the accepted items to the
+// /menu_items overrides collection.
+//
+// Cost: Claude Haiku-class with vision is ~$0.003-0.008 per image
+// at typical menu sizes — usually pennies for a full menu import.
+// Cap at 8 images per call (designer menus rarely exceed 4 pages).
+exports.aiExtractMenu = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        maxInstances: 5,
+        timeoutSeconds: 120,   // vision calls can take 20-60s for multi-page menus
+        memory: "512MiB",      // base64 + JSON parsing of multi-image responses
+        secrets: [ANTHROPIC_API_KEY],
+    },
+    async (request) => {
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({
+            ip,
+            namespace: "aiExtractMenu",
+            limit: 20,           // 20 menu imports per 5 min — generous; menu imports are rare events
+            windowMs: 5 * 60_000,
+        });
+
+        const data = request.data || {};
+        const imageUrls = Array.isArray(data.imageUrls) ? data.imageUrls : [];
+        if (imageUrls.length === 0) {
+            throw new HttpsError("invalid-argument", "imageUrls required");
+        }
+        if (imageUrls.length > 8) {
+            throw new HttpsError("invalid-argument", "too many pages (max 8)");
+        }
+
+        // Fetch each image and base64-encode. We fetch from Storage
+        // server-side rather than expecting the client to send raw
+        // bytes — keeps the request payload small and lets us run on
+        // pre-uploaded URLs cleanly.
+        const imageBlocks = [];
+        for (const url of imageUrls) {
+            if (typeof url !== "string" || !/^https:\/\//.test(url)) {
+                throw new HttpsError("invalid-argument", "imageUrls must be https URLs");
+            }
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) {
+                    throw new HttpsError("invalid-argument", `failed to fetch ${url.slice(0, 80)}: ${resp.status}`);
+                }
+                const buf = await resp.arrayBuffer();
+                const sizeKB = Math.round(buf.byteLength / 1024);
+                if (buf.byteLength > 5 * 1024 * 1024) {
+                    throw new HttpsError("invalid-argument", `image too large (${sizeKB} KB; cap 5 MB)`);
+                }
+                const b64 = Buffer.from(buf).toString("base64");
+                // Honor the content-type header; fall back to PNG which
+                // is what our pdfjs renderer produces.
+                let mediaType = (resp.headers.get("content-type") || "image/png").split(";")[0].trim().toLowerCase();
+                if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(mediaType)) {
+                    mediaType = "image/png";
+                }
+                imageBlocks.push({
+                    type: "image",
+                    source: { type: "base64", media_type: mediaType, data: b64 },
+                });
+            } catch (e) {
+                if (e instanceof HttpsError) throw e;
+                logger.error("aiExtractMenu fetch image failed:", url, e?.message);
+                throw new HttpsError("internal", "could not fetch one of the menu images");
+            }
+        }
+
+        const system = [
+            "You are a menu OCR + structuring assistant for a restaurant management app.",
+            "Given one or more images of a restaurant menu, extract the menu items into a clean JSON structure.",
+            "",
+            "Rules:",
+            "- Treat multi-page menus as one consolidated menu (don't duplicate items shown on a cover page + later).",
+            "- Group items under their visible category headers (e.g. 'Bowls', 'Bánh Mì', 'Drinks').",
+            "- For each item, capture: nameEn (English name as printed), price (as printed, e.g. '$18'), and descEn (one-line description IF printed; omit if absent).",
+            "- If the menu shows price suffixes like '/ S /M /L' or multiple sizes, capture the FIRST listed price.",
+            "- For dietary tags visible on the menu (V, GF, VG, vegan, vegetarian, gluten-free, spicy), set the matching boolean flags: vegan, glutenFree, spicy.",
+            "- Don't invent items. If you can't read something clearly, skip it.",
+            "- Preserve any accents/diacritics in names (e.g. 'Bánh Mì', 'Phở').",
+            "",
+            "Respond with ONLY a JSON object of this exact shape. No prose, no explanation, no markdown code fences:",
+            '{ "categories": [ { "category": "Bowls", "items": [ { "nameEn": "Pork Bowl", "price": "$15", "descEn": "Roast pork with rice", "spicy": false, "vegan": false, "glutenFree": false, "popular": false } ] } ] }',
+            "",
+            "If you cannot extract a menu at all, respond with: { \"categories\": [] }",
+        ].join("\n");
+
+        const userContent = [
+            ...imageBlocks,
+            { type: "text", text: "Extract the menu items from these image(s) into the JSON shape described in the system prompt." },
+        ];
+
+        let body;
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    // Haiku-class — vision-capable. If model 404s, swap to
+                    // the current Haiku model name and redeploy.
+                    model: "claude-haiku-4-5",
+                    max_tokens: 8192,    // big menus can have 50-100 items; pad generously
+                    system,
+                    messages: [{ role: "user", content: userContent }],
+                }),
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                logger.error("aiExtractMenu anthropic error", resp.status, errText.slice(0, 500));
+                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+            }
+            body = await resp.json();
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("aiExtractMenu fetch failed:", e?.message || e);
+            throw new HttpsError("unavailable", "menu extraction unavailable");
+        }
+
+        // Parse model output. Expected shape: { content: [{ type: 'text', text: '{...JSON...}' }] }
+        const textBlock = (body?.content || []).find(c => c?.type === "text");
+        const raw = textBlock?.text || "";
+        let parsed = null;
+        try {
+            const trimmed = raw.trim().replace(/^```(?:json)?\n?/i, "").replace(/```$/i, "").trim();
+            parsed = JSON.parse(trimmed);
+        } catch {
+            // Fallback: extract first {...} block if Claude prefixed prose
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (m) {
+                try { parsed = JSON.parse(m[0]); } catch {}
+            }
+        }
+        if (!parsed || !Array.isArray(parsed.categories)) {
+            logger.warn("aiExtractMenu: could not parse model output:", raw.slice(0, 300));
+            return { categories: [], rawSnippet: raw.slice(0, 500) };
+        }
+
+        // Sanity-check + sanitize each item so we don't pass garbage
+        // through to the client's review UI. Keep field whitelist tight.
+        const safeCategories = [];
+        for (const cat of parsed.categories) {
+            if (!cat || typeof cat.category !== "string") continue;
+            const items = Array.isArray(cat.items) ? cat.items : [];
+            const safeItems = [];
+            for (const it of items) {
+                if (!it || typeof it.nameEn !== "string" || !it.nameEn.trim()) continue;
+                safeItems.push({
+                    nameEn: String(it.nameEn).trim().slice(0, 120),
+                    price: typeof it.price === "string" ? it.price.slice(0, 16) : "",
+                    descEn: typeof it.descEn === "string" ? it.descEn.slice(0, 280) : "",
+                    spicy: it.spicy === true,
+                    vegan: it.vegan === true,
+                    glutenFree: it.glutenFree === true,
+                    popular: it.popular === true,
+                });
+            }
+            if (safeItems.length === 0) continue;
+            safeCategories.push({
+                category: cat.category.trim().slice(0, 60),
+                items: safeItems,
+            });
+        }
+
+        return {
+            categories: safeCategories,
+            pageCount: imageUrls.length,
+        };
+    }
+);
+
 exports.translateMessage = onCall(
     { region: "us-central1", cors: true, maxInstances: 10 },
     async (request) => {

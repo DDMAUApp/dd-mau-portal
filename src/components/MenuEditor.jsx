@@ -20,7 +20,7 @@
 // Photos upload to Firebase Storage at menu_photos/{slug}_{ts}.{ext}.
 // All edits are logged via the audit trail in menuOverrides.js.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { storage } from '../firebase';
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { MENU_DATA } from '../data/menu';
@@ -30,12 +30,17 @@ import {
 } from '../data/menuOverrides';
 import { toast } from '../toast';
 
+// Lazy because the import modal pulls in pdfjs + the Claude vision
+// pipeline. Most admin views don't need it.
+const MenuImportModal = lazy(() => import('./MenuImportModal'));
+
 export default function MenuEditor({ language = 'en', byName }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [overrides, setOverrides] = useState(() => new Map());
     const [editing, setEditing] = useState(null);   // { slug, baseItem, category, isCustom, isNew }
     const [filter, setFilter] = useState('all');     // all | edited | hidden | custom
+    const [importing, setImporting] = useState(false);
 
     useEffect(() => {
         const unsub = subscribeMenuOverrides(setOverrides);
@@ -104,6 +109,10 @@ export default function MenuEditor({ language = 'en', byName }) {
                 <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-300">
                     {overrides.size} {tx('overrides', 'cambios')}
                 </span>
+                <button onClick={() => setImporting(true)}
+                    className="ml-auto px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white text-xs font-black hover:opacity-90 transition shadow-sm">
+                    🤖 {tx('Import from PDF / JPEG', 'Importar de PDF / JPEG')}
+                </button>
             </div>
             <p className="text-[11px] text-amber-700 mb-3 leading-snug">
                 {tx(
@@ -199,6 +208,14 @@ export default function MenuEditor({ language = 'en', byName }) {
                     onClose={() => setEditing(null)}
                     byName={byName}
                     tx={tx} />
+            )}
+
+            {importing && (
+                <Suspense fallback={null}>
+                    <MenuImportModal language={language}
+                        byName={byName}
+                        onClose={() => setImporting(false)} />
+                </Suspense>
             )}
         </div>
     );
