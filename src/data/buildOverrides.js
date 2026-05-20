@@ -71,14 +71,32 @@ export async function getBuildOverride(menuItemSlug) {
 
 // Save (or replace) an override. Caller passes the full components
 // list; we don't try to merge partials.
-export async function saveBuildOverride({ menuItemSlug, menuItemName, components, byName }) {
+export async function saveBuildOverride({
+    menuItemSlug, menuItemName, components,
+    shelfLifeDays,   // 2026-05-20 — optional smart default for prints
+    notes,           // optional editable notes (replaces static cashier notes)
+    byName,
+}) {
     if (!menuItemSlug) throw new Error('menuItemSlug required');
     if (!Array.isArray(components)) throw new Error('components must be an array');
     const cleaned = components.map((c, idx) => sanitizeComponent(c, idx));
+    const cleanShelf = Number.isFinite(Number(shelfLifeDays)) && Number(shelfLifeDays) > 0
+        ? Math.min(60, Math.floor(Number(shelfLifeDays)))
+        : null;
+    const cleanNotes = Array.isArray(notes)
+        ? notes
+            .map(n => ({
+                en: String(n?.en || '').slice(0, 240).trim(),
+                es: String(n?.es || n?.en || '').slice(0, 240).trim(),
+            }))
+            .filter(n => n.en)
+        : [];
     await setDoc(doc(db, 'build_overrides', menuItemSlug), {
         menuItemSlug,
         menuItemName: String(menuItemName || menuItemSlug).slice(0, 120),
         components: cleaned,
+        ...(cleanShelf ? { shelfLifeDays: cleanShelf } : {}),
+        notes: cleanNotes,
         updatedAt: serverTimestamp(),
         updatedBy: byName || null,
     }, { merge: false });
@@ -90,6 +108,8 @@ export async function saveBuildOverride({ menuItemSlug, menuItemName, components
         details: {
             menuItemName,
             componentCount: cleaned.length,
+            shelfLifeDays: cleanShelf,
+            noteCount: cleanNotes.length,
         },
     });
 }
@@ -116,15 +136,42 @@ export async function deleteBuildOverride({ menuItemSlug, menuItemName, byName }
 // When `override` is null/undefined, returns the static build unchanged.
 export function applyBuildOverride(staticBuild, override) {
     if (!staticBuild) return staticBuild;
-    if (!override || !Array.isArray(override.components) || override.components.length === 0) {
-        return staticBuild;
+    if (!override) return staticBuild;
+    const hasComps = Array.isArray(override.components) && override.components.length > 0;
+    const hasNotes = Array.isArray(override.notes) && override.notes.length > 0;
+    if (!hasComps && !hasNotes && !override.shelfLifeDays) return staticBuild;
+
+    // Components: override list replaces the static list when provided.
+    let components = staticBuild.components || [];
+    if (hasComps) {
+        const staticNotes = (staticBuild.components || []).filter(c => c.kind === 'note');
+        // Admin-edited notes replace static notes; if no notes
+        // override, keep the static cashier guidance.
+        const noteComps = hasNotes
+            ? override.notes.map((n, i) => ({
+                id: `note-override-${i}`,
+                kind: 'note',
+                nameEn: n.en,
+                nameEs: n.es,
+            }))
+            : staticNotes;
+        components = [...override.components, ...noteComps];
+    } else if (hasNotes) {
+        // Components stay static, but notes replaced.
+        const printable = (staticBuild.components || []).filter(c => c.kind !== 'note');
+        const noteComps = override.notes.map((n, i) => ({
+            id: `note-override-${i}`,
+            kind: 'note',
+            nameEn: n.en,
+            nameEs: n.es,
+        }));
+        components = [...printable, ...noteComps];
     }
-    // Preserve static notes — they're cashier guidance, not items.
-    const notes = (staticBuild.components || []).filter(c => c.kind === 'note');
+
     return {
         ...staticBuild,
-        components: [...override.components, ...notes],
-        // Surface a flag so the UI can show a "✏ Custom" chip.
+        components,
+        shelfLifeDays: override.shelfLifeDays || staticBuild.shelfLifeDays || null,
         isCustomized: true,
         customizedAt: override.updatedAt,
         customizedBy: override.updatedBy,

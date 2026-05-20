@@ -32,6 +32,7 @@ import {
     BUILD_SHEET_SAUCES,
     BUILD_SHEET_SNACKS,
 } from './buildSheet';
+import { MASTER_RECIPES } from './masterRecipes';
 
 // Component kinds we render — drives the icon + tone in the UI.
 export const COMPONENT_KIND = Object.freeze({
@@ -422,6 +423,60 @@ function normalizeName(s) {
         .normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
+}
+
+// ── Recursive sub-recipe resolver ─────────────────────────────────
+//
+// Andrew 2026-05-20 Phase 2: "Recursive getFullItemBuild() walks
+// sub-recipes (sauce -> recipe -> ingredients tree)".
+//
+// Given a component (typically a sauce or broth), tries to find a
+// matching recipe in MASTER_RECIPES. If found, returns the recipe's
+// top-level ingredients as a list of "sub-components" the cook can
+// also print labels for. Example: Vermicelli Bowl -> sauce: Vietnamese
+// Vinaigrette -> sub-recipe finds the vinaigrette in MASTER_RECIPES ->
+// returns: Fish sauce, Sugar, Vinegar, Hot water, Thai chili, Garlic,
+// Sambal — each individually printable.
+//
+// Matching is fuzzy: exact title match first, then includes-substring
+// in either direction. Keeps "Peanut Dressing" finding "Peanut Sauce"
+// or vice versa.
+//
+// Returns:
+//   { recipe, ingredients: [{ nameEn, nameEs }] }  on match
+//   null                                            on no match
+export function findSubRecipe(componentNameEn) {
+    if (!componentNameEn) return null;
+    const target = normalizeName(componentNameEn);
+    if (!target) return null;
+    let best = null;
+    for (const r of MASTER_RECIPES) {
+        const rname = normalizeName(r.titleEn);
+        if (!rname) continue;
+        if (rname === target) { best = r; break; }
+        if (!best && (rname.includes(target) || target.includes(rname))) {
+            best = r;
+        }
+    }
+    if (!best) return null;
+    const ingredientsEn = Array.isArray(best.ingredientsEn) ? best.ingredientsEn : [];
+    const ingredientsEs = Array.isArray(best.ingredientsEs) ? best.ingredientsEs : ingredientsEn;
+    // Strip leading qty + unit so the label says "fish sauce" not
+    // "4 bottles fish sauce". Same trick labelPrinting.js uses.
+    const stripQty = (line) => {
+        const m = String(line).match(/^(?:\d+\s*[/\-]?\s*\d*\s*\w{0,12}\s*)?(.*)$/);
+        return ((m && m[1]) || line || '').trim();
+    };
+    const ingredients = ingredientsEn.map((en, i) => ({
+        nameEn: stripQty(en).slice(0, 80) || en,
+        nameEs: stripQty(ingredientsEs[i] || en).slice(0, 80) || en,
+    })).filter(x => x.nameEn);
+    return {
+        recipe: best,
+        ingredients,
+        allergens: Array.isArray(best.allergens) ? best.allergens : [],
+        shelfLifeDays: best.shelfLifeDays || null,
+    };
 }
 
 // Tone tokens for the UI per component kind.

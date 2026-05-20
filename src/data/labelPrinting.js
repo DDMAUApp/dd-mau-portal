@@ -175,9 +175,15 @@ export function buildLabelPayload({
     const titleLine = (isEs && itemNameEs) ? itemNameEs : itemName;
     const titleLines = wrapWords(String(titleLine || 'Item').toUpperCase(), 18);
 
+    // Big prep date at the top — for FIFO scanning. Andrew
+    // 2026-05-20. Format: "PREPPED 05/20/26" + smaller time line.
+    const prepDateBig = `${tx('PREPPED', 'HECHO')} ${fmtDate(prepDate)}`;
+    const prepTimeBig = fmtTime(prepDate);
+
+    const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
+    const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
     const metaLines = [
-        `${tx('Prep', 'Hecho')}:   ${fmtDate(prepDate)} ${fmtTime(prepDate)}`,
-        `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)}`,
+        `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`,
         `${tx('By', 'Por')}:     ${(preppedBy || '').slice(0, 22)}`,
     ];
     if (location) metaLines.push(`${tx('Loc', 'Loc')}:    ${location}`);
@@ -192,6 +198,8 @@ export function buildLabelPayload({
     return {
         titleLines,
         metaLines,
+        prepDateBig,
+        prepTimeBig,
         allergens: allergenList,
         ingredients: ingredientList,
         notes: String(notes || '').slice(0, 120),
@@ -232,24 +240,61 @@ function escapeXml(s) {
         .replace(/'/g, '&apos;');
 }
 
-export function renderEposXml(payload) {
+// Build the inner ePOS body for ONE prep label. Layout (Andrew
+// 2026-05-20 "lets also make the lable to be Date it was prep the
+// top and largest this helps with FIFO"):
+//
+//   ┌────────────────────────────────┐
+//   │       PREPPED 05/20/26         │  ← width=3 height=3, BOLD
+//   │           2:15p                │  ← width=2 height=2
+//   │ ============================== │
+//   │     Lemongrass Chicken         │  ← width=2 height=2 (title)
+//   │ ------------------------------ │
+//   │ Use by: 5/25/26 (Wed)          │
+//   │ By:     Andrew Shih            │
+//   │ Loc:    Webster                │
+//   │ ALLERGENS: gluten, soy         │  ← bold
+//   │ ------------------------------ │
+//   │             DD MAU             │
+//   └────────────────────────────────┘
+//
+// Date goes top + huge so a cook scanning the walk-in for FIFO sees
+// "what got made when" at a glance. Item name stays prominent below.
+function renderPrepLabelBody(payload) {
     const lines = [];
-    // Header — center + double-size title
+
+    // ── HUGE prep date at the top ────────────────────────────
     lines.push(`<text align="center"/>`);
+    lines.push(`<text em="true"/>`);
+    lines.push(`<text width="3" height="3"/>`);
+    if (payload.prepDateBig) {
+        lines.push(`<text>${escapeXml(payload.prepDateBig)}&#10;</text>`);
+    }
+    lines.push(`<text em="false"/>`);
+    // Smaller time line under the date
+    if (payload.prepTimeBig) {
+        lines.push(`<text width="2" height="2"/>`);
+        lines.push(`<text>${escapeXml(payload.prepTimeBig)}&#10;</text>`);
+    }
+    // Divider
+    lines.push(`<text width="1" height="1"/>`);
+    lines.push(`<text>==============================&#10;</text>`);
+
+    // ── Item title (medium) ──────────────────────────────────
     lines.push(`<text width="2" height="2"/>`);
     for (const t of payload.titleLines) {
         lines.push(`<text>${escapeXml(t)}&#10;</text>`);
     }
-    // Reset size + left-align for meta
     lines.push(`<text width="1" height="1"/>`);
     lines.push(`<text align="left"/>`);
     lines.push(`<text>------------------------------&#10;</text>`);
+
+    // ── Meta (use-by, by, location) ──────────────────────────
     for (const m of payload.metaLines) {
         lines.push(`<text>${escapeXml(m)}&#10;</text>`);
     }
     if (payload.allergens.length > 0) {
         lines.push(`<text>------------------------------&#10;</text>`);
-        // Bold for allergens so it's hard to miss on a scan.
         lines.push(`<text em="true"/>`);
         lines.push(`<text>ALLERGENS: ${escapeXml(payload.allergens.join(', '))}&#10;</text>`);
         lines.push(`<text em="false"/>`);
@@ -271,8 +316,17 @@ export function renderEposXml(payload) {
     lines.push(`<text em="false"/>`);
     lines.push(`<feed line="1"/>`);
     lines.push(`<cut type="feed"/>`);
+    return lines.join('');
+}
 
-    return wrapSoapEnvelope(lines.join(''));
+// Public: render N copies of a prep label inside one SOAP envelope.
+// Stitching copies inside a single envelope = one HTTP round-trip,
+// printer handles N cuts. Same trick the free-text printer uses.
+export function renderEposXml(payload, copies = 1) {
+    const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+    const body = renderPrepLabelBody(payload);
+    const stitched = Array.from({ length: c }, () => body).join('');
+    return wrapSoapEnvelope(stitched);
 }
 
 // Wrap any ePOS-Print body fragment in the SOAP envelope expected by
@@ -502,7 +556,7 @@ export async function sendToPrinter(printer, eposXml) {
 // so the UI can toast cleanly.
 export async function printPrepLabel({
     location, recipe, preppedBy, shelfLifeDays, language = 'en',
-    notes, byName,
+    notes, byName, copies = 1, source = 'recipe',
 }) {
     try {
         const printer = await getPrinterConfig(location);
@@ -512,6 +566,7 @@ export async function printPrepLabel({
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
             : resolveShelfLifeDays(recipe);
+        const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
 
         const payload = buildLabelPayload({
             itemName: recipe?.titleEn || recipe?.title || 'Item',
@@ -525,18 +580,19 @@ export async function printPrepLabel({
             language,
             notes,
         });
-        const xml = renderEposXml(payload);
+        const xml = renderEposXml(payload, c);
         const res = await sendToPrinter(printer, xml);
-        // Audit every print — who, what, where. Inspector-ready.
         recordAudit({
             action: 'print.label',
             actorName: byName || 'unknown',
-            targetType: 'recipe',
+            targetType: source === 'datestickers' ? 'menu_component' : 'recipe',
             targetId: recipe?.id || recipe?.titleEn || 'unknown',
             details: {
                 location,
                 itemName: recipe?.titleEn,
                 shelfLifeDays: days,
+                copies: c,
+                source, // 'recipe' | 'datestickers' | 'operations'
                 printerOk: res.ok,
                 printerStatus: res.status,
             },

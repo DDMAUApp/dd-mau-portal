@@ -29,12 +29,14 @@ import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import {
     getAllMenuItems, getMenuItemBuild,
     getSearchableIndex, getAiSearchItems,
+    findSubRecipe,
     COMPONENT_KIND_TONE,
 } from '../data/itemBuild';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { isAdmin } from '../data/staff';
 import { subscribeAllBuildOverrides, applyBuildOverride } from '../data/buildOverrides';
+import { subscribeAllCustomItems } from '../data/customItems';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
@@ -68,15 +70,87 @@ export default function DateStickerPrinter({
     useEffect(() => {
         return subscribeAllBuildOverrides(setOverrides);
     }, []);
+    // Live custom items — admin-created, not in menu.js. Each carries
+    // its own build inline. Subscribed once; merged into the search
+    // index + browse view alongside menu items.
+    const [customItems, setCustomItems] = useState([]);
+    useEffect(() => {
+        return subscribeAllCustomItems(setCustomItems);
+    }, []);
 
-    const allItems = useMemo(() => getAllMenuItems(), []);
+    // Menu items from the static menu.js PLUS any admin-created
+    // custom items. Custom items get a synthesized shape that the
+    // existing renderers / build resolver treat as menu items.
+    const allItems = useMemo(() => {
+        const base = getAllMenuItems();
+        const customAsItems = customItems.map(ci => ({
+            id: ci.slug,
+            nameEn: ci.nameEn,
+            nameEs: ci.nameEs,
+            category: ci.category || 'Custom',
+            categoryEs: ci.categoryEs || ci.category || 'Personalizado',
+            allergens: ci.allergens || '',
+            isCustom: true,
+        }));
+        return [...base, ...customAsItems];
+    }, [customItems]);
+
     // Flat searchable index: every menu item + every deduped
-    // component (with usedIn list). This is what "search everything"
-    // pulls from.
-    const searchIndex = useMemo(() => getSearchableIndex(), []);
-    // What we send to the aiSearch Cloud Function. Memoized so the
-    // cache key inside aiSearch stays stable.
-    const aiItems = useMemo(() => getAiSearchItems(), []);
+    // component (with usedIn list). For custom items we also push
+    // their components into the index so the search reaches them.
+    const searchIndex = useMemo(() => {
+        const base = getSearchableIndex();
+        for (const ci of customItems) {
+            base.push({
+                id: `mi::${ci.slug}`,
+                kind: 'menuItem',
+                menuItemId: ci.slug,
+                nameEn: ci.nameEn,
+                nameEs: ci.nameEs,
+                category: ci.category,
+                categoryEs: ci.categoryEs,
+                allergens: ci.allergens || '',
+                isCustom: true,
+                usedIn: [],
+            });
+            for (const c of (ci.components || [])) {
+                base.push({
+                    id: `cpcustom::${ci.slug}::${c.id}`,
+                    kind: 'component',
+                    componentKind: c.kind,
+                    nameEn: c.nameEn,
+                    nameEs: c.nameEs,
+                    descEn: c.descEn || '',
+                    descEs: c.descEs || '',
+                    usedIn: [ci.nameEn],
+                    usedInEs: [ci.nameEs || ci.nameEn],
+                });
+            }
+        }
+        return base;
+    }, [customItems]);
+
+    // AI items mirror the index — synthesized for custom items too.
+    const aiItems = useMemo(() => {
+        const base = getAiSearchItems();
+        for (const ci of customItems) {
+            base.push({
+                id: `mi::${ci.slug}`,
+                name: ci.nameEn,
+                category: ci.category || 'Custom',
+                subcat: [ci.allergens || ''].filter(Boolean).join(' | ').slice(0, 180),
+            });
+            for (const c of (ci.components || [])) {
+                base.push({
+                    id: `cpcustom::${ci.slug}::${c.id}`,
+                    name: c.nameEn,
+                    category: COMPONENT_KIND_TONE[c.kind]?.labelEn || c.kind,
+                    subcat: ci.nameEn,
+                });
+            }
+        }
+        return base;
+    }, [customItems]);
 
     const queryTokens = useMemo(() => expandQueryTermsTight(search), [search]);
     const hasQuery = queryTokens.length > 0;
@@ -153,25 +227,52 @@ export default function DateStickerPrinter({
     }, [filteredItems]);
 
     // Open-item resolver — for the inline-expand on a row. Merges
-    // any admin override on top of the static build.
+    // any admin override on top of the static build. For custom
+    // items, the build comes directly from the custom_items doc.
     const openBuild = useMemo(() => {
         if (!openItemId) return null;
         const item = allItems.find(i => i.id === openItemId);
         if (!item) return null;
+        if (item.isCustom) {
+            const ci = customItems.find(c => c.slug === item.id);
+            if (!ci) return null;
+            // Synthesize a build-shaped result. Notes go as 'note'
+            // components so the renderer's existing note styling
+            // works without modification.
+            const noteComps = (ci.notes || []).map((n, i) => ({
+                id: `note-${i}`,
+                kind: 'note',
+                nameEn: n.en,
+                nameEs: n.es,
+            }));
+            return {
+                menuItem: { ...ci, id: ci.slug, category: ci.category },
+                components: [...(ci.components || []), ...noteComps],
+                shelfLifeDays: ci.shelfLifeDays || null,
+                isCustom: true,
+                unresolved: [],
+            };
+        }
         const staticBuild = getMenuItemBuild(item.nameEn);
         const override = overrides.get(item.id) || null;
         return applyBuildOverride(staticBuild, override);
-    }, [openItemId, allItems, overrides]);
+    }, [openItemId, allItems, overrides, customItems]);
+
+    // 🆕 New custom item button state.
+    const [newItemModal, setNewItemModal] = useState(false);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
-    // mode. Allergens carry over from the menu item.
+    // mode. Allergens carry over from the menu item. Shelf-life
+    // override (if set on the menu item) propagates so the modal's
+    // slider default is the admin-set value, not the category fallback.
     const handlePrintComponent = (component, menuItem) => {
-        // Notes aren't printable as labels — they're guidance for the
-        // staff. Skip the print button for them.
         if (component.kind === 'note') return;
         const allergenStr = component.allergens || menuItem?.allergens || '';
         const allergens = parseAllergenString(allergenStr);
+        // Pull shelf-life from open build (custom items + overrides
+        // already merge it onto the build object).
+        const shelfFromBuild = openBuild?.shelfLifeDays;
         setPrintingComponent({
             titleEn: component.nameEn,
             titleEs: component.nameEs || component.nameEn,
@@ -179,6 +280,7 @@ export default function DateStickerPrinter({
             ingredientsEn: [],
             ingredientsEs: [],
             category: KIND_TO_CATEGORY[component.kind] || 'Other',
+            ...(shelfFromBuild ? { shelfLifeDays: shelfFromBuild } : {}),
         });
     };
 
@@ -242,6 +344,15 @@ export default function DateStickerPrinter({
                         ✨ {tx('AI', 'IA')}
                     </button>
                 </div>
+
+                {/* Admin: add a brand-new custom item (prep, drink,
+                    house sauce — anything not in the public menu) */}
+                {adminUser && (
+                    <button onClick={() => setNewItemModal(true)}
+                        className="w-full mb-2 py-2 rounded-lg border-2 border-dashed border-purple-300 text-purple-700 hover:bg-purple-50 font-bold text-sm">
+                        🆕 {tx('New custom item (prep / drink / sauce)', 'Nuevo artículo personalizado')}
+                    </button>
+                )}
 
                 {/* AI status strip — shows during a query */}
                 {hasQuery && aiOn && (
@@ -374,31 +485,68 @@ export default function DateStickerPrinter({
                         location={storeLocation}
                         staffName={staffName}
                         language={language}
+                        source="datestickers"
                         onClose={() => setPrintingComponent(null)}
                     />
                 </Suspense>
             )}
 
             {/* Build editor — admin-only. Opens with the current
-                build (static + any existing override). Save writes
-                /build_overrides/{slug}; the live subscription above
-                refreshes the resolver so any printer surface picks
-                up the change without reload. */}
+                build (static + any existing override). Custom items
+                save to /custom_items; regular menu items save to
+                /build_overrides. Live subscription above refreshes. */}
             {editingItem && (
                 <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
                     <BuildEditorModal
                         menuItem={editingItem}
                         initialComponents={(() => {
-                            // Resolve the build the editor seeds from
-                            // — combines static + any existing override.
+                            if (editingItem.isCustom) {
+                                const ci = customItems.find(c => c.slug === editingItem.id);
+                                return (ci?.components || []);
+                            }
                             const base = getMenuItemBuild(editingItem.nameEn);
                             const ov = overrides.get(editingItem.id) || null;
                             const merged = applyBuildOverride(base, ov);
-                            return merged?.components || [];
+                            return (merged?.components || []).filter(c => c.kind !== 'note');
                         })()}
+                        initialNotes={(() => {
+                            if (editingItem.isCustom) {
+                                const ci = customItems.find(c => c.slug === editingItem.id);
+                                return ci?.notes || [];
+                            }
+                            const ov = overrides.get(editingItem.id);
+                            return ov?.notes || [];
+                        })()}
+                        initialShelfLifeDays={(() => {
+                            if (editingItem.isCustom) {
+                                const ci = customItems.find(c => c.slug === editingItem.id);
+                                return ci?.shelfLifeDays || null;
+                            }
+                            return overrides.get(editingItem.id)?.shelfLifeDays || null;
+                        })()}
+                        isCustom={editingItem.isCustom === true}
                         staffName={staffName}
                         language={language}
                         onClose={() => setEditingItem(null)}
+                        onSaved={() => { /* live subscription refreshes the view */ }}
+                    />
+                </Suspense>
+            )}
+
+            {/* New custom item modal — admin-only. Opens with an
+                empty form; on save writes a new /custom_items doc. */}
+            {newItemModal && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <BuildEditorModal
+                        menuItem={{ id: '', nameEn: '', nameEs: '', category: 'Custom', allergens: '' }}
+                        initialComponents={[]}
+                        initialNotes={[]}
+                        initialShelfLifeDays={null}
+                        isCustom={true}
+                        isNew={true}
+                        staffName={staffName}
+                        language={language}
+                        onClose={() => setNewItemModal(false)}
                         onSaved={() => { /* live subscription refreshes the view */ }}
                     />
                 </Suspense>
@@ -506,7 +654,7 @@ function ComponentList({ components, isEs, tx, onPrint }) {
                                     tone={tone}
                                     isEs={isEs}
                                     tx={tx}
-                                    onPrint={() => onPrint(c)}
+                                    onPrint={onPrint}
                                 />
                             ))}
                         </div>
@@ -560,29 +708,73 @@ function ComponentSearchResult({ component, isEs, tx, onPrint }) {
 function ComponentRow({ component, tone, isEs, tx, onPrint }) {
     const isNote = component.kind === 'note';
     const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
+    // Recursive sub-recipe expansion (Phase 2b): try to find a
+    // matching recipe in MASTER_RECIPES. If found, the user can
+    // expand the row to see ingredients and print labels for each.
+    const [expanded, setExpanded] = useState(false);
+    const subRecipe = useMemo(() => isNote ? null : findSubRecipe(component.nameEn), [component.nameEn, isNote]);
     return (
-        <div className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg ${tone.bg} border border-dd-line`}>
-            <div className="flex-1 min-w-0">
-                <div className={`text-[13px] ${isNote ? 'italic text-dd-text-2 leading-snug' : `font-bold ${tone.text}`}`}>
-                    {name}
+        <div className={`rounded-lg ${tone.bg} border border-dd-line`}>
+            <div className="flex items-center gap-2 px-2.5 py-1.5">
+                <div className="flex-1 min-w-0">
+                    <div className={`text-[13px] ${isNote ? 'italic text-dd-text-2 leading-snug' : `font-bold ${tone.text}`}`}>
+                        {name}
+                        {subRecipe && (
+                            <span className="ml-1.5 text-[9px] font-bold text-purple-700 bg-purple-100 px-1.5 py-0.5 rounded">
+                                {tx(`+${subRecipe.ingredients.length} ingredients`, `+${subRecipe.ingredients.length} ingredientes`)}
+                            </span>
+                        )}
+                    </div>
+                    {component.descEn && !isNote && (
+                        <div className="text-[10.5px] text-dd-text-2 truncate">
+                            {isEs ? (component.descEs || component.descEn) : component.descEn}
+                        </div>
+                    )}
+                    {component.variant && (
+                        <div className="text-[10px] text-dd-text-2 italic">
+                            {tx('style', 'estilo')}: {component.variant}
+                        </div>
+                    )}
                 </div>
-                {component.descEn && !isNote && (
-                    <div className="text-[10.5px] text-dd-text-2 truncate">
-                        {isEs ? (component.descEs || component.descEn) : component.descEn}
-                    </div>
+                {subRecipe && (
+                    <button onClick={() => setExpanded(v => !v)}
+                        title={tx('Show ingredients', 'Ver ingredientes')}
+                        className="flex-shrink-0 px-2 py-1 rounded-lg bg-white border border-purple-300 text-purple-700 text-[11px] font-bold hover:bg-purple-50">
+                        {expanded ? '▾' : '▸'}
+                    </button>
                 )}
-                {component.variant && (
-                    <div className="text-[10px] text-dd-text-2 italic">
-                        {tx('style', 'estilo')}: {component.variant}
-                    </div>
+                {!isNote && (
+                    <button onClick={() => onPrint(component)}
+                        title={tx('Print date sticker', 'Imprimir etiqueta')}
+                        className="flex-shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                        🏷 {tx('Print', 'Imprimir')}
+                    </button>
                 )}
             </div>
-            {!isNote && (
-                <button onClick={onPrint}
-                    title={tx('Print date sticker', 'Imprimir etiqueta')}
-                    className="flex-shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
-                    🏷 {tx('Print', 'Imprimir')}
-                </button>
+            {/* Nested ingredients from the matched sub-recipe */}
+            {expanded && subRecipe && (
+                <div className="border-t border-dd-line/50 px-2.5 py-2 space-y-1 bg-white/40">
+                    <div className="text-[9.5px] font-bold uppercase tracking-wider text-purple-800 mb-1">
+                        🧪 {tx(`Ingredients in ${component.nameEn}`, `Ingredientes en ${component.nameEn}`)}
+                    </div>
+                    {subRecipe.ingredients.map((ing, i) => (
+                        <div key={i} className="flex items-center gap-2 px-1.5 py-1 rounded bg-white border border-dd-line/60">
+                            <span className="flex-1 text-[12px] text-dd-text truncate">
+                                {isEs ? (ing.nameEs || ing.nameEn) : ing.nameEn}
+                            </span>
+                            <button
+                                onClick={() => onPrint({
+                                    kind: 'topping',
+                                    nameEn: ing.nameEn,
+                                    nameEs: ing.nameEs,
+                                })}
+                                title={tx('Print sticker for this ingredient', 'Imprimir etiqueta')}
+                                className="flex-shrink-0 px-2 py-1 rounded-lg bg-purple-600 text-white text-[10px] font-bold hover:bg-purple-700">
+                                🏷 {tx('Print', 'Imprimir')}
+                            </button>
+                        </div>
+                    ))}
+                </div>
             )}
         </div>
     );

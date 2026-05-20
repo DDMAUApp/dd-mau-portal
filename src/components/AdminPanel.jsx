@@ -91,6 +91,10 @@ function PrintHistorySection({ tx }) {
     const [rows, setRows] = useState([]);
     const [loading, setLoading] = useState(false);
     const [expanded, setExpanded] = useState(false);
+    // Source filter — Andrew 2026-05-20 Phase 2b. Lets admin slice
+    // the print history by where the print came from (recipe page,
+    // date-stickers tab, free-text print center, test prints).
+    const [sourceFilter, setSourceFilter] = useState('all');
 
     const load = async () => {
         setLoading(true);
@@ -141,10 +145,27 @@ function PrintHistorySection({ tx }) {
             </button>
             {expanded && (
                 <div className="mt-2">
-                    <button onClick={load}
-                        className="text-[10px] text-purple-700 underline hover:no-underline mb-2">
-                        {loading ? tx('Loading…', 'Cargando…') : tx('Refresh', 'Actualizar')}
-                    </button>
+                    <div className="flex items-center gap-1 flex-wrap mb-2">
+                        {[
+                            { k: 'all',          en: 'All',          es: 'Todo' },
+                            { k: 'recipe',       en: '📖 Recipes',    es: '📖 Recetas' },
+                            { k: 'datestickers', en: '🏷 Stickers',   es: '🏷 Etiquetas' },
+                            { k: 'freetext',     en: '🖨 Free-text',  es: '🖨 Libre' },
+                            { k: 'test',         en: '🧪 Test',       es: '🧪 Prueba' },
+                        ].map(f => (
+                            <button key={f.k}
+                                onClick={() => setSourceFilter(f.k)}
+                                className={`px-2 py-1 rounded-full text-[10px] font-bold border ${sourceFilter === f.k
+                                    ? 'bg-purple-600 text-white border-purple-700'
+                                    : 'bg-white text-purple-700 border-purple-200 hover:bg-purple-50'}`}>
+                                {tx(f.en, f.es)}
+                            </button>
+                        ))}
+                        <button onClick={load}
+                            className="ml-auto text-[10px] text-purple-700 underline hover:no-underline">
+                            {loading ? tx('Loading…', 'Cargando…') : tx('Refresh', 'Actualizar')}
+                        </button>
+                    </div>
                     {loading && rows.length === 0 ? (
                         <p className="text-[11px] text-purple-700/70 italic px-2">
                             {tx('Loading…', 'Cargando…')}
@@ -158,7 +179,14 @@ function PrintHistorySection({ tx }) {
                         </p>
                     ) : (
                         <div className="space-y-1 max-h-72 overflow-y-auto">
-                            {rows.map(r => {
+                            {rows.filter(r => {
+                                if (sourceFilter === 'all') return true;
+                                if (sourceFilter === 'test') return r.action === 'print.test';
+                                if (sourceFilter === 'freetext') return r.action === 'print.freetext';
+                                if (sourceFilter === 'datestickers') return r.details?.source === 'datestickers';
+                                if (sourceFilter === 'recipe') return r.action === 'print.label' && r.details?.source !== 'datestickers';
+                                return true;
+                            }).map(r => {
                                 const ts = r.createdAt?.toDate?.() || null;
                                 const ok = r.action === 'print.test'
                                     ? r.details?.printerOk === true

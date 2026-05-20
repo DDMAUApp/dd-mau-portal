@@ -54,6 +54,7 @@ export default function PrintLabelModal({
     location,
     staffName,
     language = 'en',
+    source = 'recipe',  // 'recipe' | 'datestickers' | 'operations'
     onClose,
 }) {
     const isEs = language === 'es';
@@ -62,6 +63,10 @@ export default function PrintLabelModal({
     const defaultDays = useMemo(() => resolveShelfLifeDays(recipe), [recipe]);
     const [shelfLifeDays, setShelfLifeDays] = useState(defaultDays);
     const [notes, setNotes] = useState('');
+    // Andrew 2026-05-20 — "and then how many copies we want to print".
+    // Prep labels can print N at once, stitched into one envelope so
+    // the printer batches them as one job (no round-trips per copy).
+    const [copies, setCopies] = useState(1);
     const [printer, setPrinter] = useState(null);
     const [printing, setPrinting] = useState(false);
 
@@ -140,6 +145,8 @@ export default function PrintLabelModal({
             language,
             notes,
             byName: staffName,
+            copies,
+            source,
         });
         setPrinting(false);
         if (res.ok) {
@@ -274,6 +281,41 @@ export default function PrintLabelModal({
                         />
                     </div>
 
+                    {/* Copies — Andrew 2026-05-20. One Print tap can
+                        spit out N identical labels (one per container
+                        in a batch). Batched into a single envelope so
+                        the printer cuts in sequence. */}
+                    <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                            {tx('Copies', 'Copias')}
+                        </label>
+                        <div className="flex items-center gap-2">
+                            <button
+                                onClick={() => setCopies(c => Math.max(1, c - 1))}
+                                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
+                                −
+                            </button>
+                            <div className="w-14 text-center text-2xl font-black text-dd-green">
+                                {copies}
+                            </div>
+                            <button
+                                onClick={() => setCopies(c => Math.min(20, c + 1))}
+                                className="w-10 h-10 rounded-lg bg-dd-bg text-dd-text font-black text-lg hover:bg-dd-line active:scale-95">
+                                +
+                            </button>
+                            <div className="flex gap-1 ml-auto flex-wrap">
+                                {[1, 3, 5, 10].map(n => (
+                                    <button key={n} onClick={() => setCopies(n)}
+                                        className={`px-2.5 py-1 rounded text-[11px] font-bold border transition ${copies === n
+                                            ? 'bg-dd-green text-white border-dd-green'
+                                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
+                                        {n}×
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Preview — mimics the linerless thermal label */}
                     <div>
                         <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
@@ -320,7 +362,7 @@ export default function PrintLabelModal({
                             : 'bg-dd-green hover:bg-dd-green-700 active:scale-95 shadow-sm'}`}>
                         {printing
                             ? tx('Printing…', 'Imprimiendo…')
-                            : <>🏷 {tx('Print label', 'Imprimir')}</>}
+                            : <>🏷 {tx(`Print ${copies > 1 ? copies + '× ' : ''}label${copies > 1 ? 's' : ''}`, `Imprimir ${copies > 1 ? copies + '× ' : ''}etiqueta${copies > 1 ? 's' : ''}`)}</>}
                     </button>
                 </div>
             </div>
@@ -328,16 +370,22 @@ export default function PrintLabelModal({
     );
 }
 
-// Render the label preview as plain text. Mirrors the visual that
-// the Epson will produce — fixed-width monospace, centered title,
-// horizontal rules. Keeps the user oriented when they hit Print.
+// Render the label preview as plain text. Mirrors the new layout:
+// BIG prep date at the top (for FIFO scanning), divider, item name,
+// then meta block. Andrew 2026-05-20.
 function renderLabelPreview(payload) {
     const lines = [];
+    if (payload.prepDateBig) {
+        lines.push(centerLine('▲▲▲▲▲▲ ' + payload.prepDateBig + ' ▲▲▲▲▲▲', 30));
+    }
+    if (payload.prepTimeBig) {
+        lines.push(centerLine(payload.prepTimeBig, 30));
+    }
     lines.push('==============================');
     for (const t of payload.titleLines) {
         lines.push(centerLine(t, 30));
     }
-    lines.push('==============================');
+    lines.push('------------------------------');
     for (const m of payload.metaLines) lines.push(m);
     if (payload.allergens.length > 0) {
         lines.push('------------------------------');

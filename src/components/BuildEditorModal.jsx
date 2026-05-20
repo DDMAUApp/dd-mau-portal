@@ -12,16 +12,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
 import { COMPONENT_KIND_TONE } from '../data/itemBuild';
 import { getBuildOverride, saveBuildOverride, deleteBuildOverride } from '../data/buildOverrides';
+import { saveCustomItem, deleteCustomItem, makeCustomItemSlug } from '../data/customItems';
 
 const KIND_OPTIONS = ['base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish'];
 
 export default function BuildEditorModal({
     menuItem,             // { id (slug), nameEn, nameEs, ... }
     initialComponents,    // static + existing-override components
+    initialNotes = [],    // editable notes from override (or static)
+    initialShelfLifeDays, // override shelf-life if set
+    isCustom = false,     // true when this menuItem is in /custom_items
+    isNew = false,        // true when creating a fresh custom item
     staffName,
     language = 'en',
     onClose,
-    onSaved,              // called with the saved override doc
+    onSaved,              // called after a successful save
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
@@ -44,12 +49,36 @@ export default function BuildEditorModal({
     const [saving, setSaving] = useState(false);
     const [hasExistingOverride, setHasExistingOverride] = useState(false);
 
+    // Shelf-life + notes editing (Phase 2b). Both fields are
+    // OPTIONAL on the override; staff still tweak shelf-life on
+    // the print modal slider, this just sets the smart default.
+    const [shelfLifeDays, setShelfLifeDays] = useState(
+        Number.isFinite(initialShelfLifeDays) ? initialShelfLifeDays : ''
+    );
+    const [notes, setNotes] = useState(
+        Array.isArray(initialNotes)
+            ? initialNotes.map(n => ({ ...n }))
+            : []
+    );
+
+    // Custom-item-only fields. When isCustom/isNew, the menu name
+    // and category are editable here. (For regular menu items the
+    // name comes from menu.js and is not editable.)
+    const [customName, setCustomName] = useState(menuItem?.nameEn || '');
+    const [customNameEs, setCustomNameEs] = useState(menuItem?.nameEs || '');
+    const [customCategory, setCustomCategory] = useState(menuItem?.category || 'Custom');
+    const [customAllergens, setCustomAllergens] = useState(menuItem?.allergens || '');
+
     useEffect(() => {
+        if (isCustom || isNew) {
+            setHasExistingOverride(false);
+            return;
+        }
         (async () => {
             const existing = await getBuildOverride(menuItem.id);
             setHasExistingOverride(!!existing);
         })();
-    }, [menuItem.id]);
+    }, [menuItem.id, isCustom, isNew]);
 
     const isDirty = JSON.stringify(rows) !== originalJson;
 
@@ -81,7 +110,11 @@ export default function BuildEditorModal({
 
     const handleSave = async () => {
         if (saving) return;
-        // Trim + dedup-by-id. Also filter rows with empty name.
+        // Custom-item path needs a name first.
+        if ((isCustom || isNew) && !customName.trim()) {
+            toast(tx('Type a name first.', 'Escribe un nombre primero.'), { kind: 'error' });
+            return;
+        }
         const cleaned = rows
             .filter(r => r.nameEn.trim())
             .map(r => ({
@@ -96,14 +129,39 @@ export default function BuildEditorModal({
             toast(tx('Add at least one component first.', 'Añade al menos un componente.'), { kind: 'error' });
             return;
         }
+        const cleanShelfLife = shelfLifeDays === '' || shelfLifeDays == null
+            ? null
+            : Math.max(1, Math.min(60, Math.floor(Number(shelfLifeDays))));
+        const cleanNotes = notes
+            .map(n => ({ en: (n.en || '').trim(), es: (n.es || n.en || '').trim() }))
+            .filter(n => n.en);
+
         setSaving(true);
         try {
-            await saveBuildOverride({
-                menuItemSlug: menuItem.id,
-                menuItemName: menuItem.nameEn,
-                components: cleaned,
-                byName: staffName,
-            });
+            if (isCustom || isNew) {
+                const slug = isNew ? makeCustomItemSlug(customName) : menuItem.id;
+                await saveCustomItem({
+                    slug,
+                    nameEn: customName.trim(),
+                    nameEs: customNameEs.trim() || customName.trim(),
+                    category: customCategory.trim() || 'Custom',
+                    categoryEs: customCategory.trim() || 'Custom',
+                    allergens: customAllergens.trim(),
+                    components: cleaned,
+                    shelfLifeDays: cleanShelfLife,
+                    notes: cleanNotes,
+                    byName: staffName,
+                });
+            } else {
+                await saveBuildOverride({
+                    menuItemSlug: menuItem.id,
+                    menuItemName: menuItem.nameEn,
+                    components: cleaned,
+                    shelfLifeDays: cleanShelfLife,
+                    notes: cleanNotes,
+                    byName: staffName,
+                });
+            }
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
             onSaved?.();
             onClose();
@@ -116,6 +174,29 @@ export default function BuildEditorModal({
     };
 
     const handleRestoreDefault = async () => {
+        if (isCustom) {
+            if (!window.confirm(tx(
+                'Delete this custom item? This cannot be undone.',
+                '¿Eliminar este artículo personalizado? No se puede deshacer.',
+            ))) return;
+            setSaving(true);
+            try {
+                await deleteCustomItem({
+                    slug: menuItem.id,
+                    nameEn: menuItem.nameEn,
+                    byName: staffName,
+                });
+                toast(tx('✓ Deleted', '✓ Eliminado'), { kind: 'success' });
+                onSaved?.();
+                onClose();
+            } catch (e) {
+                console.error('delete custom failed:', e);
+                toast(tx('Delete failed: ', 'Error: ') + (e?.message || ''), { kind: 'error' });
+            } finally {
+                setSaving(false);
+            }
+            return;
+        }
         if (!hasExistingOverride) {
             toast(tx('Already on the default.', 'Ya está en el predeterminado.'));
             return;
@@ -142,6 +223,11 @@ export default function BuildEditorModal({
         }
     };
 
+    // Notes helpers
+    const addNote = () => setNotes(ns => [...ns, { en: '', es: '' }]);
+    const updateNote = (i, field, val) => setNotes(ns => ns.map((n, j) => j === i ? { ...n, [field]: val } : n));
+    const removeNote = (i) => setNotes(ns => ns.filter((_, j) => j !== i));
+
     return (
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl h-[100dvh] sm:h-auto sm:max-h-[92vh] flex flex-col">
@@ -165,11 +251,69 @@ export default function BuildEditorModal({
                 </div>
 
                 {/* Body */}
-                <div className="flex-1 overflow-y-auto p-4 space-y-2">
-                    <p className="text-[11px] text-dd-text-2 italic mb-2">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {/* Custom-item identity — only when creating or
+                        editing a custom item. Regular menu items get
+                        their name from menu.js and are not editable
+                        here. */}
+                    {(isCustom || isNew) && (
+                        <div className="bg-purple-50/40 border border-purple-200 rounded-lg p-3 space-y-2">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-purple-800">
+                                {isNew
+                                    ? tx('🆕 New custom item', '🆕 Nuevo artículo personalizado')
+                                    : tx('✏️ Custom item', '✏️ Artículo personalizado')}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input type="text" value={customName}
+                                    onChange={(e) => setCustomName(e.target.value.slice(0, 120))}
+                                    placeholder={tx('Name (EN)', 'Nombre (EN)')}
+                                    className="px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                                <input type="text" value={customNameEs}
+                                    onChange={(e) => setCustomNameEs(e.target.value.slice(0, 120))}
+                                    placeholder={tx('Name (ES, optional)', 'Nombre (ES, opcional)')}
+                                    className="px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <input type="text" value={customCategory}
+                                    onChange={(e) => setCustomCategory(e.target.value.slice(0, 60))}
+                                    placeholder={tx('Category (e.g. "Sauces", "Prep")', 'Categoría')}
+                                    className="px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                                <input type="text" value={customAllergens}
+                                    onChange={(e) => setCustomAllergens(e.target.value.slice(0, 300))}
+                                    placeholder={tx('Allergens (e.g. "Soy, Sesame")', 'Alérgenos')}
+                                    className="px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Shelf-life default for this item */}
+                    <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-900 flex-1">
+                                🗓 {tx('Default shelf life (days)', 'Días de vida útil')}
+                            </span>
+                            <input type="number" min="1" max="60"
+                                value={shelfLifeDays}
+                                onChange={(e) => setShelfLifeDays(e.target.value)}
+                                placeholder={tx('e.g. 5', 'ej. 5')}
+                                className="w-20 px-2 py-1 rounded border border-amber-300 text-sm font-bold text-center bg-white" />
+                            <button onClick={() => setShelfLifeDays('')}
+                                className="text-[10px] font-bold text-amber-700 hover:underline">
+                                {tx('Clear', 'Limpiar')}
+                            </button>
+                        </div>
+                        <p className="text-[10px] text-amber-800/80 italic mt-1">
+                            {tx(
+                                'Used as the smart default when staff print this item. Empty = use the category default (Sauces 7d, Proteins 3d, etc.). Cooks can still nudge the slider per-print.',
+                                'Predeterminado al imprimir. Vacío = usar el predeterminado de la categoría (Salsas 7d, Proteínas 3d, etc.).',
+                            )}
+                        </p>
+                    </div>
+
+                    <p className="text-[11px] text-dd-text-2 italic mb-1">
                         {tx(
-                            'Add, rename, reorder, or delete components. Notes from the cashier training reference stay on the public view — they are not editable here.',
-                            'Añade, renombra, reordena o elimina componentes. Las notas de capacitación se mantienen — no son editables aquí.',
+                            'Add, rename, reorder, or delete components. Each will print as a separate sticker.',
+                            'Añade, renombra, reordena o elimina componentes. Cada uno imprime una etiqueta.',
                         )}
                     </p>
 
@@ -238,11 +382,57 @@ export default function BuildEditorModal({
                         className="w-full mt-2 py-3 rounded-lg border-2 border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg font-bold text-sm">
                         ➕ {tx('Add component', 'Añadir componente')}
                     </button>
+
+                    {/* Editable notes — Phase 2b. Replaces the static
+                        cashier-training notes when set; not printed
+                        as labels (they're guidance for cooks). */}
+                    <div className="mt-4 bg-blue-50/40 border border-blue-200 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-1.5">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-blue-900">
+                                ℹ️ {tx('Notes for cooks (not printed)', 'Notas para cocina (no se imprimen)')}
+                            </span>
+                            <button onClick={addNote}
+                                className="text-[10px] font-bold text-blue-700 hover:underline">
+                                ➕ {tx('Add note', 'Añadir nota')}
+                            </button>
+                        </div>
+                        {notes.length === 0 ? (
+                            <p className="text-[11px] text-blue-700/70 italic">
+                                {tx(
+                                    'No notes — the static cashier guidance shows on the public view. Add a note to replace it.',
+                                    'Sin notas — se muestra la guía estática. Añade una para reemplazar.',
+                                )}
+                            </p>
+                        ) : (
+                            <div className="space-y-1.5">
+                                {notes.map((n, i) => (
+                                    <div key={i} className="flex flex-col sm:flex-row gap-1.5">
+                                        <input type="text" value={n.en}
+                                            onChange={(e) => updateNote(i, 'en', e.target.value)}
+                                            placeholder={tx('Note (EN)', 'Nota (EN)')}
+                                            className="flex-1 px-2 py-1.5 rounded border border-blue-200 text-[12.5px] bg-white" />
+                                        <input type="text" value={n.es}
+                                            onChange={(e) => updateNote(i, 'es', e.target.value)}
+                                            placeholder={tx('Note (ES, optional)', 'Nota (ES, opcional)')}
+                                            className="flex-1 px-2 py-1.5 rounded border border-blue-200 text-[12.5px] bg-white" />
+                                        <button onClick={() => removeNote(i)}
+                                            className="w-8 h-8 rounded text-red-600 hover:bg-red-50 text-sm self-end sm:self-auto">✕</button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
                 {/* Footer */}
                 <div className="border-t border-dd-line p-3 flex flex-wrap items-center gap-2 flex-shrink-0 safe-bottom">
-                    {hasExistingOverride && (
+                    {isCustom && !isNew && (
+                        <button onClick={handleRestoreDefault} disabled={saving}
+                            className="px-3 py-2.5 rounded-lg bg-red-50 border border-red-300 text-red-700 text-xs font-bold hover:bg-red-100 disabled:opacity-40">
+                            🗑 {tx('Delete item', 'Eliminar')}
+                        </button>
+                    )}
+                    {!isCustom && !isNew && hasExistingOverride && (
                         <button onClick={handleRestoreDefault} disabled={saving}
                             className="px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-xs font-bold hover:bg-amber-100 disabled:opacity-40">
                             ↺ {tx('Restore default', 'Restaurar')}
