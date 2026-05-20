@@ -14,7 +14,7 @@
 // not a primary destination. Mounting it as a modal keeps it off
 // the bottom nav.
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import {
     LIST_STATUS,
     createList,
@@ -25,6 +25,8 @@ import {
     deactivateAll,
     subscribeAllLists,
 } from '../data/inventoryLists';
+import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { toast } from '../toast';
 
 export default function InventoryListsAdmin({
@@ -64,7 +66,11 @@ export default function InventoryListsAdmin({
                         className="text-dd-text-2 hover:text-dd-text text-2xl leading-none">×</button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4">
+                {/* When editing a list, the split-pane manages its own
+                    scrolling per-pane — don't wrap it in overflow-y-auto
+                    or we get nested-scroll mess. The grid view stays
+                    inside a normal scrollable body. */}
+                <div className={`flex-1 min-h-0 p-4 ${view === 'edit' ? 'flex flex-col' : 'overflow-y-auto'}`}>
                     {view === 'grid' && (
                         <ListsGrid
                             lists={lists}
@@ -359,18 +365,35 @@ function SourceOption({ value, current, setSource, label, help }) {
     );
 }
 
-// ── List editor — categories + items, move/add/remove ────────────────
+// ── List editor — split-pane with click-to-toggle + smart search ────
 //
-// State strategy: load the list's categories into local state on
-// mount, edit locally, save to Firestore when admin clicks Save.
-// "Discard" reverts. Pending-changes badge in the header so admin
-// can tell whether they need to save.
+// Andrew 2026-05-19 — "lets make the list creation look like the new
+// list on the right and the items list is on the left and i can click
+// the items and it will move it over to the new list. ... above the
+// items i want a search window where if i say dry it pulls all dry
+// ingredients up or if i say green, or anything."
+//
+// Layout:
+//   LEFT pane  — every item in the master INVENTORY_CATEGORIES.
+//                Search box at the top filters across name (EN+ES),
+//                category, subcategory using the same accent-stripping
+//                + bilingual-synonym matcher recipeSearch uses
+//                (chicken↔pollo, lime↔limón, etc.). Click an item to
+//                toggle it in the list.
+//   RIGHT pane — the list under edit. Categories with ↑/↓ reorder,
+//                items with ↑/↓ reorder, ✕ remove, + add empty
+//                category. Items checked on the left land in their
+//                native category here, creating that category if
+//                it doesn't already exist on the right.
+//
+// State strategy unchanged from the prior single-pane version:
+// edit locally, save when admin hits Save, Discard reverts.
 function ListEditor({ list, tx, language, staffName, onClose }) {
     const isEs = language === 'es';
     const [cats, setCats] = useState(() => list.categories || []);
     const [origJson, setOrigJson] = useState(() => JSON.stringify(list.categories || []));
     const [saving, setSaving] = useState(false);
-    const [expandedCatIdx, setExpandedCatIdx] = useState(null);
+    const [search, setSearch] = useState('');
 
     // If the underlying list changes (e.g. admin renamed it via the
     // grid before opening the editor), reset our baseline. We only
@@ -408,7 +431,7 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
         setCats(JSON.parse(origJson));
     };
 
-    // ── Mutators (pure local state) ────────────────────────────────
+    // Right-side mutators — categories + items inside the list.
     const moveCat = (idx, dir) => {
         const next = [...cats];
         const j = idx + dir;
@@ -450,44 +473,64 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
         next[catIdx] = { ...next[catIdx], items };
         setCats(next);
     };
-    const addItemTo = (catIdx) => {
-        const name = window.prompt(tx('Item name:', 'Nombre del artículo:'));
-        if (!name || !name.trim()) return;
-        const subcat = window.prompt(tx('Subcategory (optional — leave blank for none):', 'Subcategoría (opcional):'), '') || '';
-        const next = [...cats];
-        const items = [...(next[catIdx].items || [])];
-        // Generate a unique id within this category — same prefix shape
-        // as the legacy ids ("0-0", "0-1", etc.) so the existing merge
-        // logic in Operations.jsx tolerates them.
-        const usedNs = new Set(items.map(it => {
-            const m = /^\d+-(\d+)$/.exec(String(it.id || ''));
-            return m ? Number(m[1]) : -1;
-        }));
-        let n = 0;
-        while (usedNs.has(n)) n++;
-        items.push({
-            id: `${cats[catIdx].id ?? catIdx}-${n}`,
-            name: name.trim(),
-            nameEs: name.trim(),
-            subcat: subcat.trim(),
-            vendor: '',
-            pack: '',
-            price: null,
-            preferredVendor: '',
-            vendorOptions: [],
+
+    // Set of item ids currently in the list — fast membership check
+    // for the left pane's checkmark rendering.
+    const presentIds = useMemo(() => {
+        const s = new Set();
+        for (const c of cats) for (const it of (c.items || [])) s.add(it.id);
+        return s;
+    }, [cats]);
+
+    // Click an item on the left → toggle in the right list.
+    // ADD: find the master category by NAME on the right. If
+    //   present, append the item. If absent, create it (using the
+    //   master category's structure) and append the item.
+    // REMOVE: walk every category on the right, drop matching id.
+    const toggleItem = (masterCat, item) => {
+        setCats(prev => {
+            if (presentIds.has(item.id)) {
+                return prev
+                    .map(c => ({ ...c, items: (c.items || []).filter(it => it.id !== item.id) }));
+            }
+            const targetIdx = prev.findIndex(c => c.name === masterCat.name);
+            if (targetIdx >= 0) {
+                const next = [...prev];
+                const items = [...(next[targetIdx].items || []), { ...item }];
+                next[targetIdx] = { ...next[targetIdx], items };
+                return next;
+            }
+            // Create the category on the right, preserving id+nameEs
+            // from the master so renders look identical.
+            return [...prev, {
+                id: masterCat.id,
+                name: masterCat.name,
+                nameEs: masterCat.nameEs,
+                items: [{ ...item }],
+            }];
         });
-        next[catIdx] = { ...next[catIdx], items };
-        setCats(next);
+    };
+
+    // Search filter for the left pane. Tight synonyms +
+    // accent-stripped substring across name/nameEs/category/subcat.
+    // "chicken" expands to "pollo"; "limón" matches "lime"; etc.
+    const queryTokens = useMemo(() => expandQueryTermsTight(search), [search]);
+    const hasQuery = queryTokens.length > 0;
+    const itemMatches = (item, catName) => {
+        if (!hasQuery) return true;
+        const hay = normalize([
+            item.name || '',
+            item.nameEs || '',
+            catName || '',
+            item.subcat || '',
+        ].join(' '));
+        return haystackMatches(hay, queryTokens);
     };
 
     return (
-        <div>
-            {/* Save bar */}
-            <div className="flex flex-wrap items-center gap-2 mb-3 sticky top-0 bg-white py-2 z-10 border-b border-dd-line">
-                <button onClick={addCat}
-                    className="px-3 py-1.5 rounded-lg bg-white border-2 border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg text-xs font-bold">
-                    ➕ {tx('Add category', 'Añadir categoría')}
-                </button>
+        <div className="flex flex-col h-full">
+            {/* Save bar (header) */}
+            <div className="flex flex-wrap items-center gap-2 mb-2 py-2 px-1 border-b border-dd-line bg-white">
                 <span className="text-xs text-dd-text-2">
                     {cats.length} {tx('categories', 'categorías')} ·{' '}
                     {cats.reduce((s, c) => s + (c.items?.length || 0), 0)} {tx('items', 'artículos')}
@@ -512,73 +555,143 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                 </div>
             </div>
 
-            {cats.length === 0 && (
-                <p className="text-sm text-dd-text-2 text-center py-8">
-                    {tx('No categories. Click "Add category" to start.', 'Sin categorías. Haz clic en "Añadir categoría".')}
-                </p>
-            )}
-
-            {cats.map((cat, catIdx) => {
-                const expanded = expandedCatIdx === catIdx;
-                return (
-                    <div key={cat.id ?? catIdx}
-                        className="border border-dd-line rounded-xl bg-white mb-2 overflow-hidden">
-                        <div className="flex items-center gap-2 p-2 bg-dd-bg">
-                            <div className="flex flex-col">
-                                <button onClick={() => moveCat(catIdx, -1)}
-                                    disabled={catIdx === 0}
-                                    className="text-xs text-dd-text-2 disabled:opacity-20 hover:text-dd-text">▲</button>
-                                <button onClick={() => moveCat(catIdx, 1)}
-                                    disabled={catIdx === cats.length - 1}
-                                    className="text-xs text-dd-text-2 disabled:opacity-20 hover:text-dd-text">▼</button>
-                            </div>
-                            <input type="text" value={isEs ? (cat.nameEs || cat.name) : cat.name}
-                                onChange={e => renameCat(catIdx, e.target.value)}
-                                className="flex-1 px-2 py-1 rounded border border-dd-line text-sm font-bold bg-white" />
-                            <span className="text-[11px] text-dd-text-2">{cat.items?.length || 0}</span>
-                            <button onClick={() => setExpandedCatIdx(expanded ? null : catIdx)}
-                                className="px-2 py-1 rounded-md bg-white border border-dd-line text-[11px] font-bold">
-                                {expanded ? tx('Hide', 'Ocultar') : tx('Items', 'Artículos')}
-                            </button>
-                            <button onClick={() => removeCat(catIdx)}
-                                className="px-2 py-1 rounded-md bg-white border border-red-200 text-red-700 text-[11px] font-bold hover:bg-red-50">
-                                🗑
-                            </button>
-                        </div>
-                        {expanded && (
-                            <div className="p-2 space-y-1">
-                                {(cat.items || []).map((item, itemIdx) => (
-                                    <div key={item.id ?? itemIdx}
-                                        className="flex items-center gap-1 px-2 py-1.5 rounded-md hover:bg-dd-bg border border-transparent hover:border-dd-line">
-                                        <div className="flex flex-col">
-                                            <button onClick={() => moveItem(catIdx, itemIdx, -1)}
-                                                disabled={itemIdx === 0}
-                                                className="text-[10px] text-dd-text-2 disabled:opacity-20 hover:text-dd-text">▲</button>
-                                            <button onClick={() => moveItem(catIdx, itemIdx, 1)}
-                                                disabled={itemIdx === (cat.items?.length || 0) - 1}
-                                                className="text-[10px] text-dd-text-2 disabled:opacity-20 hover:text-dd-text">▼</button>
-                                        </div>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="text-sm text-dd-text truncate">{isEs ? (item.nameEs || item.name) : item.name}</div>
-                                            {item.subcat && (
-                                                <div className="text-[10px] text-dd-text-2">{item.subcat}</div>
-                                            )}
-                                        </div>
-                                        <button onClick={() => removeItem(catIdx, itemIdx)}
-                                            className="px-1.5 py-0.5 rounded text-[10px] text-red-700 hover:bg-red-50">
-                                            ✕
-                                        </button>
-                                    </div>
-                                ))}
-                                <button onClick={() => addItemTo(catIdx)}
-                                    className="w-full mt-1 py-1.5 rounded-md bg-white border border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg text-xs font-bold">
-                                    ➕ {tx('Add item', 'Añadir artículo')}
+            {/* Split pane — stacks on mobile, side-by-side on sm+ */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 flex-1 min-h-0">
+                {/* LEFT — Available items + search */}
+                <div className="flex flex-col min-h-0 border border-dd-line rounded-xl bg-white overflow-hidden">
+                    <div className="px-2 py-2 border-b border-dd-line bg-dd-bg flex items-center gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 flex-shrink-0">
+                            {tx('Available', 'Disponibles')}
+                        </span>
+                        <div className="relative flex-1">
+                            <input
+                                type="search"
+                                inputMode="search"
+                                enterKeyHint="search"
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder={tx('Search (e.g. "green", "chicken", "lime")', 'Buscar (ej. "verde", "pollo", "limón")')}
+                                className="w-full pl-7 pr-7 py-1.5 border border-dd-line rounded-md text-xs"
+                            />
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-dd-text-2 text-xs pointer-events-none">🔍</span>
+                            {search && (
+                                <button onClick={() => setSearch('')}
+                                    className="absolute right-1 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-gray-200 text-gray-600 text-[10px] font-bold flex items-center justify-center">
+                                    ✕
                                 </button>
-                            </div>
+                            )}
+                        </div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                        {INVENTORY_CATEGORIES.map(masterCat => {
+                            const itemsMatching = (masterCat.items || []).filter(it => itemMatches(it, masterCat.name));
+                            if (hasQuery && itemsMatching.length === 0) return null;
+                            return (
+                                <div key={masterCat.id} className="border border-dd-line/70 rounded-lg overflow-hidden">
+                                    <div className="px-2 py-1 bg-dd-bg/50 flex items-center justify-between">
+                                        <span className="text-[11px] font-black text-dd-text">
+                                            {isEs ? (masterCat.nameEs || masterCat.name) : masterCat.name}
+                                        </span>
+                                        <span className="text-[10px] text-dd-text-2">{itemsMatching.length}</span>
+                                    </div>
+                                    <div>
+                                        {itemsMatching.map(item => {
+                                            const inList = presentIds.has(item.id);
+                                            return (
+                                                <button key={item.id}
+                                                    onClick={() => toggleItem(masterCat, item)}
+                                                    className={`w-full text-left px-2 py-1.5 flex items-center gap-2 text-xs border-t border-dd-line/40 transition ${inList ? 'bg-dd-green-50 hover:bg-dd-green-50/80' : 'bg-white hover:bg-dd-bg'}`}>
+                                                    <span className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] font-black flex-shrink-0 ${inList ? 'bg-dd-green border-dd-green text-white' : 'border-dd-line bg-white text-transparent'}`}>
+                                                        ✓
+                                                    </span>
+                                                    <span className="flex-1 min-w-0 truncate">
+                                                        {isEs ? (item.nameEs || item.name) : item.name}
+                                                        {item.subcat && (
+                                                            <span className="text-[9px] text-dd-text-2 ml-1">· {item.subcat}</span>
+                                                        )}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {hasQuery && INVENTORY_CATEGORIES.every(c => (c.items || []).filter(it => itemMatches(it, c.name)).length === 0) && (
+                            <p className="text-xs text-dd-text-2 text-center py-6 italic">
+                                {tx('No items match. Try a different search.', 'Sin coincidencias.')}
+                            </p>
                         )}
                     </div>
-                );
-            })}
+                </div>
+
+                {/* RIGHT — Your list */}
+                <div className="flex flex-col min-h-0 border border-dd-line rounded-xl bg-white overflow-hidden">
+                    <div className="px-2 py-2 border-b border-dd-line bg-dd-bg flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                            {tx('Your list', 'Tu lista')}
+                        </span>
+                        <button onClick={addCat}
+                            className="px-2 py-1 rounded-md bg-white border border-dashed border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg">
+                            ➕ {tx('Add category', 'Categoría')}
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                        {cats.length === 0 ? (
+                            <p className="text-xs text-dd-text-2 text-center py-6 italic">
+                                {tx('Click an item on the left to add it.', 'Haz clic en un artículo a la izquierda para añadirlo.')}
+                            </p>
+                        ) : cats.map((cat, catIdx) => (
+                            <div key={cat.id ?? catIdx}
+                                className="border border-dd-line rounded-lg overflow-hidden">
+                                <div className="flex items-center gap-1 p-1.5 bg-dd-bg/50">
+                                    <div className="flex flex-col">
+                                        <button onClick={() => moveCat(catIdx, -1)}
+                                            disabled={catIdx === 0}
+                                            className="text-[10px] text-dd-text-2 disabled:opacity-20 hover:text-dd-text leading-none">▲</button>
+                                        <button onClick={() => moveCat(catIdx, 1)}
+                                            disabled={catIdx === cats.length - 1}
+                                            className="text-[10px] text-dd-text-2 disabled:opacity-20 hover:text-dd-text leading-none">▼</button>
+                                    </div>
+                                    <input type="text" value={isEs ? (cat.nameEs || cat.name) : cat.name}
+                                        onChange={e => renameCat(catIdx, e.target.value)}
+                                        className="flex-1 min-w-0 px-1.5 py-0.5 rounded border border-dd-line text-xs font-bold bg-white" />
+                                    <span className="text-[10px] text-dd-text-2">{cat.items?.length || 0}</span>
+                                    <button onClick={() => removeCat(catIdx)}
+                                        className="px-1.5 py-0.5 rounded text-[10px] text-red-700 hover:bg-red-50">🗑</button>
+                                </div>
+                                <div className="bg-white">
+                                    {(cat.items || []).length === 0 ? (
+                                        <p className="px-2 py-2 text-[10px] text-dd-text-2 italic">
+                                            {tx('Empty — add items from the left.', 'Vacío — añade desde la izquierda.')}
+                                        </p>
+                                    ) : (cat.items || []).map((item, itemIdx) => (
+                                        <div key={item.id ?? itemIdx}
+                                            className="flex items-center gap-1 px-2 py-1 border-t border-dd-line/40 text-xs hover:bg-dd-bg">
+                                            <div className="flex flex-col">
+                                                <button onClick={() => moveItem(catIdx, itemIdx, -1)}
+                                                    disabled={itemIdx === 0}
+                                                    className="text-[10px] text-dd-text-2 disabled:opacity-20 hover:text-dd-text leading-none">▲</button>
+                                                <button onClick={() => moveItem(catIdx, itemIdx, 1)}
+                                                    disabled={itemIdx === (cat.items?.length || 0) - 1}
+                                                    className="text-[10px] text-dd-text-2 disabled:opacity-20 hover:text-dd-text leading-none">▼</button>
+                                            </div>
+                                            <div className="flex-1 min-w-0 truncate">
+                                                {isEs ? (item.nameEs || item.name) : item.name}
+                                                {item.subcat && (
+                                                    <span className="text-[9px] text-dd-text-2 ml-1">· {item.subcat}</span>
+                                                )}
+                                            </div>
+                                            <button onClick={() => removeItem(catIdx, itemIdx)}
+                                                className="px-1 py-0.5 rounded text-[10px] text-red-700 hover:bg-red-50">✕</button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
         </div>
     );
 }
