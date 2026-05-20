@@ -49,7 +49,13 @@ export default function InventoryListsAdmin({
 
     return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-4xl max-h-[100dvh] sm:max-h-[90vh] sm:rounded-2xl flex flex-col overflow-hidden">
+            {/* Force EXPLICIT height instead of max-h-. With max-h-,
+                the modal shrinks to its content, which then collapses
+                the flex-1 body into a zero-height container and breaks
+                its overflow-y-auto. Fixed height = stable scroll
+                container. (Andrew 2026-05-19 bug: "when the inventory
+                lists window is opened i cant scroll".) */}
+            <div className="bg-white w-full sm:max-w-4xl h-[100dvh] sm:h-[85vh] sm:rounded-2xl flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
                     <div className="flex items-center gap-2">
