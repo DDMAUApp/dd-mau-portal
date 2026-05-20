@@ -29,6 +29,7 @@ import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefr
 const TrainingHub = lazy(() => import('./components/TrainingHub'));
 const Operations = lazy(() => import('./components/Operations'));
 const MenuReference = lazy(() => import('./components/MenuReference'));
+const DateStickerPrinter = lazy(() => import('./components/DateStickerPrinter'));
 const Schedule = lazy(() => import('./components/Schedule'));
 const Recipes = lazy(() => import('./components/Recipes'));
 const LaborDashboard = lazy(() => import('./components/LaborDashboard'));
@@ -920,6 +921,7 @@ export default function App() {
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
             if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;
+            if (activeTab === 'datestickers') return <DateStickerPrinter language={language} staffName={staffName} storeLocation={effectiveLocation} />;
             if (activeTab === 'schedule') return <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />;
             if (activeTab === 'recipes' && hasRecipesAccess) return <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} geoRetry={geoRetry} geoPermState={geoPermState} />;
             if (activeTab === 'labor' && staffIsAdmin) return <LaborDashboard language={language} storeLocation={effectiveLocation} />;

@@ -210,6 +210,9 @@ export default function MobileHome({
         // 'chat_message' or 'chat_mention').
         { tab: 'chat',       icon: '💬', en: 'Chat',         es: 'Chat',           primary: true,  badge: unreadChat, badgeTone: 'amber' },
         ...(hasOpsAccess     ? [{ tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', primary: true }] : []),
+        // 2026-05-20 — Sticker printer for menu-item / component
+        // date labels. Sits next to Operations (kitchen surface).
+        { tab: 'datestickers', icon: '🏷', en: 'Stickers',   es: 'Etiquetas',   primary: true },
         ...(hasRecipesAccess ? [{ tab: 'recipes',    icon: '📖', en: 'Recipes',    es: 'Recetas',     primary: true }] : []),
         { tab: 'eighty6',    icon: '🚫', en: '86 Board',     es: 'Tablero 86',    badge: eighty6Count, badgeTone: 'danger' },
         // 2026-05-20 — Print Center tile. tab='print' is a virtual id

@@ -34,6 +34,15 @@ const NAV_GROUPS = [
             // FOH/BOH channels, DMs, groups. See ChatCenter.jsx.
             { tab: 'chat',       icon: '💬', en: 'Chat',       es: 'Chat' },
             { tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', requires: 'opsAccess' },
+            // 2026-05-20 — Andrew: "add a print tab to the home page
+            // in the workspace list under the operations tab." Sits
+            // right below Operations because date-coding labels is a
+            // kitchen-ops responsibility (cooks who just prepped
+            // something walk here, not to a separate "print" menu).
+            // Distinct from the home-tile 🖨 Print (free-form text);
+            // this one is structured: pick a menu item → drill into
+            // its build → print sticker for any component.
+            { tab: 'datestickers', icon: '🏷', en: 'Stickers',  es: 'Etiquetas' },
         ],
     },
     {
