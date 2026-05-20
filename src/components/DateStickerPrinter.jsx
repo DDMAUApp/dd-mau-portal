@@ -25,7 +25,7 @@
 //   - Editable build sheet (add/edit/delete components in-app)
 //   - Print history dashboard filtered to this surface
 
-import { useMemo, useState, lazy, Suspense } from 'react';
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import {
     getAllMenuItems, getMenuItemBuild,
     getSearchableIndex, getAiSearchItems,
@@ -33,16 +33,21 @@ import {
 } from '../data/itemBuild';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
+import { isAdmin } from '../data/staff';
+import { subscribeAllBuildOverrides, applyBuildOverride } from '../data/buildOverrides';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
+const BuildEditorModal = lazy(() => import('./BuildEditorModal'));
 
 export default function DateStickerPrinter({
     language = 'en',
     staffName,
     storeLocation,
+    staffList = [],
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
+    const adminUser = isAdmin(staffName, staffList);
 
     const [search, setSearch] = useState('');
     const [openItemId, setOpenItemId] = useState(null);
@@ -53,6 +58,16 @@ export default function DateStickerPrinter({
     // feedback, AI adds semantic matches ~300ms later. Flip off if
     // the AI is slow / unavailable.
     const [aiOn, setAiOn] = useState(true);
+    // Admin-only build editor state. When set to a menu item, the
+    // BuildEditorModal opens to edit that item's components.
+    const [editingItem, setEditingItem] = useState(null);
+    // Live override map keyed by menuItemSlug. Subscribed once,
+    // applied to every resolved build before render. Edits made by
+    // any admin (on any device) propagate live.
+    const [overrides, setOverrides] = useState(new Map());
+    useEffect(() => {
+        return subscribeAllBuildOverrides(setOverrides);
+    }, []);
 
     const allItems = useMemo(() => getAllMenuItems(), []);
     // Flat searchable index: every menu item + every deduped
@@ -137,13 +152,16 @@ export default function DateStickerPrinter({
         return Array.from(m.values());
     }, [filteredItems]);
 
-    // Open-item resolver — for the inline-expand on a row.
+    // Open-item resolver — for the inline-expand on a row. Merges
+    // any admin override on top of the static build.
     const openBuild = useMemo(() => {
         if (!openItemId) return null;
         const item = allItems.find(i => i.id === openItemId);
         if (!item) return null;
-        return getMenuItemBuild(item.nameEn);
-    }, [openItemId, allItems]);
+        const staticBuild = getMenuItemBuild(item.nameEn);
+        const override = overrides.get(item.id) || null;
+        return applyBuildOverride(staticBuild, override);
+    }, [openItemId, allItems, overrides]);
 
     // Handler: take a component (from the build), synthesize a
     // recipe-shaped object, and hand to PrintLabelModal in editable
@@ -280,6 +298,9 @@ export default function DateStickerPrinter({
                                                 tx={tx}
                                                 build={openItemId === item.menuItemId ? openBuild : null}
                                                 onPrintComponent={handlePrintComponent}
+                                                adminUser={adminUser}
+                                                onEdit={() => setEditingItem({ id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs })}
+                                                hasOverride={overrides.has(item.menuItemId)}
                                             />
                                         ))}
                                     </div>
@@ -330,6 +351,9 @@ export default function DateStickerPrinter({
                                             tx={tx}
                                             build={openItemId === item.id ? openBuild : null}
                                             onPrintComponent={handlePrintComponent}
+                                            adminUser={adminUser}
+                                            onEdit={() => setEditingItem(item)}
+                                            hasOverride={overrides.has(item.id)}
                                         />
                                     ))}
                                 </div>
@@ -354,28 +378,68 @@ export default function DateStickerPrinter({
                     />
                 </Suspense>
             )}
+
+            {/* Build editor — admin-only. Opens with the current
+                build (static + any existing override). Save writes
+                /build_overrides/{slug}; the live subscription above
+                refreshes the resolver so any printer surface picks
+                up the change without reload. */}
+            {editingItem && (
+                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                    <BuildEditorModal
+                        menuItem={editingItem}
+                        initialComponents={(() => {
+                            // Resolve the build the editor seeds from
+                            // — combines static + any existing override.
+                            const base = getMenuItemBuild(editingItem.nameEn);
+                            const ov = overrides.get(editingItem.id) || null;
+                            const merged = applyBuildOverride(base, ov);
+                            return merged?.components || [];
+                        })()}
+                        staffName={staffName}
+                        language={language}
+                        onClose={() => setEditingItem(null)}
+                        onSaved={() => { /* live subscription refreshes the view */ }}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }
 
 // ── MenuItemRow ────────────────────────────────────────────────────
-function MenuItemRow({ item, isOpen, onToggle, isEs, tx, build, onPrintComponent }) {
+function MenuItemRow({ item, isOpen, onToggle, isEs, tx, build, onPrintComponent, adminUser = false, onEdit, hasOverride = false }) {
     const allergens = parseAllergenString(item.allergens || '');
     return (
         <div className={`bg-white border-2 rounded-xl overflow-hidden ${isOpen ? 'border-purple-300 shadow-md' : 'border-dd-line'}`}>
-            {/* Collapsed header */}
-            <button onClick={onToggle}
-                className="w-full text-left px-3 py-2.5 flex items-center gap-2 hover:bg-purple-50/40 transition">
-                <span className={`flex-1 min-w-0 text-sm font-bold text-dd-text truncate`}>
-                    {isEs ? (item.nameEs || item.nameEn) : item.nameEn}
-                </span>
-                {allergens.length > 0 && (
-                    <span className="flex-shrink-0 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
-                        ⚠ {allergens.length}
+            {/* Collapsed header — toggle for everyone; admin gets an
+                additional Edit pencil pill (gated by adminUser). */}
+            <div className="flex items-center">
+                <button onClick={onToggle}
+                    className="flex-1 min-w-0 text-left px-3 py-2.5 flex items-center gap-2 hover:bg-purple-50/40 transition">
+                    <span className={`flex-1 min-w-0 text-sm font-bold text-dd-text truncate`}>
+                        {isEs ? (item.nameEs || item.nameEn) : item.nameEn}
                     </span>
+                    {hasOverride && (
+                        <span className="flex-shrink-0 text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-1.5 py-0.5 rounded-full">
+                            ✏ {tx('CUSTOM', 'CUSTOM')}
+                        </span>
+                    )}
+                    {allergens.length > 0 && (
+                        <span className="flex-shrink-0 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded-full">
+                            ⚠ {allergens.length}
+                        </span>
+                    )}
+                    <span className={`flex-shrink-0 text-purple-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
+                </button>
+                {adminUser && (
+                    <button onClick={(e) => { e.stopPropagation(); onEdit?.(); }}
+                        title={tx('Edit build (admin)', 'Editar (admin)')}
+                        className="flex-shrink-0 m-1.5 px-2.5 py-1.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-800 text-[11px] font-bold hover:bg-amber-100 active:scale-95 transition">
+                        ✏️ {tx('Edit', 'Editar')}
+                    </button>
                 )}
-                <span className={`flex-shrink-0 text-purple-500 transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
-            </button>
+            </div>
 
             {/* Expanded build view */}
             {isOpen && build && (
