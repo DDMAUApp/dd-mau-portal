@@ -22,6 +22,7 @@ import { toast, undoToast } from '../toast';
 import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
+const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -192,6 +193,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             const [phoneDrafts, setPhoneDrafts] = useState({});
             const [showBulkTag, setShowBulkTag] = useState(false);
             const [showRequiredTaskAdmin, setShowRequiredTaskAdmin] = useState(false);
+            const [showInventoryLists, setShowInventoryLists] = useState(false);
             // Staff Import flow — paste names or upload CSV, diff against
             // current staff list, configure new records (role / location /
             // PIN / flags), commit as a batch. Lives in ImportStaffModal.
@@ -1875,6 +1877,36 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             <div className="mt-3"><InventoryHistory language={language} customInventory={null} storeLocation={storeLocation} /></div>
                         )}
                     </div>
+
+                    {/* Inventory list variations — admin can create/name/
+                        activate alternate inventory lists ("Produce day",
+                        "Quick prep", etc.) that swap what staff sees in
+                        the Inventory tab. */}
+                    <div className="mt-4 pt-4 border-t border-gray-200">
+                        <button onClick={() => setShowInventoryLists(true)}
+                            className="w-full flex items-center justify-between text-left p-3 rounded-xl bg-gradient-to-r from-amber-50 to-yellow-50 border-2 border-amber-200 hover:from-amber-100 hover:to-yellow-100 transition">
+                            <div>
+                                <h3 className="text-base font-bold text-amber-800 mb-0.5">
+                                    📋 {language === "es" ? "Listas de inventario" : "Inventory lists"}
+                                </h3>
+                                <p className="text-xs text-amber-700">{language === "es"
+                                    ? "Crea variaciones (\"Día de verduras\", \"Prep rápida\") · activa la que el inventario muestra"
+                                    : 'Build named variations ("Produce day", "Quick prep") · activate the one shown in the inventory tab'}</p>
+                            </div>
+                            <span className="text-amber-600 text-2xl">→</span>
+                        </button>
+                    </div>
+
+                    {showInventoryLists && (
+                        <ReactSuspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                            <InventoryListsAdmin
+                                language={language}
+                                staffName={staffName}
+                                viewer={staffList.find(s => s.name === staffName)}
+                                onClose={() => setShowInventoryLists(false)}
+                            />
+                        </ReactSuspense>
+                    )}
 
                     {/* ── Availability Editor Modal ── */}
                     {availabilityForId !== null && (() => {

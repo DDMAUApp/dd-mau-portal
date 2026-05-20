@@ -5,6 +5,7 @@ import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { subscribeActiveList } from '../data/inventoryLists';
 import { escapeHtml as escH } from '../data/htmlEscape';
 // Lazy-loaded sub-views — these are 500-1000+ line components that only
 // render when their specific sub-tab is active. Eager-importing them
@@ -362,6 +363,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invNewSupplier, setInvNewSupplier] = useState("");
             const [invNewOrderDay, setInvNewOrderDay] = useState("Fri");
             const [customInventory, setCustomInventory] = useState(INVENTORY_CATEGORIES.map(c => ({...c, items: [...c.items]})));
+            // Active inventory-list override. When admin has activated a
+            // named list via Admin → Inventory lists, its categories
+            // replace whatever the legacy customInventory merge produced.
+            // null = no active list (default — fall back to master + ops
+            // doc merge as before).
+            const [activeList, setActiveList] = useState(null);
+            // Ref mirror so the inventory-snapshot handler can check the
+            // current active-list state without taking it as a dep
+            // (the snapshot subscription is set up once on mount).
+            const activeListRef = useRef(null);
+            useEffect(() => { activeListRef.current = activeList; }, [activeList]);
             const [livePrices, setLivePrices] = useState({}); // { sysco: { prices: { itemId: { price, pack, ... } }, lastScraped } }
             const [syscoTriggerStatus, setSyscoTriggerStatus] = useState(null); // null | "requesting" | "running" | "done" | "error"
             const [syscoScrapeStatus, setSyscoScrapeStatus] = useState(null); // { status, detail, pricesFound, updatedAt }
@@ -1393,6 +1405,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }
                 });
 
+                // Active inventory-list subscription. Lives at /inventory_lists
+                // where status='active'. If/when one is found, its categories
+                // override the legacy customInventory shape — the inventory
+                // tab renders from the active list. If no list is active,
+                // the legacy ops/inventory_{loc}.customInventory path below
+                // is the source of truth (existing behavior).
+                const unsubActiveList = subscribeActiveList((next) => {
+                    setActiveList(next);
+                    if (next && Array.isArray(next.categories) && next.categories.length > 0) {
+                        // Replace customInventory immediately — counts stay
+                        // keyed by item.id, so the inventory tab re-renders
+                        // with the list's items but the same counts.
+                        setCustomInventory(next.categories.map(c => ({ ...c, items: [...c.items] })));
+                    }
+                });
+
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
                 const unsubInventorySnapshot = onSnapshot(inventoryDocRef, { includeMetadataChanges: true }, (docSnap) => {
                     // Skip our own optimistic local writes — wait for the server-confirmed snapshot.
@@ -1404,6 +1432,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         setInventory(data.counts || {});
                         setInvCountMeta(data.countMeta || {});
                         setVendorCounts(data.vendorCounts || {});
+                        // If an admin-activated list is in play, IT owns the
+                        // categories structure — skip the legacy merge from
+                        // the ops doc. Counts/meta still come from the ops
+                        // doc (per-location, orthogonal to the list).
+                        const overrideList = activeListRef.current;
+                        if (overrideList && Array.isArray(overrideList.categories) && overrideList.categories.length > 0) {
+                            setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
+                            return;
+                        }
                         if (data.customInventory) {
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
                             // so new items from inventory.js always appear.
@@ -1530,7 +1567,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     setInventoryAudits(rows);
                 }, (err) => console.warn('inventory audits subscribe failed', err));
 
-                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubInvAudits(); };
+                return () => { unsubChecklist(); unsubInventorySnapshot(); unsubVendorLog(); unsubSplit(); unsubInvAudits(); unsubActiveList(); };
             }, [storeLocation]);
 
             // ── Vendor-price subscriptions (GLOBAL, not per-location) ──
