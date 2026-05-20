@@ -231,6 +231,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // accordion expand.
             const [recipeViews, setRecipeViews] = useState([]);
             const [showAllViews, setShowAllViews] = useState(false);
+
+            // ── Inventory audit panel state ─────────────────────────────
+            // Mirrors the recipe-view audit shape so the same UX
+            // (collapsed by default, on-demand subscribe, show-25 then
+            // expand) applies. Audit rows are already written by
+            // Operations.jsx on every count change to
+            // /inventory_audits_{location} with { itemId, itemName,
+            // previous, next, delta, byStaff, at, atLocal, dateKey }.
+            const [inventoryAudits, setInventoryAudits] = useState([]);
+            const [inventoryAuditExpanded, setInventoryAuditExpanded] = useState(false);
+            const [showAllInvAudits, setShowAllInvAudits] = useState(false);
+            // Filters — keep client-side; the query just pulls the most
+            // recent 500 rows for the selected location and we trim from
+            // there. At restaurant scale this is plenty fast.
+            const [invAuditDir, setInvAuditDir] = useState('all');         // 'all' | 'adds' | 'subs'
+            const [invAuditDateK, setInvAuditDateK] = useState('week');    // 'all' | 'today' | 'yest' | 'week'
+            const [invAuditStaff, setInvAuditStaff] = useState('');        // staffName filter, empty = all
+            const [invAuditSearch, setInvAuditSearch] = useState('');      // item-name substring
             // FIX (review 2026-05-14, perf): subscription gated by an
             // expand toggle. Recipe-views grow as a 200-doc-cap descending
             // query — every recipe open re-fires the snapshot. With the
@@ -688,6 +706,38 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 );
                 return () => unsub();
             }, [recipeAuditExpanded]);
+
+            // Inventory audit subscription — only fires when the panel
+            // is expanded. Pulls the most recent 500 rows for the
+            // currently-selected location. When storeLocation === 'both'
+            // we query BOTH suffixed collections and merge — admin on
+            // 'both' wants to see activity across the company.
+            useEffect(() => {
+                if (!inventoryAuditExpanded) return;
+                const locs = storeLocation === 'both'
+                    ? ['webster', 'maryland']
+                    : [storeLocation || 'webster'];
+                const buffers = new Map();  // loc → array
+                const unsubs = locs.map(loc => onSnapshot(
+                    query(collection(db, `inventory_audits_${loc}`), orderBy('at', 'desc'), limit(500)),
+                    (snap) => {
+                        const arr = [];
+                        snap.forEach(d => arr.push({ id: d.id, _loc: loc, ...d.data() }));
+                        buffers.set(loc, arr);
+                        // Merge + sort across all watched locations.
+                        const merged = [];
+                        for (const a of buffers.values()) merged.push(...a);
+                        merged.sort((a, b) => {
+                            const at = a.at?.toMillis?.() ?? 0;
+                            const bt = b.at?.toMillis?.() ?? 0;
+                            return bt - at;
+                        });
+                        setInventoryAudits(merged);
+                    },
+                    (err) => { console.warn(`Error loading inventory_audits_${loc}:`, err); },
+                ));
+                return () => unsubs.forEach(u => u && u());
+            }, [inventoryAuditExpanded, storeLocation]);
 
             const updateRequestStatus = async (reqId, newStatus) => {
                 try {
@@ -2632,6 +2682,207 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                             : (language === 'es' ? `Ver todas (${recipeViews.length})` : `View all (${recipeViews.length})`)}
                                     </button>
                                 )}
+                                </>)}
+                            </div>
+                        );
+                    })()}
+
+                    {/* ── INVENTORY AUDIT — who added/subtracted what, when ──────────
+                        Parallel to the recipe-view audit. Every count change in
+                        Operations.jsx already writes to /inventory_audits_{loc}
+                        with { itemId, itemName, previous, next, delta, byStaff,
+                        at, atLocal, dateKey }. This panel surfaces that history:
+                        adds vs subtracts, who did it, what item, when, on which
+                        side (webster/maryland), with date + staff + item + dir
+                        filters. Use case: "why did the egg count drop by 6 yesterday?" */}
+                    {(() => {
+                        // ── filters ──
+                        const now = new Date();
+                        const todayKey = now.toISOString().slice(0, 10);
+                        const yestKey = new Date(now.getTime() - 86400_000).toISOString().slice(0, 10);
+                        const weekAgoMs = now.getTime() - 7 * 86400_000;
+                        const searchNorm = invAuditSearch.trim().toLowerCase();
+
+                        const filtered = inventoryAudits.filter(r => {
+                            // direction
+                            if (invAuditDir === 'adds' && !((r.delta || 0) > 0)) return false;
+                            if (invAuditDir === 'subs' && !((r.delta || 0) < 0)) return false;
+                            // date — use dateKey for cheap match, fall back to at.toDate
+                            const dk = r.dateKey || (r.at?.toDate?.()?.toISOString?.()?.slice(0, 10));
+                            const atMs = r.at?.toMillis?.() ?? 0;
+                            if (invAuditDateK === 'today' && dk !== todayKey) return false;
+                            if (invAuditDateK === 'yest' && dk !== yestKey) return false;
+                            if (invAuditDateK === 'week' && atMs < weekAgoMs) return false;
+                            // staff
+                            if (invAuditStaff && r.byStaff !== invAuditStaff) return false;
+                            // item-name substring
+                            if (searchNorm) {
+                                const name = (r.itemName || r.itemId || '').toLowerCase();
+                                if (!name.includes(searchNorm)) return false;
+                            }
+                            return true;
+                        });
+
+                        const totals = { adds: 0, subs: 0, addQty: 0, subQty: 0 };
+                        for (const r of filtered) {
+                            const d = Number(r.delta) || 0;
+                            if (d > 0) { totals.adds++; totals.addQty += d; }
+                            else if (d < 0) { totals.subs++; totals.subQty += Math.abs(d); }
+                        }
+
+                        const shown = showAllInvAudits ? filtered : filtered.slice(0, 25);
+
+                        // Collect unique staff names that have audit rows
+                        // — feeds the staff filter dropdown.
+                        const staffSet = new Set();
+                        for (const r of inventoryAudits) if (r.byStaff) staffSet.add(r.byStaff);
+                        const staffOptions = Array.from(staffSet).sort();
+
+                        const fmtTime = (ts) => {
+                            if (!ts) return '—';
+                            try {
+                                const d = ts.toDate ? ts.toDate() : new Date(ts);
+                                return d.toLocaleString(language === 'es' ? 'es' : 'en', {
+                                    month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                                });
+                            } catch { return '—'; }
+                        };
+
+                        return (
+                            <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                                <button onClick={() => setInventoryAuditExpanded(s => !s)}
+                                    className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xl">📋</span>
+                                        <h3 className="text-base font-bold text-gray-800">
+                                            {language === 'es' ? 'Auditoría de inventario' : 'Inventory audit'}
+                                        </h3>
+                                    </div>
+                                    <span className="text-gray-400 text-sm">{inventoryAuditExpanded ? '▼' : '▶'}</span>
+                                </button>
+                                {inventoryAuditExpanded && (<>
+                                    <p className="text-[11px] text-gray-500 mb-3">
+                                        {language === 'es'
+                                            ? 'Cada vez que alguien sube o baja una cantidad queda registrado: quién, qué, cuándo, cuánto. Útil para "¿por qué bajaron los huevos ayer?".'
+                                            : 'Every time someone adds or subtracts an inventory count it\'s logged: who, what item, when, by how much. Answers "why did eggs drop yesterday?"'}
+                                    </p>
+
+                                    {/* Filter bar */}
+                                    <div className="flex flex-wrap gap-1.5 mb-3 text-[11px]">
+                                        {/* direction */}
+                                        <div className="inline-flex border border-dd-line rounded-md overflow-hidden">
+                                            {[
+                                                { k: 'all', en: 'All', es: 'Todas' },
+                                                { k: 'adds', en: '➕ Adds', es: '➕ Sumas' },
+                                                { k: 'subs', en: '➖ Subs', es: '➖ Restas' },
+                                            ].map(f => (
+                                                <button key={f.k} onClick={() => setInvAuditDir(f.k)}
+                                                    className={`px-2 py-1 font-bold ${invAuditDir === f.k ? 'bg-dd-text text-white' : 'bg-white text-dd-text-2 hover:bg-dd-bg'}`}>
+                                                    {language === 'es' ? f.es : f.en}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        {/* date */}
+                                        <div className="inline-flex border border-dd-line rounded-md overflow-hidden">
+                                            {[
+                                                { k: 'today', en: 'Today', es: 'Hoy' },
+                                                { k: 'yest', en: 'Yesterday', es: 'Ayer' },
+                                                { k: 'week', en: 'Week', es: 'Semana' },
+                                                { k: 'all', en: 'All time', es: 'Todo' },
+                                            ].map(f => (
+                                                <button key={f.k} onClick={() => setInvAuditDateK(f.k)}
+                                                    className={`px-2 py-1 font-bold ${invAuditDateK === f.k ? 'bg-dd-text text-white' : 'bg-white text-dd-text-2 hover:bg-dd-bg'}`}>
+                                                    {language === 'es' ? f.es : f.en}
+                                                </button>
+                                            ))}
+                                        </div>
+                                        {/* staff */}
+                                        <select value={invAuditStaff}
+                                            onChange={e => setInvAuditStaff(e.target.value)}
+                                            className="border border-dd-line rounded-md px-2 py-1 bg-white font-bold">
+                                            <option value="">{language === 'es' ? 'Todo el personal' : 'All staff'}</option>
+                                            {staffOptions.map(n => (
+                                                <option key={n} value={n}>{n}</option>
+                                            ))}
+                                        </select>
+                                        {/* item search */}
+                                        <input type="search" value={invAuditSearch}
+                                            onChange={e => setInvAuditSearch(e.target.value)}
+                                            placeholder={language === 'es' ? 'Buscar artículo…' : 'Search item…'}
+                                            className="flex-1 min-w-[120px] border border-dd-line rounded-md px-2 py-1 bg-white" />
+                                    </div>
+
+                                    {/* Totals summary */}
+                                    <div className="flex flex-wrap gap-2 mb-3 text-[11px]">
+                                        <span className="bg-green-50 text-green-700 border border-green-200 px-2 py-0.5 rounded font-bold">
+                                            ➕ {totals.adds} {language === 'es' ? `sumas (+${totals.addQty})` : `adds (+${totals.addQty})`}
+                                        </span>
+                                        <span className="bg-red-50 text-red-700 border border-red-200 px-2 py-0.5 rounded font-bold">
+                                            ➖ {totals.subs} {language === 'es' ? `restas (−${totals.subQty})` : `subs (−${totals.subQty})`}
+                                        </span>
+                                        <span className="bg-gray-50 text-gray-600 border border-gray-200 px-2 py-0.5 rounded font-bold">
+                                            {filtered.length} {language === 'es' ? 'eventos' : 'events'}
+                                        </span>
+                                    </div>
+
+                                    {filtered.length === 0 ? (
+                                        <p className="text-xs text-gray-400 italic">
+                                            {language === 'es' ? 'No hay cambios en este filtro.' : 'No changes match this filter.'}
+                                        </p>
+                                    ) : (
+                                        <div className="overflow-x-auto -mx-2">
+                                            <table className="w-full text-[11px]">
+                                                <thead>
+                                                    <tr className="text-gray-500 border-b">
+                                                        <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Hora' : 'Time'}</th>
+                                                        <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Empleado' : 'Staff'}</th>
+                                                        <th className="text-left px-2 py-1 font-semibold">{language === 'es' ? 'Artículo' : 'Item'}</th>
+                                                        <th className="text-right px-2 py-1 font-semibold">Δ</th>
+                                                        <th className="text-right px-2 py-1 font-semibold">{language === 'es' ? 'Antes → Después' : 'Was → Now'}</th>
+                                                        {storeLocation === 'both' && (
+                                                            <th className="text-center px-2 py-1 font-semibold">{language === 'es' ? 'Tienda' : 'Loc'}</th>
+                                                        )}
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {shown.map(r => {
+                                                        const d = Number(r.delta) || 0;
+                                                        const isAdd = d > 0;
+                                                        const isSub = d < 0;
+                                                        return (
+                                                            <tr key={r.id} className="border-b last:border-0">
+                                                                <td className="px-2 py-1 text-gray-700 whitespace-nowrap">{fmtTime(r.at)}</td>
+                                                                <td className="px-2 py-1 text-gray-800 font-medium">{r.byStaff || '—'}</td>
+                                                                <td className="px-2 py-1 text-gray-700">{r.itemName || r.itemId || '—'}</td>
+                                                                <td className={`px-2 py-1 text-right font-black ${isAdd ? 'text-green-700' : isSub ? 'text-red-700' : 'text-gray-500'}`}>
+                                                                    {d > 0 ? `+${d}` : d}
+                                                                </td>
+                                                                <td className="px-2 py-1 text-right text-gray-600 whitespace-nowrap">
+                                                                    {r.previous ?? '?'} → <span className="font-bold text-gray-800">{r.next ?? '?'}</span>
+                                                                </td>
+                                                                {storeLocation === 'both' && (
+                                                                    <td className="px-2 py-1 text-center">
+                                                                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${r._loc === 'webster' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>
+                                                                            {r._loc === 'webster' ? 'WG' : 'MD'}
+                                                                        </span>
+                                                                    </td>
+                                                                )}
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+
+                                    {filtered.length > 25 && (
+                                        <button onClick={() => setShowAllInvAudits(s => !s)}
+                                            className="mt-2 text-[11px] font-bold text-mint-700">
+                                            {showAllInvAudits
+                                                ? (language === 'es' ? 'Mostrar menos' : 'Show less')
+                                                : (language === 'es' ? `Ver todas (${filtered.length})` : `View all (${filtered.length})`)}
+                                        </button>
+                                    )}
                                 </>)}
                             </div>
                         );
