@@ -21,6 +21,8 @@
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onRequest } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
 const { logger } = require("firebase-functions/v2");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
@@ -29,6 +31,24 @@ const { GoogleAuth } = require("google-auth-library");
 
 initializeApp();
 const db = getFirestore();
+
+// Twilio SMS — secrets are injected per-function so they never appear
+// in the deployed bundle as plaintext. Set them with:
+//   firebase functions:secrets:set TWILIO_ACCOUNT_SID
+//   firebase functions:secrets:set TWILIO_AUTH_TOKEN
+//   firebase functions:secrets:set TWILIO_FROM_NUMBER
+// See FCM_SETUP.md companion: SMS_SETUP.md for the runbook.
+const TWILIO_ACCOUNT_SID = defineSecret("TWILIO_ACCOUNT_SID");
+const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
+const TWILIO_FROM_NUMBER = defineSecret("TWILIO_FROM_NUMBER");
+
+const smsHelpers = require("./sms");
+const {
+    renderSmsTemplate,
+    INBOUND_REPLIES,
+    CONSENT_TEXT_VERSION,
+    ALWAYS_SMS_TYPES,
+} = require("./smsTemplates");
 
 // Helper: is `staffName` currently within a published shift, or
 // within 30 min of one starting? Returns true/false. Used by the
@@ -236,6 +256,388 @@ exports.dispatchNotification = onDocumentCreated(
             );
             await db.doc("config/staff").set({ list: newList });
         }
+    }
+);
+
+// ──────────────────────────────────────────────────────────────────────
+// SMS dispatch — parallel to dispatchNotification
+// ──────────────────────────────────────────────────────────────────────
+//
+// Same trigger (onDocumentCreated on notifications/{id}) so SMS runs
+// alongside push. Independent: if Twilio is down or the staff isn't
+// SMS-opted-in, push still happens; if push has no FCM tokens (PWA
+// never installed), SMS catches the staff anyway.
+//
+// What triggers an SMS:
+//   1. notif.type is in ALWAYS_SMS_TYPES (system urgencies only; chat
+//      stays in-app per Andrew 2026-05-19)
+//   2. staff has phoneE164 + smsOptIn=true + smsStopped!=true
+//   3. global /config/sms enabled (or doc missing — default on)
+//   4. no prior sms_delivery_logs row exists for this notificationId
+//      (dedup against trigger retries)
+//
+// What we do NOT do:
+//   • Send SMS for routine chat (chat_message, chat_mention) — those
+//     stay push-only
+//   • Relay inbound SMS into the chat UI — inbound is STOP/START/HELP
+//     compliance only
+//   • Put PII (SSN, payroll, medical) into the body — SMS isn't private
+exports.dispatchSms = onDocumentCreated(
+    {
+        document: "notifications/{id}",
+        region: "us-central1",
+        secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER],
+    },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
+        const notif = snap.data();
+        const notificationId = event.params.id;
+
+        // Cheapest checks first — bail before any Firestore reads.
+        // The type-policy arm of isSmsEligible doesn't need the staff,
+        // so test it directly: anything not on the urgent list is
+        // push-only, period. Same with the explicit per-event skip.
+        if (!ALWAYS_SMS_TYPES.has(notif.type)) return;
+        if (notif.skipSms === true) return;
+
+        const forStaff = notif.forStaff;
+        if (!forStaff) return;
+
+        // Dedup — trigger may fire twice under retry pressure. Exactly-
+        // once SMS semantics per notification doc.
+        const alreadySent = await smsHelpers.hasExistingDeliveryLog(db, notificationId);
+        if (alreadySent) {
+            logger.info(`dispatchSms: ${notificationId} already has a log row, skipping (dedup)`);
+            return;
+        }
+
+        // Load staff + global settings.
+        const [staffDoc, settingsDoc] = await Promise.all([
+            db.doc("config/staff").get(),
+            db.doc("config/sms").get(),
+        ]);
+        const list = (staffDoc.data() || {}).list || [];
+        const staff = list.find((s) => s && s.name === forStaff);
+        const settings = settingsDoc.exists ? settingsDoc.data() : {};
+
+        const [eligible, reason] = smsHelpers.isSmsEligible(notif, staff, settings);
+        if (!eligible) {
+            logger.info(`dispatchSms skip: ${forStaff} type=${notif.type} reason=${reason}`);
+            // We don't write a log row for ineligible — only ATTEMPTED
+            // sends get logged, otherwise the table fills with noise.
+            return;
+        }
+
+        // Render template.
+        const language = staff.preferredLanguage === "es" ? "es" : "en";
+        const vars = smsHelpers.buildSmsVars(notif);
+        const body = renderSmsTemplate(notif.type, language, vars);
+        if (!body) {
+            logger.warn(`dispatchSms: no template for type=${notif.type}, skipping`);
+            return;
+        }
+
+        // Status callback URL — Twilio POSTs delivery updates here.
+        // Constructed from the function's deployed region/project. We
+        // don't hardcode the URL — let env override for staging if/when
+        // we have one.
+        const projectId = process.env.GCLOUD_PROJECT;
+        const statusCallback = projectId
+            ? `https://us-central1-${projectId}.cloudfunctions.net/twilioStatusCallback`
+            : undefined;
+
+        let sid = null;
+        let twilioStatus = null;
+        let errorCode = null;
+        let errorMessage = null;
+        try {
+            const res = await smsHelpers.sendTwilioSms({
+                to: staff.phoneE164,
+                from: TWILIO_FROM_NUMBER.value(),
+                body,
+                accountSid: TWILIO_ACCOUNT_SID.value(),
+                authToken: TWILIO_AUTH_TOKEN.value(),
+                statusCallback,
+            });
+            sid = res.sid;
+            twilioStatus = res.status;
+            logger.info(`SMS sent to ${forStaff} type=${notif.type} sid=${sid} status=${twilioStatus}`);
+        } catch (e) {
+            errorCode = e?.code != null ? String(e.code) : "unknown";
+            errorMessage = e?.message || "twilio_error";
+            logger.error(`dispatchSms FAILED for ${forStaff} type=${notif.type}:`, errorMessage);
+        }
+
+        // Always write a delivery log row — success and failure both.
+        await smsHelpers.writeDeliveryLog(db, {
+            notificationId,
+            forStaff,
+            staffId: staff.id ?? null,
+            phoneE164: staff.phoneE164,
+            type: notif.type,
+            body,
+            language,
+            twilioSid: sid,
+            status: sid ? (twilioStatus || "queued") : "failed",
+            errorCode,
+            errorMessage,
+            retryCount: 0,
+        });
+
+        // Update staff record with last-send timestamp + status.
+        try {
+            await smsHelpers.updateStaffSmsState(db, forStaff, {
+                smsLastSentAt: FieldValue.serverTimestamp(),
+                smsLastDeliveryStatus: sid ? (twilioStatus || "queued") : "failed",
+                ...(errorMessage ? { smsLastFailureReason: errorMessage.slice(0, 200) } : {}),
+            });
+        } catch (e) {
+            logger.warn(`dispatchSms staff-update failed for ${forStaff}:`, e?.message || e);
+        }
+    }
+);
+
+// ──────────────────────────────────────────────────────────────────────
+// Twilio inbound webhook — STOP / START / HELP only
+// ──────────────────────────────────────────────────────────────────────
+//
+// CTIA + Twilio require us to honor STOP immediately and respond to
+// HELP. START re-subscribes. Anything else is logged for reference but
+// does NOT get relayed into the chat — chat-to-staff communication
+// stays inside the app (Andrew 2026-05-19).
+//
+// Configure in Twilio Console:
+//   Phone Number → Messaging → A message comes in → Webhook
+//     URL: https://us-central1-<project>.cloudfunctions.net/twilioInbound
+//     Method: POST
+//
+// Twilio signs every webhook call; we verify the signature before
+// trusting any payload — otherwise an attacker who guessed the URL
+// could STOP/START arbitrary phone numbers.
+exports.twilioInbound = onRequest(
+    {
+        region: "us-central1",
+        secrets: [TWILIO_AUTH_TOKEN],
+        cors: false,
+        invoker: "public",
+    },
+    async (req, res) => {
+        // Signature verification — protects against spoofed inbound.
+        try {
+            const twilio = require("twilio");
+            const sig = req.header("X-Twilio-Signature") || "";
+            const url = `https://${req.hostname}${req.originalUrl}`;
+            const valid = twilio.validateRequest(
+                TWILIO_AUTH_TOKEN.value(),
+                sig,
+                url,
+                req.body || {},
+            );
+            if (!valid) {
+                logger.warn("twilioInbound: invalid signature, rejecting");
+                res.status(403).send("forbidden");
+                return;
+            }
+        } catch (e) {
+            logger.error("twilioInbound signature check failed:", e?.message || e);
+            res.status(500).send("error");
+            return;
+        }
+
+        const from = req.body?.From || "";
+        const body = req.body?.Body || "";
+        const sid = req.body?.MessageSid || null;
+        const kind = smsHelpers.classifyInboundBody(body);
+
+        const staff = await smsHelpers.findStaffByPhone(db, from);
+        const staffName = staff?.name || null;
+
+        // Log every inbound, regardless of kind. This is the audit
+        // record — proves we received a STOP at time T.
+        try {
+            await db.collection("sms_inbound_events").add({
+                fromE164: from,
+                matchedStaff: staffName,
+                staffId: staff?.id ?? null,
+                body,
+                kind,                       // 'stop' | 'start' | 'help' | 'other'
+                isOptOut: kind === "stop",
+                isOptIn: kind === "start",
+                twilioSid: sid,
+                receivedAt: FieldValue.serverTimestamp(),
+            });
+        } catch (e) {
+            logger.error("sms_inbound_events write failed:", e?.message || e);
+        }
+
+        // Pick the auto-reply language. Default to English when we
+        // don't know the staff.
+        const lang = staff?.preferredLanguage === "es" ? "es" : "en";
+
+        if (kind === "stop") {
+            // Update the staff record to reflect the opt-out + write
+            // the compliance event row. Twilio also auto-blocks future
+            // sends from the same From/To pair at the carrier level,
+            // but we mirror it on the staff record so our own
+            // eligibility check matches what Twilio will accept.
+            if (staffName) {
+                await smsHelpers.updateStaffSmsState(db, staffName, {
+                    smsOptIn: false,
+                    smsStopped: true,
+                    smsStoppedAt: FieldValue.serverTimestamp(),
+                });
+                try {
+                    await smsHelpers.writeOptInEvent(db, {
+                        staffId: staff.id,
+                        staffName,
+                        phoneE164: from,
+                        action: "opt_out",
+                        source: "sms_stop_reply",
+                        byName: staffName,
+                        byId: staff.id ?? null,
+                        twilioMessageSid: sid,
+                    });
+                } catch (_) { /* writeOptInEvent already logs */ }
+            }
+            sendTwiml(res, INBOUND_REPLIES.stop_confirm[lang]);
+            return;
+        }
+
+        if (kind === "start") {
+            if (staffName) {
+                await smsHelpers.updateStaffSmsState(db, staffName, {
+                    smsOptIn: true,
+                    smsStopped: false,
+                    smsOptInAt: FieldValue.serverTimestamp(),
+                    smsOptInBy: staffName,
+                    smsOptInSource: "sms_start_reply",
+                });
+                try {
+                    await smsHelpers.writeOptInEvent(db, {
+                        staffId: staff.id,
+                        staffName,
+                        phoneE164: from,
+                        action: "opt_in",
+                        source: "sms_start_reply",
+                        byName: staffName,
+                        byId: staff.id ?? null,
+                        twilioMessageSid: sid,
+                    });
+                } catch (_) {}
+            }
+            sendTwiml(res, INBOUND_REPLIES.start_confirm[lang]);
+            return;
+        }
+
+        if (kind === "help") {
+            sendTwiml(res, INBOUND_REPLIES.help[lang]);
+            return;
+        }
+
+        // Anything else — acknowledge with HELP copy so the staffer
+        // sees something instead of dead silence. We do NOT route
+        // freeform inbound into the chat (Andrew: "on the app's chat
+        // page is where they will text message each other").
+        sendTwiml(res, INBOUND_REPLIES.help[lang]);
+    }
+);
+
+function sendTwiml(res, message) {
+    const safe = String(message || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    res.set("Content-Type", "application/xml");
+    res.status(200).send(
+        `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${safe}</Message></Response>`
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Twilio delivery status callback
+// ──────────────────────────────────────────────────────────────────────
+//
+// Twilio POSTs to this URL each time a message changes state
+// (queued → sent → delivered, or → failed/undelivered). We use the
+// MessageSid to find the matching /sms_delivery_logs row and stamp
+// the latest status + timestamps.
+//
+// Configure in Twilio:
+//   Phone Number → Messaging → Status Callback URL:
+//     https://us-central1-<project>.cloudfunctions.net/twilioStatusCallback
+//
+// OR pass per-message via statusCallback (which dispatchSms already
+// does — that way every send carries the URL even if the console
+// config drifts).
+exports.twilioStatusCallback = onRequest(
+    {
+        region: "us-central1",
+        secrets: [TWILIO_AUTH_TOKEN],
+        cors: false,
+        invoker: "public",
+    },
+    async (req, res) => {
+        // Signature verification — same protection as inbound.
+        try {
+            const twilio = require("twilio");
+            const sig = req.header("X-Twilio-Signature") || "";
+            const url = `https://${req.hostname}${req.originalUrl}`;
+            const valid = twilio.validateRequest(
+                TWILIO_AUTH_TOKEN.value(),
+                sig,
+                url,
+                req.body || {},
+            );
+            if (!valid) {
+                logger.warn("twilioStatusCallback: invalid signature");
+                res.status(403).send("forbidden");
+                return;
+            }
+        } catch (e) {
+            logger.error("twilioStatusCallback signature check failed:", e?.message || e);
+            res.status(500).send("error");
+            return;
+        }
+
+        const sid = req.body?.MessageSid || null;
+        const status = req.body?.MessageStatus || null;
+        const errorCode = req.body?.ErrorCode || null;
+        if (!sid) {
+            res.status(400).send("missing MessageSid");
+            return;
+        }
+
+        try {
+            const snap = await db
+                .collection("sms_delivery_logs")
+                .where("twilioSid", "==", sid)
+                .limit(1)
+                .get();
+            if (snap.empty) {
+                // Not necessarily an error — the callback might race
+                // ahead of our log write, or Twilio re-deliver an old
+                // callback after we've moved on. Log + 200 so Twilio
+                // doesn't retry endlessly.
+                logger.info(`twilioStatusCallback: no log row for sid=${sid}, status=${status}`);
+                res.status(200).send("ok");
+                return;
+            }
+            const docRef = snap.docs[0].ref;
+            const updates = {
+                status,
+                lastStatusAt: FieldValue.serverTimestamp(),
+            };
+            if (errorCode) updates.errorCode = errorCode;
+            if (status === "delivered") updates.deliveredAt = FieldValue.serverTimestamp();
+            await docRef.update(updates);
+        } catch (e) {
+            logger.error("twilioStatusCallback update failed:", e?.message || e);
+            // Still 200 — we don't want Twilio retrying because we
+            // had a transient Firestore hiccup. The log entry stays
+            // with its prior status.
+        }
+        res.status(200).send("ok");
     }
 );
 

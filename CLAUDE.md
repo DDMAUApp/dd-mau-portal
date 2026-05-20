@@ -101,6 +101,10 @@ Detection happens at mount in `App.jsx`'s `readOnboardingMode()`.
 iOS Safari UA min-height on `<input>` overrides explicit `height: X%` — defeated with `minHeight: 0, minWidth: 0, lineHeight: 1` inline styles. See `OnboardingFillablePdf.jsx` FieldInput comment.
 
 ### Cloud Functions (`functions/`)
+- `dispatchNotification` — Firestore trigger: fans each `notifications/{id}` create out to the recipient's FCM tokens; off-shift gate w/ `ALWAYS_DELIVER_TYPES` bypass
+- `dispatchSms` — Firestore trigger: parallel SMS channel for urgent types only (`ALWAYS_SMS_TYPES`); requires staff `smsOptIn=true` + `phoneE164`; logs every send to `sms_delivery_logs`
+- `twilioInbound` — HTTP webhook for STOP/START/HELP compliance (inbound is NOT routed into chat — chat-to-staff stays in-app)
+- `twilioStatusCallback` — HTTP webhook for Twilio delivery status updates → `sms_delivery_logs`
 - `sendShiftReminders` — 1-hour-before-shift FCM push
 - `scheduledFirestoreBackup` — daily managed export to `gs://dd-mau-staff-app-backups/YYYY-MM-DD/` at 3am Central; writes `backup_history` log
 
