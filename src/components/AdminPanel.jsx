@@ -29,6 +29,196 @@ const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
 // (hooks must run in the same order every render). This wrapper-pattern is the
 // idiomatic fix.
 
+// ── PrintersConfigSection ─────────────────────────────────────────
+// Per-location Epson TM-L100 label printer config. Andrew 2026-05-20.
+// Each location has one printer doc at /config/printers_{location}.
+// Admin enters the printer's local IP + can fire a test print to
+// verify connectivity before staff start hitting "Print prep label".
+//
+// Why per-location: each restaurant has its own LAN + its own
+// printer with its own IP. Shared config would force both stores
+// onto the same printer.
+function PrintersConfigSection({ language, byName }) {
+    const isEs = language === 'es';
+    const tx = (en, es) => isEs ? es : en;
+    const LOCATIONS = ['webster', 'maryland'];
+    const LOC_LABEL = {
+        webster: tx('Webster', 'Webster'),
+        maryland: tx('MD Heights', 'MD Heights'),
+    };
+    return (
+        <div className="mt-6 mb-4 bg-white border-2 border-purple-200 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-1">
+                <span className="text-2xl">🏷</span>
+                <h3 className="text-base font-bold text-purple-900">
+                    {tx('Label printers', 'Impresoras de etiquetas')}
+                </h3>
+            </div>
+            <p className="text-[11px] text-purple-700 mb-3">
+                {tx(
+                    'Epson TM-L100 (linerless 80mm). Set the printer\'s local IP for each restaurant, then test. The DD Mau app prints directly to the printer over the kitchen Wi-Fi — no PC or driver needed.',
+                    'Epson TM-L100 (80mm sin liner). Configura la IP local de cada restaurante y haz una prueba. La app imprime directo por la red Wi-Fi de la cocina — sin PC ni driver.',
+                )}
+            </p>
+            <div className="space-y-2">
+                {LOCATIONS.map(loc => (
+                    <PrinterConfigRow key={loc}
+                        location={loc}
+                        locationLabel={LOC_LABEL[loc]}
+                        tx={tx}
+                        byName={byName}
+                    />
+                ))}
+            </div>
+            <p className="text-[10px] text-purple-700/70 italic mt-2">
+                {tx(
+                    'If a test print times out: confirm the printer is on the restaurant Wi-Fi, its local IP matches, and CORS is set to allow ddmauapp.github.io in the printer\'s web UI.',
+                    'Si la prueba falla: confirma que la impresora esté en la Wi-Fi del restaurante, que la IP coincida, y que el CORS permita ddmauapp.github.io.',
+                )}
+            </p>
+        </div>
+    );
+}
+
+// Single printer row — loads its config doc, lets admin edit IP /
+// port / enabled, fires a test print. Stamps lastTestedAt /
+// lastTestOk so the next admin to land here sees the state.
+function PrinterConfigRow({ location, locationLabel, tx, byName }) {
+    const [cfg, setCfg] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [ipDraft, setIpDraft] = useState('');
+    const [nameDraft, setNameDraft] = useState('');
+    const [enabled, setEnabled] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
+
+    useEffect(() => {
+        let mounted = true;
+        (async () => {
+            try {
+                const mod = await import('../data/labelPrinting');
+                const got = await mod.getPrinterConfig(location);
+                if (!mounted) return;
+                setCfg(got);
+                setIpDraft(got?.ip || '');
+                setNameDraft(got?.name || `${locationLabel} Kitchen`);
+                setEnabled(got?.enabled !== false);
+            } catch (e) {
+                console.warn('printer config load failed:', e);
+            } finally {
+                if (mounted) setLoading(false);
+            }
+        })();
+        return () => { mounted = false; };
+    }, [location, locationLabel]);
+
+    const save = async () => {
+        if (saving) return;
+        setSaving(true);
+        try {
+            const mod = await import('../data/labelPrinting');
+            await mod.savePrinterConfig({
+                location,
+                name: nameDraft,
+                ip: ipDraft.trim(),
+                enabled,
+                byName,
+            });
+            const fresh = await mod.getPrinterConfig(location);
+            setCfg(fresh);
+            toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
+        } catch (e) {
+            console.warn('save printer config failed:', e);
+            toast(tx('Save failed', 'Error al guardar') + ': ' + (e?.message || ''), { kind: 'error' });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const runTest = async () => {
+        if (testing) return;
+        setTesting(true);
+        try {
+            const mod = await import('../data/labelPrinting');
+            const res = await mod.testPrint({ location, byName });
+            if (res.ok) {
+                toast(tx('✓ Test label sent', '✓ Etiqueta de prueba enviada'), { kind: 'success' });
+            } else {
+                toast(tx('Test failed: ', 'Prueba falló: ') + res.error, { kind: 'error' });
+            }
+            const fresh = await mod.getPrinterConfig(location);
+            setCfg(fresh);
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    if (loading) {
+        return <div className="text-[11px] text-purple-700/70 px-2 py-1.5">{tx('Loading…', 'Cargando…')}</div>;
+    }
+
+    return (
+        <div className="border border-purple-200 rounded-lg p-3 bg-purple-50/40">
+            <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-black text-purple-900">{locationLabel}</span>
+                <label className="flex items-center gap-1.5 text-[11px] text-purple-800 font-bold cursor-pointer">
+                    <input type="checkbox" checked={enabled}
+                        onChange={(e) => setEnabled(e.target.checked)}
+                        className="w-4 h-4 accent-purple-600" />
+                    {tx('Enabled', 'Activada')}
+                </label>
+            </div>
+            <div className="space-y-2">
+                <label className="block">
+                    <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                        {tx('Name (any label)', 'Nombre (cualquier etiqueta)')}
+                    </span>
+                    <input type="text" value={nameDraft}
+                        onChange={(e) => setNameDraft(e.target.value)}
+                        placeholder={`${locationLabel} Kitchen`}
+                        className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white" />
+                </label>
+                <label className="block">
+                    <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                        {tx('Printer IP on local Wi-Fi', 'IP de impresora en Wi-Fi')}
+                    </span>
+                    <input type="text" value={ipDraft}
+                        onChange={(e) => setIpDraft(e.target.value)}
+                        placeholder="192.168.1.42"
+                        inputMode="decimal"
+                        className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono" />
+                </label>
+                {cfg?.lastTestedAt && (
+                    <div className={`text-[10px] font-bold ${cfg.lastTestOk ? 'text-emerald-700' : 'text-red-700'}`}>
+                        {cfg.lastTestOk ? '✓ ' : '✕ '}
+                        {tx('Last test', 'Última prueba')}: {formatPrinterTestTime(cfg.lastTestedAt)}
+                        {cfg.lastTestBy && <span className="opacity-70"> · {cfg.lastTestBy}</span>}
+                    </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                    <button onClick={save} disabled={saving || !ipDraft.trim()}
+                        className="flex-1 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 disabled:opacity-40">
+                        {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                    </button>
+                    <button onClick={runTest} disabled={testing || !ipDraft.trim() || !enabled}
+                        className="flex-1 py-1.5 rounded-lg bg-white border-2 border-purple-600 text-purple-700 text-xs font-bold hover:bg-purple-50 disabled:opacity-40">
+                        {testing ? tx('Testing…', 'Probando…') : '🏷 ' + tx('Test print', 'Probar')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+function formatPrinterTestTime(ts) {
+    try {
+        const d = ts.toDate ? ts.toDate() : new Date(ts);
+        return d.toLocaleString();
+    } catch {
+        return String(ts || '');
+    }
+}
+
 // AccessToggle — bulk-edit per-staff "what can this person SEE" pill.
 // Designed for the redesigned bulk edit cards: shows a clear icon + label,
 // big enough to be tappable on a phone, with on/off state read at a glance
@@ -3442,6 +3632,15 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+
+                    {/* ── LABEL PRINTERS — per-location Epson TM-L100 config ────────
+                        Andrew 2026-05-20 — Vietnamese equivalent of Jolt's
+                        date-code labeling feature. Each location runs an Epson
+                        TM-L100 on the kitchen Wi-Fi; this section sets the
+                        printer's local IP + lets admin send a test print. The
+                        DD Mau app (browser) sends labels directly to the
+                        printer's HTTP server — no middleware, no driver. */}
+                    <PrintersConfigSection language={language} byName={staffName} />
 
                     {/* ── DANGER ZONE — System Refresh broadcast ────────────────────
                         Writes a timestamp to /config/forceRefresh. Every active

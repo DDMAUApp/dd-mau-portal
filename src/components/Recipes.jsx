@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -7,6 +7,10 @@ import { ALLERGEN_ORDER, allergenLabel, allergenEmoji, allergenTone, sortAllerge
 import { matchesRecipeQuery } from '../data/recipeSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { toast } from '../toast';
+// 2026-05-20 — date-code label printing on Epson TM-L100. Lazy so
+// the preview + ePOS-Print XML helpers only enter the bundle when a
+// staffer actually opens the modal (most sessions won't print).
+const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 
 // Re-PIN window — staff must re-enter PIN if no recipe was opened in this many ms.
 const REPIN_INTERVAL_MS = 5 * 60 * 1000; // 5 min
@@ -187,6 +191,10 @@ function RecipeForm({ language, recipe, onSave, onCancel }) {
 
 export default function Recipes({ language, staffName, staffList, storeLocation, isAtDDMau, geoChecking, geoError, geoRetry, geoPermState }) {
     const [expandedRecipe, setExpandedRecipe] = useState(null);
+    // 2026-05-20 — Andrew: Vietnamese equivalent of Jolt's date-code
+    // labeling. When set to a recipe object, the PrintLabelModal opens
+    // with that recipe's data pre-filled. Closes on print / cancel.
+    const [printingLabelFor, setPrintingLabelFor] = useState(null);
     const [recipes, setRecipes] = useState([]);
     const [editMode, setEditMode] = useState(null); // null | "add" | recipe object
     const [recipeMultipliers, setRecipeMultipliers] = useState({}); // { recipeId: number }
@@ -1011,6 +1019,20 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
 
                         {isExpanded && (
                             <div className="border-t border-gray-200 p-4 recipe-watermark overflow-hidden" data-watermark={watermarkText}>
+                                {/* 🏷 Print prep label — Andrew 2026-05-20. Tap to
+                                    open the PrintLabelModal which previews the
+                                    label, lets the cook set shelf-life days
+                                    (default per recipe category), then prints
+                                    via the Epson TM-L100 over the kitchen Wi-Fi.
+                                    Stays at the top of the expanded view so it
+                                    rides along the allergen banner — the two
+                                    things you check before sticking a label
+                                    on a container. */}
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setPrintingLabelFor(recipe); }}
+                                    className="w-full mb-2 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm flex items-center justify-center gap-2">
+                                    🏷 {language === "es" ? "Imprimir etiqueta de preparación" : "Print prep label"}
+                                </button>
                                 {/* PROMINENT allergen banner — sits at the very top of the
                                     expanded recipe so cooks see it before scrolling to
                                     ingredients. Color-coded chips per allergen. If the
@@ -1149,6 +1171,23 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
                     </div>
                 );
             })}
+
+            {/* Print prep label modal — 2026-05-20. Lazy-imported, so
+                first-time print sessions pay a brief network round
+                trip for the chunk. Subsequent opens are instant. The
+                modal owns its own shelf-life / notes state — Recipes
+                only tracks which recipe is being printed. */}
+            {printingLabelFor && (
+                <Suspense fallback={null}>
+                    <PrintLabelModal
+                        recipe={printingLabelFor}
+                        location={storeLocation}
+                        staffName={staffName}
+                        language={language}
+                        onClose={() => setPrintingLabelFor(null)}
+                    />
+                </Suspense>
+            )}
         </div>
     );
 }
