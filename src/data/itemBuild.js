@@ -305,6 +305,125 @@ export function getAllMenuItems() {
     return out;
 }
 
+// ── Searchable index — every menu item AND every component ────────
+//
+// Andrew 2026-05-20 — "also make a search bar for everything and add
+// the ai to help optimize the search. for example if i type pho it
+// will pop up all phos and the ingredents, rare steak for pho and
+// etc."
+//
+// Returns a flat array of search-targetable rows. Two kinds:
+//   • menuItem  — a full menu entry (category: Bowls, Pho, etc.)
+//   • component — a deduped component across all menu items, with
+//                 `usedIn: [menuItemName...]` listing every menu
+//                 item that has it. This is the "rare steak" row
+//                 that surfaces when you type "pho".
+//
+// Component dedup key: (componentKind, normalized-name). Cilantro
+// shows up once even though it's in 20+ menu items; we list its
+// parents under `usedIn` so the UI can show "Used in: Bowls · Pho
+// · Fried Rice". The AI subcat field also packs `usedIn` so Claude
+// learns "rare steak is a pho thing" without needing the literal
+// word "pho" in the name.
+export function getSearchableIndex() {
+    const out = [];
+    const seenItems = new Set();
+    const componentMap = new Map(); // key -> component entry
+
+    for (const item of getAllMenuItems()) {
+        if (seenItems.has(item.id)) continue;
+        seenItems.add(item.id);
+        out.push({
+            id: `mi::${item.id}`,
+            kind: 'menuItem',
+            menuItemId: item.id,
+            nameEn: item.nameEn,
+            nameEs: item.nameEs || item.nameEn,
+            category: item.category,
+            categoryEs: item.categoryEs,
+            descEn: item.descEn,
+            descEs: item.descEs,
+            allergens: item.allergens,
+            price: item.price,
+            usedIn: [],
+        });
+
+        // Resolve this item's build + collect / dedup components.
+        const build = getMenuItemBuild(item.nameEn);
+        for (const c of build.components) {
+            if (c.kind === 'note') continue; // notes aren't printable
+            const key = `${c.kind}::${normalizeName(c.nameEn)}`;
+            if (!componentMap.has(key)) {
+                componentMap.set(key, {
+                    id: `cp::${key}`,
+                    kind: 'component',
+                    componentKind: c.kind,
+                    nameEn: c.nameEn,
+                    nameEs: c.nameEs || c.nameEn,
+                    descEn: c.descEn || '',
+                    descEs: c.descEs || '',
+                    usedIn: [],
+                    usedInEs: [],
+                });
+            }
+            const entry = componentMap.get(key);
+            // Track every menu item that uses this component (dedup).
+            if (!entry.usedIn.includes(item.nameEn)) {
+                entry.usedIn.push(item.nameEn);
+                entry.usedInEs.push(item.nameEs || item.nameEn);
+            }
+        }
+    }
+    for (const c of componentMap.values()) {
+        out.push(c);
+    }
+    return out;
+}
+
+// Build the AI-search items array from the searchable index. This
+// is what gets sent to the aiSearch Cloud Function. We pack the
+// component's parents into `subcat` so Claude can reason about "pho
+// → rare steak" without needing the literal word "pho" in the
+// component name. Trimmed to keep token cost low.
+export function getAiSearchItems() {
+    const idx = getSearchableIndex();
+    return idx.map(row => {
+        if (row.kind === 'menuItem') {
+            return {
+                id: row.id,
+                name: row.nameEn,
+                category: row.category || '',
+                // Pack short description + allergens so semantic
+                // searches like "vegan" / "spicy" reason correctly.
+                subcat: [
+                    row.descEn || '',
+                    row.allergens || '',
+                ].filter(Boolean).join(' | ').slice(0, 180),
+            };
+        }
+        // Component — subcat carries the kind + truncated parents list.
+        return {
+            id: row.id,
+            name: row.nameEn,
+            category: COMPONENT_KIND_TONE[row.componentKind]?.labelEn || row.componentKind,
+            subcat: [
+                row.descEn || '',
+                row.usedIn.slice(0, 6).join(', '),
+            ].filter(Boolean).join(' | ').slice(0, 180),
+        };
+    });
+}
+
+// Cheap normalize for dedup keys — same shape as recipeSearch's
+// helper but inlined so itemBuild stays self-contained.
+function normalizeName(s) {
+    return String(s || '')
+        .toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
 // Tone tokens for the UI per component kind.
 export const COMPONENT_KIND_TONE = Object.freeze({
     base:    { bg: 'bg-amber-50',   text: 'text-amber-900',   icon: '🍚', labelEn: 'Base',     labelEs: 'Base' },

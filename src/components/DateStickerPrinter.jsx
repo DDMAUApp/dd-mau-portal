@@ -26,8 +26,13 @@
 //   - Print history dashboard filtered to this surface
 
 import { useMemo, useState, lazy, Suspense } from 'react';
-import { getAllMenuItems, getMenuItemBuild, COMPONENT_KIND_TONE } from '../data/itemBuild';
+import {
+    getAllMenuItems, getMenuItemBuild,
+    getSearchableIndex, getAiSearchItems,
+    COMPONENT_KIND_TONE,
+} from '../data/itemBuild';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
+import { useAiSearch } from '../data/aiSearch';
 
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
 
@@ -44,29 +49,84 @@ export default function DateStickerPrinter({
     // What we hand to PrintLabelModal — a recipe-shaped object so the
     // existing modal renders it without modification.
     const [printingComponent, setPrintingComponent] = useState(null);
+    // AI toggle. ON by default — substring runs locally for instant
+    // feedback, AI adds semantic matches ~300ms later. Flip off if
+    // the AI is slow / unavailable.
+    const [aiOn, setAiOn] = useState(true);
 
     const allItems = useMemo(() => getAllMenuItems(), []);
+    // Flat searchable index: every menu item + every deduped
+    // component (with usedIn list). This is what "search everything"
+    // pulls from.
+    const searchIndex = useMemo(() => getSearchableIndex(), []);
+    // What we send to the aiSearch Cloud Function. Memoized so the
+    // cache key inside aiSearch stays stable.
+    const aiItems = useMemo(() => getAiSearchItems(), []);
 
-    // Search across name (EN+ES), category (EN+ES), descriptions,
-    // allergens — accent-insensitive bilingual matching shared with
-    // the chat / recipe search.
     const queryTokens = useMemo(() => expandQueryTermsTight(search), [search]);
     const hasQuery = queryTokens.length > 0;
-    const filteredItems = useMemo(() => {
-        if (!hasQuery) return allItems;
-        return allItems.filter(item => {
-            const hay = normalize([
-                item.nameEn, item.nameEs, item.descEn, item.descEs,
-                item.category, item.categoryEs,
-                item.allergens,
-            ].filter(Boolean).join(' '));
-            return haystackMatches(hay, queryTokens);
-        });
-    }, [allItems, hasQuery, queryTokens]);
 
-    // Group filtered items by category in their original order. Map
-    // preserves insertion order in modern JS, which is what we want
-    // (Bowls → Pho → Handhelds → …, just like the menu).
+    // AI hook — MUST sit above any conditional return (the React #300
+    // hooks-after-early-return lesson from Recipes still applies).
+    const {
+        loading: aiLoading,
+        matchingIds: aiIds,
+        error: aiError,
+    } = useAiSearch({
+        query: search,
+        items: aiItems,
+        enabled: aiOn && hasQuery,
+    });
+    const aiIdSet = useMemo(() => (aiIds ? new Set(aiIds) : null), [aiIds]);
+
+    // Substring matcher on the flat index. For each row we build a
+    // haystack from its name (EN+ES), category, description, and —
+    // for components — its `usedIn` list. So typing "pho" matches
+    // every component whose parents include a pho dish.
+    const rowMatchesSubstring = (row) => {
+        if (!hasQuery) return true;
+        const hayParts = [
+            row.nameEn, row.nameEs,
+            row.descEn, row.descEs,
+            row.category, row.categoryEs,
+            row.allergens || '',
+            (row.usedIn || []).join(' '),
+            (row.usedInEs || []).join(' '),
+            row.componentKind || '',
+        ];
+        const hay = normalize(hayParts.filter(Boolean).join(' '));
+        return haystackMatches(hay, queryTokens);
+    };
+    // Final per-row match — substring OR AI semantic match.
+    const rowMatches = (row) => {
+        if (!hasQuery) return true;
+        if (rowMatchesSubstring(row)) return true;
+        return aiIdSet ? aiIdSet.has(row.id) : false;
+    };
+
+    // Two display modes:
+    //   • No query → grouped browse view (menu items by category).
+    //   • Has query → flat results: menu items + components mixed,
+    //     ordered by kind (menu items first, then components).
+    const filteredItems = useMemo(() => {
+        if (hasQuery) return [];
+        return allItems;
+    }, [allItems, hasQuery]);
+
+    const flatResults = useMemo(() => {
+        if (!hasQuery) return [];
+        const items = [];
+        const components = [];
+        for (const row of searchIndex) {
+            if (!rowMatches(row)) continue;
+            if (row.kind === 'menuItem') items.push(row);
+            else components.push(row);
+        }
+        return { items, components };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchIndex, hasQuery, queryTokens, aiIdSet]);
+
+    // Browse grouping (no-query view) — by category.
     const grouped = useMemo(() => {
         const m = new Map();
         for (const item of filteredItems) {
@@ -77,9 +137,7 @@ export default function DateStickerPrinter({
         return Array.from(m.values());
     }, [filteredItems]);
 
-    // Open-item resolver — computed lazily so we don't re-resolve on
-    // every keystroke. The build resolver itself is cheap (~5ms) but
-    // keep the bound tight.
+    // Open-item resolver — for the inline-expand on a row.
     const openBuild = useMemo(() => {
         if (!openItemId) return null;
         const item = allItems.find(i => i.id === openItemId);
@@ -125,45 +183,136 @@ export default function DateStickerPrinter({
                     </div>
                 </div>
 
-                {/* Search */}
-                <div className="relative mb-3">
-                    <input
-                        type="search"
-                        inputMode="search"
-                        enterKeyHint="search"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder={tx(
-                            'Search menu — "pho", "bowl", "wings", "salsa"…',
-                            'Buscar — "pho", "bowl", "alas", "salsa"…',
+                {/* Search + AI toggle */}
+                <div className="flex items-center gap-2 mb-2">
+                    <div className="relative flex-1">
+                        <input
+                            type="search"
+                            inputMode="search"
+                            enterKeyHint="search"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder={aiOn
+                                ? tx(
+                                    '🔍 Search anything — "pho" finds pho + rare steak + brisket…',
+                                    '🔍 Buscar — "pho" trae pho + bistec + pecho…',
+                                )
+                                : tx(
+                                    '🔍 Search menu + components ("pho", "wings", "cilantro")…',
+                                    '🔍 Buscar menú y componentes…',
+                                )}
+                            className="w-full pl-9 pr-9 py-2.5 border-2 border-purple-200 rounded-xl text-sm font-bold bg-white focus:outline-none focus:border-purple-400 placeholder:font-normal placeholder:text-purple-400 shadow-sm"
+                        />
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none">🔍</span>
+                        {search && (
+                            <button onClick={() => setSearch('')}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-purple-100 text-purple-700 text-xs font-bold flex items-center justify-center hover:bg-purple-200">
+                                ✕
+                            </button>
                         )}
-                        className="w-full pl-9 pr-9 py-2.5 border-2 border-purple-200 rounded-xl text-sm font-bold bg-white focus:outline-none focus:border-purple-400 placeholder:font-normal placeholder:text-purple-400 shadow-sm"
-                    />
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-purple-400 pointer-events-none">🔍</span>
-                    {search && (
-                        <button onClick={() => setSearch('')}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 rounded-full bg-purple-100 text-purple-700 text-xs font-bold flex items-center justify-center hover:bg-purple-200">
-                            ✕
-                        </button>
-                    )}
+                    </div>
+                    {/* ✨ AI toggle — flips between substring-only and
+                        substring ∪ Claude semantic match. Same pattern
+                        Recipes / Operations use. ON by default. */}
+                    <button onClick={() => setAiOn(v => !v)}
+                        title={aiOn
+                            ? tx('AI search ON — tap to use plain search', 'IA activada — toca para apagar')
+                            : tx('Plain search — tap to enable AI', 'Búsqueda básica — toca para activar IA')}
+                        className={`flex-shrink-0 px-3 py-2.5 rounded-xl text-sm font-bold border-2 transition ${aiOn
+                            ? 'bg-purple-600 text-white border-purple-700'
+                            : 'bg-white text-purple-600 border-purple-200 hover:bg-purple-50'}`}>
+                        ✨ {tx('AI', 'IA')}
+                    </button>
                 </div>
 
+                {/* AI status strip — shows during a query */}
+                {hasQuery && aiOn && (
+                    <div className="text-[11px] mb-2 pl-1 min-h-[14px]">
+                        {aiLoading && (
+                            <span className="text-purple-700 font-bold">✨ {tx('thinking…', 'pensando…')}</span>
+                        )}
+                        {!aiLoading && aiError && (
+                            <span className="text-amber-700">⚠ {tx('AI unavailable — showing plain matches', 'IA no disponible — coincidencias básicas')}</span>
+                        )}
+                        {!aiLoading && !aiError && aiIds && aiIds.length > 0 && (
+                            <span className="text-purple-700 font-bold">✨ {tx(`AI added ${aiIds.length} semantic matches`, `IA añadió ${aiIds.length} coincidencias`)}</span>
+                        )}
+                    </div>
+                )}
+
+                {/* Hit count */}
                 {hasQuery && (
-                    <p className="text-[11px] text-purple-700 mb-2 font-bold pl-1">
-                        {filteredItems.length}{' '}
-                        {tx(
-                            `match${filteredItems.length === 1 ? '' : 'es'}`,
-                            `coincidencia${filteredItems.length === 1 ? '' : 's'}`,
+                    <p className="text-[11px] text-purple-800 mb-2 font-bold pl-1">
+                        {flatResults.items.length} {tx(
+                            `menu item${flatResults.items.length === 1 ? '' : 's'}`,
+                            `platillo${flatResults.items.length === 1 ? '' : 's'}`,
+                        )}
+                        {' · '}
+                        {flatResults.components.length} {tx(
+                            `component${flatResults.components.length === 1 ? '' : 's'}`,
+                            `componente${flatResults.components.length === 1 ? '' : 's'}`,
                         )}
                     </p>
                 )}
 
-                {/* Grouped item list */}
-                {grouped.length === 0 ? (
-                    <p className="text-sm text-dd-text-2 italic text-center py-12">
-                        {tx('Nothing matches that search.', 'Sin coincidencias.')}
-                    </p>
+                {/* Two render modes: flat results when searching,
+                    grouped browse view when idle. */}
+                {hasQuery ? (
+                    flatResults.items.length === 0 && flatResults.components.length === 0 ? (
+                        <p className="text-sm text-dd-text-2 italic text-center py-12">
+                            {tx('Nothing matches that search.', 'Sin coincidencias.')}
+                        </p>
+                    ) : (
+                        <div className="space-y-4">
+                            {flatResults.items.length > 0 && (
+                                <section>
+                                    <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
+                                        🍽 {tx('Menu items', 'Platillos')}
+                                    </h2>
+                                    <div className="space-y-1.5">
+                                        {flatResults.items.map(item => (
+                                            <MenuItemRow
+                                                key={item.id}
+                                                item={{ ...item, id: item.menuItemId, nameEn: item.nameEn, nameEs: item.nameEs }}
+                                                isOpen={openItemId === item.menuItemId}
+                                                onToggle={() => setOpenItemId(prev => prev === item.menuItemId ? null : item.menuItemId)}
+                                                isEs={isEs}
+                                                tx={tx}
+                                                build={openItemId === item.menuItemId ? openBuild : null}
+                                                onPrintComponent={handlePrintComponent}
+                                            />
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+                            {flatResults.components.length > 0 && (
+                                <section>
+                                    <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
+                                        🧩 {tx('Components & ingredients', 'Componentes e ingredientes')}
+                                    </h2>
+                                    <div className="space-y-1.5">
+                                        {flatResults.components.map(c => (
+                                            <ComponentSearchResult
+                                                key={c.id}
+                                                component={c}
+                                                isEs={isEs}
+                                                tx={tx}
+                                                onPrint={() => handlePrintComponent({
+                                                    kind: c.componentKind,
+                                                    nameEn: c.nameEn,
+                                                    nameEs: c.nameEs,
+                                                    descEn: c.descEn,
+                                                    descEs: c.descEs,
+                                                }, null)}
+                                            />
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+                        </div>
+                    )
                 ) : (
+                    // Idle / browse view — menu items grouped by category.
                     <div className="space-y-4">
                         {grouped.map(group => (
                             <section key={group.categoryEn}>
@@ -300,6 +449,46 @@ function ComponentList({ components, isEs, tx, onPrint }) {
                     </div>
                 );
             })}
+        </div>
+    );
+}
+
+// ── ComponentSearchResult ──────────────────────────────────────────
+// A search-result row for a component (not a menu item). Shows the
+// component name + a small "Used in:" chip listing the menu items
+// that contain it, and a Print button that opens PrintLabelModal in
+// editable mode pre-filled with the component name. Allergens come
+// in blank — cook can add them via the modal's allergen chips if
+// they apply.
+function ComponentSearchResult({ component, isEs, tx, onPrint }) {
+    const tone = COMPONENT_KIND_TONE[component.componentKind] || COMPONENT_KIND_TONE.side;
+    const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
+    const usedIn = isEs ? component.usedInEs : component.usedIn;
+    const usedInPreview = (usedIn || []).slice(0, 3);
+    const usedInExtra = Math.max(0, (usedIn || []).length - 3);
+    return (
+        <div className={`flex items-center gap-2 px-3 py-2 rounded-lg ${tone.bg} border border-dd-line`}>
+            <span className="flex-shrink-0 text-lg">{tone.icon}</span>
+            <div className="flex-1 min-w-0">
+                <div className={`text-[14px] font-bold ${tone.text}`}>
+                    {name}
+                </div>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                        {isEs ? tone.labelEs : tone.labelEn}
+                    </span>
+                    {usedInPreview.length > 0 && (
+                        <span className="text-[10.5px] text-dd-text-2 truncate" title={(usedIn || []).join(' · ')}>
+                            · {tx('in', 'en')} {usedInPreview.join(', ')}
+                            {usedInExtra > 0 && ` +${usedInExtra}`}
+                        </span>
+                    )}
+                </div>
+            </div>
+            <button onClick={onPrint}
+                className="flex-shrink-0 px-2.5 py-1.5 rounded-lg bg-purple-600 text-white text-[11px] font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                🏷 {tx('Print', 'Imprimir')}
+            </button>
         </div>
     );
 }
