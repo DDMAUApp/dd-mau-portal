@@ -272,16 +272,171 @@ export function renderEposXml(payload) {
     lines.push(`<feed line="1"/>`);
     lines.push(`<cut type="feed"/>`);
 
+    return wrapSoapEnvelope(lines.join(''));
+}
+
+// Wrap any ePOS-Print body fragment in the SOAP envelope expected by
+// the printer's /cgi-bin/epos/service.cgi endpoint. Factored out so
+// the prep-label renderer + free-text renderer share the wrapper.
+function wrapSoapEnvelope(innerEposPrintBody) {
     return [
         `<?xml version="1.0" encoding="utf-8"?>`,
         `<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">`,
         `<s:Body>`,
         `<epos-print xmlns="http://www.epson-pos.com/schemas/2011/03/epos-print">`,
-        ...lines,
+        innerEposPrintBody,
         `</epos-print>`,
         `</s:Body>`,
         `</s:Envelope>`,
     ].join('');
+}
+
+// ── Free-text "Print Center" renderer ─────────────────────────
+// Andrew 2026-05-20 — Word-style mini print app. Builds an ePOS-
+// Print body for arbitrary multi-line text with optional global
+// size / bold / alignment. Each call adds one cut, but the caller
+// can stitch N copies into a single envelope via renderFreeTextXml
+// with `copies > 1` to print multiple identical labels in one
+// network round trip.
+//
+// freePayload shape:
+//   { text:    string            — multi-line; \n delimits lines
+//     size:    'small'|'normal'|'large'|'huge'
+//     bold:    boolean
+//     align:   'left'|'center'|'right'
+//     copies:  number 1..20
+//     stampDate: boolean         — appends MM/DD/YY footer line
+//     stampSignature: boolean    — appends "— <name>" footer line
+//     signature: string          — name to use if stampSignature
+//     footer:  string?           — overrides the "DD MAU" stamp
+//   }
+const SIZE_DIM = Object.freeze({
+    small:  { width: 1, height: 1 },
+    normal: { width: 2, height: 2 },
+    large:  { width: 3, height: 3 },
+    huge:   { width: 4, height: 4 },
+});
+function sizeDim(size) {
+    return SIZE_DIM[size] || SIZE_DIM.normal;
+}
+
+// Build the inner ePOS body for a SINGLE label (no envelope, no
+// top-level cut sequencing). renderFreeTextXml wraps this N times.
+function renderFreeTextBody(freePayload) {
+    const lines = [];
+    const dim = sizeDim(freePayload.size);
+    const align = ['left', 'center', 'right'].includes(freePayload.align)
+        ? freePayload.align : 'center';
+    lines.push(`<text align="${align}"/>`);
+    lines.push(`<text width="${dim.width}" height="${dim.height}"/>`);
+    if (freePayload.bold) lines.push(`<text em="true"/>`);
+
+    // Split user text on newlines + trim trailing whitespace. Empty
+    // lines render as feed gaps — useful for spacing.
+    const rawText = String(freePayload.text || '');
+    const textLines = rawText.split(/\r?\n/).map(l => l.slice(0, 80));
+    for (const t of textLines) {
+        // Empty lines become a small feed so vertical spacing is
+        // preserved without a blank `<text>` (which the printer
+        // sometimes collapses).
+        if (!t) {
+            lines.push(`<feed line="1"/>`);
+        } else {
+            lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+        }
+    }
+    if (freePayload.bold) lines.push(`<text em="false"/>`);
+
+    // Optional auto-footer block — small text below the body so it
+    // doesn't dwarf the user's content.
+    const footerLines = [];
+    if (freePayload.stampDate) {
+        const d = new Date();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const yy = String(d.getFullYear()).slice(-2);
+        let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
+        h = h % 12 || 12;
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        footerLines.push(`${mm}/${dd}/${yy} ${h}:${mi}${ampm}`);
+    }
+    if (freePayload.stampSignature && freePayload.signature) {
+        footerLines.push(`— ${freePayload.signature}`);
+    }
+    if (freePayload.footer != null) {
+        footerLines.push(String(freePayload.footer).slice(0, 30));
+    } else if (footerLines.length > 0 || freePayload.stampDate || freePayload.stampSignature) {
+        // Default footer if any stamp is present, just to anchor the label.
+        footerLines.push('DD MAU');
+    }
+    if (footerLines.length > 0) {
+        // Reset to small + center for the stamp block, regardless of
+        // user formatting choices for the body.
+        lines.push(`<text width="1" height="1"/>`);
+        lines.push(`<text align="center"/>`);
+        lines.push(`<feed line="1"/>`);
+        for (const f of footerLines) {
+            lines.push(`<text>${escapeXml(f)}&#10;</text>`);
+        }
+    }
+    lines.push(`<feed line="1"/>`);
+    lines.push(`<cut type="feed"/>`);
+    return lines.join('');
+}
+
+export function renderFreeTextXml(freePayload) {
+    const copies = Math.max(1, Math.min(20, Math.floor(Number(freePayload.copies) || 1)));
+    // Stitch N copies inside the same envelope = one HTTP round-trip,
+    // printer handles N cuts sequentially. Significantly faster than
+    // POSTing N separate envelopes for a stack of identical labels.
+    const oneBody = renderFreeTextBody(freePayload);
+    const stitched = Array.from({ length: copies }, () => oneBody).join('');
+    return wrapSoapEnvelope(stitched);
+}
+
+// Convenience wrapper — like printPrepLabel but for free-text. The
+// audit row captures a preview of the text body (first 80 chars) so
+// admins can see what was printed without full content (privacy +
+// log volume).
+export async function printFreeText({
+    location, text, size, bold, align, copies = 1,
+    stampDate = false, stampSignature = false, signature, footer,
+    byName,
+}) {
+    try {
+        const printer = await getPrinterConfig(location);
+        if (!printer || !printer.ip) {
+            return { ok: false, error: 'no_printer_configured' };
+        }
+        const trimmed = String(text || '').trim();
+        if (!trimmed) return { ok: false, error: 'empty_text' };
+        if (trimmed.length > 2000) {
+            return { ok: false, error: 'text_too_long' };
+        }
+        const xml = renderFreeTextXml({
+            text: trimmed, size, bold, align,
+            copies, stampDate, stampSignature, signature, footer,
+        });
+        const res = await sendToPrinter(printer, xml);
+        recordAudit({
+            action: 'print.freetext',
+            actorName: byName || 'unknown',
+            targetType: 'printer',
+            targetId: location,
+            details: {
+                location,
+                preview: trimmed.slice(0, 80),
+                size, bold, align, copies,
+                printerOk: res.ok,
+                printerStatus: res.status,
+            },
+        });
+        if (!res.ok) return { ok: false, error: 'printer_rejected' };
+        return { ok: true };
+    } catch (e) {
+        console.warn('printFreeText failed:', e);
+        return { ok: false, error: e?.message || 'print_failed' };
+    }
 }
 
 // ── Print transport ───────────────────────────────────────────

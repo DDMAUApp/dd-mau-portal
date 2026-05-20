@@ -12,6 +12,10 @@ const OrderMode = lazy(() => import('./OrderMode'));
 // ePOS-Print XML helper + preview only enter the Operations chunk
 // when a staffer actually opens the quick-label modal.
 const PrintLabelModal = lazy(() => import('./PrintLabelModal'));
+// Print Center — free-form Word-style printing for ad-hoc kitchen
+// notes / equipment status / single-batch markers. Lazy for the
+// same reason.
+const PrintCenter = lazy(() => import('./PrintCenter'));
 import { escapeHtml as escH } from '../data/htmlEscape';
 // Lazy-loaded sub-views — these are 500-1000+ line components that only
 // render when their specific sub-tab is active. Eager-importing them
@@ -410,6 +414,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // a date label on ANY container without needing a recipe.
             // Closes on print / cancel.
             const [showQuickLabel, setShowQuickLabel] = useState(false);
+            // Word-style free-form printer — multi-line text, font
+            // size + bold + alignment, copies, optional date /
+            // signature stamps. For ad-hoc notes ("BROKEN FRYER"),
+            // single-batch markers, custom date tags, etc.
+            const [showPrintCenter, setShowPrintCenter] = useState(false);
             // Order Mode — full-screen workflow for placing real vendor
             // orders (Andrew 2026-05-19). Triggered from inside the cart
             // modal via a "📞 Place order" button. Snapshots the current
@@ -5007,6 +5016,16 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition">
                                         🏷 {language === "es" ? "Etiqueta" : "Label"}
                                     </button>
+                                    {/* 🖨 Print Center — free-form Word-style
+                                        printer for ad-hoc kitchen notes. Sits
+                                        next to the date-label button so
+                                        anyone reaching for "print something"
+                                        sees both options together. */}
+                                    <button onClick={() => setShowPrintCenter(true)}
+                                        title={language === "es" ? "Imprimir mensaje libre" : "Print free-form message"}
+                                        className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200 text-xs font-bold hover:bg-purple-100 transition">
+                                        🖨 {language === "es" ? "Imprimir" : "Print"}
+                                    </button>
                                     {/* Density toggle — flips master list rows
                                         between the rich detailed view (current
                                         default) and a stripped-down NAME +
@@ -5443,6 +5462,21 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         staffName={staffName}
                                         language={language}
                                         onClose={() => setShowQuickLabel(false)}
+                                    />
+                                </Suspense>
+                            )}
+
+                            {/* 🖨 Print Center — free-form printer. Stays
+                                mounted as a modal so the staffer can come
+                                back to it during their inventory session. */}
+                            {showPrintCenter && (
+                                <Suspense fallback={<div className="fixed inset-0 bg-black/40 z-50" />}>
+                                    <PrintCenter
+                                        location={storeLocation}
+                                        staffName={staffName}
+                                        language={language}
+                                        isAdmin={currentIsAdmin}
+                                        onClose={() => setShowPrintCenter(false)}
                                     />
                                 </Suspense>
                             )}
