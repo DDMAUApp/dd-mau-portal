@@ -47,6 +47,7 @@ const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
 const RequiredTaskFlow = lazy(() => import('./components/RequiredTaskFlow'));
+const MenuDisplay = lazy(() => import('./components/MenuDisplay'));
 
 // Pre-warmed chunk fetchers. React.lazy() above only fetches a chunk
 // when the component first renders. Calling these import() URLs
@@ -324,6 +325,24 @@ try {
 // localStorage opt-out key happens at module load below.
 try { if (typeof localStorage !== 'undefined') localStorage.removeItem('ddmau:v2_optout'); } catch {}
 
+// Detect digital-signage TV mode at mount. URL form:
+//   ?tv=webster   → Webster menu board
+//   ?tv=maryland  → MD Heights menu board
+// Bypasses the PIN entirely (it's a public-facing menu, not staff
+// data). Set on the Fire TV Stick / kiosk browser as the start URL.
+// Andrew 2026-05-20.
+function readTvMode() {
+    if (typeof window === 'undefined') return null;
+    try {
+        const params = new URLSearchParams(window.location.search);
+        const loc = String(params.get('tv') || '').toLowerCase().trim();
+        if (loc === 'webster' || loc === 'maryland') {
+            return { location: loc };
+        }
+    } catch {}
+    return null;
+}
+
 // Detect onboarding URL params at mount time. Three apply-mode triggers
 // (all equivalent — the canonical short URL is apply.ddmaustl.com which
 // Squarespace 302-forwards to ?apply=1; we rewrite the URL bar to /apply
@@ -368,6 +387,10 @@ export default function App() {
     // mount; if the user dismisses Apply, we clear the flag and fall through
     // to the normal PIN flow.
     const [onboardingMode, setOnboardingMode] = useState(() => readOnboardingMode());
+    // TV / digital-signage mode — Fire TV Stick or any browser hitting
+    // /?tv=<location>. Read once at mount; the kiosk browser is a
+    // long-lived tab that never navigates away.
+    const [tvMode] = useState(() => readTvMode());
     // Clean up the URL on apply-mode entry — applicants landed via the
     // Squarespace 302 forward from apply.ddmaustl.com which leaves them
     // at app.ddmaustl.com/?apply=1. We can't change the hostname (browser
@@ -789,6 +812,20 @@ export default function App() {
         })();
         return () => { cancelled = true; };
     }, [staffName, currentStaffRecord?.pwaInstalled]);
+
+    // TV / kiosk deep link (handled before auth):
+    //   /?tv=webster   → Webster menu board (digital signage)
+    //   /?tv=maryland  → MD Heights menu board
+    // The Fire TV Stick at each restaurant points its kiosk browser
+    // here. No PIN, no staff context — just a read-only public menu
+    // with live 86 status. Andrew 2026-05-20.
+    if (tvMode) {
+        return (
+            <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
+                <MenuDisplay location={tvMode.location} />
+            </Suspense>
+        );
+    }
 
     // Onboarding deep links (handled before auth):
     //   /?onboard=TOKEN → token-gated public new-hire portal
