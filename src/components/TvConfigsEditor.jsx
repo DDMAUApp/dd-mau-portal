@@ -9,8 +9,11 @@ import { useState, useEffect, useMemo } from 'react';
 import { MENU_DATA } from '../data/menu';
 import {
     subscribeTvConfigs, saveTvConfig, deleteTvConfig,
-    LAYOUTS, DEFAULT_LAYOUT, DEFAULT_ROTATE_SECONDS, makeTvId,
+    LAYOUTS, MODES, DEFAULT_LAYOUT, DEFAULT_MODE,
+    DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
+    makeTvId,
 } from '../data/tvConfigs';
+import { uploadMenuFile } from '../data/menuImageUpload';
 import { toast } from '../toast';
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
@@ -103,9 +106,13 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
 }
 
 function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
-    const layoutLabel = cfg.layout === 'rotate' ? '🔄 Rotate'
+    const isImageMode = cfg.mode === 'image';
+    const pageCount = Array.isArray(cfg.imageUrls) ? cfg.imageUrls.length : 0;
+    const modeLabel = isImageMode
+        ? (pageCount > 1 ? `🖼 Image (${pageCount}p)` : '🖼 Image')
+        : (cfg.layout === 'rotate' ? '🔄 Rotate'
         : cfg.layout === 'spotlight' ? '⭐ Spotlight'
-        : '📋 Dense';
+        : '📋 Dense');
     const url = `${baseUrl}/?tv=${cfg.tvId}`;
     return (
         <div className="border border-sky-200 rounded-lg p-2.5 bg-sky-50/40">
@@ -117,9 +124,9 @@ function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
                         {LOC_LABEL[cfg.location] || cfg.location}
                     </span>
                     <span className="text-[10px] font-bold text-sky-800 bg-white px-1.5 py-0.5 rounded border border-sky-200">
-                        {layoutLabel}
+                        {modeLabel}
                     </span>
-                    {cfg.showPhotos && (
+                    {!isImageMode && cfg.showPhotos && (
                         <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
                             📷
                         </span>
@@ -167,12 +174,17 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const [tvId, setTvId] = useState(initial?.tvId || '');
     const [label, setLabel] = useState(initial?.label || '');
     const [location, setLocation] = useState(initial?.location || 'webster');
+    const [mode, setMode] = useState(initial?.mode || DEFAULT_MODE);
     const [layout, setLayout] = useState(initial?.layout || DEFAULT_LAYOUT);
     const [showPhotos, setShowPhotos] = useState(initial?.showPhotos === true);
     const [rotateSeconds, setRotateSeconds] = useState(Number(initial?.rotateSeconds) || DEFAULT_ROTATE_SECONDS);
     const [spotlightCategory, setSpotlightCategory] = useState(initial?.spotlightCategory || '');
     const [includeAll, setIncludeAll] = useState(!Array.isArray(initial?.includeCategories) || initial.includeCategories.length === 0);
     const [includeCategories, setIncludeCategories] = useState(initial?.includeCategories || []);
+    // Image-mode state
+    const [imageUrls, setImageUrls] = useState(Array.isArray(initial?.imageUrls) ? initial.imageUrls : []);
+    const [imageRotateSeconds, setImageRotateSeconds] = useState(Number(initial?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS);
+    const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
     const [deleting, setDeleting] = useState(false);
 
@@ -182,6 +194,35 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         ? (tvId.trim() || makeTvId(label, location))
         : tvId;
     const previewUrl = previewTvId ? `${baseUrl}/?tv=${previewTvId}` : '';
+
+    const handleFilePick = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';  // allow re-picking same file
+        if (file.size > 30 * 1024 * 1024) {
+            toast(tx('File too large (max 30 MB).', 'Archivo muy grande (máx 30 MB).'), { kind: 'error' });
+            return;
+        }
+        setUploading(true);
+        try {
+            const slugPrefix = (previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-');
+            const urls = await uploadMenuFile({ file, folder: 'tv_images', slugPrefix });
+            // REPLACE the existing image set — this is "upload a new menu",
+            // not "append more pages". Admin can re-upload if they want
+            // to swap. Avoids the surprise of old pages lingering.
+            setImageUrls(urls);
+            toast(tx(`✓ Uploaded ${urls.length} page(s)`, `✓ Subido ${urls.length} página(s)`), { kind: 'success' });
+        } catch (err) {
+            console.warn('upload failed:', err);
+            toast(tx('Upload failed: ', 'Error al subir: ') + (err?.message || ''), { kind: 'error' });
+        } finally {
+            setUploading(false);
+        }
+    };
+
+    const removeImageAt = (idx) => {
+        setImageUrls(prev => prev.filter((_, i) => i !== idx));
+    };
 
     const save = async () => {
         if (saving) return;
@@ -194,21 +235,38 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             toast(tx('"webster" and "maryland" are reserved IDs. Pick a unique slug (e.g. webster-foh).', '"webster" y "maryland" son IDs reservados.'), { kind: 'error' });
             return;
         }
+        if (mode === MODES.IMAGE && imageUrls.length === 0) {
+            toast(tx('Upload at least one menu image first.', 'Sube al menos una imagen del menú.'), { kind: 'error' });
+            return;
+        }
         setSaving(true);
         try {
-            await saveTvConfig({
-                tvId: finalId,
-                payload: {
-                    label: label.trim() || finalId,
-                    location,
-                    layout,
-                    showPhotos: !!showPhotos,
-                    rotateSeconds: layout === 'rotate' ? Math.max(3, Math.min(60, Number(rotateSeconds) || DEFAULT_ROTATE_SECONDS)) : null,
-                    spotlightCategory: layout === 'spotlight' ? (spotlightCategory || null) : null,
-                    includeCategories: includeAll ? null : includeCategories,
-                },
-                byName,
-            });
+            const payload = {
+                label: label.trim() || finalId,
+                location,
+                mode,
+            };
+            if (mode === MODES.IMAGE) {
+                payload.imageUrls = imageUrls;
+                payload.imageRotateSeconds = imageUrls.length > 1
+                    ? Math.max(3, Math.min(60, Number(imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS))
+                    : null;
+                // Clear menu-mode fields on the saved doc to avoid stale data.
+                payload.layout = null;
+                payload.showPhotos = null;
+                payload.rotateSeconds = null;
+                payload.spotlightCategory = null;
+                payload.includeCategories = null;
+            } else {
+                payload.layout = layout;
+                payload.showPhotos = !!showPhotos;
+                payload.rotateSeconds = layout === 'rotate' ? Math.max(3, Math.min(60, Number(rotateSeconds) || DEFAULT_ROTATE_SECONDS)) : null;
+                payload.spotlightCategory = layout === 'spotlight' ? (spotlightCategory || null) : null;
+                payload.includeCategories = includeAll ? null : includeCategories;
+                payload.imageUrls = null;
+                payload.imageRotateSeconds = null;
+            }
+            await saveTvConfig({ tvId: finalId, payload, byName });
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
             onClose();
         } catch (e) {
@@ -302,95 +360,188 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                         </div>
                     </div>
 
-                    {/* Layout */}
+                    {/* Mode picker (top-level: data menu vs image) */}
                     <div>
                         <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-1">
-                            {tx('Layout', 'Layout')}
+                            {tx('Display mode', 'Modo de pantalla')}
                         </span>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className="grid grid-cols-2 gap-2">
                             {[
-                                { val: LAYOUTS.DENSE,     emoji: '📋', en: 'Dense',     es: 'Denso',     sub: 'all-on-one' },
-                                { val: LAYOUTS.ROTATE,    emoji: '🔄', en: 'Rotate',    es: 'Rotar',     sub: 'auto-cycle' },
-                                { val: LAYOUTS.SPOTLIGHT, emoji: '⭐', en: 'Spotlight', es: 'Destacar',  sub: 'one big +' },
-                            ].map(l => (
-                                <button key={l.val} type="button"
-                                    onClick={() => setLayout(l.val)}
-                                    className={`px-2 py-1.5 rounded-lg text-[11px] font-bold border-2 transition ${
-                                        layout === l.val
+                                { val: MODES.MENU,  emoji: '📋', en: 'Live menu data',   es: 'Datos en vivo',  sub: '86 strikes, photos, edits' },
+                                { val: MODES.IMAGE, emoji: '🖼', en: 'Image / PDF menu', es: 'Imagen / PDF',   sub: 'upload designer file' },
+                            ].map(m => (
+                                <button key={m.val} type="button"
+                                    onClick={() => setMode(m.val)}
+                                    className={`text-left px-3 py-2 rounded-lg border-2 text-[11px] font-bold transition ${
+                                        mode === m.val
                                             ? 'bg-sky-600 text-white border-sky-700'
                                             : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-50'
                                     }`}>
-                                    <div>{l.emoji} {tx(l.en, l.es)}</div>
-                                    <div className={`text-[9px] font-normal mt-0.5 ${layout === l.val ? 'text-sky-100' : 'text-sky-500'}`}>
-                                        {l.sub}
+                                    <div>{m.emoji} {tx(m.en, m.es)}</div>
+                                    <div className={`text-[9px] font-normal mt-0.5 ${mode === m.val ? 'text-sky-100' : 'text-sky-500'}`}>
+                                        {m.sub}
                                     </div>
                                 </button>
                             ))}
                         </div>
                     </div>
 
-                    {/* Layout-specific options */}
-                    {layout === LAYOUTS.ROTATE && (
-                        <label className="block">
-                            <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
-                                {tx('Seconds per page', 'Segundos por página')}
-                            </span>
-                            <input type="number" value={rotateSeconds}
-                                onChange={(e) => setRotateSeconds(Number(e.target.value) || DEFAULT_ROTATE_SECONDS)}
-                                min={3} max={60} step={1}
-                                className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white font-mono" />
-                        </label>
-                    )}
-                    {layout === LAYOUTS.SPOTLIGHT && (
-                        <label className="block">
-                            <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
-                                {tx('Hero category', 'Categoría destacada')}
-                            </span>
-                            <select value={spotlightCategory}
-                                onChange={(e) => setSpotlightCategory(e.target.value)}
-                                className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
-                                <option value="">{tx('First category (auto)', 'Primera categoría (auto)')}</option>
-                                {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                        </label>
-                    )}
-
-                    {/* Photos */}
-                    <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
-                        <input type="checkbox" checked={showPhotos}
-                            onChange={(e) => setShowPhotos(e.target.checked)}
-                            className="w-4 h-4 accent-amber-600" />
-                        <span className="text-[12px] font-bold text-amber-800">
-                            📷 {tx('Show item photos when present', 'Mostrar fotos cuando existen')}
-                        </span>
-                    </label>
-
-                    {/* Category filter */}
-                    <div>
-                        <label className="flex items-center gap-2 mb-1.5">
-                            <input type="checkbox" checked={includeAll}
-                                onChange={(e) => setIncludeAll(e.target.checked)}
-                                className="w-4 h-4 accent-sky-600" />
-                            <span className="text-[12px] font-bold text-dd-text">
-                                {tx('Show all categories', 'Mostrar todas las categorías')}
-                            </span>
-                        </label>
-                        {!includeAll && (
-                            <div className="grid grid-cols-3 gap-1.5 pl-6">
-                                {categories.map(c => (
-                                    <button key={c} type="button"
-                                        onClick={() => toggleCategory(c)}
-                                        className={`px-2 py-1 rounded text-[10px] font-bold border transition ${
-                                            includeCategories.includes(c)
-                                                ? 'bg-sky-600 text-white border-sky-700'
-                                                : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-50'
-                                        }`}>
-                                        {c}
-                                    </button>
-                                ))}
+                    {mode === MODES.IMAGE ? (
+                        <>
+                            {/* Image / PDF upload */}
+                            <div className="bg-sky-50 border-2 border-sky-200 rounded-lg p-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[11px] font-bold text-sky-900">
+                                        🖼 {tx('Menu file', 'Archivo del menú')}
+                                    </span>
+                                    <label className={`px-3 py-1.5 rounded-lg text-[11px] font-bold cursor-pointer transition ${
+                                        uploading
+                                            ? 'bg-sky-300 text-white opacity-60'
+                                            : 'bg-sky-600 text-white hover:bg-sky-700'
+                                    }`}>
+                                        {uploading ? tx('Uploading…', 'Subiendo…') : (imageUrls.length > 0 ? tx('Replace file', 'Reemplazar') : tx('Choose file', 'Elegir archivo'))}
+                                        <input type="file"
+                                            accept="image/*,application/pdf"
+                                            onChange={handleFilePick}
+                                            disabled={uploading}
+                                            className="hidden" />
+                                    </label>
+                                </div>
+                                <p className="text-[10px] text-sky-700/80 leading-snug">
+                                    {tx(
+                                        'Accepts PDF or JPEG/PNG. PDFs are converted to one image per page; multi-page menus auto-rotate on the TV.',
+                                        'Acepta PDF o JPEG/PNG. Los PDF se convierten a una imagen por página; los menús de varias páginas rotan automáticamente.',
+                                    )}
+                                </p>
+                                {imageUrls.length > 0 && (
+                                    <div className="grid grid-cols-3 gap-2 pt-1">
+                                        {imageUrls.map((url, idx) => (
+                                            <div key={url} className="relative border border-sky-300 rounded overflow-hidden bg-white">
+                                                <img src={url} alt={`page ${idx + 1}`}
+                                                    className="w-full h-24 object-contain" />
+                                                <div className="absolute top-1 left-1 bg-sky-900/80 text-white text-[9px] font-black px-1.5 py-0.5 rounded">
+                                                    {idx + 1}
+                                                </div>
+                                                <button onClick={() => removeImageAt(idx)} type="button"
+                                                    className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black hover:bg-red-700">
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                {imageUrls.length > 1 && (
+                                    <label className="block pt-1">
+                                        <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-0.5">
+                                            {tx('Seconds per page', 'Segundos por página')}
+                                        </span>
+                                        <input type="number" value={imageRotateSeconds}
+                                            onChange={(e) => setImageRotateSeconds(Number(e.target.value) || DEFAULT_IMAGE_ROTATE_SECONDS)}
+                                            min={3} max={60} step={1}
+                                            className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
+                                    </label>
+                                )}
                             </div>
-                        )}
-                    </div>
+                            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5 leading-snug">
+                                ⚠️ {tx(
+                                    'Image mode shows the file as-is. Live 86 strike-throughs and price edits do NOT apply (they\'re menu-data features). Re-upload when the designer ships a new file.',
+                                    'El modo imagen muestra el archivo tal cual. Los tachados de 86 y cambios de precio NO se aplican aquí. Vuelve a subir cuando llegue un menú nuevo.',
+                                )}
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            {/* Layout */}
+                            <div>
+                                <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-1">
+                                    {tx('Layout', 'Layout')}
+                                </span>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {[
+                                        { val: LAYOUTS.DENSE,     emoji: '📋', en: 'Dense',     es: 'Denso',     sub: 'all-on-one' },
+                                        { val: LAYOUTS.ROTATE,    emoji: '🔄', en: 'Rotate',    es: 'Rotar',     sub: 'auto-cycle' },
+                                        { val: LAYOUTS.SPOTLIGHT, emoji: '⭐', en: 'Spotlight', es: 'Destacar',  sub: 'one big +' },
+                                    ].map(l => (
+                                        <button key={l.val} type="button"
+                                            onClick={() => setLayout(l.val)}
+                                            className={`px-2 py-1.5 rounded-lg text-[11px] font-bold border-2 transition ${
+                                                layout === l.val
+                                                    ? 'bg-sky-600 text-white border-sky-700'
+                                                    : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-50'
+                                            }`}>
+                                            <div>{l.emoji} {tx(l.en, l.es)}</div>
+                                            <div className={`text-[9px] font-normal mt-0.5 ${layout === l.val ? 'text-sky-100' : 'text-sky-500'}`}>
+                                                {l.sub}
+                                            </div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Layout-specific options */}
+                            {layout === LAYOUTS.ROTATE && (
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Seconds per page', 'Segundos por página')}
+                                    </span>
+                                    <input type="number" value={rotateSeconds}
+                                        onChange={(e) => setRotateSeconds(Number(e.target.value) || DEFAULT_ROTATE_SECONDS)}
+                                        min={3} max={60} step={1}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white font-mono" />
+                                </label>
+                            )}
+                            {layout === LAYOUTS.SPOTLIGHT && (
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Hero category', 'Categoría destacada')}
+                                    </span>
+                                    <select value={spotlightCategory}
+                                        onChange={(e) => setSpotlightCategory(e.target.value)}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
+                                        <option value="">{tx('First category (auto)', 'Primera categoría (auto)')}</option>
+                                        {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </label>
+                            )}
+
+                            {/* Photos */}
+                            <label className="flex items-center gap-2 p-2 rounded-lg bg-amber-50 border border-amber-200">
+                                <input type="checkbox" checked={showPhotos}
+                                    onChange={(e) => setShowPhotos(e.target.checked)}
+                                    className="w-4 h-4 accent-amber-600" />
+                                <span className="text-[12px] font-bold text-amber-800">
+                                    📷 {tx('Show item photos when present', 'Mostrar fotos cuando existen')}
+                                </span>
+                            </label>
+
+                            {/* Category filter */}
+                            <div>
+                                <label className="flex items-center gap-2 mb-1.5">
+                                    <input type="checkbox" checked={includeAll}
+                                        onChange={(e) => setIncludeAll(e.target.checked)}
+                                        className="w-4 h-4 accent-sky-600" />
+                                    <span className="text-[12px] font-bold text-dd-text">
+                                        {tx('Show all categories', 'Mostrar todas las categorías')}
+                                    </span>
+                                </label>
+                                {!includeAll && (
+                                    <div className="grid grid-cols-3 gap-1.5 pl-6">
+                                        {categories.map(c => (
+                                            <button key={c} type="button"
+                                                onClick={() => toggleCategory(c)}
+                                                className={`px-2 py-1 rounded text-[10px] font-bold border transition ${
+                                                    includeCategories.includes(c)
+                                                        ? 'bg-sky-600 text-white border-sky-700'
+                                                        : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-50'
+                                                }`}>
+                                                {c}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
 
                     {/* URL preview */}
                     {previewUrl && (

@@ -33,7 +33,10 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
-import { subscribeTvConfig, DEFAULT_ROTATE_SECONDS } from '../data/tvConfigs';
+import {
+    subscribeTvConfig, MODES,
+    DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
+} from '../data/tvConfigs';
 
 const LOC_LABEL = {
     webster: 'Webster',
@@ -66,9 +69,12 @@ export default function MenuDisplay({ tvId = 'webster' }) {
     }, [tvId]);
 
     const location = tvConfig?.location || (tvId === 'maryland' ? 'maryland' : 'webster');
+    const mode = tvConfig?.mode || MODES.MENU;
     const layout = tvConfig?.layout || 'dense';
     const showPhotos = tvConfig?.showPhotos === true;
     const rotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.rotateSeconds) || DEFAULT_ROTATE_SECONDS));
+    const imageRotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS));
+    const imageUrls = Array.isArray(tvConfig?.imageUrls) ? tvConfig.imageUrls : [];
     const includeCategories = Array.isArray(tvConfig?.includeCategories) && tvConfig.includeCategories.length > 0
         ? new Set(tvConfig.includeCategories) : null;
     const spotlightCategory = tvConfig?.spotlightCategory || null;
@@ -158,6 +164,21 @@ export default function MenuDisplay({ tvId = 'webster' }) {
         </footer>
     );
 
+    // Image mode renders the uploaded PDF/JPEG full-bleed (no header
+    // / footer chrome) so the designer's menu fills the entire TV.
+    // A tiny live indicator + clock stays in the top-right corner so
+    // staff can confirm the feed is alive at a glance.
+    if (mode === MODES.IMAGE) {
+        return (
+            <ImageModeLayout
+                imageUrls={imageUrls}
+                imageRotateSeconds={imageRotateSeconds}
+                now={now}
+                label={tvConfig?.label || LOC_LABEL[location] || location}
+            />
+        );
+    }
+
     return (
         <div className="fixed inset-0 bg-white text-dd-text flex flex-col overflow-hidden font-sans">
             {headerNode}
@@ -169,6 +190,55 @@ export default function MenuDisplay({ tvId = 'webster' }) {
                 <DenseLayout menu={menu} is86d={is86d} showPhotos={showPhotos} />
             )}
             {footerNode}
+        </div>
+    );
+}
+
+// ── Image / PDF mode ─────────────────────────────────────────
+// Full-bleed image fill. If multiple pages, fades between them
+// every `rotateSeconds`. Minimal corner indicator (live dot +
+// clock) for staff confidence that the feed is running.
+function ImageModeLayout({ imageUrls, imageRotateSeconds, now, label }) {
+    const [idx, setIdx] = useState(0);
+    const safeUrls = Array.isArray(imageUrls) ? imageUrls : [];
+
+    useEffect(() => {
+        if (safeUrls.length <= 1) return;
+        const t = setInterval(() => {
+            setIdx(prev => (prev + 1) % safeUrls.length);
+        }, imageRotateSeconds * 1000);
+        return () => clearInterval(t);
+    }, [safeUrls.length, imageRotateSeconds]);
+
+    if (safeUrls.length === 0) {
+        return (
+            <div className="fixed inset-0 bg-stone-900 text-white flex flex-col items-center justify-center font-sans">
+                <div className="text-6xl mb-4">🖼</div>
+                <div className="text-2xl font-black tracking-tight mb-2">{label}</div>
+                <div className="text-base opacity-80 mb-1">No menu image uploaded yet.</div>
+                <div className="text-sm opacity-60">Admin → 📺 Menu TV displays → Edit → upload PDF/JPEG.</div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="fixed inset-0 bg-white overflow-hidden font-sans">
+            {/* Stacked images so the fade looks smooth instead of a hard cut */}
+            {safeUrls.map((url, i) => (
+                <img key={url + i}
+                    src={url}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-contain transition-opacity duration-700"
+                    style={{ opacity: i === idx ? 1 : 0 }} />
+            ))}
+            {/* Corner live indicator — small + low-contrast, doesn't compete with menu */}
+            <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/40 backdrop-blur-sm text-white text-[10px] font-bold">
+                <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span className="tabular-nums">{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                {safeUrls.length > 1 && (
+                    <span className="opacity-60">· {idx + 1}/{safeUrls.length}</span>
+                )}
+            </div>
         </div>
     );
 }

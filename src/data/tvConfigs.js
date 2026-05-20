@@ -12,11 +12,23 @@
 //   tvId:         'webster-foh'         // doc id; URL-friendly slug
 //   label:        'Webster Front'       // display name in admin
 //   location:     'webster'|'maryland'  // which 86 list to pull
+//
+//   // 2026-05-20 — Andrew: "if the menu comes in as pdf or jpeg how
+//   // can you make edits". Two top-level modes:
+//   mode:         'menu'|'image'        // 'menu' = data-driven (default);
+//                                        // 'image' = render uploaded PDF/JPEG
+//
+//   // For mode='menu':
 //   layout:       'dense'|'rotate'|'spotlight'
 //   includeCategories: string[]?        // null/empty = ALL categories
 //   showPhotos:   boolean?              // show item photos when present
 //   rotateSeconds:number?               // for 'rotate' layout; default 8
 //   spotlightCategory: string?          // for 'spotlight' layout
+//
+//   // For mode='image':
+//   imageUrls:        string[]?         // Firebase Storage URLs, one per page
+//   imageRotateSeconds: number?         // if multiple pages, rotate every N sec
+//
 //   updatedAt:    serverTimestamp
 //   updatedBy:    string
 // }
@@ -35,7 +47,17 @@ import { recordAudit } from './audit';
 
 const COLLECTION = 'tv_configs';
 
-// Layouts available to admin. Keep in sync with MenuDisplay.jsx
+// Top-level modes. 'menu' is the data-driven board (MENU_DATA +
+// overrides + live 86). 'image' renders an uploaded PDF/JPEG full-
+// screen — used when the designer ships a finished menu file and
+// admin wants to show it as-is without re-typing items.
+export const MODES = Object.freeze({
+    MENU:  'menu',
+    IMAGE: 'image',
+});
+export const DEFAULT_MODE = MODES.MENU;
+
+// Layouts within mode='menu'. Keep in sync with MenuDisplay.jsx
 // where each is implemented.
 export const LAYOUTS = Object.freeze({
     DENSE:     'dense',      // 3-col single-page view (initial layout)
@@ -44,6 +66,7 @@ export const LAYOUTS = Object.freeze({
 });
 export const DEFAULT_LAYOUT = LAYOUTS.DENSE;
 export const DEFAULT_ROTATE_SECONDS = 8;
+export const DEFAULT_IMAGE_ROTATE_SECONDS = 12;
 
 // URL-safe slug for a TV id. Same kebab-case convention as the
 // menu item slugs.
