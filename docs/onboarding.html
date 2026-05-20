@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DD Mau — New Hire Guide</title>
+<style>
+/* ── Reset + base ─────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', Roboto, sans-serif;
+    color: #0F172A;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    background: #F7F8FA;
+}
+
+/* ── Page container — letter sized at print, comfy at screen ──── */
+.page {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 48px;
+    background: #ffffff;
+}
+
+@media (max-width: 700px) {
+    .page { padding: 24px; }
+}
+
+/* ── Typography ───────────────────────────────────────────────── */
+h1 { font-size: 36px; font-weight: 900; margin: 0 0 8px; letter-spacing: -0.5px; color: #1F7A4D; }
+h2 { font-size: 24px; font-weight: 900; margin: 36px 0 12px; color: #0F172A; border-bottom: 3px solid #1F7A4D; padding-bottom: 6px; }
+h3 { font-size: 18px; font-weight: 800; margin: 22px 0 8px; color: #185E3A; }
+h4 { font-size: 15px; font-weight: 800; margin: 14px 0 6px; color: #0F172A; }
+p { margin: 8px 0; font-size: 14.5px; }
+em { color: #64748B; font-style: italic; }
+strong { color: #0F172A; }
+a { color: #1F7A4D; text-decoration: none; border-bottom: 1px dotted #1F7A4D; }
+
+/* ── Hero header card ─────────────────────────────────────────── */
+.hero {
+    background: linear-gradient(135deg, #1F7A4D 0%, #185E3A 100%);
+    color: #ffffff;
+    padding: 32px 28px;
+    border-radius: 16px;
+    margin-bottom: 24px;
+    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+.hero h1 { color: #ffffff; font-size: 40px; margin: 0; }
+.hero .sub { font-size: 16px; margin-top: 6px; opacity: 0.85; }
+.hero .badge {
+    display: inline-block;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    padding: 4px 12px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    margin-top: 14px;
+}
+
+/* ── Cards ────────────────────────────────────────────────────── */
+.card {
+    background: #ffffff;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin: 16px 0;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.card.tinted { background: #EEF5EF; border-color: #C9DBC9; }
+.card.warn   { background: #FFF7ED; border-color: #FED7AA; }
+.card.tip    { background: #EFF6FF; border-color: #BFDBFE; }
+
+/* ── Section dividers + callouts ─────────────────────────────── */
+.callout {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    margin: 14px 0;
+    align-items: flex-start;
+    font-size: 13.5px;
+    line-height: 1.45;
+}
+.callout .icon { font-size: 22px; line-height: 1; flex-shrink: 0; }
+.callout.tip    { background: #EFF6FF; border-left: 4px solid #2563EB; color: #1E3A8A; }
+.callout.warn   { background: #FFF7ED; border-left: 4px solid #F59E0B; color: #92400E; }
+.callout.danger { background: #FEF2F2; border-left: 4px solid #DC2626; color: #991B1B; }
+.callout.success{ background: #EEF5EF; border-left: 4px solid #1F7A4D; color: #185E3A; }
+
+/* ── Step list — numbered with circles ────────────────────────── */
+.steps { counter-reset: step; padding: 0; list-style: none; margin: 16px 0; }
+.steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 10px 0 10px 56px;
+    border-bottom: 1px solid #F3F4F6;
+    font-size: 14.5px;
+}
+.steps li:last-child { border-bottom: none; }
+.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #1F7A4D;
+    color: #ffffff;
+    text-align: center;
+    line-height: 36px;
+    font-weight: 800;
+    font-size: 15px;
+}
+
+/* ── Tables ───────────────────────────────────────────────────── */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 13.5px;
+    background: #ffffff;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #E5E7EB;
+}
+th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid #F3F4F6;
+    vertical-align: top;
+}
+th {
+    background: #F7F8FA;
+    font-weight: 700;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #64748B;
+    border-bottom: 2px solid #E5E7EB;
+}
+tr:last-child td { border-bottom: none; }
+td .em-tag { background: #EEF5EF; color: #185E3A; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+
+/* ── Feature grid ─────────────────────────────────────────────── */
+.feature-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 14px 0;
+}
+.feature {
+    background: #ffffff;
+    border: 1px solid #E5E7EB;
+    border-radius: 10px;
+    padding: 12px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+.feature.primary { border-left: 4px solid #1F7A4D; }
+.feature .ico { font-size: 26px; line-height: 1; flex-shrink: 0; }
+.feature .tt { font-size: 13.5px; font-weight: 700; color: #0F172A; }
+.feature .ss { font-size: 11.5px; color: #64748B; margin-top: 2px; }
+
+/* ── Image placeholders ───────────────────────────────────────── */
+.screenshot {
+    margin: 14px 0;
+    padding: 0;
+    border: 2px dashed #C9DBC9;
+    border-radius: 12px;
+    background: #FAFCFA;
+    overflow: hidden;
+}
+.screenshot img {
+    display: block;
+    width: 100%;
+    max-height: 480px;
+    object-fit: contain;
+    background: #ffffff;
+}
+.screenshot .empty {
+    padding: 38px 20px;
+    text-align: center;
+    color: #64748B;
+    font-size: 12.5px;
+    font-style: italic;
+}
+.screenshot .empty .label {
+    display: block;
+    font-family: 'SF Mono', Menlo, monospace;
+    background: #ffffff;
+    border: 1px solid #C9DBC9;
+    padding: 4px 10px;
+    border-radius: 6px;
+    color: #185E3A;
+    font-size: 11px;
+    font-style: normal;
+    margin-top: 8px;
+    display: inline-block;
+}
+.screenshot .caption {
+    background: #EEF5EF;
+    padding: 6px 12px;
+    font-size: 11.5px;
+    color: #185E3A;
+    border-top: 1px solid #C9DBC9;
+}
+
+/* ── Map / flow diagram ───────────────────────────────────────── */
+.flow {
+    background: #F7F8FA;
+    border: 1px solid #E5E7EB;
+    border-radius: 12px;
+    padding: 18px;
+    margin: 16px 0;
+    text-align: center;
+    font-family: 'SF Mono', Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #185E3A;
+    white-space: pre;
+}
+
+/* ── Checklist ────────────────────────────────────────────────── */
+.checklist {
+    background: #FFFBEB;
+    border: 1px solid #FCD34D;
+    border-radius: 12px;
+    padding: 18px 24px;
+    margin: 16px 0;
+    font-size: 14.5px;
+}
+.checklist li {
+    list-style: none;
+    padding: 6px 0 6px 30px;
+    position: relative;
+}
+.checklist li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 9px;
+    width: 18px;
+    height: 18px;
+    border: 2px solid #92400E;
+    border-radius: 4px;
+    background: #ffffff;
+}
+
+/* ── Footer ───────────────────────────────────────────────────── */
+.footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid #E5E7EB;
+    text-align: center;
+    color: #64748B;
+    font-size: 13px;
+}
+.footer .signature {
+    color: #1F7A4D;
+    font-weight: 800;
+    font-size: 16px;
+    margin-top: 6px;
+}
+
+/* ── Print styles ─────────────────────────────────────────────── */
+@media print {
+    body { background: #ffffff; }
+    .page {
+        max-width: none;
+        padding: 0.5in;
+        box-shadow: none;
+    }
+    h2 { page-break-before: auto; page-break-after: avoid; }
+    h3 { page-break-after: avoid; }
+    .card, .callout, .feature-grid, table, .screenshot {
+        page-break-inside: avoid;
+    }
+    .hero { box-shadow: none; }
+    a { color: #185E3A; }
+    a[href]:after { content: ""; } /* don't print URLs after links */
+    .no-print { display: none !important; }
+}
+
+@page {
+    size: letter;
+    margin: 0.5in;
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+    <!-- ── Hero ───────────────────────────────────────────── -->
+    <header class="hero">
+        <h1>🍜 Welcome to DD Mau</h1>
+        <p class="sub">Your new-hire guide to the staff app — bilingual EN/ES, works on your phone, your iPad, or any computer.</p>
+        <span class="badge">New-Hire Guide</span>
+    </header>
+
+    <!-- ── Day 1 ──────────────────────────────────────────── -->
+    <h2>⏱️ Day 1 — Get set up in 5 minutes</h2>
+    <ol class="steps">
+        <li>Open the app in <strong>Safari</strong> (iPhone) or <strong>Chrome</strong> (Android/desktop) → <code>ddmauapp.github.io</code></li>
+        <li>Tap <strong>Share → Add to Home Screen</strong> (iPhone) or <strong>Install app</strong> (Android/desktop)</li>
+        <li>Allow notifications when the app asks</li>
+        <li>Tap <strong>Schedule → ⋯ → Set my availability</strong></li>
+        <li>Tap <strong>🔒 Log out</strong> when you walk away from a shared device</li>
+    </ol>
+
+    <div class="callout warn">
+        <span class="icon">📱</span>
+        <div><strong>iPhone tip:</strong> Notifications <strong>only work if you install the app to your home screen.</strong> The browser tab won't get pushes — only the home-screen icon will.</div>
+    </div>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/01-add-to-home-screen.png</span>
+        </div>
+        <div class="caption">Adding the app to your iPhone home screen</div>
+    </div>
+
+    <!-- ── Big picture ─────────────────────────────────────── -->
+    <h2>🗺️ The big picture</h2>
+    <div class="flow">                     🏠 HOME SCREEN
+            ┌────────┬────────┬────────┬────────┐
+            ▼        ▼        ▼        ▼        ▼
+       📅 Schedule 💬 Chat  📋 Ops 📖 Recipes 🖨 Print
+
+  Green-stripe tiles = your everyday tools
+  Number badges     = things waiting for you</div>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/02-home-screen.png</span>
+        </div>
+        <div class="caption">The home screen tile grid</div>
+    </div>
+
+    <!-- ── Features overview ───────────────────────────────── -->
+    <h2>📚 What's inside the app</h2>
+    <p>Quick reference — every feature, what it does, who uses it.</p>
+
+    <div class="feature-grid">
+        <div class="feature primary"><span class="ico">🏠</span><div><div class="tt">Home</div><div class="ss">Launchpad with tiles + badges · Everyone</div></div></div>
+        <div class="feature primary"><span class="ico">💬</span><div><div class="tt">Chat</div><div class="ss">Team messaging, polls, photo reports · Everyone</div></div></div>
+        <div class="feature primary"><span class="ico">📅</span><div><div class="tt">Schedule</div><div class="ss">Shifts, swaps, PTO, availability · Everyone</div></div></div>
+        <div class="feature primary"><span class="ico">📋</span><div><div class="tt">Operations</div><div class="ss">Checklists, inventory, prep, cart, 86 · Cooks + FOH leads</div></div></div>
+        <div class="feature primary"><span class="ico">📖</span><div><div class="tt">Recipes</div><div class="ss">Bilingual book + label printing · Cooks</div></div></div>
+        <div class="feature primary"><span class="ico">🖨</span><div><div class="tt">Print Center</div><div class="ss">Date labels, signs, custom messages · Everyone</div></div></div>
+        <div class="feature"><span class="ico">📚</span><div><div class="tt">Training</div><div class="ss">Station videos + quizzes · Everyone</div></div></div>
+        <div class="feature"><span class="ico">🚫</span><div><div class="tt">86 Board</div><div class="ss">What we're out of · Cooks + FOH leads</div></div></div>
+        <div class="feature"><span class="ico">🍜</span><div><div class="tt">Menu</div><div class="ss">Bilingual menu reference · FOH</div></div></div>
+        <div class="feature"><span class="ico">🥘</span><div><div class="tt">Catering</div><div class="ss">Build catering orders · Managers</div></div></div>
+        <div class="feature"><span class="ico">🤖</span><div><div class="tt">AI Assist</div><div class="ss">Ask anything · Everyone</div></div></div>
+        <div class="feature"><span class="ico">🔧</span><div><div class="tt">Maintenance</div><div class="ss">Report broken stuff · Everyone</div></div></div>
+        <div class="feature"><span class="ico">📑</span><div><div class="tt">Insurance</div><div class="ss">Benefits enrollment · Eligible staff</div></div></div>
+        <div class="feature"><span class="ico">⏰</span><div><div class="tt">Tardies</div><div class="ss">Late + no-show tracking · Managers</div></div></div>
+        <div class="feature"><span class="ico">🤝</span><div><div class="tt">Handoff</div><div class="ss">FOH ↔ BOH shift notes · Shift leads</div></div></div>
+        <div class="feature"><span class="ico">⚙️</span><div><div class="tt">Admin</div><div class="ss">Staff, audits, printers, more · Owners</div></div></div>
+    </div>
+
+    <!-- ── Chat ────────────────────────────────────────────── -->
+    <h2>💬 Chat — How the team talks</h2>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/03-chat-thread.png</span>
+        </div>
+        <div class="caption">A chat thread with mentions, replies, and reactions</div>
+    </div>
+
+    <table>
+        <tr><th style="width:42%">Action</th><th>How</th></tr>
+        <tr><td>Send a message</td><td>Type → tap ➤</td></tr>
+        <tr><td>@-mention someone</td><td>Type <strong>@</strong> + their name</td></tr>
+        <tr><td>Translate a message</td><td>Tap the 🌐 chip below the message</td></tr>
+        <tr><td>Add a reaction</td><td>Long-press the message</td></tr>
+        <tr><td>Reply to a specific message</td><td>Swipe-right on it (or long-press → Reply)</td></tr>
+        <tr><td>Schedule a message for later</td><td>Composer → 📅 icon</td></tr>
+        <tr><td><strong>Polish spelling + grammar with AI</strong></td><td>Composer → ✨ icon (1-second polish)</td></tr>
+        <tr><td>Mute a channel</td><td>Settings → Notification settings → set channel to <strong>Mute</strong></td></tr>
+        <tr><td>Edit your own message</td><td>Long-press → Edit (15-minute window)</td></tr>
+        <tr><td>Mark something out of stock (86)</td><td>Inside any chat → 🚫 button</td></tr>
+    </table>
+
+    <div class="callout tip">
+        <span class="icon">🌙</span>
+        <div><strong>Off-shift quiet hours:</strong> Routine chat doesn't ping you between 10 pm and 6 am. <strong>Mentions</strong> and <strong>86 alerts</strong> always go through.</div>
+    </div>
+
+    <!-- ── Schedule ───────────────────────────────────────── -->
+    <h2>📅 Schedule — Your shifts + your time</h2>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/04-schedule-week.png</span>
+        </div>
+        <div class="caption">Week grid with holiday chips above the days</div>
+    </div>
+
+    <p>On the week grid, look for:</p>
+    <ul>
+        <li>🟢 Today highlighted with a green stripe</li>
+        <li>🍕 Tiny chips above the days for holidays + food days ("Memorial Day", "National Pho Day")</li>
+        <li>Your name highlighted in the shift rows</li>
+    </ul>
+
+    <table>
+        <tr><th style="width:42%">Action</th><th>How</th></tr>
+        <tr><td>See your week</td><td>Open Schedule — it defaults to grid view</td></tr>
+        <tr><td>Swap a shift with a coworker</td><td>Swap → pick their shift → manager approves</td></tr>
+        <tr><td>Request time off</td><td>⋯ → Request PTO</td></tr>
+        <tr><td>Set my weekly availability</td><td>⋯ → Set my availability</td></tr>
+        <tr><td>Tell us your birthday</td><td>⋯ → My birthday</td></tr>
+        <tr><td>See who else is available on a day</td><td>Tap the day header</td></tr>
+        <tr><td>Print the whole week</td><td>Print icon → one-page PDF preview</td></tr>
+        <tr><td>Add my shifts to my phone calendar</td><td>⋯ → Export ICS</td></tr>
+    </table>
+
+    <div class="callout warn">
+        <span class="icon">⚠️</span>
+        <div><strong>Set your availability on Day 1.</strong> Managers build next week's schedule from this.</div>
+    </div>
+
+    <!-- ── Operations ─────────────────────────────────────── -->
+    <h2>📋 Operations — The kitchen + ops home base</h2>
+    <p>Sub-tabs at the top: <strong>Tasks · Inventory · Prep · Sauce · 86</strong></p>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/05-operations-inventory.png</span>
+        </div>
+        <div class="caption">The Inventory tab with category view + cart</div>
+    </div>
+
+    <h3>Tasks (Food Safety Checklists)</h3>
+    <p>Opening / closing / mid-shift checklists. Tap to check off. Auto-saves who did what + when. Health-inspector ready.</p>
+
+    <h3>Inventory</h3>
+    <ul>
+        <li>Count items by <strong>category</strong>, <strong>vendor</strong>, or in <strong>split mode</strong></li>
+        <li>🏷 <strong>Label</strong> button on the toolbar → quick date sticker on any container</li>
+        <li>🖨 <strong>Print</strong> button → free-form signs ("BROKEN", "RESERVED FOR PARTY OF 8")</li>
+        <li>🔍 <strong>AI search</strong> finds what plain search can't ("anything for pho", "spicy", "vegan")</li>
+        <li>🛒 <strong>Cart</strong>: items you've counted go here. Side-by-side vendor prices. <strong>Order Mode</strong> lets you check off items as they arrive.</li>
+    </ul>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/06-operations-cart.png</span>
+        </div>
+        <div class="caption">The cart with multi-vendor price comparison</div>
+    </div>
+
+    <!-- ── Recipes ────────────────────────────────────────── -->
+    <h2>📖 Recipes — Every dish, bilingual</h2>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/07-recipes-detail.png</span>
+        </div>
+        <div class="caption">An expanded recipe with allergens + Print prep label</div>
+    </div>
+
+    <table>
+        <tr><th style="width:42%">Action</th><th>How</th></tr>
+        <tr><td>Search</td><td>Type in EN or ES ("wings"/"alas", "spicy", "vegan")</td></tr>
+        <tr><td>Scale</td><td>Tap a multiplier chip (½× / 2× / 3×) or enter a custom one</td></tr>
+        <tr><td>Filter for an allergen</td><td>Pick from the chips up top — recipes containing it show a red 🚫 strip</td></tr>
+        <tr><td><strong>🏷 Print a prep label</strong></td><td>Expand a recipe → Print prep label button</td></tr>
+    </table>
+
+    <div class="callout tip">
+        <span class="icon">📍</span>
+        <div>Recipes only open while you're at <strong>Webster</strong> or <strong>MD Heights</strong> — the page is geofence-protected.</div>
+    </div>
+
+    <!-- ── Print Center ───────────────────────────────────── -->
+    <h2>🖨 Print Center — Word for your printer</h2>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/08-print-center.png</span>
+        </div>
+        <div class="caption">Type, preview, print to the 80mm linerless thermal printer</div>
+    </div>
+
+    <p>Type anything. Print it. Sized for the 80mm linerless thermal printer at each kitchen.</p>
+
+    <h3>Quick templates (one tap)</h3>
+    <ul>
+        <li>🚫 <strong>Broken</strong> / Do not use</li>
+        <li>⚠ <strong>Quarantine</strong> / Do not serve</li>
+        <li>🚨 <strong>Allergen warning</strong></li>
+        <li>🔖 <strong>Reserved</strong> / Hold</li>
+        <li>🗓 <strong>Custom date</strong> label</li>
+    </ul>
+
+    <h3>Controls</h3>
+    <ul>
+        <li>Size: <strong>Small / Normal / Large / Huge</strong></li>
+        <li><strong>Bold</strong> + alignment (left / center / right)</li>
+        <li>🗓 <strong>Auto-stamp date+time</strong> toggle</li>
+        <li>✍ <strong>Auto-sign with my name</strong> toggle</li>
+        <li><strong>Copies 1-20</strong> (batched into one print job)</li>
+        <li>Last 6 messages you typed appear as one-tap recents</li>
+    </ul>
+
+    <p><strong>How to get there:</strong> 🖨 tile on the home screen, OR Operations → Inventory toolbar.</p>
+
+    <!-- ── Training ───────────────────────────────────────── -->
+    <h2>📚 Training — Learn your stations</h2>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/09-training-modules.png</span>
+        </div>
+        <div class="caption">Module library with progress + quiz status</div>
+    </div>
+
+    <p>Watch the video → take the quiz → certify. <strong>2-fail rule:</strong> fail a quiz twice, a manager has to unlock it before you try again.</p>
+
+    <table>
+        <tr><th style="width:30%">Module</th><th>For</th></tr>
+        <tr><td>M1 — Welcome</td><td>All new hires</td></tr>
+        <tr><td>M2 — Service Standards</td><td>FOH</td></tr>
+        <tr><td>M3 — Food Safety</td><td>All</td></tr>
+        <tr><td>M6 — Cashier</td><td>FOH</td></tr>
+        <tr><td>M7-M12 — Stations</td><td>BOH (Pho, Grill, Fryer, etc.)</td></tr>
+        <tr><td>M17 — Allergen Matrix</td><td>All</td></tr>
+    </table>
+
+    <!-- ── Notifications ──────────────────────────────────── -->
+    <h2>🔔 Notifications</h2>
+
+    <div class="screenshot">
+        <div class="empty">
+            <span>Drop a screenshot here:</span>
+            <span class="label">docs/images/10-notification-settings.png</span>
+        </div>
+        <div class="caption">Per-channel mute + quiet hours config</div>
+    </div>
+
+    <p>You get a push for:</p>
+    <ul>
+        <li>@-mentions in chat</li>
+        <li>Shift offers + swap approvals</li>
+        <li>1 hour before your shift starts</li>
+        <li>86 alerts (item runs out)</li>
+        <li>PTO request status updates</li>
+    </ul>
+
+    <p><strong>Quiet hours</strong> (10 pm – 6 am by default): routine pings paused, urgent ones still go. Adjust in <strong>Chat → Notification settings</strong>.</p>
+
+    <!-- ── Manager / Admin ────────────────────────────────── -->
+    <h2>👔 If you're a manager or admin</h2>
+    <p>Extra tools you'll see:</p>
+
+    <table>
+        <tr><th style="width:24%">Tool</th><th style="width:30%">Where</th><th>What it does</th></tr>
+        <tr><td>Drag editor</td><td>Schedule → Edit week</td><td>Click-and-drag shift creation</td></tr>
+        <tr><td>Auto-fill</td><td>Schedule → Auto-fill</td><td>Fills open slots from staff availability</td></tr>
+        <tr><td>Publish week</td><td>Schedule → Publish</td><td>Notifies every affected staff member</td></tr>
+        <tr><td>Tardies</td><td>🏠 → Tardies tile</td><td>Late + no-show counts</td></tr>
+        <tr><td>Handoff</td><td>🏠 → Handoff tile</td><td>Shift notes between FOH/BOH leads</td></tr>
+        <tr><td>86 mark in/out</td><td>Anywhere</td><td>Tap an item to flip stock state</td></tr>
+        <tr><td>Admin Panel</td><td>⚙️ tile</td><td>Staff, audits, printers, more <span class="em-tag">owners only</span></td></tr>
+    </table>
+
+    <!-- ── Checklist ──────────────────────────────────────── -->
+    <h2>✅ New-hire checklist</h2>
+    <ul class="checklist">
+        <li>Install the app to my home screen</li>
+        <li>Notifications allowed</li>
+        <li>Set my weekly availability</li>
+        <li>Set my birthday</li>
+        <li>Open Schedule and confirm my first shift</li>
+        <li>Watch M1 + M3 training modules</li>
+        <li>Watch the training video for my station</li>
+        <li>Pass the station quiz</li>
+        <li>Sent a "👋 hi team!" in #general chat</li>
+        <li>Tried a 🏷 prep label print on something I prepped</li>
+    </ul>
+
+    <!-- ── Tips ───────────────────────────────────────────── -->
+    <h2>💡 Tips veterans wish they'd known</h2>
+
+    <div class="card tinted">
+        <ol style="padding-left:20px; margin:0;">
+            <li><strong>Install. The. App.</strong> Push notifications on iPhone REQUIRE the home-screen install. The browser tab won't work.</li>
+            <li><strong>Date-label everything you prep.</strong> Tap a recipe → Print prep label. Way faster than masking tape. Inspectors love it.</li>
+            <li><strong>Use the ✨ grammar fix in chat</strong> before sending if you're typing fast. It keeps your voice but cleans typos.</li>
+            <li><strong>Translate, translate, translate.</strong> The team is bilingual. Don't worry about which language to write in — every message can be translated with one tap.</li>
+            <li><strong>Set quiet hours</strong> in chat settings so you don't get pinged at midnight.</li>
+            <li><strong>🔒 Log out on shared devices.</strong> PIN re-locks after 5 minutes idle, but be explicit.</li>
+            <li><strong>When in doubt, ask in chat.</strong> Someone always knows.</li>
+        </ol>
+    </div>
+
+    <!-- ── Help ───────────────────────────────────────────── -->
+    <h2>🆘 Help</h2>
+    <table>
+        <tr><th style="width:40%">Need</th><th>Talk to</th></tr>
+        <tr><td>Can't log in / forgot PIN</td><td>Manager on duty</td></tr>
+        <tr><td>App is broken / weird behavior</td><td>Manager on duty — they can force-refresh every device</td></tr>
+        <tr><td>Schedule conflict / can't make a shift</td><td>Chat your manager AND open Schedule → ⋯ → Request swap</td></tr>
+        <tr><td>Onboarding paperwork question</td><td>Andrew or Julie</td></tr>
+        <tr><td>Equipment broken</td><td>🔧 Maintenance Requests (with a photo!)</td></tr>
+    </table>
+
+    <!-- ── Footer ─────────────────────────────────────────── -->
+    <div class="footer">
+        <em>Welcome to the team.</em>
+        <div class="signature">— DD Mau 🍜</div>
+    </div>
+
+</div>
+
+<script>
+// Auto-swap screenshot placeholders for real images when present.
+// Walks every .screenshot block: pulls the filename out of the
+// .label chip ("docs/images/01-...png"), tries to load it from the
+// images/ folder next to this HTML, and on success replaces the
+// .empty placeholder with the actual image. Failure is silent —
+// the placeholder remains so Andrew sees which screenshot he still
+// needs to add.
+(function () {
+    const blocks = document.querySelectorAll('.screenshot');
+    blocks.forEach(block => {
+        const labelEl = block.querySelector('.label');
+        const emptyEl = block.querySelector('.empty');
+        if (!labelEl || !emptyEl) return;
+        // Filename is in the .label chip as "docs/images/NN-name.png"
+        // — strip the leading "docs/" since the HTML lives in docs/.
+        const rawPath = labelEl.textContent.trim();
+        const relPath = rawPath.startsWith('docs/') ? rawPath.slice(5) : rawPath;
+        const img = new Image();
+        img.onload = () => {
+            const realImg = document.createElement('img');
+            realImg.src = relPath;
+            realImg.alt = (block.querySelector('.caption')?.textContent || '').trim();
+            block.insertBefore(realImg, emptyEl);
+            emptyEl.remove();
+        };
+        img.onerror = () => { /* placeholder stays — no-op */ };
+        img.src = relPath;
+    });
+})();
+</script>
+</body>
+</html>
