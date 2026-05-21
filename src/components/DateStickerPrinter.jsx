@@ -25,7 +25,7 @@
 //   - Editable build sheet (add/edit/delete components in-app)
 //   - Print history dashboard filtered to this surface
 
-import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import {
     getAllMenuItems, getMenuItemBuild,
     getSearchableIndex, getAiSearchItems,
@@ -44,18 +44,18 @@ import {
     BUILD_SHEET_HANDHELDS,
     BUILD_SHEET_FRIED_RICE,
     BUILD_SHEET_PHO,
-    BUILD_SHEET_SAUCES,
-    BUILD_SHEET_SNACKS,
-    // Protein lists per category — Andrew 2026-05-20: "add one
-    // section at the very top of the date sticker page. put in all
-    // the bowls protiens. then above the fried rice add all the
-    // fried rice protein and then all the pho proteins". Each list
-    // is the proteins prepped-in-batch for that category, so a
-    // sticker prints per container.
-    BUILD_SHEET_BOWL_PROTEINS,
-    BUILD_SHEET_FRIED_RICE_PROTEINS,
-    BUILD_SHEET_PHO_PROTEINS,
 } from '../data/buildSheet';
+// Live-editable flat lists — Andrew 2026-05-20: "make the items all
+// editable". The five flat sections (3 protein lists + sauces +
+// snacks) now read from /config/sticker_lists with the hardcoded
+// buildSheet.js arrays as defaults. Admin edits inline via the
+// Edit Mode toggle.
+import {
+    subscribeStickerLists,
+    saveStickerList,
+    makeStickerRowId,
+    STICKER_SECTIONS,
+} from '../data/stickerListsOverride';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
 import { isAdmin } from '../data/staff';
@@ -102,6 +102,32 @@ export default function DateStickerPrinter({
     useEffect(() => {
         return subscribeAllCustomItems(setCustomItems);
     }, []);
+
+    // Editable flat lists (protein lists, sauces, snacks) — Andrew
+    // 2026-05-20 "make the items all editable". `stickerLists` is
+    // `{ bowlProteins, friedRiceProteins, phoProteins, sauces,
+    // snacks }`, each an array of rows. Defaults come from
+    // buildSheet.js; admin overrides live in /config/sticker_lists.
+    const [stickerLists, setStickerLists] = useState(null);
+    useEffect(() => {
+        return subscribeStickerLists(setStickerLists);
+    }, []);
+    // Edit Mode — admin-only. When ON, each row in the flat sections
+    // becomes an editable form with delete + add-row buttons. Off
+    // by default so the normal print-a-sticker flow stays clean.
+    const [editMode, setEditMode] = useState(false);
+
+    // Save handler — given a section key + updated rows array,
+    // pushes to Firestore. The live subscription will mirror the
+    // change back, so the UI updates without needing optimistic
+    // state. Errors toast but don't crash the editor.
+    const handleSaveSection = async (sectionKey, rows) => {
+        try {
+            await saveStickerList(sectionKey, rows, staffName);
+        } catch (e) {
+            console.warn('saveStickerList failed:', e);
+        }
+    };
 
     // Menu items from the static menu.js PLUS any admin-created
     // custom items. Custom items get a synthesized shape that the
@@ -382,21 +408,41 @@ export default function DateStickerPrinter({
                     </button>
                 </div>
 
-                {/* Action row — Custom Print is the only entry left
-                    here. The "🆕 New custom item" button was removed
-                    2026-05-20 when the browse view switched to the
-                    build sheet — custom items don't fit that fixed
-                    structure. Existing custom items still surface via
-                    the search index (and the admin build editor stays
-                    reachable from any search-result row), so nothing
-                    was destroyed; the create-new flow just isn't
-                    advertised from this tab anymore. */}
+                {/* Action row — Custom Print for everyone; Edit Mode
+                    toggle for admins only. Edit Mode flips the flat
+                    sections (3 protein lists + sauces + snacks) into
+                    inline-edit forms with delete + add-row buttons.
+                    Saves live to /config/sticker_lists. */}
                 <div className="flex gap-2 mb-2">
                     <button onClick={() => setCustomPrintOpen(true)}
-                        className="flex-1 py-2.5 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
+                        className={`${adminUser ? 'flex-1' : 'flex-1'} py-2.5 rounded-lg bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm`}>
                         🖨 {tx('Custom print (any text)', 'Imprimir personalizado')}
                     </button>
+                    {adminUser && (
+                        <button onClick={() => setEditMode(v => !v)}
+                            title={tx(
+                                'Toggle Edit Mode — admin only. Rename, delete, or add rows in any flat list.',
+                                'Modo edición — sólo admin. Renombra, borra o agrega filas en las listas planas.',
+                            )}
+                            className={`flex-1 py-2.5 rounded-lg text-sm font-bold transition shadow-sm border-2 ${
+                                editMode
+                                    ? 'bg-amber-500 border-amber-600 text-white hover:bg-amber-600'
+                                    : 'bg-white border-purple-300 text-purple-700 hover:bg-purple-50'
+                            }`}>
+                            {editMode
+                                ? '✓ ' + tx('Done editing', 'Listo')
+                                : '✏️ ' + tx('Edit items', 'Editar')}
+                        </button>
+                    )}
                 </div>
+                {editMode && (
+                    <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5 mb-2 leading-snug">
+                        {tx(
+                            '✏️ Edit Mode — type to rename, 🗑 to delete, + Add row at section bottom. Changes save automatically across all devices. Tap "Done editing" when finished.',
+                            '✏️ Modo edición — escribe para renombrar, 🗑 para borrar, + Agregar fila al final de cada sección. Los cambios se guardan automáticamente en todos los dispositivos.',
+                        )}
+                    </div>
+                )}
 
                 {/* AI status strip — shows during a query */}
                 {hasQuery && aiOn && (
@@ -505,6 +551,9 @@ export default function DateStickerPrinter({
                         isEs={isEs}
                         tx={tx}
                         onPrint={(c) => handlePrintComponent(c, null)}
+                        stickerLists={stickerLists}
+                        editMode={editMode}
+                        onSaveSection={handleSaveSection}
                     />
                 )}
             </div>
@@ -850,23 +899,33 @@ function ComponentRow({ component, tone, isEs, tx, onPrint }) {
 //
 // All copy comes from src/data/buildSheet.js — that's the single
 // source of truth. Update once, both surfaces update.
-function BuildSheetBrowse({ isEs, tx, onPrint }) {
+function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSection }) {
+    // Helper that pulls a section's live list out of the subscription,
+    // falling back to the section's own hardcoded defaults if the
+    // subscription hasn't loaded yet (renders something instead of
+    // blank during the first paint).
+    const listFor = (key) => {
+        const fromSub = stickerLists?.[key];
+        if (Array.isArray(fromSub)) return fromSub;
+        return STICKER_SECTIONS.find(s => s.key === key)?.defaults || [];
+    };
     return (
         <div className="space-y-5">
-            {/* Bowl Proteins — Andrew wants this AT THE VERY TOP so
-                the most-prepped batches (chicken / pork / shrimp /
-                steak etc.) are one tap away when the kitchen starts
-                a shift. Shared across Bowls / Bánh Mì / Sliders /
-                Tacos / Lo Mein — kitchen preps one batch, labels
-                one container, multiple categories serve from it. */}
+            {/* Bowl Proteins — at the very top so the most-prepped
+                batches are one tap away when the kitchen starts a
+                shift. Shared across Bowls / Bánh Mì / Sliders /
+                Tacos / Lo Mein — one batch labels one container. */}
             <BuildSheetFlatSection
+                sectionKey="bowlProteins"
                 titleEn="🍤 Bowl Proteins"
                 titleEs="🍤 Proteínas de Bowls"
-                items={BUILD_SHEET_BOWL_PROTEINS}
+                items={listFor('bowlProteins')}
                 kind="protein"
                 isEs={isEs}
                 tx={tx}
                 onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
             />
 
             {/* Bowls — 3 styles (Vermicelli / Salad / Rice) */}
@@ -889,18 +948,19 @@ function BuildSheetBrowse({ isEs, tx, onPrint }) {
                 onPrint={onPrint}
             />
 
-            {/* Fried Rice Proteins — placed ABOVE the Fried Rice
-                section so prep-staff sees "what I need to portion"
-                before "what the dish looks like". Ham is the one
-                protein UNIQUE to Fried Rice (not in bowls combo). */}
+            {/* Fried Rice Proteins — Ham is the one protein UNIQUE
+                to Fried Rice (not in bowls combo). */}
             <BuildSheetFlatSection
+                sectionKey="friedRiceProteins"
                 titleEn="🍤 Fried Rice Proteins"
                 titleEs="🍤 Proteínas de Fried Rice"
-                items={BUILD_SHEET_FRIED_RICE_PROTEINS}
+                items={listFor('friedRiceProteins')}
                 kind="protein"
                 isEs={isEs}
                 tx={tx}
                 onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
             />
 
             {/* Fried Rice — single item */}
@@ -913,19 +973,20 @@ function BuildSheetBrowse({ isEs, tx, onPrint }) {
                 onPrint={onPrint}
             />
 
-            {/* Pho Proteins — placed ABOVE the Pho section so the
-                broth-side proteins (rare steak, brisket, meatball,
-                tendon, tripe, seafood) are easy to label per pot.
-                The same proteins are also shown under each broth
-                in the Pho section below as read-only reference. */}
+            {/* Pho Proteins — broth-side proteins easy to label per
+                pot. Same proteins also shown under each broth in
+                the Pho section below as read-only reference. */}
             <BuildSheetFlatSection
+                sectionKey="phoProteins"
                 titleEn="🍤 Pho Proteins"
                 titleEs="🍤 Proteínas de Pho"
-                items={BUILD_SHEET_PHO_PROTEINS}
+                items={listFor('phoProteins')}
                 kind="protein"
                 isEs={isEs}
                 tx={tx}
                 onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
             />
 
             {/* Pho — special structure: standard garnish + 3 broths,
@@ -934,24 +995,30 @@ function BuildSheetBrowse({ isEs, tx, onPrint }) {
 
             {/* Sauces — flat list, each sauce is itself the prep item */}
             <BuildSheetFlatSection
+                sectionKey="sauces"
                 titleEn="🥢 Sauces"
                 titleEs="🥢 Salsas"
-                items={BUILD_SHEET_SAUCES}
+                items={listFor('sauces')}
                 kind="sauce"
                 isEs={isEs}
                 tx={tx}
                 onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
             />
 
             {/* Snacks — flat list, each snack is the prep item */}
             <BuildSheetFlatSection
+                sectionKey="snacks"
                 titleEn="🥟 Snacks"
                 titleEs="🥟 Snacks"
-                items={BUILD_SHEET_SNACKS}
+                items={listFor('snacks')}
                 kind="side"
                 isEs={isEs}
                 tx={tx}
                 onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
             />
         </div>
     );
@@ -1163,13 +1230,126 @@ function PhoBuildSheetSection({ isEs, tx, onPrint }) {
     );
 }
 
-// Flat sections (Sauces, Snacks) — each row IS the prep item, no
-// nested toppings/notes. Description renders under the name; Print
-// button on every row.
-function BuildSheetFlatSection({ titleEn, titleEs, items, kind, isEs, tx, onPrint }) {
+// Flat sections (Bowl/Fried Rice/Pho Proteins, Sauces, Snacks) —
+// each row IS the prep item, no nested toppings/notes. Description
+// renders under the name; Print button on every row.
+//
+// Edit Mode (admin only, Andrew 2026-05-20 "make the items all
+// editable"): rows turn into inline name (EN + ES) inputs with a
+// delete button. Section gets a "+ Add row" button at the bottom.
+// Saves debounce to /config/sticker_lists via onSaveSection.
+function BuildSheetFlatSection({
+    sectionKey, titleEn, titleEs, items, kind, isEs, tx, onPrint,
+    editMode = false, onSaveSection,
+}) {
     const tone = COMPONENT_KIND_TONE[kind] || COMPONENT_KIND_TONE.side;
+
+    // Local working copy while editing. We mirror the subscription
+    // list when not editing, but in edit mode we keep our own copy
+    // so per-keystroke typing doesn't fight with debounced Firestore
+    // round-trips. When edit mode flips off we re-sync from props.
+    const [draft, setDraft] = useState(() => normalizeForEdit(items));
+    useEffect(() => {
+        // When edit mode is off, always mirror props. When edit mode
+        // is on, also mirror props if the lengths/ids changed (e.g.
+        // another admin added a row from another device) but keep
+        // the user's in-progress text otherwise.
+        if (!editMode) {
+            setDraft(normalizeForEdit(items));
+        } else {
+            setDraft(prev => mergeDrafts(prev, normalizeForEdit(items)));
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [items, editMode]);
+
+    // Debounced save — flush 600ms after the last edit. Firing
+    // immediately on every keystroke would burn write quota and
+    // race with the live subscription.
+    const saveTimer = useRef(null);
+    const queueSave = (next) => {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+            if (onSaveSection) onSaveSection(sectionKey, next);
+        }, 600);
+    };
+
+    // Edit handlers — keep `draft` authoritative locally, fire
+    // queueSave on every change.
+    const updateRow = (id, patch) => {
+        setDraft(prev => {
+            const next = prev.map(r => r.id === id ? { ...r, ...patch } : r);
+            queueSave(next);
+            return next;
+        });
+    };
+    const deleteRow = (id) => {
+        setDraft(prev => {
+            const next = prev.filter(r => r.id !== id);
+            queueSave(next);
+            return next;
+        });
+    };
+    const addRow = () => {
+        setDraft(prev => {
+            const next = [...prev, {
+                id: makeStickerRowId(`${sectionKey}-new`),
+                nameEn: '',
+                nameEs: '',
+                descEn: '',
+                descEs: '',
+            }];
+            // Don't queue save yet — wait for the user to type. An
+            // empty row would get filtered out by saveStickerList's
+            // sanitizer anyway.
+            return next;
+        });
+    };
+
+    // Render. In edit mode use `draft`; otherwise build print rows
+    // from `items` directly.
+    if (editMode) {
+        return (
+            <section>
+                <h2 className="text-sm font-black uppercase tracking-widest text-dd-text mb-2 px-1 flex items-center gap-2">
+                    {tx(titleEn, titleEs)}
+                    <span className="text-[10px] font-bold text-dd-text-2/60">
+                        · {draft.length} {tx('rows', 'filas')}
+                    </span>
+                    <span className="ml-auto text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                        ✏️ {tx('editing', 'editando')}
+                    </span>
+                </h2>
+                <div className="bg-white border-2 border-amber-300 rounded-xl p-3">
+                    <div className="space-y-1.5">
+                        {draft.map(row => (
+                            <EditableFlatRow
+                                key={row.id}
+                                row={row}
+                                tone={tone}
+                                isEs={isEs}
+                                tx={tx}
+                                onUpdate={(patch) => updateRow(row.id, patch)}
+                                onDelete={() => deleteRow(row.id)}
+                            />
+                        ))}
+                        {draft.length === 0 && (
+                            <div className="text-[11px] italic text-dd-text-2 text-center py-2">
+                                {tx('No rows yet — tap "Add row" to start.', 'Sin filas — toca "Agregar fila".')}
+                            </div>
+                        )}
+                    </div>
+                    <button onClick={addRow}
+                        className="mt-3 w-full py-2 rounded-lg border-2 border-dashed border-purple-300 text-purple-700 hover:bg-purple-50 text-xs font-bold">
+                        + {tx('Add row', 'Agregar fila')}
+                    </button>
+                </div>
+            </section>
+        );
+    }
+
+    // Normal (non-edit) render — printable component rows.
     const components = items.map((s, i) => ({
-        id: `bs-flat::${kind}::${i}`,
+        id: s.id || `bs-flat::${kind}::${i}`,
         kind,
         nameEn: s.nameEn,
         nameEs: s.nameEs || s.nameEn,
@@ -1200,6 +1380,76 @@ function BuildSheetFlatSection({ titleEn, titleEs, items, kind, isEs, tx, onPrin
                 </div>
             </div>
         </section>
+    );
+}
+
+// Strip the build-sheet rows down to the four editable fields + id
+// so the edit form has clean state. Generates an id if the source
+// row lacks one (hardcoded defaults sometimes do).
+function normalizeForEdit(items) {
+    return (items || []).map((row, i) => ({
+        id:     row.id || `tmp-${i}-${row.nameEn || ''}`,
+        nameEn: row.nameEn || '',
+        nameEs: row.nameEs || row.nameEn || '',
+        descEn: row.descEn || '',
+        descEs: row.descEs || '',
+    }));
+}
+
+// Merge an incoming list from the subscription with the user's
+// in-progress draft. Rows the user has touched (different from
+// the incoming version) win; brand-new rows from another device
+// get appended; rows the user deleted but that still exist
+// elsewhere get re-introduced. Best-effort — no MVCC, last write
+// wins on conflicts.
+function mergeDrafts(draft, incoming) {
+    const incomingById = new Map(incoming.map(r => [r.id, r]));
+    const out = [];
+    for (const d of draft) {
+        const i = incomingById.get(d.id);
+        if (i) {
+            // Keep the draft (user's typed value).
+            out.push(d);
+            incomingById.delete(d.id);
+        } else {
+            // Draft has an id the incoming doesn't — keep the draft
+            // (it's probably a new row the user just added).
+            out.push(d);
+        }
+    }
+    // Any incoming rows not in draft = new from another device.
+    for (const i of incomingById.values()) {
+        out.push(i);
+    }
+    return out;
+}
+
+// One inline-edit row. Name EN + Name ES side by side, with a
+// trash button at the right.
+function EditableFlatRow({ row, tone, isEs, tx, onUpdate, onDelete }) {
+    return (
+        <div className={`flex items-stretch gap-1.5 rounded-lg ${tone.bg} border border-dd-line p-1.5`}>
+            <input
+                type="text"
+                value={row.nameEn}
+                onChange={(e) => onUpdate({ nameEn: e.target.value })}
+                placeholder={tx('Name (English)', 'Nombre (Inglés)')}
+                className="flex-1 min-w-0 px-2 py-1.5 text-xs font-bold border border-dd-line rounded bg-white"
+            />
+            <input
+                type="text"
+                value={row.nameEs}
+                onChange={(e) => onUpdate({ nameEs: e.target.value })}
+                placeholder={tx('Name (Spanish)', 'Nombre (Español)')}
+                className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-dd-line rounded bg-white"
+            />
+            <button
+                onClick={onDelete}
+                title={tx('Delete row', 'Borrar fila')}
+                className="flex-shrink-0 px-2.5 rounded-lg bg-red-100 border border-red-300 text-red-700 text-sm hover:bg-red-200 active:scale-95">
+                🗑
+            </button>
+        </div>
     );
 }
 
