@@ -29,7 +29,7 @@
 //                 (good for "today's specials" feel)
 
 import { useEffect, useMemo, useState } from 'react';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -123,6 +123,26 @@ export default function MenuDisplay({ tvId = 'webster' }) {
         return () => clearInterval(t);
     }, []);
 
+    // Heartbeat — write to /tv_heartbeats/{tvId} every minute. The
+    // checkTvHeartbeats Cloud Function looks at lastSeenAt and pings
+    // admins when a TV goes quiet (>10 min). Wave 7 of "match the
+    // SaaS leaders" — Raydiant / ScreenCloud both surface "device
+    // offline" alerts. Ours is integrated into the existing FCM/SMS
+    // notification dispatcher.
+    useEffect(() => {
+        if (!tvId) return;
+        const write = () => {
+            setDoc(doc(db, 'tv_heartbeats', tvId), {
+                tvId,
+                lastSeenAt: serverTimestamp(),
+                userAgent: typeof navigator !== 'undefined' ? navigator.userAgent.slice(0, 200) : null,
+            }, { merge: true }).catch(err => console.warn('tv heartbeat failed:', err));
+        };
+        write();   // initial heartbeat on mount
+        const id = setInterval(write, 60_000);
+        return () => clearInterval(id);
+    }, [tvId]);
+
     // Merge MENU_DATA + overrides + apply category filter.
     const menu = useMemo(() => {
         const merged = applyMenuOverrides(MENU_DATA, overrides);
@@ -203,6 +223,26 @@ export default function MenuDisplay({ tvId = 'webster' }) {
         );
     }
 
+    if (mode === MODES.SPLIT) {
+        const split = tvConfig?.split || {};
+        return (
+            <>
+                <SplitModeLayout
+                    leftImageUrls={Array.isArray(split.leftImageUrls) ? split.leftImageUrls : []}
+                    leftRotateSeconds={Math.max(3, Math.min(60, Number(split.leftRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS))}
+                    rightImageUrls={Array.isArray(split.rightImageUrls) ? split.rightImageUrls : []}
+                    rightRotateSeconds={Math.max(3, Math.min(60, Number(split.rightRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS))}
+                    leftWidthPct={Math.max(50, Math.min(85, Number(split.leftWidthPct) || 70))}
+                    imageHitZones={imageHitZones}
+                    sixed={sixed}
+                    now={now}
+                    label={tvConfig?.label || LOC_LABEL[location] || location}
+                />
+                <PromoStrip promoStrip={tvConfig?.promoStrip} />
+            </>
+        );
+    }
+
     return (
         <>
             <div className="fixed inset-0 bg-white text-dd-text flex flex-col overflow-hidden font-sans">
@@ -243,7 +283,12 @@ export default function MenuDisplay({ tvId = 'webster' }) {
 //   container). Overlays are positioned absolute inside the
 //   container at fractional coordinates — they always land on
 //   the right pixels regardless of TV size.
-function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], sixed, now, label, daypartLabel }) {
+function ImageModeLayout({
+    imageUrls, imageRotateSeconds, imageHitZones = [],
+    sixed, now, label, daypartLabel,
+    embedded = false,           // when used inside SplitModeLayout, drop fixed positioning
+    suppressIndicator = false,  // hide the corner pill (the embedding parent already shows it)
+}) {
     const [idx, setIdx] = useState(0);
     // Track natural dims per page so we can size each container to
     // its image's aspect ratio. Updated on each img's onLoad.
@@ -258,9 +303,16 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
         return () => clearInterval(t);
     }, [safeUrls.length, imageRotateSeconds]);
 
+    const containerCls = embedded
+        ? 'absolute inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center'
+        : 'fixed inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center';
+
     if (safeUrls.length === 0) {
+        const emptyCls = embedded
+            ? 'absolute inset-0 bg-stone-900 text-white flex flex-col items-center justify-center font-sans'
+            : 'fixed inset-0 bg-stone-900 text-white flex flex-col items-center justify-center font-sans';
         return (
-            <div className="fixed inset-0 bg-stone-900 text-white flex flex-col items-center justify-center font-sans">
+            <div className={emptyCls}>
                 <div className="text-6xl mb-4">🖼</div>
                 <div className="text-2xl font-black tracking-tight mb-2">{label}</div>
                 <div className="text-base opacity-80 mb-1">No menu image uploaded yet.</div>
@@ -290,7 +342,7 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
         z.qrUrl && /^https?:\/\//i.test(String(z.qrUrl).trim()));
 
     return (
-        <div className="fixed inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center">
+        <div className={containerCls}>
             {/* Each page is its own container, sized to its image's
                 aspect ratio. Overlays inside the container align
                 perfectly with the image regardless of TV resolution. */}
@@ -369,7 +421,9 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
                 );
             })}
 
-            {/* Corner live indicator */}
+            {/* Corner live indicator — hidden inside split mode's
+                right pane (the left pane already shows it). */}
+            {!suppressIndicator && (
             <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/40 backdrop-blur-sm text-white text-[10px] font-bold z-10">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span className="tabular-nums">{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
@@ -385,6 +439,52 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
                 {priceZonesOnPage.length > 0 && (
                     <span className="opacity-70 ml-1">· {priceZonesOnPage.length} priced</span>
                 )}
+            </div>
+            )}
+        </div>
+    );
+}
+
+// ── Split mode — two image sources side-by-side ──────────────
+// Andrew 2026-05-20 Wave 6 of "match the SaaS leaders". The
+// "menu + photo carousel" layout that Raydiant / ScreenCloud /
+// Samsung VXT use heavily on portrait drive-thru / lobby TVs.
+// Left side carries the hit zones (so 86 / price / QR overlays
+// still work on the menu side); right side is just a rotation.
+function SplitModeLayout({
+    leftImageUrls, leftRotateSeconds,
+    rightImageUrls, rightRotateSeconds,
+    leftWidthPct,
+    imageHitZones, sixed, now, label,
+}) {
+    return (
+        <div className="fixed inset-0 bg-stone-900 overflow-hidden flex font-sans">
+            {/* LEFT — menu side with hit-zone overlays */}
+            <div className="relative flex items-center justify-center"
+                style={{ width: `${leftWidthPct}%`, height: '100%' }}>
+                <ImageModeLayout
+                    imageUrls={leftImageUrls}
+                    imageRotateSeconds={leftRotateSeconds}
+                    imageHitZones={imageHitZones}
+                    sixed={sixed}
+                    now={now}
+                    label={label}
+                    daypartLabel={null}
+                    embedded={true} />
+            </div>
+            {/* RIGHT — secondary carousel (no overlays) */}
+            <div className="relative flex items-center justify-center bg-black border-l border-stone-800"
+                style={{ width: `${100 - leftWidthPct}%`, height: '100%' }}>
+                <ImageModeLayout
+                    imageUrls={rightImageUrls}
+                    imageRotateSeconds={rightRotateSeconds}
+                    imageHitZones={[]}
+                    sixed={new Set()}
+                    now={now}
+                    label={label}
+                    daypartLabel={null}
+                    embedded={true}
+                    suppressIndicator={true} />
             </div>
         </div>
     );

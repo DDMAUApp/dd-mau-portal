@@ -14,6 +14,7 @@ import {
     makeTvId,
 } from '../data/tvConfigs';
 import { uploadMenuFile } from '../data/menuImageUpload';
+import { generatePromo } from '../data/aiGeneratePromo';
 import { toast } from '../toast';
 
 // Lazy because the hit-zone editor pulls in a fair amount of UI
@@ -185,12 +186,17 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
 
 function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
     const isImageMode = cfg.mode === 'image';
+    const isSplitMode = cfg.mode === 'split';
     const pageCount = Array.isArray(cfg.imageUrls) ? cfg.imageUrls.length : 0;
-    const modeLabel = isImageMode
-        ? (pageCount > 1 ? `🖼 Image (${pageCount}p)` : '🖼 Image')
-        : (cfg.layout === 'rotate' ? '🔄 Rotate'
-        : cfg.layout === 'spotlight' ? '⭐ Spotlight'
-        : '📋 Dense');
+    const leftCount = Array.isArray(cfg.split?.leftImageUrls) ? cfg.split.leftImageUrls.length : 0;
+    const rightCount = Array.isArray(cfg.split?.rightImageUrls) ? cfg.split.rightImageUrls.length : 0;
+    const modeLabel = isSplitMode
+        ? `🪟 Split (${leftCount}+${rightCount})`
+        : isImageMode
+            ? (pageCount > 1 ? `🖼 Image (${pageCount}p)` : '🖼 Image')
+            : (cfg.layout === 'rotate' ? '🔄 Rotate'
+            : cfg.layout === 'spotlight' ? '⭐ Spotlight'
+            : '📋 Dense');
     const url = `${baseUrl}/?tv=${cfg.tvId}`;
     return (
         <div className="border border-sky-200 rounded-lg p-2.5 bg-sky-50/40">
@@ -289,6 +295,14 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const [imageRotateSeconds, setImageRotateSeconds] = useState(Number(initial?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS);
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
     const [dayparts, setDayparts] = useState(Array.isArray(initial?.dayparts) ? initial.dayparts : []);
+    const [split, setSplit] = useState(initial?.split || {
+        leftImageUrls: [],
+        leftRotateSeconds: 12,
+        rightImageUrls: [],
+        rightRotateSeconds: 8,
+        leftWidthPct: 70,
+    });
+    const [splitUploading, setSplitUploading] = useState(null); // 'left' | 'right' | null
     const [promoStrip, setPromoStrip] = useState(initial?.promoStrip || {
         enabled: false,
         position: 'bottom',
@@ -297,6 +311,43 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         style: 'sage',
         speed: 0,
     });
+    // AI promo generation state
+    const [aiHint, setAiHint] = useState('');
+    const [aiGenerating, setAiGenerating] = useState(false);
+    const [aiVariants, setAiVariants] = useState([]);
+
+    const handleGeneratePromo = async () => {
+        const hint = aiHint.trim();
+        if (!hint) {
+            toast(tx('Type a hint first (e.g. "happy hour")', 'Escribe una pista'), { kind: 'error' });
+            return;
+        }
+        setAiGenerating(true);
+        try {
+            const { variants } = await generatePromo({ hint });
+            if (!variants.length) {
+                toast(tx('AI returned nothing. Try a different hint.', 'AI no devolvió variantes.'), { kind: 'error' });
+            } else {
+                setAiVariants(variants);
+            }
+        } catch (e) {
+            console.warn('aiGeneratePromo failed:', e);
+            toast(tx('AI failed: ', 'Error AI: ') + (e?.message || ''), { kind: 'error' });
+        } finally {
+            setAiGenerating(false);
+        }
+    };
+
+    const applyVariant = (v) => {
+        setPromoStrip(p => ({
+            ...p,
+            enabled: true,
+            textEn: v.en || p.textEn,
+            textEs: v.es || p.textEs,
+        }));
+        setAiVariants([]);
+        toast(tx('✓ Applied to promo strip', '✓ Aplicado'), { kind: 'success' });
+    };
     const [hitZoneEditorOpen, setHitZoneEditorOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -341,6 +392,33 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         setImageUrls(prev => prev.filter((_, i) => i !== idx));
     };
 
+    // Split-mode upload handler — one side at a time. Same caps +
+    // file types as the main upload handler.
+    const handleSplitUpload = async (side, e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        e.target.value = '';
+        if (file.size > 80 * 1024 * 1024) {
+            toast(tx('File too large (max 80 MB).', 'Archivo muy grande (máx 80 MB).'), { kind: 'error' });
+            return;
+        }
+        setSplitUploading(side);
+        try {
+            const slugPrefix = (previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-') + '-' + side;
+            const urls = await uploadMenuFile({ file, folder: 'tv_images', slugPrefix });
+            setSplit(s => ({
+                ...s,
+                [side === 'left' ? 'leftImageUrls' : 'rightImageUrls']: urls,
+            }));
+            toast(tx(`✓ ${side} uploaded`, `✓ ${side} subido`), { kind: 'success' });
+        } catch (err) {
+            console.warn('split upload failed:', err);
+            toast(tx('Upload failed: ', 'Error al subir: ') + (err?.message || ''), { kind: 'error' });
+        } finally {
+            setSplitUploading(null);
+        }
+    };
+
     const save = async () => {
         if (saving) return;
         const finalId = (tvId.trim() || makeTvId(label, location)).toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 48);
@@ -373,7 +451,26 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                     : null;
                 payload.imageHitZones = imageHitZones;
                 payload.dayparts = dayparts;
+                payload.split = null;
                 // Clear menu-mode fields on the saved doc to avoid stale data.
+                payload.layout = null;
+                payload.showPhotos = null;
+                payload.rotateSeconds = null;
+                payload.spotlightCategory = null;
+                payload.includeCategories = null;
+            } else if (mode === MODES.SPLIT) {
+                if (!Array.isArray(split.leftImageUrls) || split.leftImageUrls.length === 0) {
+                    toast(tx('Upload at least one image for the LEFT side of the split.', 'Sube al menos una imagen para el lado izquierdo.'), { kind: 'error' });
+                    setSaving(false);
+                    return;
+                }
+                payload.split = split;
+                // Hit zones still live at top level — they apply to the
+                // left (menu) side of the split.
+                payload.imageHitZones = imageHitZones;
+                payload.imageUrls = null;
+                payload.imageRotateSeconds = null;
+                payload.dayparts = null;
                 payload.layout = null;
                 payload.showPhotos = null;
                 payload.rotateSeconds = null;
@@ -389,6 +486,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.imageRotateSeconds = null;
                 payload.imageHitZones = null;
                 payload.dayparts = null;
+                payload.split = null;
             }
             await saveTvConfig({ tvId: finalId, payload, byName });
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
@@ -536,6 +634,50 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                 </label>
                             </div>
 
+                            {/* ── AI promo generation ─────────────────
+                                Andrew's hint → Claude returns 3 bilingual
+                                banner variants → admin picks one which
+                                auto-fills the EN/ES inputs above. */}
+                            <div className="border-t border-amber-200 pt-2 mt-1 space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <input type="text"
+                                        value={aiHint}
+                                        onChange={(e) => setAiHint(e.target.value)}
+                                        placeholder={tx('Tell AI what to promote (e.g. "happy hour", "promote catering")', 'Dile a la AI qué promover')}
+                                        maxLength={300}
+                                        className="flex-1 px-2 py-1.5 rounded border border-purple-300 text-sm bg-white" />
+                                    <button type="button"
+                                        onClick={handleGeneratePromo}
+                                        disabled={aiGenerating || !aiHint.trim()}
+                                        className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-fuchsia-600 text-white text-xs font-black hover:opacity-90 disabled:opacity-40 whitespace-nowrap">
+                                        {aiGenerating ? tx('🤖 …', '🤖 …') : tx('🤖 Generate', '🤖 Generar')}
+                                    </button>
+                                </div>
+                                {aiVariants.length > 0 && (
+                                    <div className="space-y-1.5">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-purple-800">
+                                                {tx(`${aiVariants.length} variants — pick one`, `${aiVariants.length} variantes`)}
+                                            </span>
+                                            <button type="button" onClick={() => setAiVariants([])}
+                                                className="text-[10px] font-bold text-stone-600 hover:underline">
+                                                {tx('Dismiss', 'Cerrar')}
+                                            </button>
+                                        </div>
+                                        {aiVariants.map((v, i) => (
+                                            <button key={i} type="button"
+                                                onClick={() => applyVariant(v)}
+                                                className="w-full text-left bg-white border border-purple-200 rounded-md p-2 hover:bg-purple-50 transition">
+                                                <div className="text-[12px] font-bold text-dd-text">{v.en}</div>
+                                                {v.es && (
+                                                    <div className="text-[11px] text-dd-text-2 mt-0.5">{v.es}</div>
+                                                )}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
                             <div className="grid grid-cols-3 gap-2">
                                 <label className="block">
                                     <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
@@ -584,10 +726,11 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                         <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-1">
                             {tx('Display mode', 'Modo de pantalla')}
                         </span>
-                        <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-3 gap-2">
                             {[
                                 { val: MODES.MENU,  emoji: '📋', en: 'Live menu data',   es: 'Datos en vivo',  sub: '86 strikes, photos, edits' },
                                 { val: MODES.IMAGE, emoji: '🖼', en: 'Image / PDF menu', es: 'Imagen / PDF',   sub: 'upload designer file' },
+                                { val: MODES.SPLIT, emoji: '🪟', en: 'Split (menu + carousel)', es: 'Split',     sub: 'menu + photo side panel' },
                             ].map(m => (
                                 <button key={m.val} type="button"
                                     onClick={() => setMode(m.val)}
@@ -605,7 +748,91 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                         </div>
                     </div>
 
-                    {mode === MODES.IMAGE ? (
+                    {mode === MODES.SPLIT ? (
+                        <>
+                            {/* Split-mode UX — two upload slots + width slider */}
+                            <div className="bg-sky-50 border-2 border-sky-200 rounded-lg p-3 space-y-3">
+                                <p className="text-[11px] text-sky-800 leading-snug">
+                                    {tx(
+                                        'Split mode: two image sources side-by-side. LEFT = main menu (carries the SOLD OUT / price / QR overlays). RIGHT = secondary carousel (photos, promos, branding loop). Each side has its own upload + rotation speed.',
+                                        'Modo dividido: dos imágenes lado a lado. Izquierda = menú principal (con SOLD OUT). Derecha = carrusel secundario.',
+                                    )}
+                                </p>
+
+                                {/* Width slider */}
+                                <label className="block">
+                                    <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-1">
+                                        <span>{tx('Left side width', 'Ancho izquierdo')}</span>
+                                        <span className="text-sky-900">{split.leftWidthPct || 70}% / {100 - (split.leftWidthPct || 70)}%</span>
+                                    </div>
+                                    <input type="range" min="50" max="85" step="5"
+                                        value={split.leftWidthPct || 70}
+                                        onChange={(e) => setSplit(s => ({ ...s, leftWidthPct: Number(e.target.value) }))}
+                                        className="w-full accent-sky-600" />
+                                </label>
+
+                                {/* Two upload slots side by side */}
+                                <div className="grid grid-cols-2 gap-3">
+                                    {['left', 'right'].map(side => {
+                                        const urls = split[side === 'left' ? 'leftImageUrls' : 'rightImageUrls'] || [];
+                                        const isUploading = splitUploading === side;
+                                        return (
+                                            <div key={side} className="bg-white border border-sky-200 rounded-lg p-2.5">
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-sky-800">
+                                                        {side === 'left' ? tx('Left (menu + 86)', 'Izquierda') : tx('Right (carousel)', 'Derecha')}
+                                                    </span>
+                                                    <label className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                                                        isUploading ? 'bg-sky-200 text-sky-600 opacity-60' : 'bg-sky-100 text-sky-700 hover:bg-sky-200'
+                                                    }`}>
+                                                        {isUploading ? '⏳' : (urls.length > 0 ? tx('Replace', 'Reemplazar') : tx('Upload', 'Subir'))}
+                                                        <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime,application/pdf"
+                                                            onChange={(e) => handleSplitUpload(side, e)}
+                                                            disabled={isUploading}
+                                                            className="hidden" />
+                                                    </label>
+                                                </div>
+                                                {urls.length > 0 ? (
+                                                    <div className="text-[10px] text-sky-700 font-bold">
+                                                        {urls.length} {urls.length === 1 ? tx('item', 'item') : tx('items', 'items')}
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-[10px] text-stone-500 italic">
+                                                        {tx('No upload yet', 'Sin subir')}
+                                                    </div>
+                                                )}
+                                                {urls.length > 1 && (
+                                                    <label className="block mt-2">
+                                                        <span className="block text-[9px] font-bold text-sky-700 uppercase tracking-wide mb-0.5">
+                                                            {tx('Sec/page', 'Seg/pág')}
+                                                        </span>
+                                                        <input type="number"
+                                                            min={3} max={60}
+                                                            value={split[side === 'left' ? 'leftRotateSeconds' : 'rightRotateSeconds'] || (side === 'left' ? 12 : 8)}
+                                                            onChange={(e) => setSplit(s => ({
+                                                                ...s,
+                                                                [side === 'left' ? 'leftRotateSeconds' : 'rightRotateSeconds']: Number(e.target.value) || 8,
+                                                            }))}
+                                                            className="w-full px-1.5 py-0.5 rounded border border-sky-200 text-[11px] font-mono bg-white" />
+                                                    </label>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Hit zone editor for the LEFT side */}
+                                {(split.leftImageUrls?.length || 0) > 0 && (
+                                    <button onClick={() => setHitZoneEditorOpen(true)} type="button"
+                                        className="w-full px-3 py-2 rounded-lg bg-white border-2 border-amber-500 text-amber-700 text-xs font-bold hover:bg-amber-50 transition flex items-center justify-center gap-1.5">
+                                        🎯 {imageHitZones.length > 0
+                                            ? tx(`Edit SOLD OUT zones on LEFT (${imageHitZones.length} mapped)`, `Editar zonas (${imageHitZones.length})`)
+                                            : tx('Map LEFT-side items for SOLD OUT overlays', 'Mapear items')}
+                                    </button>
+                                )}
+                            </div>
+                        </>
+                    ) : mode === MODES.IMAGE ? (
                         <>
                             {/* Image / PDF upload */}
                             <div className="bg-sky-50 border-2 border-sky-200 rounded-lg p-3 space-y-2">
@@ -846,11 +1073,12 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 </footer>
             </div>
 
-            {/* Hit zone editor — opened from the image-mode panel */}
+            {/* Hit zone editor — sources images from image-mode OR
+                the LEFT side of split-mode, whichever is active. */}
             {hitZoneEditorOpen && (
                 <Suspense fallback={null}>
                     <HitZoneEditor
-                        imageUrls={imageUrls}
+                        imageUrls={mode === MODES.SPLIT ? (split.leftImageUrls || []) : imageUrls}
                         initialZones={imageHitZones}
                         language={tx('en', 'es') === 'es' ? 'es' : 'en'}
                         onSave={(result) => {
@@ -862,7 +1090,11 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                 setImageHitZones(result.zones);
                             }
                             if (result && Array.isArray(result.imageUrls)) {
-                                setImageUrls(result.imageUrls);
+                                if (mode === MODES.SPLIT) {
+                                    setSplit(s => ({ ...s, leftImageUrls: result.imageUrls }));
+                                } else {
+                                    setImageUrls(result.imageUrls);
+                                }
                             }
                         }}
                         onClose={() => setHitZoneEditorOpen(false)} />

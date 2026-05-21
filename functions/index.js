@@ -179,6 +179,8 @@ exports.dispatchNotification = onDocumentCreated(
             "required_ack",            // explicit ack flow
             "task_handoff",            // assigned to YOU
             "invite_sent",             // onboarding
+            "tv_offline",              // menu TV went dark — needs reboot
+            "tv_back_online",          // menu TV recovered
         ]);
 
         // ── Per-channel mute gate ───────────────────────────────────
@@ -2364,6 +2366,118 @@ exports.aiFixText = onCall(
     }
 );
 
+// ── 2026-05-20 — checkTvHeartbeats: alert when a menu TV goes dark ─
+// Andrew Wave 7 of "match the SaaS leaders". Every kiosk browser
+// (MenuDisplay) writes a heartbeat to /tv_heartbeats/{tvId} every
+// minute via setDoc + serverTimestamp. This function runs every
+// 5 minutes, finds heartbeats that haven't ticked in >10 min, and
+// fires a notification (FCM + SMS if configured) once per outage.
+//
+// We also stamp `alertedAt` on the heartbeat doc so the same outage
+// doesn't re-fire every 5 minutes — only one ping per stretch of
+// offline time. When a TV comes back online (heartbeat resumes),
+// `alertedAt` is cleared so the NEXT outage will alert again.
+//
+// Recipients: staff with canReceiveTvOfflineAlerts === true on
+// their /config/staff.list[] record. Falls back to admin (40, 41)
+// if no opt-in flags are set, so the alert never silently no-ops.
+exports.checkTvHeartbeats = onSchedule(
+    {
+        schedule: "every 5 minutes",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+    },
+    async (event) => {
+        const STALE_MS = 10 * 60_000;   // 10 min = "TV is dark"
+        const now = Date.now();
+        const snap = await db.collection("tv_heartbeats").get();
+        if (snap.empty) {
+            logger.info("checkTvHeartbeats: no heartbeats yet");
+            return;
+        }
+
+        // Load staff once to resolve recipients.
+        let recipients = [];
+        try {
+            const staffSnap = await db.doc("config/staff").get();
+            const staffList = Array.isArray(staffSnap.data()?.list)
+                ? staffSnap.data().list : [];
+            recipients = staffList.filter(s => s?.canReceiveTvOfflineAlerts === true && s?.name);
+            // Fallback: admin IDs 40 + 41 (Andrew + Julie) so the
+            // alert never silently no-ops before anyone opts in.
+            if (recipients.length === 0) {
+                recipients = staffList.filter(s => s?.id === 40 || s?.id === 41);
+            }
+        } catch (e) {
+            logger.warn("checkTvHeartbeats: could not load staff:", e?.message);
+        }
+
+        let alerted = 0;
+        let recovered = 0;
+        for (const hbDoc of snap.docs) {
+            const hb = hbDoc.data() || {};
+            const tvId = hbDoc.id;
+            const lastSeenMs = hb.lastSeenAt?.toMillis
+                ? hb.lastSeenAt.toMillis()
+                : (hb.lastSeenAt?.seconds ? hb.lastSeenAt.seconds * 1000 : 0);
+            const ageMs = lastSeenMs ? (now - lastSeenMs) : Infinity;
+            const isStale = ageMs > STALE_MS;
+            const alertedAt = hb.alertedAt?.toMillis ? hb.alertedAt.toMillis() : 0;
+
+            if (isStale && !alertedAt) {
+                // Going offline — fire one notification per recipient.
+                const ageMin = Math.round(ageMs / 60_000);
+                for (const r of recipients) {
+                    try {
+                        await db.collection("notifications").add({
+                            type: "tv_offline",
+                            forStaff: r.name,
+                            title: `📴 TV offline: ${tvId}`,
+                            body: `${tvId} hasn't reported in ${ageMin} min. Reboot the Fire TV or check the kiosk browser.`,
+                            createdAt: FieldValue.serverTimestamp(),
+                            read: false,
+                            details: { tvId, ageMin },
+                        });
+                    } catch (e) {
+                        logger.warn("tv_offline notification write failed:", r.name, e?.message);
+                    }
+                }
+                await hbDoc.ref.set({
+                    alertedAt: FieldValue.serverTimestamp(),
+                    lastOutageAgeMin: ageMin,
+                }, { merge: true });
+                alerted += 1;
+                logger.info(`checkTvHeartbeats: alerted on ${tvId} (${ageMin} min stale)`);
+            } else if (!isStale && alertedAt) {
+                // Recovery — TV is reporting again. Clear the alert
+                // stamp so the NEXT outage will alert.
+                for (const r of recipients) {
+                    try {
+                        await db.collection("notifications").add({
+                            type: "tv_back_online",
+                            forStaff: r.name,
+                            title: `🟢 TV back online: ${tvId}`,
+                            body: `${tvId} is reporting again.`,
+                            createdAt: FieldValue.serverTimestamp(),
+                            read: false,
+                            details: { tvId },
+                        });
+                    } catch (e) {
+                        logger.warn("tv_back_online notification write failed:", r.name, e?.message);
+                    }
+                }
+                await hbDoc.ref.set({
+                    alertedAt: FieldValue.delete(),
+                    lastOutageAgeMin: FieldValue.delete(),
+                }, { merge: true });
+                recovered += 1;
+                logger.info(`checkTvHeartbeats: ${tvId} recovered`);
+            }
+        }
+        logger.info(`checkTvHeartbeats: alerted=${alerted} recovered=${recovered} totalHeartbeats=${snap.size}`);
+    }
+);
+
 // ── 2026-05-20 — aiExtractMenu: PDF/image → structured menu data ──
 // Andrew: "if the menu comes in as pdf or jpeg how can you make
 // edits". The client uploads a PDF/JPEG to Storage (handled by
@@ -2546,6 +2660,127 @@ exports.aiExtractMenu = onCall(
             categories: safeCategories,
             pageCount: imageUrls.length,
         };
+    }
+);
+
+// ── 2026-05-20 — aiGeneratePromo: AI banner copy for menu TVs ─────
+// Andrew Wave 5 of "match the SaaS leaders, beat them where we can".
+// None of Raydiant / ScreenCloud / Samsung VXT offer AI-generated
+// promo banner copy. Ours does, in EN + ES, picking restaurant-
+// appropriate emojis and short attention-grabbing phrasing. Admin
+// types a hint ("happy hour", "promote catering", "we're slow
+// tuesdays") and Claude returns 3 banner variants to pick from.
+//
+// Cost: Claude Haiku, ~$0.0005 per call. Used a handful of times
+// per week at most.
+exports.aiGeneratePromo = onCall(
+    {
+        region: "us-central1",
+        cors: true,
+        maxInstances: 5,
+        secrets: [ANTHROPIC_API_KEY],
+    },
+    async (request) => {
+        const ip = request.rawRequest?.ip
+            || request.rawRequest?.headers?.["x-forwarded-for"]?.split(",")[0]
+            || null;
+        await enforceRateLimit({
+            ip,
+            namespace: "aiGeneratePromo",
+            limit: 40,
+            windowMs: 5 * 60_000,
+        });
+
+        const data = request.data || {};
+        const hint = String(data.hint || "").trim().slice(0, 300);
+        const variant = String(data.variant || "promo").toLowerCase();
+        if (!hint) {
+            throw new HttpsError("invalid-argument", "hint required");
+        }
+
+        const system = [
+            "You are a copywriter for DD Mau, a Vietnamese fast-casual restaurant with locations in Webster Groves and Maryland Heights, MO.",
+            "Generate short, punchy banner copy for the restaurant's menu TVs.",
+            "",
+            "Style rules:",
+            "- Keep each banner to ONE line, under 80 characters.",
+            "- Lead with one tasteful emoji (food, time, sale, sparkle — pick one that fits).",
+            "- Friendly, warm tone — never corporate. Active voice.",
+            "- Use real, scannable details if the user provided them (times, percentages, dates, menu items).",
+            "- No exclamation marks at the end of EVERY variant — vary punctuation.",
+            "- Avoid clichés (\"limited time only\", \"act now\", \"don't miss out\").",
+            "",
+            "Output 3 variants of the SAME promo, each in English AND Spanish (Mexican Spanish; restaurants in Missouri).",
+            "Translation should match the energy of the English version — not word-for-word.",
+            "",
+            "Respond with ONLY this JSON shape, no prose, no markdown fences:",
+            '{ "variants": [ { "en": "🎉 Happy hour 3-5pm — half off all boba teas", "es": "🎉 Happy hour 3-5pm: boba a mitad de precio" }, ... ] }',
+        ].join("\n");
+
+        const userMessage = [
+            `Restaurant: DD Mau (Vietnamese fast-casual)`,
+            `Banner type: ${variant}`,
+            ``,
+            `Admin's hint: ${hint}`,
+            ``,
+            `Generate 3 banner variants.`,
+        ].join("\n");
+
+        let body;
+        try {
+            const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                method: "POST",
+                headers: {
+                    "x-api-key": ANTHROPIC_API_KEY.value(),
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                body: JSON.stringify({
+                    model: "claude-haiku-4-5",
+                    max_tokens: 1024,
+                    system,
+                    messages: [{ role: "user", content: userMessage }],
+                }),
+            });
+            if (!resp.ok) {
+                const errText = await resp.text();
+                logger.error("aiGeneratePromo anthropic error", resp.status, errText.slice(0, 500));
+                throw new HttpsError("internal", `anthropic failed: ${resp.status}`);
+            }
+            body = await resp.json();
+        } catch (e) {
+            if (e instanceof HttpsError) throw e;
+            logger.error("aiGeneratePromo fetch failed:", e?.message || e);
+            throw new HttpsError("unavailable", "promo generation unavailable");
+        }
+
+        const textBlock = (body?.content || []).find(c => c?.type === "text");
+        const raw = textBlock?.text || "";
+        let parsed = null;
+        try {
+            const trimmed = raw.trim().replace(/^```(?:json)?\n?/i, "").replace(/```$/i, "").trim();
+            parsed = JSON.parse(trimmed);
+        } catch {
+            const m = raw.match(/\{[\s\S]*\}/);
+            if (m) {
+                try { parsed = JSON.parse(m[0]); } catch {}
+            }
+        }
+        if (!parsed || !Array.isArray(parsed.variants)) {
+            logger.warn("aiGeneratePromo: could not parse model output:", raw.slice(0, 300));
+            return { variants: [] };
+        }
+
+        // Sanitize each variant — short string lengths, drop blanks.
+        const safe = parsed.variants
+            .filter(v => v && typeof v.en === "string" && v.en.trim())
+            .map(v => ({
+                en: String(v.en).trim().slice(0, 200),
+                es: typeof v.es === "string" ? v.es.trim().slice(0, 200) : "",
+            }))
+            .slice(0, 5);
+
+        return { variants: safe };
     }
 );
 

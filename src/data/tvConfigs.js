@@ -93,6 +93,19 @@
 //   //   "Welcome to DD Mau! Order at the counter."
 //   // The strip auto-scrolls horizontally when the text is wider than
 //   // the screen so long promos stay legible.
+//   // For mode='split': two image sources side-by-side. Used to
+//   // mimic the SaaS competitors' "menu + photo carousel" layout
+//   // (Raydiant, Samsung VXT all push this). Left side gets the hit
+//   // zones for 86/price/QR. Right side just rotates content.
+//   split: {
+//     leftImageUrls:        string[]       // main side (gets hit zones)
+//     leftRotateSeconds:    number?
+//     rightImageUrls:       string[]       // secondary side (carousel)
+//     rightRotateSeconds:   number?
+//     leftWidthPct:         number?         // 50..85; default 70
+//     // imageHitZones live at the top level (apply to the LEFT side)
+//   }?
+//
 //   promoStrip:   {
 //     enabled:  boolean
 //     position: 'top'|'bottom'
@@ -120,13 +133,18 @@ import { recordAudit } from './audit';
 
 const COLLECTION = 'tv_configs';
 
-// Top-level modes. 'menu' is the data-driven board (MENU_DATA +
-// overrides + live 86). 'image' renders an uploaded PDF/JPEG full-
-// screen — used when the designer ships a finished menu file and
-// admin wants to show it as-is without re-typing items.
+// Top-level modes:
+//   • 'menu'  — data-driven board (MENU_DATA + overrides + live 86)
+//   • 'image' — uploaded PDF/JPEG/video, full-bleed
+//   • 'split' — Wave 6 of "match the leaders": two image sources
+//               side-by-side (e.g. 70% menu PDF + 30% photo carousel).
+//               Each side has its own imageUrls + rotateSeconds; the
+//               LEFT side carries the hit zones (so 86 + price + QR
+//               overlays still work on the menu side).
 export const MODES = Object.freeze({
     MENU:  'menu',
     IMAGE: 'image',
+    SPLIT: 'split',
 });
 export const DEFAULT_MODE = MODES.MENU;
 
