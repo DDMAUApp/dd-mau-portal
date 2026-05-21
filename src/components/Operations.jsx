@@ -2475,6 +2475,51 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 await saveChecklistState(checksRef.current, updated);
             };
 
+            // Andrew 2026-05-21: "the arrow button when pressed the
+            // task moves up and not in range of the mouse arrow. make
+            // it so when uparrow is clicked it the whole list moves
+            // down and the item and where the mouse click is in the
+            // same spot". Wraps moveChecklistTask: captures the moved
+            // task's screen-Y before the swap, then after React
+            // commits the new DOM, scrolls the window by the delta so
+            // the task ends up at the same screen position. Net
+            // result: rapid up-arrow clicks all land on the same
+            // button without the user chasing it up the page.
+            const moveChecklistTaskWithScroll = (fromIdx, toIdx, taskId) => {
+                if (typeof document === 'undefined') {
+                    moveChecklistTask(fromIdx, toIdx);
+                    return;
+                }
+                const card = document.querySelector(`[data-task-id="${CSS.escape(taskId)}"]`);
+                const beforeTop = card ? card.getBoundingClientRect().top : null;
+                moveChecklistTask(fromIdx, toIdx);
+                if (beforeTop == null) return;
+                // Two rAFs: first to wait for React commit, second to
+                // wait for the browser to lay out post-commit. After
+                // that, getBoundingClientRect reflects the new
+                // position.
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => {
+                        const after = document.querySelector(`[data-task-id="${CSS.escape(taskId)}"]`);
+                        if (!after) return;
+                        const afterTop = after.getBoundingClientRect().top;
+                        const delta = afterTop - beforeTop;
+                        // Skip if the move happened in a scroll
+                        // container we can't predict, or if the delta
+                        // is essentially zero (item didn't visibly move
+                        // — happens at the list edges).
+                        if (Math.abs(delta) < 1) return;
+                        // Scroll the WINDOW by the delta. If the task
+                        // moved up (afterTop < beforeTop), delta is
+                        // negative, scrollBy with negative scrolls UP,
+                        // which moves content DOWN on screen — exactly
+                        // what we need to bring the task back to the
+                        // cursor's original Y.
+                        window.scrollBy({ top: delta, behavior: 'auto' });
+                    });
+                });
+            };
+
             const deleteChecklistTask = async (idx) => {
                 const tasks = customTasksRef.current;
                 const removed = tasks?.[checklistSide]?.[PERIOD_KEY]?.[idx];
@@ -3999,7 +4044,9 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             }
 
                             return (
-                                <div key={item.id} className={"rounded-lg border-2 transition overflow-hidden " +
+                                <div key={item.id}
+                                    data-task-id={item.id}
+                                    className={"rounded-lg border-2 transition overflow-hidden " +
                                     (taskComplete ? "border-green-300 bg-green-50"
                                         : taskUrgency === "overdue" ? "task-flash-red"
                                         : taskUrgency === "warning" ? "task-flash-yellow"
@@ -4220,13 +4267,13 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     (using their _origIdx) so the order works as
                                                     the admin sees it on screen, even with a
                                                     category filter active. */}
-                                                <button onClick={() => moveChecklistTask(origIdx, idx > 0 ? tasks[idx - 1]._origIdx : origIdx)}
+                                                <button onClick={() => moveChecklistTaskWithScroll(origIdx, idx > 0 ? tasks[idx - 1]._origIdx : origIdx, item.id)}
                                                     disabled={idx === 0}
                                                     title={language === "es" ? "Mover arriba" : "Move up"}
                                                     className={`px-1.5 py-0.5 rounded-lg text-gray-600 text-xs leading-none ${idx === 0 ? 'opacity-30 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200'}`}>
                                                     ▲
                                                 </button>
-                                                <button onClick={() => moveChecklistTask(origIdx, idx < tasks.length - 1 ? tasks[idx + 1]._origIdx : origIdx)}
+                                                <button onClick={() => moveChecklistTaskWithScroll(origIdx, idx < tasks.length - 1 ? tasks[idx + 1]._origIdx : origIdx, item.id)}
                                                     disabled={idx === tasks.length - 1}
                                                     title={language === "es" ? "Mover abajo" : "Move down"}
                                                     className={`px-1.5 py-0.5 rounded-lg text-gray-600 text-xs leading-none ${idx === tasks.length - 1 ? 'opacity-30 cursor-not-allowed' : 'bg-gray-100 hover:bg-gray-200'}`}>
