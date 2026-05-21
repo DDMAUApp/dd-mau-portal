@@ -262,6 +262,38 @@ export const BUILD_SHEET_PHO = {
 // separate sections; the overlap is intentional — staff sees what
 // each category needs in its own column.
 
+// Andrew 2026-05-20: "yes everything on the list" — add Rice &
+// Noodles + Stocks + Made Ahead. Same edit machinery as the
+// proteins/sauces/snacks — each section appears in STICKER_SECTIONS
+// and is rendered by BuildSheetFlatSection.
+
+export const BUILD_SHEET_RICE_NOODLES = [
+    { nameEn: "Jasmine Rice",            nameEs: "Arroz Jazmín",                  descEn: "Rice Bowl base / Fried Rice base",                          descEs: "Base de Rice Bowl / Fried Rice" },
+    { nameEn: "Brown Rice",              nameEs: "Arroz Integral",                descEn: "+$2 upgrade — Rice Bowl",                                   descEs: "+$2 — Rice Bowl" },
+    { nameEn: "Vermicelli Noodles",      nameEs: "Fideos Vermicelli",             descEn: "Vermicelli Bowl base / Spring Rolls — pre-cooked, cold",    descEs: "Base de Vermicelli Bowl / Spring Rolls — pre-cocidos, fríos" },
+    { nameEn: "Pho Rice Noodles",        nameEs: "Fideos de Arroz (Pho)",         descEn: "All Pho — gluten-free, blanch to order",                    descEs: "Todos los Pho — sin gluten, escaldar a la orden" },
+    { nameEn: "Lo Mein Noodles",         nameEs: "Fideos Lo Mein",                descEn: "All Lo Mein — WHEAT, not gluten-free",                      descEs: "Todos los Lo Mein — TRIGO, no sin gluten" },
+    { nameEn: "Spring Mix",              nameEs: "Mezcla de Hojas Verdes",        descEn: "Salad Bowl base — wash + drain morning prep",               descEs: "Base de Salad Bowl — lavar + escurrir en la mañana" },
+];
+
+export const BUILD_SHEET_STOCKS = [
+    { nameEn: "Beef Pho Stock",                  nameEs: "Caldo de Pho de Res",                  descEn: "Ultimate / Combo / Rare Steak / Brisket / Meatball / Shrimp Pho — fish sauce in base", descEs: "Ultimate / Combo / Bistec / Pecho / Albóndiga / Camarón — lleva salsa de pescado" },
+    { nameEn: "Chicken Pho Stock",               nameEs: "Caldo de Pho de Pollo",                descEn: "Chicken Pho / Lemongrass Pho variant",                                                  descEs: "Chicken Pho / variante Lemongrass Pho" },
+    { nameEn: "Vegan Pho Stock",                 nameEs: "Caldo de Pho Vegano",                  descEn: "Vegan Pho / Veggies w/ Tofu Pho — fully plant-based",                                   descEs: "Vegan Pho / Veggies w/ Tofu — totalmente vegetal" },
+    { nameEn: "Spicy Vegan Lemongrass Stock",    nameEs: "Caldo Vegano Picante con Limoncillo",  descEn: "Spicy Vegan Lemongrass Pho only — keeps separate from Vegan stock",                     descEs: "Sólo Spicy Vegan Lemongrass Pho — separar del caldo vegano" },
+];
+
+export const BUILD_SHEET_MADE_AHEAD = [
+    { nameEn: "Vietnamese Egg Rolls (uncooked)", nameEs: "Egg Rolls Vietnamitas (crudos)",       descEn: "Pork-filled wrappers — fry to order",                                                     descEs: "Wrappers de cerdo — freír a la orden" },
+    { nameEn: "Veggie Egg Rolls (uncooked)",     nameEs: "Egg Rolls Veganos (crudos)",           descEn: "Vegetable-filled wrappers — fry to order",                                                descEs: "Wrappers vegetales — freír a la orden" },
+    { nameEn: "Fried Vietnamese Egg Rolls",      nameEs: "Egg Rolls Vietnamitas Fritos",         descEn: "Pre-fried, hold warm — auto-included with pork/beef/chicken bowls",                       descEs: "Pre-fritos, mantener caliente — auto-incluidos con bowls de cerdo/res/pollo" },
+    { nameEn: "Fried Veggie Egg Rolls",          nameEs: "Egg Rolls Veganos Fritos",             descEn: "Pre-fried, hold warm — auto-included with tofu/vegan/fish bowls",                         descEs: "Pre-fritos, mantener caliente — auto-incluidos con bowls de tofu/vegano/pescado" },
+    { nameEn: "Krab Rangoon (uncooked)",         nameEs: "Krab Rangoons (crudos)",               descEn: "Pre-stuffed wrappers — fry to order",                                                     descEs: "Pre-rellenos — freír a la orden" },
+    { nameEn: "Vegan Cheese Rolls (uncooked)",   nameEs: "Vegan Cheese Rolls (crudos)",          descEn: "Pre-stuffed almond-cream-cheese wrappers — fry to order",                                 descEs: "Pre-rellenos con queso crema de almendra — freír a la orden" },
+    { nameEn: "Bao Buns (steamed)",              nameEs: "Pan Bao (al vapor)",                   descEn: "Pre-steamed, hold warm — Bao Sliders. CONTAINS DAIRY (milk in the dough).",                descEs: "Pre-cocidos al vapor — Bao Sliders. LLEVA LÁCTEO (leche en la masa)." },
+    { nameEn: "Spring Rolls (fresh, ready)",     nameEs: "Spring Rolls (frescos, listos)",       descEn: "Rice paper rolls — hold cold, peanut sauce on side",                                      descEs: "Rollos de papel de arroz — frío, salsa de cacahuate al lado" },
+];
+
 // Andrew 2026-05-20: "what about the vegetables?" — same logic as
 // the proteins: cabbage/cucumber/pickled-medley/etc. are prepped in
 // batch every morning, each tub needs a date sticker. Order roughly

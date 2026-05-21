@@ -48,6 +48,9 @@ import {
     BUILD_SHEET_SAUCES,
     BUILD_SHEET_SNACKS,
     BUILD_SHEET_VEGETABLES,
+    BUILD_SHEET_RICE_NOODLES,
+    BUILD_SHEET_STOCKS,
+    BUILD_SHEET_MADE_AHEAD,
 } from './buildSheet';
 
 // The five editable sections. Keys match the Firestore doc fields
@@ -61,6 +64,27 @@ export const STICKER_SECTIONS = Object.freeze([
         titleEn: '🥬 Vegetables',
         titleEs: '🥬 Vegetales',
         defaults: BUILD_SHEET_VEGETABLES,
+    },
+    {
+        key: 'riceNoodles',
+        kind: 'base',
+        titleEn: '🍚 Rice & Noodles',
+        titleEs: '🍚 Arroz y Fideos',
+        defaults: BUILD_SHEET_RICE_NOODLES,
+    },
+    {
+        key: 'stocks',
+        kind: 'broth',
+        titleEn: '🍲 Stocks',
+        titleEs: '🍲 Caldos',
+        defaults: BUILD_SHEET_STOCKS,
+    },
+    {
+        key: 'madeAhead',
+        kind: 'side',
+        titleEn: '🥟 Made Ahead',
+        titleEs: '🥟 Pre-Hechos',
+        defaults: BUILD_SHEET_MADE_AHEAD,
     },
     {
         key: 'bowlProteins',

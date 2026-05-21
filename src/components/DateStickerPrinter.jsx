@@ -946,6 +946,24 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                 onSaveSection={onSaveSection}
             />
 
+            {/* Rice & Noodles — Andrew 2026-05-20: "yes everything
+                on the list". The starch bases (jasmine/brown rice,
+                vermicelli, pho rice noodles, lo mein noodles, spring
+                mix). Rice cooks in big batches, noodles pre-cooked
+                and held cold — each needs a date sticker. */}
+            <BuildSheetFlatSection
+                sectionKey="riceNoodles"
+                titleEn="🍚 Rice & Noodles"
+                titleEs="🍚 Arroz y Fideos"
+                items={listFor('riceNoodles')}
+                kind="base"
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
+            />
+
             {/* Bowls — 3 styles (Vermicelli / Salad / Rice) */}
             <BuildSheetCategory
                 titleEn="🥗 Bowls"
@@ -991,6 +1009,22 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                 onPrint={onPrint}
             />
 
+            {/* Stocks — weekly-prep pho stocks. Each stockpot gets
+                a sticker. Placed right above Pho Proteins so the
+                two pho-prep sections sit together. */}
+            <BuildSheetFlatSection
+                sectionKey="stocks"
+                titleEn="🍲 Stocks"
+                titleEs="🍲 Caldos"
+                items={listFor('stocks')}
+                kind="broth"
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
+            />
+
             {/* Pho Proteins — broth-side proteins easy to label per
                 pot. Same proteins also shown under each broth in
                 the Pho section below as read-only reference. */}
@@ -1031,6 +1065,27 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                 titleEn="🥟 Snacks"
                 titleEs="🥟 Snacks"
                 items={listFor('snacks')}
+                kind="side"
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
+            />
+
+            {/* Made Ahead — pre-rolled / pre-fried / pre-steamed
+                items the kitchen batches in advance (egg roll
+                wrappers, krab rangoons, bao buns, fresh spring
+                rolls). Distinct from Snacks (which are
+                ready-to-serve menu items) — these are prep
+                stages that need their own stickers. Placed last
+                since they're typically a separate end-of-shift
+                or weekly-prep activity. */}
+            <BuildSheetFlatSection
+                sectionKey="madeAhead"
+                titleEn="🥟 Made Ahead"
+                titleEs="🥟 Pre-Hechos"
+                items={listFor('madeAhead')}
                 kind="side"
                 isEs={isEs}
                 tx={tx}
