@@ -37,6 +37,13 @@
 // location's 86 list, MenuDisplay overlays a red "SOLD OUT"
 // sticker at the rectangle, preserving the original menu design.
 //
+// Same zones also carry a `priceOverride` — Andrew 2026-05-20 later:
+// "i also want to be able to change pricing how can we do that".
+// When the printed PDF price gets stale, admin sets a new price
+// string on the zone; MenuDisplay covers the right ~30% of the
+// zone with a white sticker showing the new price, preserving the
+// rest of the menu design.
+//
 // Coordinates are fractions of the image's natural width/height
 // (0..1) so the same hit zones work at any TV resolution.
 // Shape:
@@ -46,6 +53,7 @@
 //     width, height: number // size in 0..1
 //     itemName:    string   // matches MENU_DATA item nameEn (after normalize())
 //     category:    string?  // hint for the admin UI; not used by 86 matching
+//     priceOverride: string?  // e.g. "$19.50" — covers the printed price when set
 //   }
 //
 //   updatedAt:    serverTimestamp

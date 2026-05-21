@@ -245,10 +245,12 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
         );
     }
 
-    // Resolve which hit zones, on the current page, should render.
-    const activeZonesOnPage = imageHitZones.filter(z => {
-        if ((z.page ?? 0) !== idx) return false;
-        if (!z.itemName) return false;
+    // Resolve which hit zones, on the current page, need a SOLD OUT
+    // overlay AND which need a price-override overlay. A single zone
+    // can have both (sold out today + new price set).
+    const zonesOnCurrentPage = imageHitZones.filter(z =>
+        (z.page ?? 0) === idx && z.itemName);
+    const activeZonesOnPage = zonesOnCurrentPage.filter(z => {
         // Fuzzy name match against the 86 set (same normalize() used
         // for data-mode matching above).
         const candidates = [
@@ -258,6 +260,8 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
         ].map(normalizeName);
         return candidates.some(n => n && sixed.has(n));
     });
+    const priceZonesOnPage = zonesOnCurrentPage.filter(z =>
+        z.priceOverride && String(z.priceOverride).trim().length > 0);
 
     return (
         <div className="fixed inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center">
@@ -296,9 +300,14 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
                                 className="block w-full h-full object-contain"
                                 draggable={false} />
 
-                            {/* Overlays — only render on the active page */}
+                            {/* Price-override overlays first, SOLD OUT stickers on top
+                                so when both apply (item is 86'd AND has a new price),
+                                the SOLD OUT stamp covers everything. */}
+                            {i === idx && priceZonesOnPage.map((zone, zi) => (
+                                <PriceOverlay key={`price-${zi}`} zone={zone} />
+                            ))}
                             {i === idx && activeZonesOnPage.map((zone, zi) => (
-                                <SoldOutSticker key={zi} zone={zone} />
+                                <SoldOutSticker key={`sold-${zi}`} zone={zone} />
                             ))}
                         </div>
                     </div>
@@ -315,7 +324,54 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
                 {activeZonesOnPage.length > 0 && (
                     <span className="opacity-70 ml-1">· {activeZonesOnPage.length} sold out</span>
                 )}
+                {priceZonesOnPage.length > 0 && (
+                    <span className="opacity-70 ml-1">· {priceZonesOnPage.length} priced</span>
+                )}
             </div>
+        </div>
+    );
+}
+
+// ── Price overlay — covers the printed price on the menu image ──
+// Andrew 2026-05-20: "i also want to be able to change pricing".
+// Renders an opaque white sticker on the right ~30% of the hit
+// zone, with bold green text showing the new price. Designed to
+// fully cover the printed price (most menus put prices flush
+// right on each row) while leaving the item name + the rest of
+// the menu design untouched.
+//
+// If a zone is shorter/wider than typical (e.g. wide bowls layout),
+// admin can tighten the zone to bound the price area more precisely
+// in the HitZoneEditor.
+function PriceOverlay({ zone }) {
+    // Right-aligned 30% of the zone width; full zone height.
+    const widthFrac = 0.30;
+    const leftFrac = 1 - widthFrac;
+    return (
+        <div className="absolute pointer-events-none flex items-center justify-center"
+            style={{
+                left: `${(zone.x + zone.width * leftFrac) * 100}%`,
+                top: `${zone.y * 100}%`,
+                width: `${zone.width * widthFrac * 100}%`,
+                height: `${zone.height * 100}%`,
+                // White sticker with subtle border. We use a slightly
+                // off-white to nudge against pure-paper menus and a
+                // hairline border so the sticker reads as deliberate.
+                background: 'rgba(255, 255, 255, 0.98)',
+                border: '1px solid rgba(0, 0, 0, 0.08)',
+                borderRadius: '2px',
+                boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+            }}>
+            <span className="font-black tabular-nums whitespace-nowrap text-dd-green-700"
+                style={{
+                    // Auto-scale price font to zone height. Use clamp so
+                    // tiny zones don't get unreadable + huge zones don't
+                    // get hideous.
+                    fontSize: 'clamp(11px, 2.4vw, 26px)',
+                    lineHeight: 1,
+                }}>
+                {zone.priceOverride}
+            </span>
         </div>
     );
 }

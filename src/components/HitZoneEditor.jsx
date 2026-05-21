@@ -166,6 +166,11 @@ export default function HitZoneEditor({
         setPickerFilter('');
     };
 
+    const setZonePrice = (idx, priceOverride) => {
+        setZones(prev => prev.map((z, i) =>
+            i === idx ? { ...z, priceOverride: priceOverride || '' } : z));
+    };
+
     const deleteZone = (idx) => {
         setZones(prev => prev.filter((_, i) => i !== idx));
         if (pickerForZoneIdx === idx) setPickerForZoneIdx(null);
@@ -293,8 +298,13 @@ export default function HitZoneEditor({
                                         }}>
                                         {/* Label tag */}
                                         {labeled && (
-                                            <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white whitespace-nowrap">
-                                                {zone.itemName}
+                                            <div className="absolute -top-5 left-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-600 text-white whitespace-nowrap flex items-center gap-1">
+                                                <span>{zone.itemName}</span>
+                                                {zone.priceOverride && (
+                                                    <span className="px-1 rounded bg-white text-emerald-700 tabular-nums">
+                                                        {zone.priceOverride}
+                                                    </span>
+                                                )}
                                             </div>
                                         )}
                                         {/* Delete button */}
@@ -325,6 +335,48 @@ export default function HitZoneEditor({
                         </div>
                     )}
                 </div>
+
+                {/* Mapped items list — page-scoped, with editable price overrides */}
+                {pageZones.filter(z => z.itemName).length > 0 && (
+                    <div className="border-t border-dd-line bg-emerald-50/30 p-3 flex-shrink-0 max-h-44 overflow-y-auto">
+                        <div className="text-[10px] font-black uppercase tracking-widest text-emerald-900 mb-1.5">
+                            {tx(`Mapped items on this page (${pageZones.filter(z => z.itemName).length})`, `Items mapeados (${pageZones.filter(z => z.itemName).length})`)}
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                            {pageZones.filter(z => z.itemName).map((zone) => {
+                                const zoneIdx = zones.indexOf(zone);
+                                return (
+                                    <div key={zoneIdx}
+                                        className="flex items-center gap-1.5 bg-white border border-emerald-200 rounded px-2 py-1">
+                                        <span className="flex-1 text-[11px] font-bold text-emerald-900 truncate" title={`${zone.category} — ${zone.itemName}`}>
+                                            {zone.itemName}
+                                        </span>
+                                        <input type="text"
+                                            value={zone.priceOverride || ''}
+                                            onChange={(e) => setZonePrice(zoneIdx, e.target.value)}
+                                            placeholder={tx('$ new price', '$ precio')}
+                                            className={`w-20 px-1.5 py-0.5 rounded border text-[11px] font-bold tabular-nums text-right ${
+                                                zone.priceOverride
+                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                                    : 'border-stone-200 bg-white text-stone-500'
+                                            }`} />
+                                        <button onClick={() => deleteZone(zoneIdx)}
+                                            className="w-5 h-5 rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-[10px] font-black"
+                                            title={tx('Delete zone', 'Borrar zona')}>
+                                            ✕
+                                        </button>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                        <p className="text-[10px] text-emerald-700/70 italic mt-1.5 leading-snug">
+                            {tx(
+                                'Set a price to overlay it on the menu image (covers the printed price). Leave blank to keep the printed price.',
+                                'Escribe un precio para sobreponer al impreso. Déjalo vacío para mantener el precio original.',
+                            )}
+                        </p>
+                    </div>
+                )}
 
                 {/* Picker popover */}
                 {pickerForZoneIdx !== null && zones[pickerForZoneIdx] && (
