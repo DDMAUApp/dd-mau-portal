@@ -33,6 +33,9 @@ import {
     resolveShelfLifeDays,
     subscribePrinterConfig,
     printPrepLabel,
+    LABEL_SIZE_PRESETS,
+    DEFAULT_LABEL_SIZE_PRESET,
+    applyLabelSizePreset,
 } from '../data/labelPrinting';
 import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
@@ -127,6 +130,23 @@ export default function PrintLabelModal({
     const [labelFormat, setLabelFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
     useEffect(() => subscribeLabelFormat(setLabelFormat), []);
 
+    // Label-size preset — Andrew 2026-05-20 "lets make 3 tabs in
+    // the print screen for the labels. 3x3 3x2 3x1.5". Staff picks
+    // the size that matches the roll loaded on the printer. Choice
+    // persists in localStorage so the same size sticks across prints.
+    const [presetId, setPresetId] = useState(() => {
+        try { return localStorage.getItem('ddmau:labelPreset') || DEFAULT_LABEL_SIZE_PRESET; }
+        catch { return DEFAULT_LABEL_SIZE_PRESET; }
+    });
+    const setPresetPersistent = (id) => {
+        setPresetId(id);
+        try { localStorage.setItem('ddmau:labelPreset', id); } catch {}
+    };
+    // Effective format: admin's saved format + preset overrides on top.
+    const effectiveFormat = useMemo(
+        () => applyLabelSizePreset(labelFormat, presetId),
+        [labelFormat, presetId]);
+
     // Build the preview payload — same builder the print path uses,
     // so what the user sees IS what prints. In editable mode this
     // pulls from the local edit state via effectiveRecipe.
@@ -141,8 +161,8 @@ export default function PrintLabelModal({
         ingredients: pickIngredientsForLabel(effectiveRecipe, language),
         language,
         notes,
-        format: labelFormat,
-    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, labelFormat]);
+        format: effectiveFormat,
+    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, effectiveFormat]);
 
     // "Ready" = enabled and (Brother [browser print dialog, no IP needed]
     // OR Epson with an IP filled in). The slot's type comes from the
@@ -178,6 +198,7 @@ export default function PrintLabelModal({
             byName: staffName,
             copies,
             source,
+            presetId,
         });
         setPrinting(false);
         if (res.ok) {
@@ -347,12 +368,38 @@ export default function PrintLabelModal({
                         </div>
                     </div>
 
-                    {/* Preview — mimics the linerless thermal label
-                        with the actual sizing the printer uses (date
-                        HUGE, label small, body medium). Andrew
-                        2026-05-20: "im looking at the preview of what
-                        prints and the prepped date is still same size.
-                        i want it bold and bigger." */}
+                    {/* Label size tabs — Andrew 2026-05-20: "3 tabs
+                        in the print screen for the labels. 3x3 3x2
+                        3x1.5". Staff picks the size that matches the
+                        roll loaded on the printer. Smaller sizes
+                        auto-hide non-essential sections so the date
+                        + title still dominate. */}
+                    <div>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                            {tx('Label size', 'Tamaño de etiqueta')}
+                        </div>
+                        <div className="flex gap-1 mb-2">
+                            {LABEL_SIZE_PRESETS.map(p => {
+                                const active = p.id === presetId;
+                                return (
+                                    <button key={p.id}
+                                        onClick={() => setPresetPersistent(p.id)}
+                                        className={`flex-1 px-2 py-2 rounded-lg text-xs font-bold border-2 transition leading-tight ${
+                                            active
+                                                ? 'bg-dd-text text-white border-dd-text'
+                                                : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
+                                        }`}>
+                                        <div>{isEs ? p.nameEs : p.nameEn}</div>
+                                        <div className={`text-[9px] font-normal mt-0.5 ${active ? 'text-white/70' : 'text-dd-text-2/60'}`}>
+                                            {p.widthIn}" × {p.heightIn}"
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    {/* Preview — what the printer will produce */}
                     <div>
                         <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
                             {tx('Preview (what prints)', 'Vista previa')}

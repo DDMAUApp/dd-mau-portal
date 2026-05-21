@@ -132,6 +132,83 @@ export const DEFAULT_PRINTER_TYPE = PRINTER_TYPES.EPSON_LINERLESS;
 export const DEFAULT_BROTHER_LABEL_WIDTH_MM  = 62;
 export const DEFAULT_BROTHER_LABEL_HEIGHT_MM = 90;
 
+// Label size presets — Andrew 2026-05-20: "lets make 3 tabs in the
+// print screen for the labels. 3x3 3x2 3x1.5 or something like that
+// depending on the printer and paper size".
+//
+// Three preset sizes the staff picks at print time. Each preset:
+//   • Has physical dimensions (inch + mm) so the Brother HTML @page
+//     can size correctly and the Epson knows roughly how much
+//     content to fit before cutting.
+//   • Carries layout overrides — smaller labels auto-drop non-
+//     essential sections so the date + title still dominate.
+//
+// Admin's saved /config/label_format remains the base; the preset
+// applies on top of it at print time. Staff's choice persists in
+// localStorage so the same size sticks across prints.
+export const LABEL_SIZE_PRESETS = Object.freeze([
+    {
+        id: 'full',
+        nameEn: '3×3 Full',
+        nameEs: '3×3 Completa',
+        widthIn: 3, heightIn: 3,
+        widthMm: 76, heightMm: 76,
+        // No section overrides — uses admin's saved format as-is.
+        // Default scales unchanged.
+    },
+    {
+        id: 'medium',
+        nameEn: '3×2 Medium',
+        nameEs: '3×2 Media',
+        widthIn: 3, heightIn: 2,
+        widthMm: 76, heightMm: 51,
+        // Drop the two biggest section blocks so date+title still pop.
+        showIngredients: false,
+        showNotes: false,
+        // Date is still the focal point at scale 5.
+    },
+    {
+        id: 'small',
+        nameEn: '3×1.5 Small',
+        nameEs: '3×1.5 Pequeña',
+        widthIn: 3, heightIn: 1.5,
+        widthMm: 76, heightMm: 38,
+        // Keep only the essentials: date + title + use-by.
+        showIngredients: false,
+        showNotes: false,
+        showAllergens: false,
+        showLocation: false,
+        showByName: false,
+        // Slightly smaller title so the date still dominates a 1.5"
+        // tall label.
+        titleScale: 1,
+        dateNumberScale: 4,
+    },
+]);
+
+export const DEFAULT_LABEL_SIZE_PRESET = 'full';
+
+// Apply a preset's overrides on top of a format. Returns a new
+// format object — the preset wins for any field it specifies.
+// Also stamps the preset's physical dimensions so Brother HTML
+// can size the @page correctly.
+export function applyLabelSizePreset(format, presetId) {
+    const preset = LABEL_SIZE_PRESETS.find(p => p.id === presetId);
+    if (!preset) return format || {};
+    const out = { ...(format || {}) };
+    // Override section toggles + scales when the preset specifies.
+    for (const k of ['showIngredients', 'showNotes', 'showAllergens',
+        'showLocation', 'showByName', 'showTime', 'showTitle',
+        'titleScale', 'dateNumberScale']) {
+        if (k in preset) out[k] = preset[k];
+    }
+    // Stamp physical dims for the printer page size.
+    out._presetWidthMm = preset.widthMm;
+    out._presetHeightMm = preset.heightMm;
+    out._presetId = preset.id;
+    return out;
+}
+
 function printerDocPath(location, slot) {
     const safeSlot = PRINTER_SLOTS.includes(slot) ? slot : DEFAULT_PRINTER_SLOT;
     return `printers_${location}_${safeSlot}`;
@@ -825,6 +902,7 @@ export async function printFreeText({
     text, size, bold, align, copies = 1,
     stampDate = false, stampSignature = false, signature, footer,
     byName,
+    presetId = DEFAULT_LABEL_SIZE_PRESET,
 }) {
     try {
         const printer = await getPrinterConfig(location, slot);
@@ -848,12 +926,16 @@ export async function printFreeText({
             text: trimmed, size, bold, align,
             copies: c, stampDate, stampSignature, signature, footer,
         };
+        // Resolve preset dimensions for Brother @page sizing. Free-
+        // text printing doesn't go through buildLabelPayload so we
+        // pull the preset directly here.
+        const presetDims = LABEL_SIZE_PRESETS.find(p => p.id === presetId);
 
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
             const html = buildBrotherPrintDoc({
-                widthMm: printer.labelWidthMm || DEFAULT_BROTHER_LABEL_WIDTH_MM,
-                heightMm: printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                widthMm:  presetDims?.widthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                heightMm: presetDims?.heightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
                 bodyHtml: renderFreeTextHtmlBody(freePayload),
                 copies: c,
             });
@@ -950,6 +1032,7 @@ export async function printPrepLabel({
     location, slot = DEFAULT_PRINTER_SLOT,
     recipe, preppedBy, shelfLifeDays, language = 'en',
     notes, byName, copies = 1, source = 'recipe',
+    presetId = DEFAULT_LABEL_SIZE_PRESET,
 }) {
     try {
         const printer = await getPrinterConfig(location, slot);
@@ -963,10 +1046,11 @@ export async function printPrepLabel({
         if (printer.enabled === false) {
             return { ok: false, error: 'printer_disabled' };
         }
-        const format = await getLabelFormat();
+        const baseFormat = await getLabelFormat();
+        const format = applyLabelSizePreset(baseFormat, presetId);
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
-            : (resolveShelfLifeDays(recipe) || format?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);
+            : (resolveShelfLifeDays(recipe) || baseFormat?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);
         const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
 
         const payload = buildLabelPayload({
@@ -986,8 +1070,12 @@ export async function printPrepLabel({
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
             const html = buildBrotherPrintDoc({
-                widthMm: printer.labelWidthMm || DEFAULT_BROTHER_LABEL_WIDTH_MM,
-                heightMm: printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                // Preset stamps physical dimensions when staff picks
+                // a size tab — overrides the printer's configured
+                // default roll dims. Falls back to printer config if
+                // no preset is active.
+                widthMm:  payload._presetWidthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                heightMm: payload._presetHeightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
                 bodyHtml: renderPrepLabelHtmlBody(payload),
                 copies: c,
             });
@@ -1076,8 +1164,12 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
             const html = buildBrotherPrintDoc({
-                widthMm: printer.labelWidthMm || DEFAULT_BROTHER_LABEL_WIDTH_MM,
-                heightMm: printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                // Preset stamps physical dimensions when staff picks
+                // a size tab — overrides the printer's configured
+                // default roll dims. Falls back to printer config if
+                // no preset is active.
+                widthMm:  payload._presetWidthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                heightMm: payload._presetHeightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
                 bodyHtml: renderPrepLabelHtmlBody(payload),
                 copies: 1,
             });

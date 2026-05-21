@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
-import { subscribePrinterConfig, printFreeText } from '../data/labelPrinting';
+import { subscribePrinterConfig, printFreeText, LABEL_SIZE_PRESETS, DEFAULT_LABEL_SIZE_PRESET } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -78,6 +78,17 @@ export default function PrintCenter({
     const [stampSignature, setStampSignature] = useState(false);
     const [printing, setPrinting] = useState(false);
     const [recents, setRecents] = useState([]);
+    // Label-size preset — Andrew 2026-05-20 "3 tabs for the labels".
+    // Shared localStorage key with PrintLabelModal so the choice
+    // sticks across both prep-label and free-text prints.
+    const [presetId, setPresetId] = useState(() => {
+        try { return localStorage.getItem('ddmau:labelPreset') || DEFAULT_LABEL_SIZE_PRESET; }
+        catch { return DEFAULT_LABEL_SIZE_PRESET; }
+    });
+    const setPresetPersistent = (id) => {
+        setPresetId(id);
+        try { localStorage.setItem('ddmau:labelPreset', id); } catch {}
+    };
 
     useEffect(() => {
         try {
@@ -132,6 +143,7 @@ export default function PrintCenter({
             size, bold, align, copies,
             stampDate, stampSignature, signature: staffName,
             byName: staffName,
+            presetId,
         });
         setPrinting(false);
         if (res.ok) {
@@ -377,6 +389,35 @@ export default function PrintCenter({
                             "i only need the kitchen section for each
                             location". Slot defaults to 'kitchen' from
                             state init; toggle hidden from staff UI. */}
+
+                        {/* Label size tabs — Andrew 2026-05-20 "3 tabs
+                            in the print screen for the labels". Same
+                            preset picker as PrintLabelModal; shared
+                            localStorage so choice carries across. */}
+                        <div>
+                            <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
+                                {tx('Label size', 'Tamaño')}
+                            </span>
+                            <div className="flex gap-1">
+                                {LABEL_SIZE_PRESETS.map(p => {
+                                    const active = p.id === presetId;
+                                    return (
+                                        <button key={p.id}
+                                            onClick={() => setPresetPersistent(p.id)}
+                                            className={`flex-1 px-2 py-1.5 rounded-lg text-[11px] font-bold border-2 transition leading-tight ${
+                                                active
+                                                    ? 'bg-dd-text text-white border-dd-text'
+                                                    : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
+                                            }`}>
+                                            <div>{isEs ? p.nameEs : p.nameEn}</div>
+                                            <div className={`text-[9px] font-normal mt-0.5 ${active ? 'text-white/70' : 'text-dd-text-2/60'}`}>
+                                                {p.widthIn}" × {p.heightIn}"
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
 
                         {/* Recent prints */}
                         {recents.length > 0 && (
