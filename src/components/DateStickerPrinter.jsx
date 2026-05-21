@@ -928,6 +928,24 @@ function BuildSheetBrowse({ isEs, tx, onPrint, stickerLists, editMode, onSaveSec
                 onSaveSection={onSaveSection}
             />
 
+            {/* Vegetables — Andrew 2026-05-20: "what about the
+                vegetables?". Morning prep: red cabbage / cucumber /
+                pickled medley etc. all need stickers on their tubs.
+                Shared across every category, so it lives at the
+                top next to Bowl Proteins. */}
+            <BuildSheetFlatSection
+                sectionKey="vegetables"
+                titleEn="🥬 Vegetables"
+                titleEs="🥬 Vegetales"
+                items={listFor('vegetables')}
+                kind="topping"
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+                editMode={editMode}
+                onSaveSection={onSaveSection}
+            />
+
             {/* Bowls — 3 styles (Vermicelli / Salad / Rice) */}
             <BuildSheetCategory
                 titleEn="🥗 Bowls"

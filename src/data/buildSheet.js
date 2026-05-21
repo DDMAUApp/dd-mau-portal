@@ -262,6 +262,28 @@ export const BUILD_SHEET_PHO = {
 // separate sections; the overlap is intentional — staff sees what
 // each category needs in its own column.
 
+// Andrew 2026-05-20: "what about the vegetables?" — same logic as
+// the proteins: cabbage/cucumber/pickled-medley/etc. are prepped in
+// batch every morning, each tub needs a date sticker. Order roughly
+// matches prep frequency (red cabbage shows up on basically every
+// dish; lime wedges only show up on Pho).
+export const BUILD_SHEET_VEGETABLES = [
+    { nameEn: "Red Cabbage",        nameEs: "Repollo Rojo",                 descEn: "Shredded — Bowls / Bao / Spring Rolls / Tacos",                 descEs: "Rallado — Bowls / Bao / Spring Rolls / Tacos" },
+    { nameEn: "Lettuce",            nameEs: "Lechuga",                      descEn: "Chopped — Bowls / Spring Rolls",                                descEs: "Picada — Bowls / Spring Rolls" },
+    { nameEn: "Cucumber",           nameEs: "Pepino",                       descEn: "Sliced — Bowls / Bánh Mì / Spring Rolls",                       descEs: "Rebanado — Bowls / Bánh Mì / Spring Rolls" },
+    { nameEn: "Pickled Medley",     nameEs: "Encurtido (zanahoria/daikon)", descEn: "Carrot + daikon julienne — Bowls / Bánh Mì / Bao / Tacos",      descEs: "Zanahoria + daikon en juliana — Bowls / Bánh Mì / Bao / Tacos" },
+    { nameEn: "Cilantro",           nameEs: "Cilantro",                     descEn: "Fresh — Bowls / Bánh Mì / Pho / all handhelds",                 descEs: "Fresco — Bowls / Bánh Mì / Pho / todos los handhelds" },
+    { nameEn: "Scallions",          nameEs: "Cebolla Verde",                descEn: "Sliced — Bowls / Pho / Fried Rice",                             descEs: "Rebanada — Bowls / Pho / Fried Rice" },
+    { nameEn: "White Onion",        nameEs: "Cebolla Blanca",               descEn: "Diced — Pho / Fried Rice",                                      descEs: "Picada — Pho / Fried Rice" },
+    { nameEn: "Jalapeños",          nameEs: "Jalapeños",                    descEn: "Sliced — Bánh Mì / Tacos",                                      descEs: "Rebanados — Bánh Mì / Tacos" },
+    { nameEn: "Thai Basil",         nameEs: "Albahaca Tailandesa",          descEn: "Garnish plate — Pho",                                           descEs: "Plato de guarnición — Pho" },
+    { nameEn: "Beansprouts",        nameEs: "Germinados",                   descEn: "Garnish plate — Pho",                                           descEs: "Plato de guarnición — Pho" },
+    { nameEn: "Lime Wedges",        nameEs: "Limones (gajos)",              descEn: "Garnish plate — Pho",                                           descEs: "Plato de guarnición — Pho" },
+    { nameEn: "Fried Shallots",     nameEs: "Cebollas Fritas",              descEn: "Crispy topping — Bowls",                                        descEs: "Topping crujiente — Bowls" },
+    { nameEn: "Crushed Peanuts",    nameEs: "Cacahuetes Molidos",           descEn: "Topping — Bowls (omit for peanut allergy)",                     descEs: "Topping — Bowls (omitir si alergia al cacahuate)" },
+    { nameEn: "Egg (over easy)",    nameEs: "Huevo Estrellado",             descEn: "Default topping — Rice Bowl",                                   descEs: "Topping por defecto — Rice Bowl" },
+];
+
 export const BUILD_SHEET_BOWL_PROTEINS = [
     { nameEn: "Lemongrass Pork",       nameEs: "Cerdo al limoncillo",      descEn: "Marinated, grilled — also for Bánh Mì / Sliders / Tacos / Lo Mein", descEs: "Marinado, a la parrilla — también para Bánh Mì / Sliders / Tacos / Lo Mein" },
     { nameEn: "Lemongrass Chicken",    nameEs: "Pollo al limoncillo",      descEn: "Marinated, grilled — also for Bánh Mì / Sliders / Tacos / Lo Mein", descEs: "Marinado, a la parrilla — también para Bánh Mì / Sliders / Tacos / Lo Mein" },

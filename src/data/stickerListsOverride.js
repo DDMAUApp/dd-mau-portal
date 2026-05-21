@@ -47,6 +47,7 @@ import {
     BUILD_SHEET_PHO_PROTEINS,
     BUILD_SHEET_SAUCES,
     BUILD_SHEET_SNACKS,
+    BUILD_SHEET_VEGETABLES,
 } from './buildSheet';
 
 // The five editable sections. Keys match the Firestore doc fields
@@ -54,6 +55,13 @@ import {
 // new section by adding an entry here + a default list + a
 // matching section in DateStickerPrinter's BuildSheetBrowse.
 export const STICKER_SECTIONS = Object.freeze([
+    {
+        key: 'vegetables',
+        kind: 'topping',
+        titleEn: '🥬 Vegetables',
+        titleEs: '🥬 Vegetales',
+        defaults: BUILD_SHEET_VEGETABLES,
+    },
     {
         key: 'bowlProteins',
         kind: 'protein',
