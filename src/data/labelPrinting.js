@@ -1107,6 +1107,59 @@ function renderFreeTextOnPdfPage(page, payload, fonts, widthMm, heightMm /* , co
     }
 }
 
+// Brother transport (PDF + iOS share sheet). Andrew 2026-05-21:
+// "the proxy is off on the printer, can we just use the ip and
+// bridge straight into the printer?" — direct-IP probe revealed
+// the DD Mau app is served over HTTPS and the Brother only speaks
+// HTTP, so Safari blocks ALL direct requests via mixed-content
+// policy. AirPrint preview showed the label on a full Letter page
+// because iOS was advertising Letter as the default paper.
+//
+// Solution: use the Web Share API to push the rendered PDF to the
+// iOS share sheet. From the share sheet the user picks:
+//   • Brother iPrint&Scan (best — Brother's native protocol,
+//     correct paper sizes, no AirPrint involvement)
+//   • Or the system Print action (falls back to AirPrint)
+//
+// One extra tap per print vs. window.print(), but reliable on
+// both printers. Falls back to the legacy iframe-then-print path
+// when navigator.share() isn't available (desktop browsers,
+// older iOS, share-sheet rejected by the user, etc.).
+async function sendBrotherPdfViaShareSheet(pdfBlob, fileNameHint = 'DD-Mau-Label.pdf') {
+    if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+        try {
+            const file = new File([pdfBlob], fileNameHint, { type: 'application/pdf' });
+            // canShare check is important — calling share() with
+            // unsupported MIME on some browsers throws synchronously.
+            const canShareFiles = typeof navigator.canShare === 'function'
+                ? navigator.canShare({ files: [file] })
+                : true;
+            if (canShareFiles) {
+                await navigator.share({
+                    files: [file],
+                    title: 'DD Mau Label',
+                });
+                return { ok: true, status: 200, responseXml: 'web_share_dispatched' };
+            }
+        } catch (e) {
+            // AbortError = user dismissed the share sheet. That's a
+            // legit "no print this time" outcome — return ok:true
+            // so the caller doesn't surface a scary toast. Other
+            // errors fall through to the iframe fallback.
+            if (e && e.name === 'AbortError') {
+                return { ok: true, status: 200, responseXml: 'share_dismissed' };
+            }
+            console.warn('navigator.share failed, falling back to iframe:', e);
+            // fall through to iframe fallback below
+        }
+    }
+    // Fallback: legacy iframe-then-print path. Useful on desktop
+    // browsers (which don't support Web Share API with files) and
+    // as a safety net if share() is unavailable. Same code as the
+    // previous PDF-iframe path.
+    return sendBrotherPdfToBrowserPrintDialog(pdfBlob);
+}
+
 // Brother transport (PDF path). Same iframe-then-print pattern as
 // the HTML path, but uses a blob: URL pointing at a PDF instead of
 // writing HTML inline. The PDF carries explicit page dimensions in
@@ -1387,7 +1440,7 @@ export async function printFreeText({
                 copies: c,
                 kind: 'freetext',
             });
-            res = await sendBrotherPdfToBrowserPrintDialog(pdfBlob);
+            res = await sendBrotherPdfViaShareSheet(pdfBlob, `DD-Mau-FreeText.pdf`);
         } else {
             const xml = renderFreeTextXml(freePayload);
             res = await sendToPrinter(printer, xml);
@@ -1529,7 +1582,11 @@ export async function printPrepLabel({
                 copies: c,
                 kind: 'prep',
             });
-            res = await sendBrotherPdfToBrowserPrintDialog(pdfBlob);
+            // Use the printed item name in the share-sheet preview
+            // so the user can see what they're about to print.
+            const safeName = String(recipe?.titleEn || 'Label')
+                .replace(/[^A-Za-z0-9-]+/g, '-').slice(0, 40);
+            res = await sendBrotherPdfViaShareSheet(pdfBlob, `DD-Mau-${safeName}.pdf`);
         } else {
             const xml = renderEposXml(payload, c);
             res = await sendToPrinter(printer, xml);
@@ -1622,7 +1679,7 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
                 copies: 1,
                 kind: 'prep',
             });
-            res = await sendBrotherPdfToBrowserPrintDialog(pdfBlob);
+            res = await sendBrotherPdfViaShareSheet(pdfBlob, 'DD-Mau-Test.pdf');
         } else {
             const xml = renderEposXml(payload);
             res = await sendToPrinter(printer, xml);
