@@ -31,6 +31,7 @@ import {
     getSearchableIndex, getAiSearchItems,
     findSubRecipe,
     getAllCategoryComponents,
+    getGlobalComponentSections,
     COMPONENT_KIND_TONE,
 } from '../data/itemBuild';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
@@ -228,16 +229,14 @@ export default function DateStickerPrinter({
         return Array.from(m.values());
     }, [filteredItems]);
 
-    // Andrew 2026-05-20: "in the day stickers window in the bowls we
-    // dont need all the bowls listed like this. make it vermicelli
-    // noodles, salad, rice, list the protiens, toppings."
-    //
-    // New browse view = each menu category rendered as ONE card with
-    // its components aggregated by kind (base / protein / topping /
-    // sauce / etc.). Kitchen preps in BATCHES — they want to print
-    // one date sticker per batch, not navigate to a specific menu
-    // item first. Search results still flatten into items/components.
-    const categoryBuilds = useMemo(() => getAllCategoryComponents(), []);
+    // Andrew 2026-05-20: "but bowls, sliders and rolls, tacos, all
+    // share the same protiens". Refactored to surface PROTEINS and
+    // SAUCES once at the top (shared across all dishes) and only
+    // show category-specific components (bases, toppings, garnishes)
+    // inside each category card. The kitchen preps ONE batch of
+    // pork that serves bowls + banh mi + sliders + tacos; one sticker
+    // for the pot, not four duplicates.
+    const sections = useMemo(() => getGlobalComponentSections(), []);
 
     // Open-item resolver — for the inline-expand on a row. Merges
     // any admin override on top of the static build. For custom
@@ -467,16 +466,33 @@ export default function DateStickerPrinter({
                         </div>
                     )
                 ) : (
-                    // Idle / browse view — Andrew 2026-05-20: each
-                    // category card lists its components by KIND
-                    // (vermicelli/salad/rice, then proteins, then
-                    // toppings, then sauces). Tap any to print a date
-                    // sticker for a batch of THAT component.
+                    // Idle / browse view — shared sections (proteins,
+                    // sauces) at top with a "shared across all dishes"
+                    // hint, then per-category cards with only the
+                    // category-specific components below.
                     <div className="space-y-5">
-                        {categoryBuilds.map(catBuild => {
-                            // Order kinds intentionally: foundations first,
-                            // then proteins, then add-ons. Skip empty buckets.
-                            const KIND_ORDER = ['base', 'broth', 'protein', 'topping', 'garnish', 'side', 'sauce', 'item', 'note'];
+                        {/* Shared sections — proteins + sauces */}
+                        {Array.isArray(sections.shared?.protein) && sections.shared.protein.length > 0 && (
+                            <SharedSection
+                                kind="protein"
+                                items={sections.shared.protein}
+                                isEs={isEs}
+                                tx={tx}
+                                onPrint={(c) => handlePrintComponent(c, null)} />
+                        )}
+                        {Array.isArray(sections.shared?.sauce) && sections.shared.sauce.length > 0 && (
+                            <SharedSection
+                                kind="sauce"
+                                items={sections.shared.sauce}
+                                isEs={isEs}
+                                tx={tx}
+                                onPrint={(c) => handlePrintComponent(c, null)} />
+                        )}
+
+                        {/* Per-category sections — only category-specific
+                            components (bases, toppings, garnishes, etc.) */}
+                        {sections.categories.map(catBuild => {
+                            const KIND_ORDER = ['base', 'broth', 'topping', 'garnish', 'side', 'item', 'note'];
                             const flat = [];
                             for (const k of KIND_ORDER) {
                                 if (Array.isArray(catBuild.byKind[k])) {
@@ -484,7 +500,6 @@ export default function DateStickerPrinter({
                                 }
                             }
                             if (flat.length === 0) return null;
-                            // Total count for the header badge
                             const printableCount = flat.filter(c => c.kind !== 'note').length;
                             return (
                                 <section key={catBuild.category}
@@ -677,6 +692,67 @@ function MenuItemRow({ item, isOpen, onToggle, isEs, tx, build, onPrintComponent
 // Renders the components grouped by kind (base / topping / etc.) with
 // a 🏷 Print button on every printable component. Notes show but have
 // no Print button (they're guidance, not items).
+// ── SharedSection ─────────────────────────────────────────────
+// Andrew 2026-05-20: "but bowls, sliders and rolls, tacos, all
+// share the same protiens". Renders one card per shared kind
+// (proteins or sauces) at the top of the browse view. Each row
+// shows the component name + chips for the categories that use it
+// ("used in: Bowls · Bánh Mì · Tacos") so the cook knows one
+// batch covers multiple dishes.
+function SharedSection({ kind, items, isEs, tx, onPrint }) {
+    const tone = COMPONENT_KIND_TONE[kind] || COMPONENT_KIND_TONE.side;
+    const headerEn = kind === 'protein' ? 'Proteins (shared across dishes)'
+        : kind === 'sauce' ? 'Sauces (shared across dishes)'
+        : (tone.labelEn + ' (shared)');
+    const headerEs = kind === 'protein' ? 'Proteínas (compartidas)'
+        : kind === 'sauce' ? 'Salsas (compartidas)'
+        : (tone.labelEs + ' (compartidas)');
+    return (
+        <section className="bg-emerald-50/40 border border-emerald-200 rounded-xl p-3">
+            <div className="flex items-center gap-2 mb-2 pl-0.5">
+                <span className="text-base">{tone.icon}</span>
+                <h2 className="text-sm font-black uppercase tracking-widest text-emerald-900">
+                    {isEs ? headerEs : headerEn}
+                </h2>
+                <span className="text-[10px] font-bold text-emerald-700/70">
+                    · {items.length}
+                </span>
+            </div>
+            <div className="space-y-1 pl-1">
+                {items.map(c => (
+                    <SharedComponentRow key={c.id}
+                        component={c}
+                        tone={tone}
+                        isEs={isEs}
+                        tx={tx}
+                        onPrint={onPrint} />
+                ))}
+            </div>
+        </section>
+    );
+}
+
+function SharedComponentRow({ component, tone, isEs, tx, onPrint }) {
+    const name = isEs ? (component.nameEs || component.nameEn) : component.nameEn;
+    const cats = Array.isArray(component.usedInCategories) ? component.usedInCategories : [];
+    return (
+        <div className="flex items-center gap-2 bg-white border border-dd-line rounded-lg px-2.5 py-1.5">
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-dd-text">{name}</div>
+                {cats.length > 0 && (
+                    <div className="text-[10px] text-dd-text-2 mt-0.5 truncate">
+                        {tx('Used in', 'Se usa en')}: {cats.join(' · ')}
+                    </div>
+                )}
+            </div>
+            <button onClick={() => onPrint(component)}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold ${tone.btnClass || 'bg-dd-green text-white hover:bg-dd-green-700'} transition`}>
+                🏷
+            </button>
+        </div>
+    );
+}
+
 function ComponentList({ components, isEs, tx, onPrint }) {
     // Group by kind preserving first-seen order.
     const byKind = new Map();

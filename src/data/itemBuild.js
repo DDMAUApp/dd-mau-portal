@@ -404,6 +404,84 @@ export function getAllCategoryComponents() {
     return MENU_DATA.map(cat => getCategoryComponents(cat.category)).filter(Boolean);
 }
 
+// ── Shared vs category-specific component split ────────────────
+// Andrew 2026-05-20: "but bowls, sliders and rolls, tacos, all
+// share the same protiens". The kitchen preps ONE pot of pork and
+// it serves bowls, banh mi, sliders, tacos. Listing "Pork" under
+// each category's protein section was duplicative noise.
+//
+// This function partitions components by KIND:
+//   • protein / sauce  → globally shared. Aggregated once at top,
+//     deduplicated by name. Carries `usedInCategories` for the UI
+//     to show "used in: Bowls · Bánh Mì · Tacos" hint chips.
+//   • base / topping / garnish / broth / side / item / note
+//     → category-specific. Rice noodles belong to Pho, vermicelli
+//     to Bowls, etc. Stay nested inside each category card.
+//
+// Returns:
+//   {
+//     shared: {
+//       protein: [{ id, kind, nameEn, nameEs, usedInCategories: [...], allergens }],
+//       sauce:   [...],
+//     },
+//     categories: [
+//       { category: 'Bowls', categoryEs: 'Bowls', byKind: { base: [...], topping: [...] } },
+//       ...
+//     ]
+//   }
+const SHARED_KINDS = new Set(['protein', 'sauce']);
+
+export function getGlobalComponentSections() {
+    const sharedMaps = new Map();   // kind → Map<normalizedName, entry>
+    const categories = [];
+
+    for (const cat of MENU_DATA) {
+        const catBuild = getCategoryComponents(cat.category);
+        if (!catBuild) continue;
+
+        const localByKind = {};
+        for (const [kind, items] of Object.entries(catBuild.byKind)) {
+            if (SHARED_KINDS.has(kind)) {
+                if (!sharedMaps.has(kind)) sharedMaps.set(kind, new Map());
+                const sharedMap = sharedMaps.get(kind);
+                for (const item of items) {
+                    const key = normalizeName(item.nameEn);
+                    if (sharedMap.has(key)) {
+                        const existing = sharedMap.get(key);
+                        if (!existing.usedInCategories.includes(cat.category)) {
+                            existing.usedInCategories.push(cat.category);
+                        }
+                    } else {
+                        sharedMap.set(key, {
+                            ...item,
+                            usedInCategories: [cat.category],
+                        });
+                    }
+                }
+            } else {
+                localByKind[kind] = items;
+            }
+        }
+        // Only include the category in the per-category list if it
+        // has at least one non-shared component. A category whose
+        // entire build was shared (rare) would otherwise render as
+        // an empty card.
+        if (Object.keys(localByKind).length > 0) {
+            categories.push({
+                category: cat.category,
+                categoryEs: cat.categoryEs,
+                byKind: localByKind,
+            });
+        }
+    }
+
+    const shared = {};
+    for (const [kind, map] of sharedMaps.entries()) {
+        shared[kind] = Array.from(map.values());
+    }
+    return { shared, categories };
+}
+
 // ── Searchable index — every menu item AND every component ────────
 //
 // Andrew 2026-05-20 — "also make a search bar for everything and add
