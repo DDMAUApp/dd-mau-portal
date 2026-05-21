@@ -28,7 +28,7 @@
 //   • spotlight — one big featured category + others compact
 //                 (good for "today's specials" feel)
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
@@ -293,6 +293,36 @@ function ImageModeLayout({
     // Track natural dims per page so we can size each container to
     // its image's aspect ratio. Updated on each img's onLoad.
     const [naturalDims, setNaturalDims] = useState({});
+    // Parent rect — used to compute EXACT image-fit dimensions so
+    // overlay coords (stored as fractions of the natural image)
+    // land on the right pixels regardless of letterboxing. Fixes
+    // Andrew 2026-05-20: "the menu over lay doesnt really work" —
+    // root cause was a CSS aspect-ratio + width:100%/height:100%
+    // conflict in the container, which sized the wrapper to the
+    // VIEWPORT and let the image letterbox inside; overlays were
+    // positioned against the wrapper not the image.
+    const wrapperRef = useRef(null);
+    const [parentBox, setParentBox] = useState({ w: 0, h: 0 });
+    useEffect(() => {
+        if (!wrapperRef.current) return;
+        const update = () => {
+            const r = wrapperRef.current.getBoundingClientRect();
+            setParentBox({ w: r.width, h: r.height });
+        };
+        update();
+        let ro = null;
+        if (typeof ResizeObserver !== 'undefined') {
+            ro = new ResizeObserver(update);
+            ro.observe(wrapperRef.current);
+        }
+        window.addEventListener('resize', update);
+        window.addEventListener('orientationchange', update);
+        return () => {
+            if (ro) ro.disconnect();
+            window.removeEventListener('resize', update);
+            window.removeEventListener('orientationchange', update);
+        };
+    }, []);
     const safeUrls = Array.isArray(imageUrls) ? imageUrls : [];
 
     useEffect(() => {
@@ -342,22 +372,44 @@ function ImageModeLayout({
         z.qrUrl && /^https?:\/\//i.test(String(z.qrUrl).trim()));
 
     return (
-        <div className={containerCls}>
-            {/* Each page is its own container, sized to its image's
-                aspect ratio. Overlays inside the container align
-                perfectly with the image regardless of TV resolution. */}
+        <div ref={wrapperRef} className={containerCls}>
+            {/* Each page renders inside a container sized to the EXACT
+                displayed image dimensions (via JS measurement of the
+                wrapper + the image's natural aspect ratio). This is
+                the fix for "overlays in wrong position": the container
+                IS the image's displayed box, so overlay coordinates
+                stored as fractions of the natural image land on the
+                right pixels. No letterbox between container and image. */}
             {safeUrls.map((url, i) => {
                 const dims = naturalDims[i];
                 const aspect = dims ? (dims.w / dims.h) : null;
-                // Until the image's onLoad fires we don't know its
-                // aspect; render a placeholder full-screen frame.
+                // Compute the largest letterbox-fit box inside parentBox
+                // that preserves the image's natural aspect ratio.
+                let fitW, fitH;
+                if (!aspect || !parentBox.w || !parentBox.h) {
+                    // Fallback before image loads or before we've
+                    // measured the parent — fill the parent. Overlays
+                    // will look off for ~100ms; once dims arrive they
+                    // snap to correct positions.
+                    fitW = parentBox.w || '100%';
+                    fitH = parentBox.h || '100%';
+                } else {
+                    const widthIfHeightConstrained = parentBox.h * aspect;
+                    if (widthIfHeightConstrained <= parentBox.w) {
+                        // Height-constrained (sides letterboxed).
+                        fitW = widthIfHeightConstrained;
+                        fitH = parentBox.h;
+                    } else {
+                        // Width-constrained (top/bottom letterboxed).
+                        fitW = parentBox.w;
+                        fitH = parentBox.w / aspect;
+                    }
+                }
                 return (
                     <div key={url + i}
                         className="absolute transition-opacity duration-700"
                         style={{
                             opacity: i === idx ? 1 : 0,
-                            // Outer wrapper fills the viewport so the
-                            // image-aspect inner can center itself.
                             inset: 0,
                             display: 'flex',
                             alignItems: 'center',
@@ -365,9 +417,7 @@ function ImageModeLayout({
                             pointerEvents: i === idx ? 'auto' : 'none',
                         }}>
                         <div className="relative"
-                            style={aspect
-                                ? { aspectRatio: aspect, maxWidth: '100vw', maxHeight: '100vh', width: '100%', height: '100%' }
-                                : { width: '100vw', height: '100vh' }}>
+                            style={{ width: fitW, height: fitH }}>
                             {urlIsVideo(url) ? (
                                 // Video pages — autoplay muted loops. The
                                 // `muted` attribute is required for autoplay
