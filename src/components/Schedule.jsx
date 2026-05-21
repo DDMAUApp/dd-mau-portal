@@ -23,7 +23,7 @@
  *   • Add/edit/delete shifts: admin OR staff with role containing "Manager"
  *     (see canEditSchedule() in src/data/staff.js)
  */
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, memo } from 'react';
 import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
 import {
@@ -290,6 +290,49 @@ function checkAvailabilityConflict(staff, dateStr, startTime, endTime) {
     }
     return null;
 }
+
+// Andrew 2026-05-21: "the schedule app was running a little glitchy".
+// Module-level helpers + a memoized AvailabilityBadge moved out of
+// the grid render. The grid was running shortTime() and a fresh IIFE
+// for every (staff × 7 days) cell on every parent re-render — ~350
+// invocations per render for a 50-staff week. The badge is now
+// memo'd on its 4 PRIMITIVE props (available / from / to / isEn) so
+// React skips the re-render when nothing about that one cell's
+// availability has actually changed.
+const SCHEDULE_DAY_KEYS = Object.freeze(['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']);
+
+function shortTime12h(t) {
+    if (!t) return '';
+    const [h, m] = String(t).split(':').map(Number);
+    const period = h >= 12 ? 'p' : 'a';
+    const h12 = ((h + 11) % 12) + 1;
+    return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+}
+
+const AvailabilityBadge = memo(function AvailabilityBadge({ available, from, to, isEn }) {
+    // Off-this-day badge — staff explicitly marked unavailable.
+    if (available === false) {
+        return (
+            <div
+                className="text-[9px] text-gray-400 italic leading-tight mt-0.5"
+                title={isEn ? 'Marked unavailable' : 'Marcado no disponible'}>
+                🚫 {isEn ? 'off' : 'no disp.'}
+            </div>
+        );
+    }
+    // Narrower-than-default hours = constraint worth surfacing. Defaults
+    // from MyAvailabilityModal are 09:00–21:00; anything tighter shows.
+    const fromOk = (from || '09:00') > '09:00';
+    const toOk = (to || '21:00') < '21:00';
+    if (!fromOk && !toOk) return null;
+    return (
+        <div
+            className="text-[9px] text-gray-400 italic leading-tight mt-0.5"
+            title={isEn ? 'Staff availability window' : 'Ventana de disponibilidad'}>
+            ⏰ {shortTime12h(from)}–{shortTime12h(to)}
+        </div>
+    );
+});
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -5798,38 +5841,22 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                 (the implicit default) so the grid doesn't get
                                                 noise on every cell. */}
                                             {canEdit && !closed && !onPTO && !onPendingPTO && (() => {
-                                                const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
-                                                const dayKey = dayKeys[d.getDay()];
-                                                const dayAvail = (s.availability || {})[dayKey];
+                                                // Pull the per-day availability sub-object and pass
+                                                // its PRIMITIVE fields into the memoized badge —
+                                                // shallow memo compare on (available, from, to)
+                                                // skips re-render of unchanged cells. Module-level
+                                                // SCHEDULE_DAY_KEYS / AvailabilityBadge live near
+                                                // the top of this file. Andrew 2026-05-21 perf.
+                                                const dayAvail = (s.availability || {})[SCHEDULE_DAY_KEYS[d.getDay()]];
                                                 if (!dayAvail) return null;
-                                                if (dayAvail.available === false) {
-                                                    return (
-                                                        <div className="text-[9px] text-gray-400 italic leading-tight mt-0.5" title={isEn ? "Marked unavailable" : "Marcado no disponible"}>
-                                                            🚫 {isEn ? 'off' : 'no disp.'}
-                                                        </div>
-                                                    );
-                                                }
-                                                // Narrower-than-default hours = real constraint
-                                                // worth showing. Defaults from MyAvailabilityModal
-                                                // are 09:00–21:00, so anything tighter on either
-                                                // end deserves a hint.
-                                                const fromOk = (dayAvail.from || '09:00') > '09:00';
-                                                const toOk = (dayAvail.to || '21:00') < '21:00';
-                                                if (fromOk || toOk) {
-                                                    const shortTime = (t) => {
-                                                        if (!t) return '';
-                                                        const [h, m] = t.split(':').map(Number);
-                                                        const period = h >= 12 ? 'p' : 'a';
-                                                        const h12 = ((h + 11) % 12) + 1;
-                                                        return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2,'0')}${period}`;
-                                                    };
-                                                    return (
-                                                        <div className="text-[9px] text-gray-400 italic leading-tight mt-0.5" title={isEn ? "Staff availability window" : "Ventana de disponibilidad"}>
-                                                            ⏰ {shortTime(dayAvail.from)}–{shortTime(dayAvail.to)}
-                                                        </div>
-                                                    );
-                                                }
-                                                return null;
+                                                return (
+                                                    <AvailabilityBadge
+                                                        available={dayAvail.available}
+                                                        from={dayAvail.from}
+                                                        to={dayAvail.to}
+                                                        isEn={isEn}
+                                                    />
+                                                );
                                             })()}
                                             {cellShifts.map(sh => (
                                                 <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
@@ -5915,7 +5942,15 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     );
 }
 
-function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
+// Andrew 2026-05-21 perf: memo-wrapped so the 100+ cubes in a busy
+// week's grid don't all re-render when an unrelated bit of parent
+// state updates. Shallow prop compare catches the very common case
+// of "this shift's data didn't change but the parent re-rendered".
+// Some handler props (onDelete / onOfferShift / etc.) may still
+// arrive as new refs each render — future pass can useCallback them
+// at the parent for full benefit, but memo costs ~nothing so it's
+// fine to land it now.
+const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
     // Multi-select: shift+click toggles. Parent owns the Set of selected ids.
     isSelected = false, onToggleSelection,
 }) {
@@ -6222,7 +6257,7 @@ function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, 
             )}
         </div>
     );
-}
+});
 
 function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer }) {
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
