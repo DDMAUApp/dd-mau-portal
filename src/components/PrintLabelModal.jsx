@@ -394,21 +394,23 @@ export default function PrintLabelModal({
                         <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
                             {tx('Label size', 'Tamaño de etiqueta')}
                         </div>
+                        {/* Tabs — Small / Medium / Large. Dimensions
+                            stripped 2026-05-20 ("staff will know the
+                            size") — preset still carries widthMm /
+                            heightMm under the hood for the Brother
+                            @page sizing, just not shown in the UI. */}
                         <div className="flex gap-1 mb-2">
                             {sizePresets.map(p => {
                                 const active = p.id === presetId;
                                 return (
                                     <button key={p.id}
                                         onClick={() => setPresetPersistent(p.id)}
-                                        className={`flex-1 px-2 py-2 rounded-lg text-xs font-bold border-2 transition leading-tight ${
+                                        className={`flex-1 px-2 py-3 rounded-lg text-sm font-bold border-2 transition ${
                                             active
                                                 ? 'bg-dd-text text-white border-dd-text'
                                                 : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
                                         }`}>
-                                        <div>{isEs ? p.nameEs : p.nameEn}</div>
-                                        <div className={`text-[9px] font-normal mt-0.5 ${active ? 'text-white/70' : 'text-dd-text-2/60'}`}>
-                                            {p.widthIn}" × {p.heightIn}"
-                                        </div>
+                                        {isEs ? p.nameEs : p.nameEn}
                                     </button>
                                 );
                             })}

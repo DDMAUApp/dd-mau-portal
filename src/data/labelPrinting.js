@@ -175,31 +175,20 @@ export const DEFAULT_BROTHER_LABEL_HEIGHT_MM = 90;
 // Brother @page CSS would need. Epson prints at its native paper
 // width regardless of these values; the dims are mainly for
 // display and for the Brother @page rule.
+// Andrew 2026-05-20 (later same day): "make the whole tab say small
+// medium and large" — staff already know which roll is loaded; the
+// tab is just a content-density choice. So the display names drop
+// the dimensions; widthIn/heightIn/widthMm/heightMm are kept (still
+// used for Brother @page sizing) but no longer shown in the UI.
+// ID 'full' is kept (not renamed to 'large') to preserve any value
+// staff have already cached in localStorage.
+// Tabs render in array order — Andrew wants "small medium and
+// large" so the array is in ascending size.
 export const EPSON_LABEL_PRESETS = Object.freeze([
     {
-        id: 'full',
-        nameEn: '3×3 Full',
-        nameEs: '3×3 Completa',
-        widthIn: 3, heightIn: 3,
-        widthMm: 80, heightMm: 80,
-        // No section overrides — uses admin's saved format as-is.
-        // Default scales unchanged.
-    },
-    {
-        id: 'medium',
-        nameEn: '3×2 Medium',
-        nameEs: '3×2 Media',
-        widthIn: 3, heightIn: 2,
-        widthMm: 80, heightMm: 51,
-        // Drop the two biggest section blocks so date+title still pop.
-        showIngredients: false,
-        showNotes: false,
-        // Date is still the focal point at scale 5.
-    },
-    {
         id: 'small',
-        nameEn: '3×1.5 Small',
-        nameEs: '3×1.5 Pequeña',
+        nameEn: 'Small',
+        nameEs: 'Pequeña',
         widthIn: 3, heightIn: 1.5,
         widthMm: 80, heightMm: 38,
         // Keep only the essentials: date + title + use-by.
@@ -213,29 +202,33 @@ export const EPSON_LABEL_PRESETS = Object.freeze([
         titleScale: 1,
         dateNumberScale: 4,
     },
+    {
+        id: 'medium',
+        nameEn: 'Medium',
+        nameEs: 'Media',
+        widthIn: 3, heightIn: 2,
+        widthMm: 80, heightMm: 51,
+        // Drop the two biggest section blocks so date+title still pop.
+        showIngredients: false,
+        showNotes: false,
+        // Date is still the focal point at scale 5.
+    },
+    {
+        id: 'full',
+        nameEn: 'Large',
+        nameEs: 'Grande',
+        widthIn: 3, heightIn: 3,
+        widthMm: 80, heightMm: 80,
+        // No section overrides — uses admin's saved format as-is.
+        // Default scales unchanged.
+    },
 ]);
 
 export const BROTHER_LABEL_PRESETS = Object.freeze([
     {
-        id: 'full',
-        nameEn: '2.4×2.4 Full',
-        nameEs: '2.4×2.4 Completa',
-        widthIn: 2.4, heightIn: 2.4,
-        widthMm: 62, heightMm: 62,
-    },
-    {
-        id: 'medium',
-        nameEn: '2.4×1.5 Medium',
-        nameEs: '2.4×1.5 Media',
-        widthIn: 2.4, heightIn: 1.5,
-        widthMm: 62, heightMm: 38,
-        showIngredients: false,
-        showNotes: false,
-    },
-    {
         id: 'small',
-        nameEn: '2.4×1 Small',
-        nameEs: '2.4×1 Pequeña',
+        nameEn: 'Small',
+        nameEs: 'Pequeña',
         widthIn: 2.4, heightIn: 1,
         widthMm: 62, heightMm: 25,
         showIngredients: false,
@@ -247,6 +240,22 @@ export const BROTHER_LABEL_PRESETS = Object.freeze([
         // running off the cut edge.
         titleScale: 1,
         dateNumberScale: 3,
+    },
+    {
+        id: 'medium',
+        nameEn: 'Medium',
+        nameEs: 'Media',
+        widthIn: 2.4, heightIn: 1.5,
+        widthMm: 62, heightMm: 38,
+        showIngredients: false,
+        showNotes: false,
+    },
+    {
+        id: 'full',
+        nameEn: 'Large',
+        nameEs: 'Grande',
+        widthIn: 2.4, heightIn: 2.4,
+        widthMm: 62, heightMm: 62,
     },
 ]);
 
