@@ -33,7 +33,7 @@ import {
     resolveShelfLifeDays,
     subscribePrinterConfig,
     printPrepLabel,
-    LABEL_SIZE_PRESETS,
+    getLabelSizePresets,
     DEFAULT_LABEL_SIZE_PRESET,
     applyLabelSizePreset,
 } from '../data/labelPrinting';
@@ -130,6 +130,17 @@ export default function PrintLabelModal({
     const [labelFormat, setLabelFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
     useEffect(() => subscribeLabelFormat(setLabelFormat), []);
 
+    // Printer type drives which preset list staff sees:
+    //   • epson_linerless → 80mm-wide ("3-inch") presets
+    //   • brother_ql      → 62mm-wide (2.4-inch DK-4205) presets
+    // The default matches DEFAULT_PRINTER_TYPE so an unconfigured
+    // printer still renders a sensible 3-tab UI.
+    const printerType = printer?.type || 'epson_linerless';
+    const isBrotherPrinter = printerType === 'brother_ql';
+    const sizePresets = useMemo(
+        () => getLabelSizePresets(printerType),
+        [printerType]);
+
     // Label-size preset — Andrew 2026-05-20 "lets make 3 tabs in
     // the print screen for the labels. 3x3 3x2 3x1.5". Staff picks
     // the size that matches the roll loaded on the printer. Choice
@@ -143,9 +154,12 @@ export default function PrintLabelModal({
         try { localStorage.setItem('ddmau:labelPreset', id); } catch {}
     };
     // Effective format: admin's saved format + preset overrides on top.
+    // printerType picks the right preset list (Epson vs Brother) so
+    // the stamped _presetWidthMm/_presetHeightMm match the loaded
+    // roll.
     const effectiveFormat = useMemo(
-        () => applyLabelSizePreset(labelFormat, presetId),
-        [labelFormat, presetId]);
+        () => applyLabelSizePreset(labelFormat, presetId, printerType),
+        [labelFormat, presetId, printerType]);
 
     // Build the preview payload — same builder the print path uses,
     // so what the user sees IS what prints. In editable mode this
@@ -165,10 +179,8 @@ export default function PrintLabelModal({
     }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, effectiveFormat]);
 
     // "Ready" = enabled and (Brother [browser print dialog, no IP needed]
-    // OR Epson with an IP filled in). The slot's type comes from the
-    // printer config; default unset = epson_linerless for backward compat.
-    const printerType = printer?.type || 'epson_linerless';
-    const isBrotherPrinter = printerType === 'brother_ql';
+    // OR Epson with an IP filled in). printerType + isBrotherPrinter
+    // are derived above (where the preset list is resolved).
     const printerReady = !!(printer
         && (isBrotherPrinter || printer.ip)
         && printer.enabled !== false);
@@ -373,13 +385,17 @@ export default function PrintLabelModal({
                         3x1.5". Staff picks the size that matches the
                         roll loaded on the printer. Smaller sizes
                         auto-hide non-essential sections so the date
-                        + title still dominate. */}
+                        + title still dominate. The tab options come
+                        from `sizePresets` which is per-printer-type:
+                        Epson shows 3×3/3×2/3×1.5 (80mm paper),
+                        Brother shows 2.4×2.4/2.4×1.5/2.4×1 (62mm
+                        DK-4205 roll). */}
                     <div>
                         <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
                             {tx('Label size', 'Tamaño de etiqueta')}
                         </div>
                         <div className="flex gap-1 mb-2">
-                            {LABEL_SIZE_PRESETS.map(p => {
+                            {sizePresets.map(p => {
                                 const active = p.id === presetId;
                                 return (
                                     <button key={p.id}

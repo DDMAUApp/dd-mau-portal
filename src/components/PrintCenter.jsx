@@ -25,7 +25,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
-import { subscribePrinterConfig, printFreeText, LABEL_SIZE_PRESETS, DEFAULT_LABEL_SIZE_PRESET } from '../data/labelPrinting';
+import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
 const MAX_RECENTS = 6;
@@ -121,6 +121,14 @@ export default function PrintCenter({
     const printerReady = !!(printer
         && (isBrotherPrinter || printer.ip)
         && printer.enabled !== false);
+
+    // Per-printer-type preset list (Epson 80mm vs Brother 62mm).
+    // The 3 size tabs below render from this — names + dims update
+    // automatically when the staff toggles between locations whose
+    // kitchen printer happens to be a different model.
+    const sizePresets = useMemo(
+        () => getLabelSizePresets(printerType),
+        [printerType]);
 
     const handlePrint = async () => {
         if (printing) return;
@@ -393,13 +401,15 @@ export default function PrintCenter({
                         {/* Label size tabs — Andrew 2026-05-20 "3 tabs
                             in the print screen for the labels". Same
                             preset picker as PrintLabelModal; shared
-                            localStorage so choice carries across. */}
+                            localStorage so choice carries across.
+                            Per-printer-type list (Epson 80mm vs
+                            Brother 62mm) comes from `sizePresets`. */}
                         <div>
                             <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
                                 {tx('Label size', 'Tamaño')}
                             </span>
                             <div className="flex gap-1">
-                                {LABEL_SIZE_PRESETS.map(p => {
+                                {sizePresets.map(p => {
                                     const active = p.id === presetId;
                                     return (
                                         <button key={p.id}

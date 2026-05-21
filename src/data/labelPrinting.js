@@ -136,41 +136,61 @@ export const DEFAULT_BROTHER_LABEL_HEIGHT_MM = 90;
 // print screen for the labels. 3x3 3x2 3x1.5 or something like that
 // depending on the printer and paper size".
 //
-// 2026-05-20 update: Andrew is loading the Brother QL-820NWB with
-// MarkDomain DK-4205-compatible continuous removable rolls — 2.4"
-// (62mm) wide × 100ft. The roll is the only paper Andrew has on
-// order for the Brother, so the 3 presets are sized to FIT that
-// roll. The roll is continuous so we can cut to any length; the
-// heights below are just the cut lengths each preset asks for.
-// Epson uses its own thermal stock at its native width (also ~58–
-// 62mm), so the same widths still render correctly there.
+// 2026-05-20 update: per-printer preset lists, because Andrew is
+// running two label printers with different paper widths:
+//   • Epson TM-L100 thermal: 80mm-wide continuous (sold as "3-inch
+//     thermal paper" — the colloquial restaurant name).
+//   • Brother QL-820NWB: 62mm-wide DK-4205-compatible continuous
+//     removable roll (2.4" wide × 100ft, black on white).
 //
-// Three preset sizes the staff picks at print time. Each preset:
-//   • Has physical dimensions (inch + mm) so the Brother HTML @page
-//     can size correctly and the Epson knows roughly how much
-//     content to fit before cutting.
+// Both rolls are continuous so we can cut to any length. The
+// heights below are the cut lengths each preset asks for.
+//
+// Architecture:
+//   • EPSON_LABEL_PRESETS and BROTHER_LABEL_PRESETS each list 3
+//     presets with the same conceptual IDs ('full', 'medium',
+//     'small') and the same section-toggle behavior. Only physical
+//     dimensions + display names differ.
+//   • getLabelSizePresets(printerType) returns the right list at
+//     call time. The modal + free-text printer both look up the
+//     configured printer's type and feed it through.
+//   • LABEL_SIZE_PRESETS stays exported as an alias to the Epson
+//     list (matches DEFAULT_PRINTER_TYPE) so any leftover caller
+//     that doesn't yet pass printerType still gets sensible dims.
+//
+// Each preset:
+//   • Has physical dimensions (inch + mm) so the Brother HTML
+//     @page can size correctly and the Epson knows roughly how
+//     much content to fit before cutting.
 //   • Carries layout overrides — smaller labels auto-drop non-
 //     essential sections so the date + title still dominate.
 //
 // Admin's saved /config/label_format remains the base; the preset
 // applies on top of it at print time. Staff's choice persists in
 // localStorage so the same size sticks across prints.
-export const LABEL_SIZE_PRESETS = Object.freeze([
+//
+// Note on widthIn vs widthMm for Epson: 80mm = 3.15" but staff
+// universally call this "3 inch thermal paper", so widthIn shows
+// the colloquial 3 while widthMm carries the precise 80 the
+// Brother @page CSS would need. Epson prints at its native paper
+// width regardless of these values; the dims are mainly for
+// display and for the Brother @page rule.
+export const EPSON_LABEL_PRESETS = Object.freeze([
     {
         id: 'full',
-        nameEn: '2.4×2.4 Full',
-        nameEs: '2.4×2.4 Completa',
-        widthIn: 2.4, heightIn: 2.4,
-        widthMm: 62, heightMm: 62,
+        nameEn: '3×3 Full',
+        nameEs: '3×3 Completa',
+        widthIn: 3, heightIn: 3,
+        widthMm: 80, heightMm: 80,
         // No section overrides — uses admin's saved format as-is.
         // Default scales unchanged.
     },
     {
         id: 'medium',
-        nameEn: '2.4×1.5 Medium',
-        nameEs: '2.4×1.5 Media',
-        widthIn: 2.4, heightIn: 1.5,
-        widthMm: 62, heightMm: 38,
+        nameEn: '3×2 Medium',
+        nameEs: '3×2 Media',
+        widthIn: 3, heightIn: 2,
+        widthMm: 80, heightMm: 51,
         // Drop the two biggest section blocks so date+title still pop.
         showIngredients: false,
         showNotes: false,
@@ -178,11 +198,46 @@ export const LABEL_SIZE_PRESETS = Object.freeze([
     },
     {
         id: 'small',
+        nameEn: '3×1.5 Small',
+        nameEs: '3×1.5 Pequeña',
+        widthIn: 3, heightIn: 1.5,
+        widthMm: 80, heightMm: 38,
+        // Keep only the essentials: date + title + use-by.
+        showIngredients: false,
+        showNotes: false,
+        showAllergens: false,
+        showLocation: false,
+        showByName: false,
+        // Slightly smaller title so the date still dominates a 1.5"
+        // tall label.
+        titleScale: 1,
+        dateNumberScale: 4,
+    },
+]);
+
+export const BROTHER_LABEL_PRESETS = Object.freeze([
+    {
+        id: 'full',
+        nameEn: '2.4×2.4 Full',
+        nameEs: '2.4×2.4 Completa',
+        widthIn: 2.4, heightIn: 2.4,
+        widthMm: 62, heightMm: 62,
+    },
+    {
+        id: 'medium',
+        nameEn: '2.4×1.5 Medium',
+        nameEs: '2.4×1.5 Media',
+        widthIn: 2.4, heightIn: 1.5,
+        widthMm: 62, heightMm: 38,
+        showIngredients: false,
+        showNotes: false,
+    },
+    {
+        id: 'small',
         nameEn: '2.4×1 Small',
         nameEs: '2.4×1 Pequeña',
         widthIn: 2.4, heightIn: 1,
         widthMm: 62, heightMm: 25,
-        // Keep only the essentials: date + title + use-by.
         showIngredients: false,
         showNotes: false,
         showAllergens: false,
@@ -195,14 +250,31 @@ export const LABEL_SIZE_PRESETS = Object.freeze([
     },
 ]);
 
+// Backward-compat alias — matches DEFAULT_PRINTER_TYPE so any
+// caller that hasn't been updated to pass printerType still gets
+// the right defaults.
+export const LABEL_SIZE_PRESETS = EPSON_LABEL_PRESETS;
+
+// Return the preset list for a given printer type. Defaults to
+// the Epson list when the type is missing/unknown (matches
+// DEFAULT_PRINTER_TYPE).
+export function getLabelSizePresets(printerType) {
+    return printerType === PRINTER_TYPES.BROTHER_QL
+        ? BROTHER_LABEL_PRESETS
+        : EPSON_LABEL_PRESETS;
+}
+
 export const DEFAULT_LABEL_SIZE_PRESET = 'full';
 
 // Apply a preset's overrides on top of a format. Returns a new
 // format object — the preset wins for any field it specifies.
 // Also stamps the preset's physical dimensions so Brother HTML
-// can size the @page correctly.
-export function applyLabelSizePreset(format, presetId) {
-    const preset = LABEL_SIZE_PRESETS.find(p => p.id === presetId);
+// can size the @page correctly. printerType picks which list of
+// presets to resolve from (Epson 80mm vs Brother 62mm); defaults
+// to Epson to match DEFAULT_PRINTER_TYPE.
+export function applyLabelSizePreset(format, presetId, printerType) {
+    const list = getLabelSizePresets(printerType);
+    const preset = list.find(p => p.id === presetId);
     if (!preset) return format || {};
     const out = { ...(format || {}) };
     // Override section toggles + scales when the preset specifies.
@@ -937,8 +1009,10 @@ export async function printFreeText({
         };
         // Resolve preset dimensions for Brother @page sizing. Free-
         // text printing doesn't go through buildLabelPayload so we
-        // pull the preset directly here.
-        const presetDims = LABEL_SIZE_PRESETS.find(p => p.id === presetId);
+        // pull the preset directly here. Pick the right preset list
+        // based on the printer's type so Epson gets 80mm dims and
+        // Brother gets 62mm dims.
+        const presetDims = getLabelSizePresets(type).find(p => p.id === presetId);
 
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
@@ -1056,7 +1130,10 @@ export async function printPrepLabel({
             return { ok: false, error: 'printer_disabled' };
         }
         const baseFormat = await getLabelFormat();
-        const format = applyLabelSizePreset(baseFormat, presetId);
+        // Pass the printer's type so the right preset list (Epson
+        // 80mm vs Brother 62mm) resolves the physical dims stamped
+        // onto the payload.
+        const format = applyLabelSizePreset(baseFormat, presetId, type);
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
             : (resolveShelfLifeDays(recipe) || baseFormat?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);
