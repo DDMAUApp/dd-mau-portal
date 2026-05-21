@@ -26,7 +26,7 @@ import useIsMobile from './v2/useIsMobile';
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
-const TrainingHub = lazy(() => import('./components/TrainingHub'));
+const TrainingHub = lazy(() => import('./components/TrainingHub').then(m => ({ default: memo(m.default) })));
 // memo-wrap the heaviest routes — Andrew 2026-05-21: "the site is
 // still very glitchy". When a staff member's lastSeen ticks (which
 // fires the /config/staff onSnapshot), App.jsx re-renders. Without
@@ -36,22 +36,27 @@ const TrainingHub = lazy(() => import('./components/TrainingHub'));
 // shallow prop compare; the access-gate useMemo block further down
 // stabilizes the boolean props so shallow compare actually catches
 // the no-op cases.
+// Andrew 2026-05-21 perf pass 3: extend the memo wrap to every lazy
+// route. Each one's body re-runs on every parent re-render (e.g.
+// staffList tick from a lastSeen update) unless memo skips it. The
+// access-gate useMemo block below stabilizes the boolean props so
+// memo's shallow compare can actually catch the no-op renders.
 const Operations = lazy(() => import('./components/Operations').then(m => ({ default: memo(m.default) })));
-const MenuReference = lazy(() => import('./components/MenuReference'));
-const DateStickerPrinter = lazy(() => import('./components/DateStickerPrinter'));
+const MenuReference = lazy(() => import('./components/MenuReference').then(m => ({ default: memo(m.default) })));
+const DateStickerPrinter = lazy(() => import('./components/DateStickerPrinter').then(m => ({ default: memo(m.default) })));
 const Schedule = lazy(() => import('./components/Schedule').then(m => ({ default: memo(m.default) })));
-const Recipes = lazy(() => import('./components/Recipes'));
-const LaborDashboard = lazy(() => import('./components/LaborDashboard'));
-const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard'));
-const CateringOrder = lazy(() => import('./components/CateringOrder'));
-const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest'));
+const Recipes = lazy(() => import('./components/Recipes').then(m => ({ default: memo(m.default) })));
+const LaborDashboard = lazy(() => import('./components/LaborDashboard').then(m => ({ default: memo(m.default) })));
+const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then(m => ({ default: memo(m.default) })));
+const CateringOrder = lazy(() => import('./components/CateringOrder').then(m => ({ default: memo(m.default) })));
+const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest').then(m => ({ default: memo(m.default) })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: memo(m.default) })));
-const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'));
-const AiAssistant = lazy(() => import('./components/AiAssistant'));
-const TardinessTracker = lazy(() => import('./components/TardinessTracker'));
-const ShiftHandoff = lazy(() => import('./components/ShiftHandoff'));
+const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment').then(m => ({ default: memo(m.default) })));
+const AiAssistant = lazy(() => import('./components/AiAssistant').then(m => ({ default: memo(m.default) })));
+const TardinessTracker = lazy(() => import('./components/TardinessTracker').then(m => ({ default: memo(m.default) })));
+const ShiftHandoff = lazy(() => import('./components/ShiftHandoff').then(m => ({ default: memo(m.default) })));
 const Onboarding = lazy(() => import('./components/Onboarding').then(m => ({ default: memo(m.default) })));
-const ChatCenter = lazy(() => import('./components/ChatCenter'));
+const ChatCenter = lazy(() => import('./components/ChatCenter').then(m => ({ default: memo(m.default) })));
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
@@ -397,6 +402,37 @@ function readOnboardingMode() {
     return { mode: null };
 }
 
+// Andrew 2026-05-21 perf: structural hash of the staff list that
+// EXCLUDES the volatile bookkeeping fields (lastSeen, per-token
+// lastSeen). The /config/staff doc re-emits all day long because
+// every login bumps that staffer's lastSeen — without this hash
+// the App re-renders the entire tree N times per shift for
+// effectively zero new info. We hash the rest of the record and
+// only call setStaffList when the result actually changed.
+//
+// Kept as a module-level function so the closure stays stable
+// across re-renders. Defensive try/catch + slice to keep this
+// fast even on huge staff docs (typical = ~50 entries).
+function computeStaffListShapeHash(list) {
+    try {
+        return JSON.stringify((list || []).map((s) => {
+            if (!s) return null;
+            const { lastSeen, fcmTokens, ...rest } = s;
+            return {
+                ...rest,
+                // Keep the COUNT (so FCM enable/disable still
+                // triggers an update) but drop per-token bookkeeping
+                // (lastSeen, deviceId rotations don't matter for UI).
+                fcmTokenCount: Array.isArray(fcmTokens) ? fcmTokens.length : 0,
+            };
+        }));
+    } catch {
+        // If JSON.stringify throws (circular ref etc.) fall through
+        // to a always-update behavior — safer than dropping changes.
+        return String(Math.random());
+    }
+}
+
 export default function App() {
     const isMobile = useIsMobile();
     // Onboarding URL routing — if the user landed here via an invite link or
@@ -603,10 +639,25 @@ export default function App() {
     // schema migration is ever needed again, do it as a one-shot script
     // run from a desktop with admin credentials, NOT in the page-load path.
     useEffect(() => {
+        // Andrew 2026-05-21 perf: dedup snapshot updates that only
+        // bumped `lastSeen` or rotated `fcmTokens`. The /config/staff
+        // doc re-emits on every staff member's app open (their
+        // lastSeen ticks) and every FCM token refresh — neither
+        // changes anything the UI actually reads, but each one was
+        // forcing a full React tree re-render via setStaffList. The
+        // shape-hash compare below skips no-op updates entirely so
+        // downstream effects + memo'd routes only react to real
+        // changes (name / role / access flags / availability /
+        // scheduleSide / etc.).
+        let prevShapeHash = '';
         const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {
-            if (docSnap.exists() && docSnap.data().list) {
-                setStaffList(docSnap.data().list);
-            }
+            if (!docSnap.exists()) return;
+            const list = docSnap.data().list;
+            if (!Array.isArray(list)) return;
+            const hash = computeStaffListShapeHash(list);
+            if (hash === prevShapeHash) return;
+            prevShapeHash = hash;
+            setStaffList(list);
         });
         return () => unsubscribe();
     }, []);
@@ -871,7 +922,7 @@ export default function App() {
     // their token IS the credential.
     if (onboardingMode.mode === 'portal') {
         return (
-            <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
+            <Suspense fallback={<TabLoading language={language} />}>
                 <OnboardingPortal token={onboardingMode.token} language={language} />
             </Suspense>
         );
@@ -882,7 +933,7 @@ export default function App() {
         // the splash. Replace history entry so the splash isn't
         // navigable-back-to.
         return (
-            <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
+            <Suspense fallback={<TabLoading language={language} />}>
                 <InstallSplash
                     language={language}
                     onSkip={() => {
@@ -899,7 +950,7 @@ export default function App() {
     }
     if (onboardingMode.mode === 'apply') {
         return (
-            <Suspense fallback={<div className="min-h-screen bg-mint-50" />}>
+            <Suspense fallback={<TabLoading language={language} />}>
                 <OnboardingApply
                     language={language}
                     onClose={() => {
@@ -938,7 +989,7 @@ export default function App() {
     }
     if (pendingBlockingCount > 0 && !gateBypassed) {
         return (
-            <Suspense fallback={<div className="min-h-screen bg-dd-bg" />}>
+            <Suspense fallback={<TabLoading language={language} />}>
                 <RequiredTaskFlow
                     staffName={staffName}
                     staff={currentStaffRecord}

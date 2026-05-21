@@ -1151,7 +1151,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     } else {
                         setLaborData(null);
                     }
-                });
+                }, (err) => console.warn('labor snapshot subscribe failed', err));
+                // FIX (review 2026-05-20): added the error callback above. Without it a
+                // permission-denied / transient onSnapshot failure became an unhandled
+                // rejection and the labor card silently stopped updating with no log —
+                // matching the error-callback pattern already used on the audit listener.
                 return () => unsubLabor();
             }, [storeLocation]);
 
@@ -1615,7 +1619,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (docSnap.exists()) {
                         setVendorChangeLog(docSnap.data().log || []);
                     }
-                });
+                }, (err) => console.warn('vendorLog snapshot subscribe failed', err));
 
                 // Load split list config (overrides + write-ins)
                 const unsubSplit = onSnapshot(doc(db, "ops", "splitConfig_" + storeLocation), (docSnap) => {
@@ -1624,7 +1628,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         if (data.overrides) setSplitOverrides(data.overrides);
                         if (data.writeIns) setSplitWriteIns(data.writeIns);
                     }
-                });
+                }, (err) => console.warn('splitConfig snapshot subscribe failed', err));
 
                 // Inventory audit log — last 50 changes for this location.
                 // Drives the expandable "Recent changes" panel below the
@@ -4266,7 +4270,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         <span className="text-xs text-green-600 font-bold">{"\u{2713}"} {language === "es" ? "Foto tomada" : "Photo taken"}</span>
                                                         <span className="text-xs text-gray-400">{checks[currentPrefix + item.id + "_photoTime"] ? new Date(checks[currentPrefix + item.id + "_photoTime"]).toLocaleTimeString() : ""}</span>
                                                     </div>
-                                                    <img src={photoUrl} alt="Task photo" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
+                                                    <img src={photoUrl} alt="Task photo" loading="lazy" decoding="async" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{ maxHeight: "150px" }}
                                                         onClick={() => {
                                                             const w = window.open(photoUrl, "_blank");
                                                             if (!w) {

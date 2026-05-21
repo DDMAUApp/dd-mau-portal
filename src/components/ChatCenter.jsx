@@ -21,7 +21,7 @@
 // the three /chats/channel_{key} docs so they always exist with
 // up-to-date membership. Cheap (3 writes + only when membership drifts).
 
-import { useState, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, memo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
@@ -266,6 +266,12 @@ export default function ChatCenter({
     // won't re-fire spuriously).
     const [jumpToMessageId, setJumpToMessageId] = useState(null);
     const [search, setSearch] = useState('');
+    // Andrew 2026-05-21 perf: useDeferredValue keeps the search input
+    // typing-snappy while the chat-list filter (100+ chats) runs as
+    // low-priority work. React commits the input change immediately
+    // and schedules the filtered list re-render when the main thread
+    // has time.
+    const deferredSearch = useDeferredValue(search);
     const [showNewChat, setShowNewChat] = useState(false);
     const [showSettings, setShowSettings] = useState(false);
     const [showAnnouncement, setShowAnnouncement] = useState(false);
@@ -293,14 +299,14 @@ export default function ChatCenter({
 
     // ── Filtered list ─────────────────────────────────────────────
     const filteredChats = useMemo(() => {
-        const term = search.trim().toLowerCase();
+        const term = deferredSearch.trim().toLowerCase();
         if (!term) return chats;
         return chats.filter(c => {
             if (chatDisplayName(c, staffName).toLowerCase().includes(term)) return true;
             const preview = previewOf(c.lastMessage).toLowerCase();
             return preview.includes(term);
         });
-    }, [chats, search, staffName]);
+    }, [chats, deferredSearch, staffName]);
 
     // Container height uses dynamic viewport units (dvh) instead of vh
     // — iOS Safari treats vh as the INITIAL viewport (address bar
@@ -631,7 +637,14 @@ export default function ChatCenter({
 // One row in the chat list. Avatar disc on the left (initials for DMs,
 // emoji for channels/groups), name + preview in the middle, time +
 // unread dot on the right.
-function ChatListItem({ chat, viewerName, active, onClick, onLongPress, isEs }) {
+// Andrew 2026-05-21 perf: memo-wrapped so the chat list (often
+// 50-100 chats) doesn't re-render every row when the user types in
+// the search box. The shallow compare on (chat, viewerName, active,
+// isEs) skips unchanged rows — only the row whose `active` flipped
+// (from search-result open) re-renders. onClick / onLongPress
+// handlers come from the parent — if they're new refs each render
+// the memo only partially lands; future pass can useCallback them.
+const ChatListItem = memo(function ChatListItem({ chat, viewerName, active, onClick, onLongPress, isEs }) {
     const name = chatDisplayName(chat, viewerName);
     const subtitle = previewOf(chat.lastMessage) || subtitleFor(chat, isEs);
     const unread = isChatUnread(chat, viewerName);
@@ -699,7 +712,7 @@ function ChatListItem({ chat, viewerName, active, onClick, onLongPress, isEs }) 
             </div>
         </button>
     );
-}
+});
 
 // Avatar — channel emoji, group emoji, or DM initials. Stays a circle
 // at every size; falls back to a sage-tinted background when no emoji.

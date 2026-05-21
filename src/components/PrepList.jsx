@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useDeferredValue, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
@@ -33,6 +33,13 @@ export default function PrepList({ language, staffName, storeLocation, staffList
     const [showCalendar, setShowCalendar] = useState(false);
     const [editingItem, setEditingItem] = useState(null);
     const [ingredientSearch, setIngredientSearch] = useState("");
+    // Andrew 2026-05-21 perf: defer the search term so the keystroke
+    // updates the input INSTANTLY but the heavy inventory filter
+    // (1k+ items) only re-runs on the deferred value. React keeps
+    // the typing-priority render snappy and queues the expensive
+    // filter as low-priority work. Same idea as a debounce but no
+    // arbitrary delay — React tracks the actual frame cost.
+    const deferredIngredientSearch = useDeferredValue(ingredientSearch);
     const [collapsedStations, setCollapsedStations] = useState({});
     const [prepSearch, setPrepSearch] = useState("");
     const [selectedDay, setSelectedDay] = useState(new Date().getDay());
@@ -717,8 +724,8 @@ export default function PrepList({ language, staffName, storeLocation, staffList
                             {allInventoryItems
                                 .filter(inv => {
                                     if (editingItem.ingredients.includes(inv.id)) return false;
-                                    if (!ingredientSearch.trim()) return false;
-                                    const s = ingredientSearch.toLowerCase();
+                                    if (!deferredIngredientSearch.trim()) return false;
+                                    const s = deferredIngredientSearch.toLowerCase();
                                     return (inv.name || "").toLowerCase().includes(s) || (inv.nameEs || "").toLowerCase().includes(s) || (inv.catName || "").toLowerCase().includes(s);
                                 })
                                 .slice(0, 30)

@@ -236,7 +236,7 @@ function MenuItemRow({ item, category, onEdit, tx }) {
                     : 'bg-white border-dd-line'
         }`}>
             {item.photoUrl && (
-                <img src={item.photoUrl} alt=""
+                <img src={item.photoUrl} alt="" loading="lazy" decoding="async"
                     className="w-8 h-8 rounded object-cover bg-dd-bg flex-shrink-0" />
             )}
             <span className="flex-1 text-sm font-bold text-dd-text">{item.nameEn}</span>

@@ -1814,7 +1814,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                                                     {req.reason && <p className="text-xs text-gray-600"><span className="font-bold">{language === "es" ? "Razón:" : "Why:"}</span> {req.reason}</p>}
                                                     <p className="text-xs text-gray-500">{language === "es" ? "Enviado:" : "Submitted:"} {new Date(req.createdAt).toLocaleString()}</p>
                                                     {req.photoUrl && (
-                                                        <img src={req.photoUrl} alt="Maintenance" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{maxHeight: "200px"}}
+                                                        <img src={req.photoUrl} alt="Maintenance" loading="lazy" decoding="async" className="rounded-lg border border-gray-200 max-w-full cursor-pointer" style={{maxHeight: "200px"}}
                                                             onClick={() => window.open(req.photoUrl, "_blank")} />
                                                     )}
                                                     {req.adminNote && <p className="text-xs bg-blue-50 border border-blue-200 rounded p-2 text-blue-700">💬 {req.adminNote}</p>}
