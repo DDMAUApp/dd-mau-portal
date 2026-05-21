@@ -30,6 +30,7 @@ import {
     getAllMenuItems, getMenuItemBuild,
     getSearchableIndex, getAiSearchItems,
     findSubRecipe,
+    getAllCategoryComponents,
     COMPONENT_KIND_TONE,
 } from '../data/itemBuild';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
@@ -226,6 +227,17 @@ export default function DateStickerPrinter({
         }
         return Array.from(m.values());
     }, [filteredItems]);
+
+    // Andrew 2026-05-20: "in the day stickers window in the bowls we
+    // dont need all the bowls listed like this. make it vermicelli
+    // noodles, salad, rice, list the protiens, toppings."
+    //
+    // New browse view = each menu category rendered as ONE card with
+    // its components aggregated by kind (base / protein / topping /
+    // sauce / etc.). Kitchen preps in BATCHES — they want to print
+    // one date sticker per batch, not navigate to a specific menu
+    // item first. Search results still flatten into items/components.
+    const categoryBuilds = useMemo(() => getAllCategoryComponents(), []);
 
     // Open-item resolver — for the inline-expand on a row. Merges
     // any admin override on top of the static build. For custom
@@ -455,32 +467,45 @@ export default function DateStickerPrinter({
                         </div>
                     )
                 ) : (
-                    // Idle / browse view — menu items grouped by category.
-                    <div className="space-y-4">
-                        {grouped.map(group => (
-                            <section key={group.categoryEn}>
-                                <h2 className="text-[11px] font-black uppercase tracking-widest text-dd-text-2 mb-1.5 pl-1">
-                                    {isEs ? (group.categoryEs || group.categoryEn) : group.categoryEn}
-                                </h2>
-                                <div className="space-y-1.5">
-                                    {group.items.map(item => (
-                                        <MenuItemRow
-                                            key={item.id}
-                                            item={item}
-                                            isOpen={openItemId === item.id}
-                                            onToggle={() => setOpenItemId(prev => prev === item.id ? null : item.id)}
-                                            isEs={isEs}
-                                            tx={tx}
-                                            build={openItemId === item.id ? openBuild : null}
-                                            onPrintComponent={handlePrintComponent}
-                                            adminUser={adminUser}
-                                            onEdit={() => setEditingItem(item)}
-                                            hasOverride={overrides.has(item.id)}
-                                        />
-                                    ))}
-                                </div>
-                            </section>
-                        ))}
+                    // Idle / browse view — Andrew 2026-05-20: each
+                    // category card lists its components by KIND
+                    // (vermicelli/salad/rice, then proteins, then
+                    // toppings, then sauces). Tap any to print a date
+                    // sticker for a batch of THAT component.
+                    <div className="space-y-5">
+                        {categoryBuilds.map(catBuild => {
+                            // Order kinds intentionally: foundations first,
+                            // then proteins, then add-ons. Skip empty buckets.
+                            const KIND_ORDER = ['base', 'broth', 'protein', 'topping', 'garnish', 'side', 'sauce', 'item', 'note'];
+                            const flat = [];
+                            for (const k of KIND_ORDER) {
+                                if (Array.isArray(catBuild.byKind[k])) {
+                                    flat.push(...catBuild.byKind[k]);
+                                }
+                            }
+                            if (flat.length === 0) return null;
+                            // Total count for the header badge
+                            const printableCount = flat.filter(c => c.kind !== 'note').length;
+                            return (
+                                <section key={catBuild.category}
+                                    className="bg-white border border-dd-line rounded-xl p-3">
+                                    <div className="flex items-center gap-2 mb-2 pl-0.5">
+                                        <h2 className="text-sm font-black uppercase tracking-widest text-dd-text">
+                                            {isEs ? (catBuild.categoryEs || catBuild.category) : catBuild.category}
+                                        </h2>
+                                        <span className="text-[10px] font-bold text-dd-text-2/60">
+                                            · {printableCount} {tx('printable', 'imprimibles')}
+                                        </span>
+                                    </div>
+                                    <ComponentList
+                                        components={flat}
+                                        isEs={isEs}
+                                        tx={tx}
+                                        onPrint={(c) => handlePrintComponent(c, null)}
+                                    />
+                                </section>
+                            );
+                        })}
                     </div>
                 )}
             </div>

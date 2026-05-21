@@ -306,6 +306,104 @@ export function getAllMenuItems() {
     return out;
 }
 
+// ── Category component aggregator ─────────────────────────────
+// Andrew 2026-05-20: "in the day stickers window in the bowls we
+// dont need all the bowls listed like this. make it vermicelli
+// noodles, salad, rice, list the protiens, toppings."
+//
+// Aggregates components ACROSS every item in a category. The Date
+// Sticker Printer page uses this to render each category as a card
+// of grouped components (bases / proteins / toppings / sauces) —
+// what the kitchen actually preps in batches — instead of listing
+// every menu item individually.
+//
+// For categories without a build sheet (Snacks, Drinks, Sweets),
+// falls back to the menu items themselves as printable rows since
+// each item is its own batch.
+//
+// Returns:
+//   {
+//     category: 'Bowls',
+//     categoryEs: 'Bowls',
+//     byKind: {
+//       base:    [{ id, kind, nameEn, nameEs, usedIn:[itemName...] }],
+//       protein: [...],
+//       topping: [...],
+//       sauce:   [...],
+//       broth:   [...],   // only for Pho
+//       garnish: [...],
+//       side:    [...],
+//       note:    [...],   // shown but not printable
+//       item:    [...],   // fallback for build-sheet-less categories
+//     }
+//   }
+export function getCategoryComponents(categoryName) {
+    if (!categoryName) return null;
+    const cat = MENU_DATA.find(c => c.category === categoryName);
+    if (!cat) return null;
+
+    const byKind = {};
+    const seen = new Map();   // key → entry, so we can merge usedIn
+    const push = (kind, nameEn, nameEs, extra = {}) => {
+        const key = `${kind}::${normalizeName(nameEn)}`;
+        if (seen.has(key)) {
+            const entry = seen.get(key);
+            for (const u of (extra.usedIn || [])) {
+                if (!entry.usedIn.includes(u)) entry.usedIn.push(u);
+            }
+            return;
+        }
+        const entry = {
+            id: `cat::${slugify(categoryName)}::${kind}::${slugify(nameEn)}`,
+            kind,
+            nameEn,
+            nameEs: nameEs || nameEn,
+            usedIn: extra.usedIn || [],
+            allergens: extra.allergens || '',
+            ...(extra.descEn ? { descEn: extra.descEn } : {}),
+            ...(extra.descEs ? { descEs: extra.descEs } : {}),
+        };
+        seen.set(key, entry);
+        if (!byKind[kind]) byKind[kind] = [];
+        byKind[kind].push(entry);
+    };
+
+    for (const item of (cat.items || [])) {
+        const build = getMenuItemBuild(item.nameEn);
+        if (build.components.length === 0) {
+            // No build sheet for this item — surface the item itself
+            // as a printable row (Snacks / Drinks / Sweets fall here).
+            push('item', item.nameEn, item.nameEs, {
+                allergens: item.allergens,
+                descEn: item.descEn,
+                descEs: item.descEs,
+                usedIn: [item.nameEn],
+            });
+            continue;
+        }
+        for (const c of build.components) {
+            push(c.kind, c.nameEn, c.nameEs, {
+                allergens: c.allergens,
+                descEn: c.descEn,
+                descEs: c.descEs,
+                usedIn: [item.nameEn],
+            });
+        }
+    }
+
+    return {
+        category: cat.category,
+        categoryEs: cat.categoryEs,
+        byKind,
+    };
+}
+
+// All categories aggregated. Convenience for the Date Sticker Printer
+// to render every category card without N calls.
+export function getAllCategoryComponents() {
+    return MENU_DATA.map(cat => getCategoryComponents(cat.category)).filter(Boolean);
+}
+
 // ── Searchable index — every menu item AND every component ────────
 //
 // Andrew 2026-05-20 — "also make a search bar for everything and add
