@@ -136,10 +136,16 @@ function TvConfigRow({ cfg, baseUrl, onEdit, tx }) {
                         </span>
                     )}
                 </div>
-                <button onClick={onEdit}
-                    className="px-2.5 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 rounded transition">
-                    {tx('Edit', 'Editar')}
-                </button>
+                <div className="flex items-center gap-1">
+                    <a href={url} target="_blank" rel="noopener noreferrer"
+                        className="px-2.5 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 rounded transition flex items-center gap-1">
+                        👁 {tx('Preview', 'Vista previa')}
+                    </a>
+                    <button onClick={onEdit}
+                        className="px-2.5 py-1 text-[11px] font-bold text-sky-700 hover:bg-sky-100 rounded transition">
+                        {tx('Edit', 'Editar')}
+                    </button>
+                </div>
             </div>
             <KioskUrlRow url={url} tx={tx} />
         </div>
@@ -165,6 +171,10 @@ function KioskUrlRow({ url, label, tx }) {
             <code className="flex-1 text-[11px] text-sky-900 bg-white px-2 py-1 rounded border border-sky-200 truncate font-mono">
                 {url}
             </code>
+            <a href={url} target="_blank" rel="noopener noreferrer"
+                className="px-2 py-1 rounded-lg bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-50 whitespace-nowrap">
+                👁 {tx('Preview', 'Vista previa')}
+            </a>
             <button onClick={copy}
                 className="px-2 py-1 rounded-lg bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-50">
                 📋 {tx('Copy', 'Copiar')}
@@ -574,10 +584,23 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                     {/* URL preview */}
                     {previewUrl && (
                         <div className="bg-sky-50 border border-sky-200 rounded-lg p-2.5">
-                            <div className="text-[10px] font-black uppercase tracking-widest text-sky-800 mb-1">
-                                {tx('Kiosk URL for this TV', 'URL del kiosko')}
+                            <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                                <span className="text-[10px] font-black uppercase tracking-widest text-sky-800">
+                                    {tx('Kiosk URL for this TV', 'URL del kiosko')}
+                                </span>
+                                {!isNew && (
+                                    <a href={previewUrl} target="_blank" rel="noopener noreferrer"
+                                        className="px-2 py-0.5 rounded bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-100 whitespace-nowrap">
+                                        👁 {tx('Preview', 'Vista previa')}
+                                    </a>
+                                )}
                             </div>
                             <code className="block text-[11px] text-sky-900 break-all font-mono">{previewUrl}</code>
+                            {isNew && (
+                                <p className="text-[10px] text-sky-700/70 italic mt-1">
+                                    {tx('Save first to preview this TV in a new tab.', 'Guarda primero para previsualizar.')}
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>
