@@ -46,6 +46,15 @@ import {
     BUILD_SHEET_PHO,
     BUILD_SHEET_SAUCES,
     BUILD_SHEET_SNACKS,
+    // Protein lists per category — Andrew 2026-05-20: "add one
+    // section at the very top of the date sticker page. put in all
+    // the bowls protiens. then above the fried rice add all the
+    // fried rice protein and then all the pho proteins". Each list
+    // is the proteins prepped-in-batch for that category, so a
+    // sticker prints per container.
+    BUILD_SHEET_BOWL_PROTEINS,
+    BUILD_SHEET_FRIED_RICE_PROTEINS,
+    BUILD_SHEET_PHO_PROTEINS,
 } from '../data/buildSheet';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
@@ -844,6 +853,22 @@ function ComponentRow({ component, tone, isEs, tx, onPrint }) {
 function BuildSheetBrowse({ isEs, tx, onPrint }) {
     return (
         <div className="space-y-5">
+            {/* Bowl Proteins — Andrew wants this AT THE VERY TOP so
+                the most-prepped batches (chicken / pork / shrimp /
+                steak etc.) are one tap away when the kitchen starts
+                a shift. Shared across Bowls / Bánh Mì / Sliders /
+                Tacos / Lo Mein — kitchen preps one batch, labels
+                one container, multiple categories serve from it. */}
+            <BuildSheetFlatSection
+                titleEn="🍤 Bowl Proteins"
+                titleEs="🍤 Proteínas de Bowls"
+                items={BUILD_SHEET_BOWL_PROTEINS}
+                kind="protein"
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+            />
+
             {/* Bowls — 3 styles (Vermicelli / Salad / Rice) */}
             <BuildSheetCategory
                 titleEn="🥗 Bowls"
@@ -864,11 +889,40 @@ function BuildSheetBrowse({ isEs, tx, onPrint }) {
                 onPrint={onPrint}
             />
 
+            {/* Fried Rice Proteins — placed ABOVE the Fried Rice
+                section so prep-staff sees "what I need to portion"
+                before "what the dish looks like". Ham is the one
+                protein UNIQUE to Fried Rice (not in bowls combo). */}
+            <BuildSheetFlatSection
+                titleEn="🍤 Fried Rice Proteins"
+                titleEs="🍤 Proteínas de Fried Rice"
+                items={BUILD_SHEET_FRIED_RICE_PROTEINS}
+                kind="protein"
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+            />
+
             {/* Fried Rice — single item */}
             <BuildSheetCategory
                 titleEn="🍚 Fried Rice"
                 titleEs="🍚 Arroz Frito"
                 items={[BUILD_SHEET_FRIED_RICE]}
+                isEs={isEs}
+                tx={tx}
+                onPrint={onPrint}
+            />
+
+            {/* Pho Proteins — placed ABOVE the Pho section so the
+                broth-side proteins (rare steak, brisket, meatball,
+                tendon, tripe, seafood) are easy to label per pot.
+                The same proteins are also shown under each broth
+                in the Pho section below as read-only reference. */}
+            <BuildSheetFlatSection
+                titleEn="🍤 Pho Proteins"
+                titleEs="🍤 Proteínas de Pho"
+                items={BUILD_SHEET_PHO_PROTEINS}
+                kind="protein"
                 isEs={isEs}
                 tx={tx}
                 onPrint={onPrint}

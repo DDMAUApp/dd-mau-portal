@@ -248,6 +248,73 @@ export const BUILD_SHEET_PHO = {
     ],
 };
 
+// Andrew 2026-05-20: "i want to add one section at the very top of
+// the date sticker page. put in all the bowls protiens. then above
+// the fried rice add all the fried rice protein and then all the
+// pho proteins". Each list is the set of proteins that get
+// prepped-in-batch for that category, suitable for printing a
+// date sticker per container.
+//
+// Note on overlap: chicken / pork / shrimp / tofu show up across
+// categories because the kitchen preps them once and they serve
+// multiple categories (a single lemongrass-chicken batch goes on
+// bowls, banh mi, lo mein, fried rice). Andrew asked for three
+// separate sections; the overlap is intentional — staff sees what
+// each category needs in its own column.
+
+export const BUILD_SHEET_BOWL_PROTEINS = [
+    { nameEn: "Lemongrass Pork",       nameEs: "Cerdo al limoncillo",      descEn: "Marinated, grilled — also for Bánh Mì / Sliders / Tacos / Lo Mein", descEs: "Marinado, a la parrilla — también para Bánh Mì / Sliders / Tacos / Lo Mein" },
+    { nameEn: "Lemongrass Chicken",    nameEs: "Pollo al limoncillo",      descEn: "Marinated, grilled — also for Bánh Mì / Sliders / Tacos / Lo Mein", descEs: "Marinado, a la parrilla — también para Bánh Mì / Sliders / Tacos / Lo Mein" },
+    { nameEn: "Lemongrass Steak",      nameEs: "Carne al limoncillo",      descEn: "Marinated, grilled — also for Lo Mein / Fried Rice",                 descEs: "Marinada, a la parrilla — también para Lo Mein / Fried Rice" },
+    { nameEn: "Lemongrass Shrimp",     nameEs: "Camarón al limoncillo",    descEn: "8 per bowl (2 in combo) — also for Bánh Mì / Sliders / Tacos",      descEs: "8 por bowl (2 en combo) — también para Bánh Mì / Sliders / Tacos" },
+    { nameEn: "Roast Pork",            nameEs: "Cerdo asado",              descEn: "Char siu / pork belly — also for Bánh Mì",                          descEs: "Char siu / panceta — también para Bánh Mì" },
+    { nameEn: "Coconut Shrimp",        nameEs: "Camarón con coco",         descEn: "Coconut-battered, fried",                                            descEs: "Empanizado con coco, frito" },
+    { nameEn: "Cajun Salmon",          nameEs: "Salmón Cajún",             descEn: "Cajun-seasoned, pan-seared",                                         descEs: "Sazón cajún, a la sartén" },
+    { nameEn: "Fried Fish",            nameEs: "Pescado frito",            descEn: "Crispy battered fish",                                               descEs: "Pescado empanizado y frito" },
+    { nameEn: "Tofu",                  nameEs: "Tofu",                     descEn: "Marinated, pan-fried — also for Bánh Mì / Lo Mein / Fried Rice",     descEs: "Marinado, a la sartén — también para Bánh Mì / Lo Mein / Fried Rice" },
+    { nameEn: "Vegan Beef",            nameEs: "Carne vegana",             descEn: "Plant-based beef substitute",                                        descEs: "Sustituto vegetal de carne" },
+    { nameEn: "Vegan Chikn",           nameEs: "Pollo vegano",             descEn: "Plant-based chicken substitute",                                     descEs: "Sustituto vegetal de pollo" },
+    { nameEn: "Vegan Shrimp",          nameEs: "Camarón vegano",           descEn: "Plant-based shrimp substitute",                                      descEs: "Sustituto vegetal de camarón" },
+];
+
+export const BUILD_SHEET_FRIED_RICE_PROTEINS = [
+    { nameEn: "Roast Pork",            nameEs: "Cerdo asado",              descEn: "Char siu — used in Combo Fried Rice",                               descEs: "Char siu — usado en Combo Fried Rice" },
+    { nameEn: "Lemongrass Chicken",    nameEs: "Pollo al limoncillo",      descEn: "Shared with Bowls / Bánh Mì / Lo Mein",                              descEs: "Compartido con Bowls / Bánh Mì / Lo Mein" },
+    { nameEn: "Lemongrass Steak",      nameEs: "Carne al limoncillo",      descEn: "Shared with Bowls / Lo Mein",                                        descEs: "Compartido con Bowls / Lo Mein" },
+    { nameEn: "Lemongrass Shrimp",     nameEs: "Camarón al limoncillo",    descEn: "8 per order; combo gets 5",                                          descEs: "8 por orden; combo lleva 5" },
+    { nameEn: "Ham",                   nameEs: "Jamón",                    descEn: "Diced ham — UNIQUE to Fried Rice (not in bowls combo)",              descEs: "Jamón en cubitos — ÚNICO de Fried Rice" },
+    { nameEn: "Tofu",                  nameEs: "Tofu",                     descEn: "Marinated, pan-fried",                                               descEs: "Marinado, a la sartén" },
+    { nameEn: "Fish Balls",            nameEs: "Bolas de pescado",         descEn: "For Seafood Fried Rice",                                             descEs: "Para Seafood Fried Rice" },
+    { nameEn: "Calamari",              nameEs: "Calamar",                  descEn: "For Seafood Fried Rice",                                             descEs: "Para Seafood Fried Rice" },
+    { nameEn: "Vegan Chikn",           nameEs: "Pollo vegano",             descEn: "Plant-based chicken substitute",                                     descEs: "Sustituto vegetal de pollo" },
+    { nameEn: "Vegan Beef",            nameEs: "Carne vegana",             descEn: "Plant-based beef substitute",                                        descEs: "Sustituto vegetal de carne" },
+    { nameEn: "Vegan Shrimp",          nameEs: "Camarón vegano",           descEn: "Plant-based shrimp substitute",                                      descEs: "Sustituto vegetal de camarón" },
+];
+
+export const BUILD_SHEET_PHO_PROTEINS = [
+    // Beef-broth proteins
+    { nameEn: "Rare Steak",            nameEs: "Bistec poco cocido",       descEn: "Flank meat, thin slice — Beef broth",                                descEs: "Carne de flanco en rebanadas finas — caldo de res" },
+    { nameEn: "Brisket",               nameEs: "Pecho de res",             descEn: "Slow-cooked brisket — Beef broth",                                   descEs: "Pecho lento — caldo de res" },
+    { nameEn: "Meatball",              nameEs: "Albóndiga",                descEn: "Beef meatballs — Beef broth",                                        descEs: "Albóndigas de res — caldo de res" },
+    { nameEn: "Tendon",                nameEs: "Tendón",                   descEn: "Slow-cooked tendon — Ultimate Pho",                                  descEs: "Tendón lento — Ultimate Pho" },
+    { nameEn: "Tripe",                 nameEs: "Callos",                   descEn: "Beef tripe — Ultimate Pho",                                          descEs: "Callos de res — Ultimate Pho" },
+    { nameEn: "Shrimp",                nameEs: "Camarón",                  descEn: "Lemongrass shrimp — Beef or Seafood broth",                          descEs: "Camarón al limoncillo — caldo de res o mariscos" },
+    { nameEn: "Fish Balls",            nameEs: "Bolas de pescado",         descEn: "Seafood Pho",                                                        descEs: "Seafood Pho" },
+    { nameEn: "Calamari",              nameEs: "Calamar",                  descEn: "Seafood Pho",                                                        descEs: "Seafood Pho" },
+    { nameEn: "Imitation Crab",        nameEs: "Surimi (cangrejo)",        descEn: "Seafood Pho — Beef broth variant",                                   descEs: "Surimi — variante con caldo de res" },
+    { nameEn: "Scallops",              nameEs: "Vieiras",                  descEn: "Seafood Pho — Beef broth variant",                                   descEs: "Vieiras — variante con caldo de res" },
+    { nameEn: "Squid",                 nameEs: "Calamar",                  descEn: "Seafood Pho — Beef broth variant",                                   descEs: "Calamar — variante con caldo de res" },
+    // Chicken-broth proteins
+    { nameEn: "Chicken (sliced)",      nameEs: "Pollo en rebanadas",       descEn: "Chicken Pho — Chicken broth",                                        descEs: "Chicken Pho — caldo de pollo" },
+    { nameEn: "Lemongrass Chicken",    nameEs: "Pollo al limoncillo",      descEn: "Lemongrass Pho variant",                                             descEs: "Variante Lemongrass Pho" },
+    { nameEn: "Lemongrass Beef",       nameEs: "Carne al limoncillo",      descEn: "Lemongrass Pho variant",                                             descEs: "Variante Lemongrass Pho" },
+    // Vegan-broth proteins
+    { nameEn: "Tofu",                  nameEs: "Tofu",                     descEn: "Vegan Pho / Veggies w/ Tofu Pho",                                    descEs: "Vegan Pho / Veggies w/ Tofu Pho" },
+    { nameEn: "Deep-fried Tofu",       nameEs: "Tofu frito",               descEn: "Spicy Vegan Lemongrass Pho",                                         descEs: "Spicy Vegan Lemongrass Pho" },
+    { nameEn: "King Mushroom",         nameEs: "Hongo king",               descEn: "Spicy Vegan Lemongrass Pho",                                         descEs: "Spicy Vegan Lemongrass Pho" },
+    { nameEn: "Oyster Mushroom",       nameEs: "Hongo ostra",              descEn: "Spicy Vegan Lemongrass Pho",                                         descEs: "Spicy Vegan Lemongrass Pho" },
+];
+
 export const BUILD_SHEET_SAUCES = [
     { nameEn: "Vietnamese Vinaigrette",      nameEs: "Vinagreta Vietnamita",       descEn: "Traditional fish sauce",        descEs: "Salsa de pescado tradicional" },
     { nameEn: "Vegan Vietnamese Vinaigrette", nameEs: "Vinagreta Vietnamita Vegana", descEn: "Vegan fish sauce",              descEs: "Salsa de pescado vegana" },
