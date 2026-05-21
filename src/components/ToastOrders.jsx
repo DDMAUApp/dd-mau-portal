@@ -77,8 +77,37 @@ export default function ToastOrders({ language }) {
         return () => clearInterval(id);
     }, []);
 
+    // Track which location the current `orders` array belongs to.
+    // When admin switches stores, the old location's orders briefly
+    // stay visible until the new snapshot fires; this flag lets the
+    // UI render a tiny "switching to X…" cue without blanking the
+    // list. Set IMMEDIATELY on location change so the cue is up the
+    // moment admin taps the toggle, cleared when the new snapshot
+    // arrives.
+    const [ordersLocation, setOrdersLocation] = useState(location);
+    const [switching, setSwitching] = useState(false);
+
+    // Stale-closure refs — the onSnapshot callback set up in the
+    // [location] effect captures `orders` + `ordersLocation` at the
+    // moment the effect ran. For the defensive-guard check below to
+    // see the *latest* values across subsequent snapshots (the
+    // listener can fire many times during a single sync), mirror
+    // both into refs.
+    const ordersRef = useRef(orders);
+    const ordersLocationRef = useRef(ordersLocation);
+    useEffect(() => { ordersRef.current = orders; }, [orders]);
+    useEffect(() => { ordersLocationRef.current = ordersLocation; }, [ordersLocation]);
+
     useEffect(() => {
-        setLoading(true);
+        // FIX (Andrew 2026-05-20): "every time i use the orders page
+        // to look at the orders per store the orders will disappear
+        // and come back". Root cause was setLoading(true) here →
+        // replaced the orders list with a full-page spinner on every
+        // location toggle. Now we keep the previous orders visible
+        // and just stamp `switching=true` so the UI shows a thin
+        // "switching to Maryland Heights…" bar at the top instead of
+        // blanking the list.
+        setSwitching(location !== ordersLocation);
         setExpandedOrder(null);
 
         // Get today's date string in CST
@@ -97,7 +126,40 @@ export default function ToastOrders({ language }) {
         const unsub = onSnapshot(q, (snap) => {
             const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             docs.sort((a, b) => (b.createdDate || "").localeCompare(a.createdDate || ""));
+
+            // DEFENSIVE GUARD (Andrew 2026-05-20): the Toast scraper on
+            // Railway sometimes does a delete-then-re-insert pass when
+            // refreshing today's orders (we control the scraper but
+            // can't change its behavior from here). That causes a
+            // transient empty snapshot followed by a full one. Without
+            // this guard the UI flashes the "No orders yet today"
+            // empty state for a beat before refilling.
+            //
+            // Rule: if the new snapshot is EMPTY and we previously had
+            // orders for THIS SAME location and the most-recent one
+            // landed within the last 10 min, ignore the empty snapshot
+            // and wait for the next one. Snapshots that come in WITH
+            // data are always trusted (they're authoritative).
+            const currentOrders = ordersRef.current;
+            const currentOrdersLocation = ordersLocationRef.current;
+            if (docs.length === 0
+                && currentOrdersLocation === location
+                && currentOrders.length > 0) {
+                const latestSyncedAt = currentOrders[0]?.syncedAt;
+                const latestMs = latestSyncedAt
+                    ? Date.parse(latestSyncedAt)
+                    : 0;
+                const ageMin = latestMs ? (Date.now() - latestMs) / 60000 : 999;
+                if (ageMin < 10) {
+                    // Stale-but-recent. Hold the previous orders in
+                    // place; the next snapshot will catch up.
+                    return;
+                }
+            }
+
             setOrders(docs);
+            setOrdersLocation(location);
+            setSwitching(false);
             setLoading(false);
             if (docs.length > 0 && docs[0].syncedAt) {
                 setLastSync(docs[0].syncedAt);
@@ -105,8 +167,10 @@ export default function ToastOrders({ language }) {
         }, (err) => {
             console.error("Toast orders query error:", err);
             setLoading(false);
+            setSwitching(false);
         });
         return () => unsub();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location]);
 
     // ── Sync-health computation ──────────────────────────────────
@@ -346,7 +410,23 @@ export default function ToastOrders({ language }) {
                 </div>
             )}
 
-            {loading ? (
+            {/* Inline "switching location" cue — shows ABOVE the orders
+                list when admin taps the other location's toggle. Keeps
+                the previous orders visible underneath so the page never
+                blanks. Fixes Andrew's "disappear and come back" flicker. */}
+            {switching && (
+                <div className="mb-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 flex items-center gap-2 text-[12px] font-bold text-sky-800">
+                    <span className="inline-block w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
+                    {isEn
+                        ? `Switching to ${location === 'webster' ? 'Webster' : 'Maryland Heights'}…`
+                        : `Cambiando a ${location === 'webster' ? 'Webster' : 'Maryland Heights'}…`}
+                </div>
+            )}
+
+            {/* Only the very-first load (no orders ever yet) shows the
+                full-page spinner. After that, the orders array stays
+                rendered while updates trickle through — no flicker. */}
+            {loading && orders.length === 0 ? (
                 <div className="text-center py-12">
                     <p className="text-3xl mb-2">⏳</p>
                     <p className="text-gray-400">{isEn ? "Loading orders..." : "Cargando pedidos..."}</p>
