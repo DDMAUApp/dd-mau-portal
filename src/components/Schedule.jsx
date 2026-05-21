@@ -9268,7 +9268,16 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                                 const totalSlots = (t.blocks || []).reduce((sum, b) => sum + (b.slots || []).reduce((s, sl) => s + (sl.count || 0), 0), 0);
                                 const isPicked = pickedTemplate && pickedTemplate.id === t.id;
                                 const tDays = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
-                                const matchesDay = templateMatchesDay(t);
+                                // BUG FIX (2026-05-21, Andrew: "apply a template in
+                                // schedule is broken not opening"). Leftover from a
+                                // rename — the function was called templateMatchesDay
+                                // at some point but is now templateMatchesAnyPicked
+                                // (defined just above). The undefined reference threw
+                                // inside this map() during render, which unmounted the
+                                // entire modal silently → tap "Apply template", nothing
+                                // happened. Console would have shown
+                                // "templateMatchesDay is not defined".
+                                const matchesDay = templateMatchesAnyPicked(t);
                                 return (
                                     <div key={t.id} className={`p-2 rounded-lg border-2 transition ${
                                         isPicked
@@ -9289,7 +9298,13 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                                                             {tDays.map(dId => (
                                                                 <span key={dId}
                                                                     className={`px-1 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
-                                                                        pickedDayId === dId
+                                                                        // Was `pickedDayId === dId` —
+                                                                        // pickedDayId never existed; the
+                                                                        // canonical state is `pickedDayIds`
+                                                                        // (Set of day ids). Same rename
+                                                                        // leftover as the matchesDay fix
+                                                                        // above. See 2026-05-21 bug note.
+                                                                        pickedDayIds.has(dId)
                                                                             ? 'bg-dd-green text-white'
                                                                             : 'bg-indigo-100 text-indigo-700'
                                                                     }`}>
