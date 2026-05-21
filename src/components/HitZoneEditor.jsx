@@ -174,6 +174,11 @@ export default function HitZoneEditor({
             i === idx ? { ...z, priceOverride: priceOverride || '' } : z));
     };
 
+    const setZoneQrUrl = (idx, qrUrl) => {
+        setZones(prev => prev.map((z, i) =>
+            i === idx ? { ...z, qrUrl: (qrUrl || '').trim() } : z));
+    };
+
     const deleteZone = (idx) => {
         setZones(prev => prev.filter((_, i) => i !== idx));
         if (pickerForZoneIdx === idx) setPickerForZoneIdx(null);
@@ -423,24 +428,38 @@ export default function HitZoneEditor({
                                 const zoneIdx = zones.indexOf(zone);
                                 return (
                                     <div key={zoneIdx}
-                                        className="flex items-center gap-1.5 bg-white border border-emerald-200 rounded px-2 py-1">
-                                        <span className="flex-1 text-[11px] font-bold text-emerald-900 truncate" title={`${zone.category} — ${zone.itemName}`}>
-                                            {zone.itemName}
-                                        </span>
-                                        <input type="text"
-                                            value={zone.priceOverride || ''}
-                                            onChange={(e) => setZonePrice(zoneIdx, e.target.value)}
-                                            placeholder={tx('$ new price', '$ precio')}
-                                            className={`w-20 px-1.5 py-0.5 rounded border text-[11px] font-bold tabular-nums text-right ${
-                                                zone.priceOverride
-                                                    ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
-                                                    : 'border-stone-200 bg-white text-stone-500'
-                                            }`} />
-                                        <button onClick={() => deleteZone(zoneIdx)}
-                                            className="w-5 h-5 rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-[10px] font-black"
-                                            title={tx('Delete zone', 'Borrar zona')}>
-                                            ✕
-                                        </button>
+                                        className="flex flex-col gap-1 bg-white border border-emerald-200 rounded px-2 py-1.5">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="flex-1 text-[11px] font-bold text-emerald-900 truncate" title={`${zone.category} — ${zone.itemName}`}>
+                                                {zone.itemName}
+                                            </span>
+                                            <input type="text"
+                                                value={zone.priceOverride || ''}
+                                                onChange={(e) => setZonePrice(zoneIdx, e.target.value)}
+                                                placeholder={tx('$ new price', '$ precio')}
+                                                className={`w-20 px-1.5 py-0.5 rounded border text-[11px] font-bold tabular-nums text-right ${
+                                                    zone.priceOverride
+                                                        ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
+                                                        : 'border-stone-200 bg-white text-stone-500'
+                                                }`} />
+                                            <button onClick={() => deleteZone(zoneIdx)}
+                                                className="w-5 h-5 rounded-full bg-red-100 hover:bg-red-200 text-red-700 text-[10px] font-black"
+                                                title={tx('Delete zone', 'Borrar zona')}>
+                                                ✕
+                                            </button>
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            <span className="text-[9px] font-bold text-stone-500 w-8">QR:</span>
+                                            <input type="url"
+                                                value={zone.qrUrl || ''}
+                                                onChange={(e) => setZoneQrUrl(zoneIdx, e.target.value)}
+                                                placeholder={tx('https://… (optional QR overlay)', 'https://… (QR opcional)')}
+                                                className={`flex-1 px-1.5 py-0.5 rounded border text-[10px] font-mono ${
+                                                    zone.qrUrl
+                                                        ? 'border-purple-500 bg-purple-50 text-purple-700'
+                                                        : 'border-stone-200 bg-white text-stone-500'
+                                                }`} />
+                                        </div>
                                     </div>
                                 );
                             })}

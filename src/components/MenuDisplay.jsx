@@ -33,8 +33,9 @@ import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
+import { urlIsVideo } from '../data/menuImageUpload';
 import {
-    subscribeTvConfig, MODES,
+    subscribeTvConfig, MODES, resolveActiveDaypart,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
 } from '../data/tvConfigs';
 
@@ -73,9 +74,25 @@ export default function MenuDisplay({ tvId = 'webster' }) {
     const layout = tvConfig?.layout || 'dense';
     const showPhotos = tvConfig?.showPhotos === true;
     const rotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.rotateSeconds) || DEFAULT_ROTATE_SECONDS));
-    const imageRotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS));
-    const imageUrls = Array.isArray(tvConfig?.imageUrls) ? tvConfig.imageUrls : [];
-    const imageHitZones = Array.isArray(tvConfig?.imageHitZones) ? tvConfig.imageHitZones : [];
+
+    // Daypart resolution — if the TV config has a `dayparts` schedule,
+    // pick the one that covers the current hour and use ITS imageUrls /
+    // hitZones / imageRotateSeconds instead of the top-level fields.
+    // The `now` clock state already ticks every 30s so we'll switch
+    // dayparts within at most 30s of the boundary.
+    const activeDaypart = useMemo(
+        () => resolveActiveDaypart(tvConfig?.dayparts, now),
+        [tvConfig?.dayparts, now]);
+    const imageUrls = Array.isArray(activeDaypart?.imageUrls)
+        ? activeDaypart.imageUrls
+        : (Array.isArray(tvConfig?.imageUrls) ? tvConfig.imageUrls : []);
+    const imageHitZones = Array.isArray(activeDaypart?.imageHitZones)
+        ? activeDaypart.imageHitZones
+        : (Array.isArray(tvConfig?.imageHitZones) ? tvConfig.imageHitZones : []);
+    const imageRotateSeconds = Math.max(3, Math.min(60,
+        Number(activeDaypart?.imageRotateSeconds)
+        || Number(tvConfig?.imageRotateSeconds)
+        || DEFAULT_IMAGE_ROTATE_SECONDS));
     const includeCategories = Array.isArray(tvConfig?.includeCategories) && tvConfig.includeCategories.length > 0
         ? new Set(tvConfig.includeCategories) : null;
     const spotlightCategory = tvConfig?.spotlightCategory || null;
@@ -171,29 +188,36 @@ export default function MenuDisplay({ tvId = 'webster' }) {
     // staff can confirm the feed is alive at a glance.
     if (mode === MODES.IMAGE) {
         return (
-            <ImageModeLayout
-                imageUrls={imageUrls}
-                imageRotateSeconds={imageRotateSeconds}
-                imageHitZones={imageHitZones}
-                sixed={sixed}
-                now={now}
-                label={tvConfig?.label || LOC_LABEL[location] || location}
-            />
+            <>
+                <ImageModeLayout
+                    imageUrls={imageUrls}
+                    imageRotateSeconds={imageRotateSeconds}
+                    imageHitZones={imageHitZones}
+                    sixed={sixed}
+                    now={now}
+                    label={tvConfig?.label || LOC_LABEL[location] || location}
+                    daypartLabel={activeDaypart?.label || null}
+                />
+                <PromoStrip promoStrip={tvConfig?.promoStrip} />
+            </>
         );
     }
 
     return (
-        <div className="fixed inset-0 bg-white text-dd-text flex flex-col overflow-hidden font-sans">
-            {headerNode}
-            {layout === 'rotate' ? (
-                <RotateLayout menu={menu} is86d={is86d} showPhotos={showPhotos} rotateSeconds={rotateSeconds} />
-            ) : layout === 'spotlight' ? (
-                <SpotlightLayout menu={menu} is86d={is86d} showPhotos={showPhotos} spotlightCategory={spotlightCategory} />
-            ) : (
-                <DenseLayout menu={menu} is86d={is86d} showPhotos={showPhotos} />
-            )}
-            {footerNode}
-        </div>
+        <>
+            <div className="fixed inset-0 bg-white text-dd-text flex flex-col overflow-hidden font-sans">
+                {headerNode}
+                {layout === 'rotate' ? (
+                    <RotateLayout menu={menu} is86d={is86d} showPhotos={showPhotos} rotateSeconds={rotateSeconds} />
+                ) : layout === 'spotlight' ? (
+                    <SpotlightLayout menu={menu} is86d={is86d} showPhotos={showPhotos} spotlightCategory={spotlightCategory} />
+                ) : (
+                    <DenseLayout menu={menu} is86d={is86d} showPhotos={showPhotos} />
+                )}
+                {footerNode}
+            </div>
+            <PromoStrip promoStrip={tvConfig?.promoStrip} />
+        </>
     );
 }
 
@@ -219,7 +243,7 @@ export default function MenuDisplay({ tvId = 'webster' }) {
 //   container). Overlays are positioned absolute inside the
 //   container at fractional coordinates — they always land on
 //   the right pixels regardless of TV size.
-function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], sixed, now, label }) {
+function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], sixed, now, label, daypartLabel }) {
     const [idx, setIdx] = useState(0);
     // Track natural dims per page so we can size each container to
     // its image's aspect ratio. Updated on each img's onLoad.
@@ -262,6 +286,8 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
     });
     const priceZonesOnPage = zonesOnCurrentPage.filter(z =>
         z.priceOverride && String(z.priceOverride).trim().length > 0);
+    const qrZonesOnPage = zonesOnCurrentPage.filter(z =>
+        z.qrUrl && /^https?:\/\//i.test(String(z.qrUrl).trim()));
 
     return (
         <div className="fixed inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center">
@@ -290,19 +316,48 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
                             style={aspect
                                 ? { aspectRatio: aspect, maxWidth: '100vw', maxHeight: '100vh', width: '100%', height: '100%' }
                                 : { width: '100vw', height: '100vh' }}>
-                            <img src={url} alt=""
-                                onLoad={(e) => {
-                                    const img = e.currentTarget;
-                                    setNaturalDims(prev => prev[i]
-                                        ? prev
-                                        : { ...prev, [i]: { w: img.naturalWidth, h: img.naturalHeight } });
-                                }}
-                                className="block w-full h-full object-contain"
-                                draggable={false} />
+                            {urlIsVideo(url) ? (
+                                // Video pages — autoplay muted loops. The
+                                // `muted` attribute is required for autoplay
+                                // on iOS Safari + Chrome on TV browsers.
+                                // playsInline keeps it from going full-screen
+                                // on mobile in landscape. preload=auto so
+                                // the next frame is ready when the rotation
+                                // gets there.
+                                <video src={url}
+                                    autoPlay loop muted playsInline
+                                    preload="auto"
+                                    onLoadedMetadata={(e) => {
+                                        const v = e.currentTarget;
+                                        setNaturalDims(prev => prev[i]
+                                            ? prev
+                                            : { ...prev, [i]: { w: v.videoWidth || 1920, h: v.videoHeight || 1080 } });
+                                    }}
+                                    className="block w-full h-full object-contain"
+                                    style={{ background: '#000' }} />
+                            ) : (
+                                <img src={url} alt=""
+                                    onLoad={(e) => {
+                                        const img = e.currentTarget;
+                                        setNaturalDims(prev => prev[i]
+                                            ? prev
+                                            : { ...prev, [i]: { w: img.naturalWidth, h: img.naturalHeight } });
+                                    }}
+                                    className="block w-full h-full object-contain"
+                                    draggable={false} />
+                            )}
 
-                            {/* Price-override overlays first, SOLD OUT stickers on top
-                                so when both apply (item is 86'd AND has a new price),
-                                the SOLD OUT stamp covers everything. */}
+                            {/* Layer order from bottom up:
+                                  1. QR codes (don't compete with SOLD OUT)
+                                  2. Price overrides
+                                  3. SOLD OUT stamps (cover everything when an
+                                     item is out — sold out trumps price + QR)
+                                When an item is 86'd, the SOLD OUT stamp covers
+                                the QR too, which is correct: don't tempt a
+                                customer to scan a QR for an out-of-stock item. */}
+                            {i === idx && qrZonesOnPage.map((zone, zi) => (
+                                <QrOverlay key={`qr-${zi}`} zone={zone} />
+                            ))}
                             {i === idx && priceZonesOnPage.map((zone, zi) => (
                                 <PriceOverlay key={`price-${zi}`} zone={zone} />
                             ))}
@@ -318,6 +373,9 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
             <div className="absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full bg-black/40 backdrop-blur-sm text-white text-[10px] font-bold z-10">
                 <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
                 <span className="tabular-nums">{now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                {daypartLabel && (
+                    <span className="opacity-80 ml-1">· {daypartLabel}</span>
+                )}
                 {safeUrls.length > 1 && (
                     <span className="opacity-60">· {idx + 1}/{safeUrls.length}</span>
                 )}
@@ -327,6 +385,121 @@ function ImageModeLayout({ imageUrls, imageRotateSeconds, imageHitZones = [], si
                 {priceZonesOnPage.length > 0 && (
                     <span className="opacity-70 ml-1">· {priceZonesOnPage.length} priced</span>
                 )}
+            </div>
+        </div>
+    );
+}
+
+// ── Promo / announcement strip ───────────────────────────────
+// Andrew 2026-05-20 Wave 3 of "match the SaaS leaders". A
+// persistent text bar overlaid at the top or bottom of the TV.
+// When the text is wider than the screen, scrolls horizontally
+// like a marquee so long promos stay legible without truncating.
+function PromoStrip({ promoStrip }) {
+    if (!promoStrip || promoStrip.enabled === false) return null;
+    const textEn = String(promoStrip.textEn || '').trim();
+    const textEs = String(promoStrip.textEs || '').trim();
+    // We don't have a language signal at this layer (the TV display
+    // is anonymous public). Show both languages separated by a wide
+    // bullet when both are set; otherwise just the one that exists.
+    const text = textEn && textEs
+        ? `${textEn}   •   ${textEs}`
+        : (textEn || textEs);
+    if (!text) return null;
+
+    const position = promoStrip.position === 'top' ? 'top' : 'bottom';
+    const styleKey = ['sage', 'red', 'amber', 'sky', 'dark'].includes(promoStrip.style)
+        ? promoStrip.style : 'sage';
+    const STYLE_CLASS = {
+        sage:  'bg-dd-green text-white',
+        red:   'bg-red-700 text-white',
+        amber: 'bg-amber-500 text-amber-950',
+        sky:   'bg-sky-700 text-white',
+        dark:  'bg-stone-900 text-white',
+    }[styleKey];
+
+    const speed = Number(promoStrip.speed) || 0;
+    const isScrolling = speed > 0;
+
+    return (
+        <div className={`fixed left-0 right-0 z-30 overflow-hidden px-6 py-2 font-sans font-black tracking-wide text-[clamp(14px,2vw,28px)] shadow-md ${STYLE_CLASS}`}
+            style={{ [position]: 0 }}>
+            {isScrolling ? (
+                <div className="whitespace-nowrap"
+                    style={{
+                        animation: `dd-mau-promo-scroll ${Math.max(8, 100 - speed)}s linear infinite`,
+                    }}>
+                    {/* Duplicate the text so the scroll loops seamlessly */}
+                    {text}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{text}
+                </div>
+            ) : (
+                <div className="text-center truncate">{text}</div>
+            )}
+            {/* Keyframes inlined — they don't exist in the global CSS yet */}
+            <style>{`
+                @keyframes dd-mau-promo-scroll {
+                    from { transform: translateX(0); }
+                    to   { transform: translateX(-50%); }
+                }
+            `}</style>
+        </div>
+    );
+}
+
+// ── QR overlay — renders a QR code at the hit zone ───────────
+// Andrew 2026-05-20 Wave 2 of "match the SaaS leaders". Common
+// use cases: "Scan to order online", "Scan for catering menu",
+// "Scan for nutrition info". Generated client-side via the
+// qrcode npm package (already in the bundle as a lazy chunk).
+//
+// The QR is centered + sized to FIT inside the zone (square,
+// since QR codes need a 1:1 aspect to scan). A white background
+// + small label below for readability across the dining room.
+function QrOverlay({ zone }) {
+    const [dataUrl, setDataUrl] = useState('');
+
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const qrcode = await import('qrcode');
+                // Generate a high error-correction QR (level H) so the
+                // code stays scannable even if a corner is occluded.
+                const url = await qrcode.toDataURL(zone.qrUrl, {
+                    errorCorrectionLevel: 'H',
+                    margin: 1,
+                    width: 512,   // canvas size; CSS scales to the zone
+                    color: { dark: '#000000', light: '#ffffff' },
+                });
+                if (!cancelled) setDataUrl(url);
+            } catch (e) {
+                console.warn('qr generation failed:', zone.qrUrl, e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [zone.qrUrl]);
+
+    if (!dataUrl) return null;
+
+    return (
+        <div className="absolute pointer-events-none flex items-center justify-center"
+            style={{
+                left: `${zone.x * 100}%`,
+                top: `${zone.y * 100}%`,
+                width: `${zone.width * 100}%`,
+                height: `${zone.height * 100}%`,
+            }}>
+            {/* White card holding the QR */}
+            <div className="bg-white rounded-md shadow-lg p-1 flex items-center justify-center"
+                style={{
+                    // Make the QR square within the zone — use the smaller
+                    // dimension so the QR doesn't overflow.
+                    aspectRatio: '1 / 1',
+                    maxWidth: '100%',
+                    maxHeight: '100%',
+                }}>
+                <img src={dataUrl} alt="QR code"
+                    className="w-full h-full" />
             </div>
         </div>
     );

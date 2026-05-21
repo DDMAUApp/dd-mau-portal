@@ -29,6 +29,28 @@
 //   imageUrls:        string[]?         // Firebase Storage URLs, one per page
 //   imageRotateSeconds: number?         // if multiple pages, rotate every N sec
 //   imageHitZones:    HitZone[]?        // SOLD OUT overlay regions; see below
+//
+//   // 2026-05-20 — Andrew Wave 1 of "match the SaaS leaders". Auto-
+//   // switch the displayed menu by time of day. Every "real" digital
+//   // signage tool (Raydiant, ScreenCloud, NowSignage, Samsung VXT)
+//   // has this; ours adds a kicker — each daypart can carry its own
+//   // imageUrls + hitZones (so lunch and dinner can be entirely
+//   // different PDFs with their own SOLD OUT mappings).
+//   //
+//   // dayparts: [{
+//   //   label:    'Breakfast'|'Lunch'|'Dinner'|<custom>,
+//   //   startHour: 0..23  // inclusive, 24h
+//   //   endHour:   0..24  // exclusive (24 = until end of day)
+//   //   imageUrls: string[]   // shown during this daypart
+//   //   imageHitZones: HitZone[]?
+//   //   imageRotateSeconds: number?
+//   // }]
+//   //
+//   // When dayparts.length > 0, MenuDisplay picks the daypart that
+//   // contains the current local hour and renders its content. If
+//   // no daypart matches the current hour, falls back to the
+//   // top-level imageUrls/hitZones. Backward-compatible — a TV
+//   // config without `dayparts` behaves exactly as before.
 
 // HitZone — Andrew 2026-05-20: "will i be able to keep the look of
 // the menu the exact same — Image + overlay 'SOLD OUT' stickers on
@@ -54,7 +76,31 @@
 //     itemName:    string   // matches MENU_DATA item nameEn (after normalize())
 //     category:    string?  // hint for the admin UI; not used by 86 matching
 //     priceOverride: string?  // e.g. "$19.50" — covers the printed price when set
+//     qrUrl:       string?  // 2026-05-20 — when set, MenuDisplay renders a
+//                            // QR code overlay covering the zone that links
+//                            // to this URL (e.g. catering page, online order,
+//                            // nutrition info). The QR is generated client-
+//                            // side from the qrcode npm package; no server
+//                            // call needed.
 //   }
+//
+//
+//   // 2026-05-20 — Wave 3 of "match the SaaS leaders". A persistent
+//   // text bar overlaid at the top or bottom of the TV. Common uses:
+//   //   "🎉 Happy hour 3-5pm — half off boba teas"
+//   //   "📞 Order online → ddmau.com/order"
+//   //   "🎂 Closed Tuesday for staff training — reopens Wednesday"
+//   //   "Welcome to DD Mau! Order at the counter."
+//   // The strip auto-scrolls horizontally when the text is wider than
+//   // the screen so long promos stay legible.
+//   promoStrip:   {
+//     enabled:  boolean
+//     position: 'top'|'bottom'
+//     textEn:   string
+//     textEs:   string?
+//     style:    'sage'|'red'|'amber'|'sky'|'dark'   // background tint
+//     speed:    number?                              // scroll px/sec; null = static
+//   }?
 //
 //   updatedAt:    serverTimestamp
 //   updatedBy:    string
@@ -94,6 +140,39 @@ export const LAYOUTS = Object.freeze({
 export const DEFAULT_LAYOUT = LAYOUTS.DENSE;
 export const DEFAULT_ROTATE_SECONDS = 8;
 export const DEFAULT_IMAGE_ROTATE_SECONDS = 12;
+
+// Common restaurant dayparts; used as default suggestions in the
+// daypart editor. Admin can also pick custom hours.
+export const PRESET_DAYPARTS = Object.freeze([
+    { label: 'Breakfast', startHour:  7, endHour: 11 },
+    { label: 'Lunch',     startHour: 11, endHour: 15 },
+    { label: 'Happy Hour',startHour: 15, endHour: 17 },
+    { label: 'Dinner',    startHour: 17, endHour: 22 },
+    { label: 'Late Night',startHour: 22, endHour: 24 },
+]);
+
+// Pure function — given a list of dayparts and a Date, returns the
+// matching daypart (or null if none cover the current hour). Used by
+// MenuDisplay every minute via a tick effect to decide what to show.
+// Wraps across midnight if endHour < startHour (e.g. 22→4).
+export function resolveActiveDaypart(dayparts, now = new Date()) {
+    if (!Array.isArray(dayparts) || dayparts.length === 0) return null;
+    const h = now.getHours() + now.getMinutes() / 60;
+    for (const dp of dayparts) {
+        const s = Number(dp?.startHour);
+        const e = Number(dp?.endHour);
+        if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+        if (s < e) {
+            // Normal range.
+            if (h >= s && h < e) return dp;
+        } else if (s > e) {
+            // Wraps midnight (e.g. 22..4).
+            if (h >= s || h < e) return dp;
+        }
+        // s === e → zero-length daypart, skip.
+    }
+    return null;
+}
 
 // URL-safe slug for a TV id. Same kebab-case convention as the
 // menu item slugs.

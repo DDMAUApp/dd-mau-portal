@@ -184,19 +184,48 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
     return await getDownloadURL(pref);
 }
 
-// One-shot: take a user-picked File, render pages (PDF) or wrap a
-// single image, and upload all results. Returns the URLs.
+// Detect whether a URL points at a video file. Used by MenuDisplay
+// to decide between <img> and <video>. Looks at the path before
+// the query string (Firebase Storage URLs end in ?alt=media&token=…).
+export function urlIsVideo(url) {
+    if (!url) return false;
+    const pathPart = String(url).split('?')[0].toLowerCase();
+    return /\.(mp4|webm|mov|m4v)$/i.test(pathPart);
+}
+
+// One-shot: take a user-picked File and upload it. Supports:
+//   • PDF → split to one PNG per page, upload each
+//   • Image (jpeg/png/gif/webp) → upload as-is
+//   • Video (mp4/webm/mov) → upload as-is, returned URL renders via
+//     <video> in MenuDisplay. Andrew 2026-05-20 Wave 4 of "match the
+//     SaaS leaders" — all of them support video; some charge extra
+//     for it. Ours is included.
 export async function uploadMenuFile({ file, folder = 'tv_images', slugPrefix }) {
     if (!file) throw new Error('file required');
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    let blobs;
+    const isImage = file.type?.startsWith('image/') || /\.(jpe?g|png|gif|webp)$/i.test(file.name);
+    const isVideo = file.type?.startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(file.name);
+
     if (isPdf) {
-        blobs = await renderPdfPagesToBlobs(file);
+        const blobs = await renderPdfPagesToBlobs(file);
         if (blobs.length === 0) throw new Error('PDF had no renderable pages');
-    } else if (file.type?.startsWith('image/')) {
-        blobs = [file];
-    } else {
-        throw new Error('Unsupported file type. Use PDF or image.');
+        return await uploadImageBlobs({ blobs, folder, slugPrefix });
     }
-    return await uploadImageBlobs({ blobs, folder, slugPrefix });
+    if (isImage) {
+        return await uploadImageBlobs({ blobs: [file], folder, slugPrefix });
+    }
+    if (isVideo) {
+        // Cap video size to keep Storage costs sane. Restaurant
+        // sizzle reels are typically 5-30 MB compressed; 80 MB is
+        // a generous ceiling.
+        if (file.size > 80 * 1024 * 1024) {
+            throw new Error('video too large (max 80 MB)');
+        }
+        const ext = (file.name.split('.').pop() || 'mp4').toLowerCase().replace(/[^a-z0-9]/g, '') || 'mp4';
+        const path = `${folder}/${slugPrefix || 'menu'}_${Date.now()}.${ext}`;
+        const pref = storageRef(storage, path);
+        await uploadBytes(pref, file);
+        return [await getDownloadURL(pref)];
+    }
+    throw new Error('Unsupported file type. Use PDF, image, or video.');
 }

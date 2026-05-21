@@ -19,6 +19,7 @@ import { toast } from '../toast';
 // Lazy because the hit-zone editor pulls in a fair amount of UI
 // state + per-zone rendering that most admin views don't need.
 const HitZoneEditor = lazy(() => import('./HitZoneEditor'));
+const DaypartEditor = lazy(() => import('./DaypartEditor'));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -287,6 +288,15 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const [imageUrls, setImageUrls] = useState(Array.isArray(initial?.imageUrls) ? initial.imageUrls : []);
     const [imageRotateSeconds, setImageRotateSeconds] = useState(Number(initial?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS);
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
+    const [dayparts, setDayparts] = useState(Array.isArray(initial?.dayparts) ? initial.dayparts : []);
+    const [promoStrip, setPromoStrip] = useState(initial?.promoStrip || {
+        enabled: false,
+        position: 'bottom',
+        textEn: '',
+        textEs: '',
+        style: 'sage',
+        speed: 0,
+    });
     const [hitZoneEditorOpen, setHitZoneEditorOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [saving, setSaving] = useState(false);
@@ -303,8 +313,11 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         const file = e.target.files?.[0];
         if (!file) return;
         e.target.value = '';  // allow re-picking same file
-        if (file.size > 30 * 1024 * 1024) {
-            toast(tx('File too large (max 30 MB).', 'Archivo muy grande (máx 30 MB).'), { kind: 'error' });
+        // 80 MB ceiling — fits restaurant sizzle reels (MP4, ~30-60 MB)
+        // and the largest PDF menus. Image-only uploads will rarely
+        // even approach this.
+        if (file.size > 80 * 1024 * 1024) {
+            toast(tx('File too large (max 80 MB).', 'Archivo muy grande (máx 80 MB).'), { kind: 'error' });
             return;
         }
         setUploading(true);
@@ -351,6 +364,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 label: label.trim() || finalId,
                 location,
                 mode,
+                promoStrip: promoStrip?.textEn || promoStrip?.textEs ? promoStrip : null,
             };
             if (mode === MODES.IMAGE) {
                 payload.imageUrls = imageUrls;
@@ -358,6 +372,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                     ? Math.max(3, Math.min(60, Number(imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS))
                     : null;
                 payload.imageHitZones = imageHitZones;
+                payload.dayparts = dayparts;
                 // Clear menu-mode fields on the saved doc to avoid stale data.
                 payload.layout = null;
                 payload.showPhotos = null;
@@ -373,6 +388,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.imageUrls = null;
                 payload.imageRotateSeconds = null;
                 payload.imageHitZones = null;
+                payload.dayparts = null;
             }
             await saveTvConfig({ tvId: finalId, payload, byName });
             toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
@@ -472,6 +488,97 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                         </div>
                     </div>
 
+                    {/* Promo / announcement strip — works in both modes */}
+                    <details className="border border-amber-200 rounded-lg overflow-hidden">
+                        <summary className="px-3 py-2 cursor-pointer bg-amber-50 text-[11px] font-bold text-amber-900 flex items-center gap-2 hover:bg-amber-100">
+                            <span>🎉 {tx('Promo / announcement strip', 'Anuncio')}</span>
+                            {promoStrip?.enabled && (promoStrip?.textEn || promoStrip?.textEs) && (
+                                <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-700 bg-emerald-100 px-1.5 py-0.5 rounded">
+                                    ✓ {tx('Active', 'Activo')}
+                                </span>
+                            )}
+                            <span className="ml-auto text-amber-700 text-[10px] italic">
+                                {tx('e.g. "Happy hour 3-5"', 'ej. "Happy hour 3-5"')}
+                            </span>
+                        </summary>
+                        <div className="p-3 space-y-2 bg-white">
+                            <label className="flex items-center gap-2">
+                                <input type="checkbox" checked={promoStrip?.enabled === true}
+                                    onChange={(e) => setPromoStrip(p => ({ ...p, enabled: e.target.checked }))}
+                                    className="w-4 h-4 accent-amber-600" />
+                                <span className="text-[12px] font-bold text-amber-800">
+                                    {tx('Show promo strip on this TV', 'Mostrar anuncio')}
+                                </span>
+                            </label>
+
+                            <div className="grid grid-cols-2 gap-2">
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Text (English)', 'Texto (EN)')}
+                                    </span>
+                                    <input type="text"
+                                        value={promoStrip?.textEn || ''}
+                                        onChange={(e) => setPromoStrip(p => ({ ...p, textEn: e.target.value }))}
+                                        placeholder="🎉 Happy hour 3-5pm: half off boba!"
+                                        maxLength={200}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white" />
+                                </label>
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Text (Español)', 'Texto (ES)')}
+                                    </span>
+                                    <input type="text"
+                                        value={promoStrip?.textEs || ''}
+                                        onChange={(e) => setPromoStrip(p => ({ ...p, textEs: e.target.value }))}
+                                        placeholder="🎉 Happy hour 3-5pm: ¡boba a mitad de precio!"
+                                        maxLength={200}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white" />
+                                </label>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Position', 'Posición')}
+                                    </span>
+                                    <select value={promoStrip?.position || 'bottom'}
+                                        onChange={(e) => setPromoStrip(p => ({ ...p, position: e.target.value }))}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
+                                        <option value="bottom">{tx('Bottom', 'Inferior')}</option>
+                                        <option value="top">{tx('Top', 'Superior')}</option>
+                                    </select>
+                                </label>
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Color', 'Color')}
+                                    </span>
+                                    <select value={promoStrip?.style || 'sage'}
+                                        onChange={(e) => setPromoStrip(p => ({ ...p, style: e.target.value }))}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
+                                        <option value="sage">🟢 DD Green</option>
+                                        <option value="red">🔴 Red</option>
+                                        <option value="amber">🟡 Amber</option>
+                                        <option value="sky">🔵 Blue</option>
+                                        <option value="dark">⚫ Dark</option>
+                                    </select>
+                                </label>
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-0.5">
+                                        {tx('Scroll speed', 'Velocidad')}
+                                    </span>
+                                    <select value={Number(promoStrip?.speed) || 0}
+                                        onChange={(e) => setPromoStrip(p => ({ ...p, speed: Number(e.target.value) }))}
+                                        className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white">
+                                        <option value="0">{tx('Static (no scroll)', 'Estático')}</option>
+                                        <option value="40">{tx('Slow', 'Lento')}</option>
+                                        <option value="60">{tx('Medium', 'Medio')}</option>
+                                        <option value="80">{tx('Fast', 'Rápido')}</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </div>
+                    </details>
+
                     {/* Mode picker (top-level: data menu vs image) */}
                     <div>
                         <span className="block text-[10px] font-bold uppercase tracking-wide text-dd-text-2 mb-1">
@@ -513,7 +620,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     }`}>
                                         {uploading ? tx('Uploading…', 'Subiendo…') : (imageUrls.length > 0 ? tx('Replace file', 'Reemplazar') : tx('Choose file', 'Elegir archivo'))}
                                         <input type="file"
-                                            accept="image/*,application/pdf"
+                                            accept="image/*,video/mp4,video/webm,video/quicktime,application/pdf"
                                             onChange={handleFilePick}
                                             disabled={uploading}
                                             className="hidden" />
@@ -580,6 +687,23 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     'El modo imagen muestra el archivo tal cual. Los tachados de 86 y cambios de precio NO se aplican aquí. Vuelve a subir cuando llegue un menú nuevo.',
                                 )}
                             </p>
+
+                            {/* ── Daypart scheduling ───────────────────
+                                Optional. When dayparts are configured,
+                                MenuDisplay picks the one covering the
+                                current hour and shows ITS imageUrls /
+                                hitZones (so lunch + dinner can be totally
+                                separate menus). Falls back to the top-level
+                                upload when no daypart matches the hour. */}
+                            <div className="border-2 border-sky-200 rounded-lg p-3 bg-white">
+                                <Suspense fallback={<div className="text-xs text-dd-text-2 italic py-2">Loading daypart editor…</div>}>
+                                    <DaypartEditor
+                                        dayparts={dayparts}
+                                        onChange={setDayparts}
+                                        slugPrefix={tvId || makeTvId(label, location)}
+                                        language={tx('en', 'es') === 'es' ? 'es' : 'en'} />
+                                </Suspense>
+                            </div>
                         </>
                     ) : (
                         <>
