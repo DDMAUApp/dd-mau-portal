@@ -57,8 +57,8 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
             </div>
             <p className="text-[11px] text-sky-700 mb-3 leading-snug">
                 {tx(
-                    'Each Fire TV Stick (or any kiosk browser) points at a URL with a TV ID. Each TV can pick its own location, layout, and shown categories. The "webster" and "maryland" IDs always work without a config doc — useful for first boot.',
-                    'Cada Fire TV (o navegador kiosko) apunta a una URL con un ID de TV. Cada una elige ubicación, layout y categorías. Los IDs "webster" y "maryland" funcionan sin config — útil para el primer arranque.',
+                    'Each Fire TV Stick (or any kiosk browser) points at a URL with a TV ID. The "webster" and "maryland" IDs work without any config (data-driven fallback) — but click "Override default" below to replace them with an uploaded PDF/JPEG menu or a custom layout.',
+                    'Cada Fire TV apunta a una URL con un ID. Los IDs "webster" y "maryland" funcionan sin config (datos por defecto) — pero usa "Personalizar" para reemplazarlos con un menú PDF/JPEG o un layout personalizado.',
                 )}
             </p>
 
@@ -67,13 +67,37 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
                 <div className="text-[10px] font-black uppercase tracking-widest text-sky-800 mb-1.5">
                     {tx('Default kiosk URLs', 'URLs por defecto')}
                 </div>
-                <div className="space-y-1">
-                    {['webster', 'maryland'].map(loc => (
-                        <KioskUrlRow key={loc}
-                            label={`${LOC_LABEL[loc]} (default)`}
-                            url={`${baseUrl}/?tv=${loc}`}
-                            tx={tx} />
-                    ))}
+                <div className="space-y-1.5">
+                    {['webster', 'maryland'].map(loc => {
+                        // Has admin already created a custom config that
+                        // overrides this default? If so, show the custom
+                        // row instead so the layout/mode it already has
+                        // is reflected (and Edit takes admin to that doc).
+                        const existing = configs.find(c => c.tvId === loc);
+                        if (existing) {
+                            return (
+                                <TvConfigRow key={loc}
+                                    cfg={{ ...existing, label: `${existing.label || LOC_LABEL[loc]} (default override)` }}
+                                    baseUrl={baseUrl}
+                                    onEdit={() => setEditing({ existing })}
+                                    tx={tx} />
+                            );
+                        }
+                        return (
+                            <div key={loc} className="space-y-0.5">
+                                <KioskUrlRow
+                                    label={`${LOC_LABEL[loc]} (default)`}
+                                    url={`${baseUrl}/?tv=${loc}`}
+                                    tx={tx} />
+                                <div className="pl-32">
+                                    <button onClick={() => setEditing({ presetForDefault: loc })}
+                                        className="text-[10px] font-bold text-sky-700 hover:underline">
+                                        ✏ {tx(`Override ${LOC_LABEL[loc]} default with a custom config (image / layout / categories)`, `Personalizar ${LOC_LABEL[loc]}`)}
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
             </div>
 
@@ -99,7 +123,22 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
 
             {editing && (
                 <EditTvConfigModal
-                    initial={editing === 'new' ? null : editing.existing}
+                    initial={
+                        editing === 'new' ? null
+                            : editing.existing ? editing.existing
+                            : editing.presetForDefault
+                                ? {
+                                    // Preset for "Override default" — pre-populate
+                                    // with the reserved-loc slug + image mode so the
+                                    // admin can drop the PDF and save.
+                                    tvId: editing.presetForDefault,
+                                    label: LOC_LABEL[editing.presetForDefault] || editing.presetForDefault,
+                                    location: editing.presetForDefault,
+                                    mode: MODES.IMAGE,
+                                    _isPresetForDefault: true,
+                                }
+                            : null
+                    }
                     baseUrl={baseUrl}
                     onClose={() => setEditing(null)}
                     byName={byName}
@@ -184,7 +223,18 @@ function KioskUrlRow({ url, label, tx }) {
 }
 
 function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
+    // Three modes for the modal:
+    //   • brand-new   — initial null. Both tvId + label editable, no Delete.
+    //   • preset-for-default — initial.tvId is webster/maryland and the doc
+    //     doesn't exist yet. tvId locked (we WANT the slug to be exactly
+    //     webster/maryland to override the default), no Delete (nothing
+    //     to delete), title says "Override default".
+    //   • editing existing — initial is the real doc. tvId locked, Delete
+    //     button shown.
+    const isPreset = !!initial?._isPresetForDefault;
+    const docExists = !!initial && !isPreset;
     const isNew = !initial;
+    const tvIdLocked = !isNew;     // both preset + editing-existing lock the slug
     const [tvId, setTvId] = useState(initial?.tvId || '');
     const [label, setLabel] = useState(initial?.label || '');
     const [location, setLocation] = useState(initial?.location || 'webster');
@@ -247,10 +297,12 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             toast(tx('TV ID required', 'ID de TV requerido'), { kind: 'error' });
             return;
         }
-        if (finalId === 'webster' || finalId === 'maryland') {
-            toast(tx('"webster" and "maryland" are reserved IDs. Pick a unique slug (e.g. webster-foh).', '"webster" y "maryland" son IDs reservados.'), { kind: 'error' });
-            return;
-        }
+        // Note: 'webster' and 'maryland' used to be reserved here, but
+        // that prevented admin from overriding the synthetic defaults
+        // (e.g. swapping the Webster default to image mode with an
+        // uploaded PDF). Removed 2026-05-20 per Andrew's request when
+        // /?tv=webster was rendering the data-driven fallback instead
+        // of his designer PDF.
         if (mode === MODES.IMAGE && imageUrls.length === 0) {
             toast(tx('Upload at least one menu image first.', 'Sube al menos una imagen del menú.'), { kind: 'error' });
             return;
@@ -324,7 +376,11 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 <header className="bg-sky-600 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
                     <div>
                         <div className="text-base font-black">
-                            {isNew ? tx('Add TV display', 'Agregar TV') : tx('Edit TV display', 'Editar TV')}
+                            {isPreset
+                                ? tx(`Override ${LOC_LABEL[initial.tvId] || initial.tvId} default`, `Personalizar ${LOC_LABEL[initial.tvId] || initial.tvId}`)
+                                : isNew
+                                    ? tx('Add TV display', 'Agregar TV')
+                                    : tx('Edit TV display', 'Editar TV')}
                         </div>
                         {!isNew && <div className="text-[11px] opacity-90 font-mono">#{initial.tvId}</div>}
                     </div>
@@ -352,7 +408,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                             </span>
                             <input type="text" value={tvId}
                                 onChange={(e) => setTvId(e.target.value)}
-                                disabled={!isNew}
+                                disabled={tvIdLocked}
                                 placeholder={makeTvId(label, location)}
                                 className="w-full px-2 py-1.5 rounded border border-dd-line text-sm bg-white font-mono disabled:bg-stone-50 disabled:text-stone-500" />
                         </label>
@@ -588,7 +644,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                 <span className="text-[10px] font-black uppercase tracking-widest text-sky-800">
                                     {tx('Kiosk URL for this TV', 'URL del kiosko')}
                                 </span>
-                                {!isNew && (
+                                {(docExists || isPreset) && (
                                     <a href={previewUrl} target="_blank" rel="noopener noreferrer"
                                         className="px-2 py-0.5 rounded bg-white border border-sky-300 text-sky-700 text-[10px] font-bold hover:bg-sky-100 whitespace-nowrap">
                                         👁 {tx('Preview', 'Vista previa')}
@@ -601,12 +657,17 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     {tx('Save first to preview this TV in a new tab.', 'Guarda primero para previsualizar.')}
                                 </p>
                             )}
+                            {isPreset && (
+                                <p className="text-[10px] text-sky-700/70 italic mt-1">
+                                    {tx('This will replace the default kiosk URL once you Save.', 'Reemplazará la URL por defecto al guardar.')}
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>
 
                 <footer className="border-t border-dd-line p-3 flex gap-2 flex-shrink-0">
-                    {!isNew && (
+                    {docExists && (
                         <button onClick={remove} disabled={deleting}
                             className="px-3 py-2 rounded-lg bg-white border border-red-300 text-red-700 text-xs font-bold hover:bg-red-50 disabled:opacity-40">
                             {deleting ? tx('Deleting…', 'Borrando…') : tx('Delete', 'Eliminar')}
