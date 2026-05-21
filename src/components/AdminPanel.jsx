@@ -252,6 +252,18 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
     // forgets about it. Andrew (2026-05-20): "yes" to "Want me to put
     // this as a help blurb inside the Admin panel's Brother section".
     const [showSetupGuide, setShowSetupGuide] = useState(false);
+    // Andrew 2026-05-21 — "the proxy is off on the printer, can we
+    // just use the ip and bridge straight into the printer?". Probe
+    // tests 3 things against the Brother's IP from the browser:
+    // basic reach, CORS-mode GET, IPP POST. The output tells us
+    // whether direct-IP browser printing is feasible (Brother
+    // accepts CORS) or not (Same-Origin Policy blocks).
+    const [probing, setProbing] = useState(false);
+    const [probeResult, setProbeResult] = useState(null);
+    // The Brother section doesn't normally need an IP (it goes
+    // through AirPrint). For the probe we need one, so we expose
+    // a small input below.
+    const [probeIp, setProbeIp] = useState('');
 
     const isBrother = typeDraft === 'brother_ql';
 
@@ -320,6 +332,98 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
         } finally {
             setTesting(false);
         }
+    };
+
+    // Brother direct-IP probe — see if we can talk to the Brother
+    // from the browser without going through AirPrint. Tests three
+    // things and reports back, all read-only / no print attempts.
+    // If ALL three succeed the path is "we can build direct-IP".
+    // If any fail with a CORS error, the browser is blocking — we
+    // can't direct-IP and have to stick with AirPrint or Brother's
+    // own SDK app.
+    const runProbe = async () => {
+        if (probing) return;
+        const ip = (probeIp || ipDraft || cfg?.ip || '').trim();
+        if (!ip) {
+            setProbeResult('No IP set. Type the Brother\'s IP in the field below first.');
+            return;
+        }
+        setProbing(true);
+        setProbeResult('Running…');
+        const lines = [`Probing http://${ip}/ from ${window.location.origin}`, ''];
+
+        // Test 1 — basic reachability. no-cors mode tells the
+        // browser "don't enforce CORS, just see if the request
+        // round-trips". The response is opaque (we can't read
+        // status or body) but a non-network error means the
+        // Brother answered.
+        try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 6000);
+            await fetch(`http://${ip}/`, { method: 'GET', mode: 'no-cors', signal: ctrl.signal });
+            clearTimeout(to);
+            lines.push('✓ TEST 1 — basic reach (no-cors): printer answered');
+            lines.push('   (response is opaque to JS — that\'s normal)');
+        } catch (e) {
+            lines.push(`✗ TEST 1 — basic reach failed: ${e.name} ${e.message}`);
+            lines.push('   → Possible causes: wrong IP, printer offline, iPad on different Wi-Fi.');
+        }
+
+        // Test 2 — CORS-mode GET. The browser will refuse to give
+        // us the response unless the printer returns proper CORS
+        // headers (Access-Control-Allow-Origin etc.). If this
+        // succeeds, the printer is willing to talk to a browser
+        // app — which is what we'd need for direct-IP print.
+        try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 6000);
+            const r = await fetch(`http://${ip}/`, { method: 'GET', mode: 'cors', signal: ctrl.signal });
+            clearTimeout(to);
+            const acao = r.headers.get('Access-Control-Allow-Origin') || '(none)';
+            lines.push(`✓ TEST 2 — CORS GET succeeded: status ${r.status}`);
+            lines.push(`   Access-Control-Allow-Origin = ${acao}`);
+            lines.push('   → Printer accepts browser requests.');
+        } catch (e) {
+            lines.push(`✗ TEST 2 — CORS GET blocked: ${e.message || e.name}`);
+            lines.push('   → Browser refused the response (no CORS headers).');
+        }
+
+        // Test 3 — try POSTing to the IPP endpoint (path used by
+        // AirPrint under the hood). Empty body just to see if the
+        // route responds at all. If this succeeds with CORS, we can
+        // build a real IPP client in the browser.
+        try {
+            const ctrl = new AbortController();
+            const to = setTimeout(() => ctrl.abort(), 6000);
+            const r = await fetch(`http://${ip}/ipp/printer`, {
+                method: 'POST',
+                mode: 'cors',
+                headers: { 'Content-Type': 'application/ipp' },
+                body: new Uint8Array([]),
+                signal: ctrl.signal,
+            });
+            clearTimeout(to);
+            lines.push(`✓ TEST 3 — IPP POST succeeded: status ${r.status}`);
+            lines.push('   → Direct-IP print to the Brother is feasible.');
+        } catch (e) {
+            lines.push(`✗ TEST 3 — IPP POST blocked: ${e.message || e.name}`);
+            lines.push('   → No CORS-permissive IPP. Browser-direct path is not available.');
+        }
+
+        lines.push('');
+        lines.push('— Summary —');
+        const allOk = lines.filter(l => l.startsWith('✓')).length === 3;
+        if (allOk) {
+            lines.push('All three tests passed. I can build a direct-IP path');
+            lines.push('similar to the Epson (no AirPrint, no OS dialog).');
+        } else {
+            lines.push('Some tests failed. Browser-direct to Brother is not');
+            lines.push('viable on this firmware. Options: install Brother');
+            lines.push('iPrint&Scan and use the Web Share API path, or fix');
+            lines.push('the AirPrint paper-size issue at the printer level.');
+        }
+        setProbeResult(lines.join('\n'));
+        setProbing(false);
     };
 
     if (loading) {
@@ -565,6 +669,59 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                                     {tx(
                                         'Why no IP? The Epson talks straight to its IP over Wi-Fi (HTTP/SOAP). The Brother uses AirPrint via Bonjour — the OS does discovery and routing, the app just hands off the print job.',
                                         '¿Por qué sin IP? La Epson habla directo a su IP por Wi-Fi (HTTP/SOAP). La Brother usa AirPrint vía Bonjour — el sistema operativo hace el descubrimiento y el ruteo, la app solo entrega el trabajo de impresión.',
+                                    )}
+                                </p>
+                            </div>
+                        </details>
+
+                        {/* Direct-IP probe — Andrew 2026-05-21: "can
+                            we just use the ip and bridge straight
+                            into the printer?". Tests if the Brother
+                            accepts CORS-permissive HTTP from a
+                            browser. If all 3 tests pass, direct-IP
+                            print is feasible like the Epson. If any
+                            fail, AirPrint or iPrint&Scan is the
+                            only browser-side option. Read-only — no
+                            print attempts. */}
+                        <details className="text-[11px] bg-white/80 border-2 border-purple-200 rounded-md">
+                            <summary className="cursor-pointer px-2.5 py-2 font-bold text-purple-800 select-none hover:bg-purple-50 rounded-md">
+                                🔬 {tx('Try direct IP (skip AirPrint)', 'Probar IP directa (saltar AirPrint)')}
+                            </summary>
+                            <div className="px-3 pb-3 pt-1 space-y-2 text-purple-900/90 leading-snug">
+                                <p className="text-[10.5px] italic text-purple-700">
+                                    {tx(
+                                        'Tests whether the Brother accepts direct HTTP from the browser (3 read-only requests, no print attempts). If yes, I can build a direct-IP print path like the Epson. If no, browser is blocking us — AirPrint is the only browser-side route.',
+                                        'Prueba si la Brother acepta HTTP directo del navegador (3 peticiones de solo-lectura, sin impresión). Si sí, puedo construir una ruta IP directa como la Epson.',
+                                    )}
+                                </p>
+                                <label className="block">
+                                    <span className="block text-[10px] font-bold uppercase tracking-wide text-purple-800 mb-0.5">
+                                        {tx('Brother IP', 'IP de Brother')}
+                                    </span>
+                                    <input
+                                        type="text"
+                                        value={probeIp}
+                                        onChange={(e) => setProbeIp(e.target.value)}
+                                        placeholder="192.168.1.42"
+                                        inputMode="decimal"
+                                        className="w-full px-2 py-1.5 rounded border border-purple-200 text-sm bg-white font-mono"
+                                    />
+                                </label>
+                                <button
+                                    onClick={runProbe}
+                                    disabled={probing || !(probeIp || ipDraft || cfg?.ip)}
+                                    className="w-full py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 disabled:opacity-40">
+                                    {probing ? tx('Probing…', 'Probando…') : '🔬 ' + tx('Run direct-IP probe', 'Ejecutar prueba')}
+                                </button>
+                                {probeResult && (
+                                    <pre className="text-[10px] text-purple-900 bg-white border border-purple-200 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap font-mono leading-tight">
+                                        {probeResult}
+                                    </pre>
+                                )}
+                                <p className="text-[10px] italic text-purple-600 border-t border-purple-200 pt-2">
+                                    {tx(
+                                        'Make sure the Brother\'s IP is filled in above before probing. Find the IP on the Brother\'s LCD: Menu → WLAN → TCP/IP → IP Address.',
+                                        'Llena la IP de la Brother arriba antes de probar. Encuéntrala en la LCD de la Brother: Menu → WLAN → TCP/IP → IP Address.',
                                     )}
                                 </p>
                             </div>
