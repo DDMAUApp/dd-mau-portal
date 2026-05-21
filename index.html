@@ -8,6 +8,20 @@
     <meta name="apple-mobile-web-app-title" content="DD Mau">
     <meta name="theme-color" content="#255a37">
     <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>">
+    <!-- Andrew 2026-05-21: warm up the connections to Firebase before
+         the first onSnapshot fires. On restaurant Wi-Fi, DNS+TLS
+         handshake to a brand-new host adds 100-300 ms latency on the
+         very first request. Preconnect runs those handshakes during
+         HTML parse so the first Firestore read lands on an already-
+         open TLS session. crossorigin attr is required for the
+         handshake to be reusable by fetch/XHR (which is what the
+         Firebase SDK uses). -->
+    <link rel="preconnect" href="https://firestore.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://firebasestorage.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fcm.googleapis.com" crossorigin>
+    <link rel="preconnect" href="https://fcmregistrations.googleapis.com" crossorigin>
+    <link rel="dns-prefetch" href="https://identitytoolkit.googleapis.com">
+    <link rel="dns-prefetch" href="https://firebaseinstallations.googleapis.com">
     <title>DD Mau Staff Portal</title>
 </head>
 <body>

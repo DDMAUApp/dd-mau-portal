@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, lazy, Suspense, Component } from 'react';
+import { useState, useEffect, useRef, useMemo, lazy, memo, Suspense, Component } from 'react';
 import { db } from './firebase';
 import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } from 'firebase/firestore';
 import { onSnapshot } from 'firebase/firestore';
@@ -27,21 +27,30 @@ import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
 // Components — lazy loaded (only when tab is active)
 const TrainingHub = lazy(() => import('./components/TrainingHub'));
-const Operations = lazy(() => import('./components/Operations'));
+// memo-wrap the heaviest routes — Andrew 2026-05-21: "the site is
+// still very glitchy". When a staff member's lastSeen ticks (which
+// fires the /config/staff onSnapshot), App.jsx re-renders. Without
+// memo each heavy route's function body would run again on every
+// such tick — its 12-16 hooks each iterating deps, even though
+// nothing the route cares about changed. memo here uses the default
+// shallow prop compare; the access-gate useMemo block further down
+// stabilizes the boolean props so shallow compare actually catches
+// the no-op cases.
+const Operations = lazy(() => import('./components/Operations').then(m => ({ default: memo(m.default) })));
 const MenuReference = lazy(() => import('./components/MenuReference'));
 const DateStickerPrinter = lazy(() => import('./components/DateStickerPrinter'));
-const Schedule = lazy(() => import('./components/Schedule'));
+const Schedule = lazy(() => import('./components/Schedule').then(m => ({ default: memo(m.default) })));
 const Recipes = lazy(() => import('./components/Recipes'));
 const LaborDashboard = lazy(() => import('./components/LaborDashboard'));
 const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard'));
 const CateringOrder = lazy(() => import('./components/CateringOrder'));
 const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest'));
-const AdminPanel = lazy(() => import('./components/AdminPanel'));
+const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: memo(m.default) })));
 const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment'));
 const AiAssistant = lazy(() => import('./components/AiAssistant'));
 const TardinessTracker = lazy(() => import('./components/TardinessTracker'));
 const ShiftHandoff = lazy(() => import('./components/ShiftHandoff'));
-const Onboarding = lazy(() => import('./components/Onboarding'));
+const Onboarding = lazy(() => import('./components/Onboarding').then(m => ({ default: memo(m.default) })));
 const ChatCenter = lazy(() => import('./components/ChatCenter'));
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
@@ -616,33 +625,53 @@ export default function App() {
             setActiveTab("home");
         }
     }, [staffName, staffList]);
-    const staffIsAdmin = isAdmin(staffName, staffList);
-    const currentStaffRecord = (staffList || []).find(s => s.name === staffName);
+    // Andrew 2026-05-21: "the site is still very glitchy". Wrapped each
+    // access-gate derivation in useMemo so the BOOLEAN results stabilize
+    // across staffList re-emits (lastSeen ticks etc.). The useMemo body
+    // still re-runs every staffList change (object reference differs),
+    // but when the resulting boolean is the same React's Object.is
+    // dependency check on downstream useEffect/useMemo skips them. Cuts
+    // a large cascade of "no-op" effects that fired on every login/
+    // sweep update.
+    //
+    // CRITICAL: the `isManager` const MUST stay declared BEFORE the
+    // useEffect below that references it in its dep array. TDZ
+    // ("Cannot access 'isManager' before initialization") broke the
+    // whole app in May 2026 — leave the ordering as-is.
+    const staffIsAdmin = useMemo(
+        () => isAdmin(staffName, staffList),
+        [staffName, staffList],
+    );
+    const currentStaffRecord = useMemo(
+        () => (staffList || []).find(s => s.name === staffName) || null,
+        [staffList, staffName],
+    );
     // Recipes access — opt-OUT model. Default: every staff has access.
     // Admin can flip recipesAccess to FALSE to revoke a specific person.
-    // (Schema migration handled by the "Grant recipes to all" button in
-    // BulkTag for staff records that pre-date this policy and still have
-    // the field unset or false.)
-    const hasRecipesAccess = staffIsAdmin || !currentStaffRecord || currentStaffRecord.recipesAccess !== false;
-    // Operations access — opt-IN model. Default: NO access. Admin must
-    // toggle opsAccess to true per staff member who needs Operations.
-    const hasOpsAccess = staffIsAdmin || (currentStaffRecord && currentStaffRecord.opsAccess === true);
-    // Manager-or-admin gate for HR-style features (tardiness, shift handoff).
-    // "Manager" in role title catches Manager / Asst Manager / Kitchen Manager
-    // / Asst Kitchen Manager. Shift Lead is intentionally NOT included —
-    // those are leads, not managers, and tardy authority sits with managers.
-    //
-    // CRITICAL: this `const isManager` MUST be declared BEFORE the useEffect
-    // below that references it in its dependency array. The dep array is
-    // evaluated on every render — referencing a `const` before its
-    // declaration triggers a TDZ "Cannot access 'isManager' before
-    // initialization" error and BREAKS THE WHOLE APP. (This was the cause
-    // of the May 2026 production outage.)
-    const isManager = staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || ''));
-    // Onboarding access — tighter than isAdmin. Holds PII (SSN, W4, DL etc).
-    // Defaults true for owners (id 40/41) only; everyone else needs the
-    // explicit canViewOnboarding=true flag in their staff record.
-    const hasOnboardingAccess = canViewOnboarding(currentStaffRecord);
+    const hasRecipesAccess = useMemo(
+        () => staffIsAdmin || !currentStaffRecord || currentStaffRecord.recipesAccess !== false,
+        [staffIsAdmin, currentStaffRecord],
+    );
+    // Operations access — opt-IN model. Default: NO access.
+    const hasOpsAccess = useMemo(
+        () => staffIsAdmin || (currentStaffRecord && currentStaffRecord.opsAccess === true),
+        [staffIsAdmin, currentStaffRecord],
+    );
+    // Manager-or-admin gate for HR-style features (tardiness, shift
+    // handoff). Catches Manager / Asst Manager / Kitchen Manager / Asst
+    // Kitchen Manager via role title. Shift Lead is intentionally NOT
+    // included — tardy authority sits with managers.
+    const isManager = useMemo(
+        () => staffIsAdmin || (currentStaffRecord && /manager/i.test(currentStaffRecord.role || '')),
+        [staffIsAdmin, currentStaffRecord],
+    );
+    // Onboarding access — tighter than isAdmin. Holds PII (SSN, W4, DL).
+    // Defaults true for owners (id 40/41); everyone else needs the
+    // explicit canViewOnboarding=true flag.
+    const hasOnboardingAccess = useMemo(
+        () => canViewOnboarding(currentStaffRecord),
+        [currentStaffRecord],
+    );
     // Guard: if a non-admin restored a session that landed on admin/labor,
     // bounce them back to Home. Otherwise the tab gate hides the content
     // and they see a blank screen + a sidebar item highlighted that they
