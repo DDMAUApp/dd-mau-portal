@@ -247,6 +247,11 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
     const [enabled, setEnabled] = useState(true);
     const [saving, setSaving] = useState(false);
     const [testing, setTesting] = useState(false);
+    // Brother-only — expandable "first-time setup" guide. Collapsed by
+    // default; admin pops it open the day the Brother arrives, then
+    // forgets about it. Andrew (2026-05-20): "yes" to "Want me to put
+    // this as a help blurb inside the Admin panel's Brother section".
+    const [showSetupGuide, setShowSetupGuide] = useState(false);
 
     const isBrother = typeDraft === 'brother_ql';
 
@@ -417,7 +422,7 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                             <div className="font-bold text-purple-800 mb-0.5">
                                 {tx('Common DK rolls', 'Rollos DK comunes')}:
                             </div>
-                            <div>DK-2205 (62 × cut length) · DK-1201 (29 × 90) · DK-1247 (103 × 164)</div>
+                            <div>DK-2205 (62 × cut length) · DK-1201 (29 × 90) · DK-1247 (103 × 164) · DK-4205 (62 continuous, removable)</div>
                             <div className="mt-1 italic text-purple-600">
                                 {tx(
                                     'Brother goes through the OS print dialog. Tap "Test print" → pick the Brother in AirPrint → confirm.',
@@ -425,6 +430,145 @@ function PrinterConfigRow({ location, slot = 'kitchen', locationLabel, tx, byNam
                                 )}
                             </div>
                         </div>
+
+                        {/* First-time setup guide — collapsible. The
+                            day the Brother arrives, the admin opens
+                            this once, runs through the 3 steps, never
+                            opens it again. Lives here (next to the
+                            Type selector) so it's where you'd look
+                            after picking "Brother QL". */}
+                        <details
+                            open={showSetupGuide}
+                            onToggle={(e) => setShowSetupGuide(e.currentTarget.open)}
+                            className="text-[11px] bg-white/80 border-2 border-purple-200 rounded-md">
+                            <summary className="cursor-pointer px-2.5 py-2 font-bold text-purple-800 select-none hover:bg-purple-50 rounded-md">
+                                📖 {tx('First-time setup guide', 'Guía de configuración inicial')}
+                            </summary>
+                            <div className="px-3 pb-3 pt-1 space-y-3 text-purple-900/90 leading-snug">
+                                <p className="text-[10.5px] italic text-purple-700">
+                                    {tx(
+                                        'Brother goes through the OS print dialog (AirPrint), so it doesn\'t need an IP like the Epson does. Three steps the day it arrives:',
+                                        'Brother imprime por AirPrint del sistema operativo, no necesita IP como la Epson. Tres pasos el día que llegue:',
+                                    )}
+                                </p>
+
+                                {/* Step 1 — Wi-Fi */}
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">
+                                        1. {tx('Get the Brother on restaurant Wi-Fi', 'Conecta la Brother al Wi-Fi del restaurante')}
+                                    </div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li>
+                                            <span className="font-bold">{tx('WPS (fastest)', 'WPS (lo más rápido)')}:</span>{' '}
+                                            {tx(
+                                                'press WPS on the router, then hold the Wi-Fi button on the Brother for ~3 sec. Wi-Fi LED goes solid = connected.',
+                                                'presiona WPS en el router, luego mantén el botón Wi-Fi de la Brother ~3 seg. LED Wi-Fi fijo = conectado.',
+                                            )}
+                                        </li>
+                                        <li>
+                                            <span className="font-bold">{tx('Brother iPrint&Scan app', 'App Brother iPrint&Scan')}:</span>{' '}
+                                            {tx(
+                                                'install on the iPad, tap Add Printer, follow the wizard to push Wi-Fi creds.',
+                                                'instálala en el iPad, toca Agregar impresora, sigue el asistente para pasarle las credenciales Wi-Fi.',
+                                            )}
+                                        </li>
+                                        <li>
+                                            <span className="font-bold">{tx('USB to laptop', 'USB a la laptop')}:</span>{' '}
+                                            {tx(
+                                                'plug into a Mac/PC, install drivers from support.brother.com, then use Printer Setting Tool → Communication Settings to switch USB → Wi-Fi.',
+                                                'conéctala a la Mac/PC, instala los drivers de support.brother.com, luego usa Printer Setting Tool → Communication Settings para pasar de USB a Wi-Fi.',
+                                            )}
+                                        </li>
+                                    </ul>
+                                </div>
+
+                                {/* Step 2 — AirPrint */}
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">
+                                        2. {tx('Confirm AirPrint sees it', 'Confirma que AirPrint la detecta')}
+                                    </div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li>{tx(
+                                            'On the iPad, open any app, hit Print — the Brother should be in the printer list.',
+                                            'En el iPad, abre cualquier app y toca Imprimir — la Brother debe aparecer en la lista.',
+                                        )}</li>
+                                        <li>{tx(
+                                            'If not visible: wait 30-60 sec (Bonjour discovery is slow at first), confirm the iPad is on the same Wi-Fi (NOT a guest network), turn off "client/AP isolation" on the router if enabled.',
+                                            'Si no aparece: espera 30-60 seg, confirma que el iPad esté en la misma Wi-Fi (no de invitados), apaga "aislamiento de cliente/AP" en el router si está activado.',
+                                        )}</li>
+                                    </ul>
+                                </div>
+
+                                {/* Step 3 — App config */}
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">
+                                        3. {tx('Save the printer here', 'Guarda la impresora aquí')}
+                                    </div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li>{tx(
+                                            'Type = Brother QL (already picked above).',
+                                            'Tipo = Brother QL (ya seleccionado arriba).',
+                                        )}</li>
+                                        <li>{tx(
+                                            'Name = anything ("Webster Brother" is fine).',
+                                            'Nombre = lo que quieras ("Webster Brother" está bien).',
+                                        )}</li>
+                                        <li>{tx(
+                                            'Label width = 62 mm (DK-4205 paper width). Height = doesn\'t really matter — the Small/Medium/Large tabs override it at print time.',
+                                            'Ancho = 62 mm (ancho del papel DK-4205). Alto = casi no importa — las pestañas Small/Medium/Large lo sobrescriben al imprimir.',
+                                        )}</li>
+                                        <li>{tx(
+                                            'Toggle Enabled ON, hit Save, then hit Test print → OS print dialog opens → pick the Brother in AirPrint → confirm.',
+                                            'Activa Enabled, toca Guardar, luego Probar → se abre el diálogo del sistema → elige la Brother en AirPrint → confirma.',
+                                        )}</li>
+                                    </ul>
+                                </div>
+
+                                {/* Troubleshooting */}
+                                <div>
+                                    <div className="font-black text-purple-900 mb-1">
+                                        🔧 {tx('Troubleshooting', 'Problemas comunes')}
+                                    </div>
+                                    <ul className="space-y-1 pl-4 list-disc marker:text-purple-400">
+                                        <li>
+                                            <span className="font-bold">{tx('Not in AirPrint list', 'No aparece en AirPrint')}:</span>{' '}
+                                            {tx(
+                                                'iPad on wrong Wi-Fi, or router has client isolation on.',
+                                                'iPad en Wi-Fi equivocada, o el router tiene aislamiento de cliente activado.',
+                                            )}
+                                        </li>
+                                        <li>
+                                            <span className="font-bold">{tx('Job hangs', 'El trabajo se cuelga')}:</span>{' '}
+                                            {tx(
+                                                'open Brother iPrint&Scan to check status — usually paper jam or empty roll.',
+                                                'abre Brother iPrint&Scan para ver el estado — normalmente atasco de papel o rollo vacío.',
+                                            )}
+                                        </li>
+                                        <li>
+                                            <span className="font-bold">{tx('Label prints sideways', 'La etiqueta sale de lado')}:</span>{' '}
+                                            {tx(
+                                                'Printer Setting Tool → Layout → set to Portrait.',
+                                                'Printer Setting Tool → Layout → ponlo en Vertical.',
+                                            )}
+                                        </li>
+                                        <li>
+                                            <span className="font-bold">{tx('Wrong cut length', 'Largo de corte incorrecto')}:</span>{' '}
+                                            {tx(
+                                                'DK-4205 is continuous; the Small/Medium/Large tab in the print modal sets the cut. Small = 25mm, Medium = 38mm, Large = 62mm.',
+                                                'DK-4205 es continuo; la pestaña Small/Medium/Large fija el corte. Small = 25mm, Medium = 38mm, Large = 62mm.',
+                                            )}
+                                        </li>
+                                    </ul>
+                                </div>
+
+                                <p className="text-[10px] italic text-purple-600 border-t border-purple-200 pt-2">
+                                    {tx(
+                                        'Why no IP? The Epson talks straight to its IP over Wi-Fi (HTTP/SOAP). The Brother uses AirPrint via Bonjour — the OS does discovery and routing, the app just hands off the print job.',
+                                        '¿Por qué sin IP? La Epson habla directo a su IP por Wi-Fi (HTTP/SOAP). La Brother usa AirPrint vía Bonjour — el sistema operativo hace el descubrimiento y el ruteo, la app solo entrega el trabajo de impresión.',
+                                    )}
+                                </p>
+                            </div>
+                        </details>
                     </>
                 )}
 
