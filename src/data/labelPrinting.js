@@ -883,6 +883,300 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFo
 </script></body></html>`;
 }
 
+// ── Brother PDF renderer ──────────────────────────────────────
+// Andrew 2026-05-21: AirPrint on iOS was ignoring the HTML doc's
+// `@page { size: 62mm Hmm; }` rule and defaulting to Letter (8.5×11)
+// — the preview showed an 8.5×11 page with the label tiny in a
+// corner. Switched the Brother path from "render HTML + window.
+// print()" to "render a PDF with the page size baked into the PDF
+// MediaBox + open in iframe + window.print()". PDF page size lives
+// in the file header, not in CSS, so AirPrint can't reflow it.
+//
+// pdf-lib is already in deps (used by the onboarding fillable-PDF
+// flow). Dynamic-import keeps it out of the main bundle.
+async function buildBrotherPrintPdfBlob({ widthMm, heightMm, payload, copies = 1, kind = 'prep' }) {
+    const { PDFDocument, StandardFonts } = await import('pdf-lib');
+    const w = Math.max(20, Math.min(200, Number(widthMm) || DEFAULT_BROTHER_LABEL_WIDTH_MM));
+    const h = Math.max(20, Math.min(300, Number(heightMm) || DEFAULT_BROTHER_LABEL_HEIGHT_MM));
+    const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+    const mmToPt = (mm) => mm * (72 / 25.4);
+    const pageWidth = mmToPt(w);
+    const pageHeight = mmToPt(h);
+    const compact = h < 35;
+
+    const pdf = await PDFDocument.create();
+    const fontBold = await pdf.embedFont(StandardFonts.HelveticaBold);
+    const fontReg = await pdf.embedFont(StandardFonts.Helvetica);
+    const fontItalic = await pdf.embedFont(StandardFonts.HelveticaOblique);
+
+    for (let i = 0; i < c; i++) {
+        const page = pdf.addPage([pageWidth, pageHeight]);
+        if (kind === 'freetext') {
+            renderFreeTextOnPdfPage(page, payload, { fontBold, fontReg }, w, h, compact);
+        } else {
+            renderPrepLabelOnPdfPage(page, payload, { fontBold, fontReg, fontItalic }, w, h, compact);
+        }
+    }
+
+    const bytes = await pdf.save();
+    return new Blob([bytes], { type: 'application/pdf' });
+}
+
+// Render a prep-label payload onto a single PDF page. Layout
+// mirrors the HTML renderer (date HUGE, title, meta, allergens,
+// ingredients, notes, footer) so what came out before still comes
+// out — just with a properly-sized PDF page instead of an 8.5×11
+// page with the label rendered in one corner.
+//
+// PDF coords are bottom-up (0,0 at bottom-left) — we track a
+// "drawing cursor" `y` that starts at the top and decreases as we
+// stack lines downward.
+function renderPrepLabelOnPdfPage(page, payload, fonts, widthMm, heightMm, compact) {
+    const { fontBold, fontReg, fontItalic } = fonts;
+    const mmToPt = (mm) => mm * (72 / 25.4);
+    const pageW = mmToPt(widthMm);
+    const pageH = mmToPt(heightMm);
+    const padding = mmToPt(Math.min(2, widthMm * 0.04));
+    let y = pageH - padding;
+
+    const drawCentered = (text, font, fontSize) => {
+        const tw = font.widthOfTextAtSize(text, fontSize);
+        page.drawText(text, {
+            x: Math.max(padding, (pageW - tw) / 2),
+            y: y - fontSize,
+            size: fontSize,
+            font,
+        });
+        y -= fontSize + mmToPt(0.6);
+    };
+    const drawLeft = (text, font, fontSize) => {
+        page.drawText(text, {
+            x: padding,
+            y: y - fontSize,
+            size: fontSize,
+            font,
+        });
+        y -= fontSize + mmToPt(0.5);
+    };
+
+    // Date label (PREPPED) — small caps line above the big date.
+    if (payload.prepDateLabel) {
+        const size = compact ? mmToPt(heightMm * 0.07) : mmToPt(widthMm * 0.08);
+        drawCentered(String(payload.prepDateLabel).toUpperCase(), fontBold, size);
+    }
+    // Date number — the HUGE focal element.
+    if (payload.prepDateNumber) {
+        const size = compact ? mmToPt(heightMm * 0.30) : mmToPt(widthMm * 0.26);
+        drawCentered(payload.prepDateNumber, fontBold, size);
+    } else if (payload.prepDateBig) {
+        const size = compact ? mmToPt(heightMm * 0.22) : mmToPt(widthMm * 0.16);
+        drawCentered(payload.prepDateBig, fontBold, size);
+    }
+    if (payload.prepTimeBig) {
+        const size = compact ? mmToPt(heightMm * 0.09) : mmToPt(widthMm * 0.09);
+        drawCentered(payload.prepTimeBig, fontReg, size);
+    }
+
+    // Divider line — thin dashed-look (pdf-lib draws a solid line;
+    // close enough to the HTML dashed style, this just visually
+    // separates date from title).
+    page.drawLine({
+        start: { x: padding, y },
+        end: { x: pageW - padding, y },
+        thickness: 0.5,
+    });
+    y -= mmToPt(1.5);
+
+    // Title — item name, centered + bold.
+    if (Array.isArray(payload.titleLines) && payload.titleLines.length > 0) {
+        const size = compact ? mmToPt(heightMm * 0.17) : mmToPt(widthMm * 0.09);
+        for (const line of payload.titleLines) {
+            if (!line) continue;
+            drawCentered(String(line), fontBold, size);
+        }
+        y -= mmToPt(0.5);
+    }
+
+    // Meta lines — use-by, by, location.
+    if (Array.isArray(payload.metaLines) && payload.metaLines.length > 0) {
+        const size = compact ? mmToPt(heightMm * 0.09) : mmToPt(widthMm * 0.055);
+        for (const line of payload.metaLines) {
+            if (!line) continue;
+            drawLeft(String(line), fontReg, size);
+        }
+    }
+    // Allergens — bold callout.
+    if (Array.isArray(payload.allergens) && payload.allergens.length > 0) {
+        const size = mmToPt(widthMm * 0.055);
+        drawLeft(`ALLERGENS: ${payload.allergens.join(', ')}`, fontBold, size);
+    }
+    // Ingredients.
+    if (Array.isArray(payload.ingredients) && payload.ingredients.length > 0) {
+        const size = mmToPt(widthMm * 0.05);
+        for (const ing of payload.ingredients) {
+            if (!ing) continue;
+            drawLeft('• ' + String(ing), fontReg, size);
+        }
+    }
+    // Notes — italic.
+    if (payload.notes) {
+        const size = mmToPt(widthMm * 0.05);
+        drawLeft(String(payload.notes), fontItalic, size);
+    }
+    // Footer — bottom-anchored, not part of the y cursor. Compact
+    // labels hide the brand line to free up vertical space.
+    if (!compact && payload.footer) {
+        const size = mmToPt(widthMm * 0.055);
+        const tw = fontBold.widthOfTextAtSize(payload.footer, size);
+        page.drawText(payload.footer, {
+            x: (pageW - tw) / 2,
+            y: padding,
+            size,
+            font: fontBold,
+        });
+    }
+}
+
+// Render a free-text payload onto a single PDF page (PrintCenter
+// custom prints). Mirrors renderFreeTextHtmlBody: size class
+// (small/normal/large/huge), bold, alignment, optional date +
+// signature footer.
+function renderFreeTextOnPdfPage(page, payload, fonts, widthMm, heightMm /* , compact */) {
+    const { fontBold, fontReg } = fonts;
+    const mmToPt = (mm) => mm * (72 / 25.4);
+    const pageW = mmToPt(widthMm);
+    const pageH = mmToPt(heightMm);
+    const padding = mmToPt(Math.min(2, widthMm * 0.04));
+    let y = pageH - padding;
+
+    const sizeMap = {
+        small:  widthMm * 0.06,
+        normal: widthMm * 0.10,
+        large:  widthMm * 0.14,
+        huge:   widthMm * 0.18,
+    };
+    const fontSize = mmToPt(sizeMap[payload.size] != null ? sizeMap[payload.size] : sizeMap.normal);
+    const font = payload.bold ? fontBold : fontReg;
+    const align = ['left', 'center', 'right'].includes(payload.align) ? payload.align : 'center';
+
+    const lines = String(payload.text || '').split(/\r?\n/);
+    for (const line of lines) {
+        const text = line || ' ';
+        const tw = font.widthOfTextAtSize(text, fontSize);
+        let x = padding;
+        if (align === 'center') x = Math.max(padding, (pageW - tw) / 2);
+        else if (align === 'right') x = Math.max(padding, pageW - tw - padding);
+        page.drawText(text, { x, y: y - fontSize, size: fontSize, font });
+        y -= fontSize + mmToPt(0.6);
+    }
+
+    // Footer (date stamp / signature / brand) — mirrors the HTML
+    // freetext-footer block.
+    const footerLines = [];
+    if (payload.stampDate) {
+        const d = new Date();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const yy = String(d.getFullYear()).slice(-2);
+        let h = d.getHours(); const ampm = h >= 12 ? 'p' : 'a';
+        h = h % 12 || 12;
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        footerLines.push(`${mm}/${dd}/${yy} ${h}:${mi}${ampm}`);
+    }
+    if (payload.stampSignature && payload.signature) {
+        footerLines.push(`— ${payload.signature}`);
+    }
+    if (payload.footer != null) {
+        footerLines.push(String(payload.footer).slice(0, 30));
+    } else if (footerLines.length > 0) {
+        footerLines.push('DD MAU');
+    }
+    if (footerLines.length > 0) {
+        const footerSize = mmToPt(widthMm * 0.045);
+        let fy = padding + footerLines.length * (footerSize + mmToPt(0.5));
+        for (const fl of footerLines) {
+            const tw = fontReg.widthOfTextAtSize(fl, footerSize);
+            page.drawText(fl, {
+                x: Math.max(padding, (pageW - tw) / 2),
+                y: fy - footerSize,
+                size: footerSize,
+                font: fontReg,
+            });
+            fy -= footerSize + mmToPt(0.5);
+        }
+    }
+}
+
+// Brother transport (PDF path). Same iframe-then-print pattern as
+// the HTML path, but uses a blob: URL pointing at a PDF instead of
+// writing HTML inline. The PDF carries explicit page dimensions in
+// its MediaBox so iOS AirPrint can't reflow it to letter.
+async function sendBrotherPdfToBrowserPrintDialog(pdfBlob) {
+    if (typeof document === 'undefined') {
+        return { ok: false, status: 0, responseXml: 'no_document' };
+    }
+    return new Promise((resolve) => {
+        const url = URL.createObjectURL(pdfBlob);
+        const iframe = document.createElement('iframe');
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.style.position = 'fixed';
+        iframe.style.right = '0';
+        iframe.style.bottom = '0';
+        iframe.style.width = '0';
+        iframe.style.height = '0';
+        iframe.style.border = '0';
+        iframe.style.opacity = '0';
+        iframe.style.pointerEvents = 'none';
+        document.body.appendChild(iframe);
+
+        let resolved = false;
+        const finish = (result) => {
+            if (resolved) return;
+            resolved = true;
+            // Hold the iframe + blob URL for 90 s so the OS print
+            // dialog has time to read the document. Print dialogs
+            // are opaque to JS — we can't be told when they close.
+            setTimeout(() => {
+                try { iframe.remove(); } catch {}
+                try { URL.revokeObjectURL(url); } catch {}
+            }, 90_000);
+            resolve(result);
+        };
+
+        iframe.onload = () => {
+            // Give the embedded PDF viewer a moment to lay out
+            // before triggering print. Mobile Safari especially
+            // needs ~200-400ms here.
+            setTimeout(() => {
+                try {
+                    iframe.contentWindow.focus();
+                    iframe.contentWindow.print();
+                    finish({ ok: true, status: 200, responseXml: 'browser_print_dialog_pdf' });
+                } catch (e) {
+                    console.warn('PDF iframe print failed:', e);
+                    finish({ ok: false, status: 0, responseXml: 'pdf_print_failed' });
+                }
+            }, 350);
+        };
+        iframe.onerror = () => {
+            finish({ ok: false, status: 0, responseXml: 'pdf_iframe_error' });
+        };
+
+        try {
+            iframe.src = url;
+        } catch (e) {
+            console.warn('PDF iframe src failed:', e);
+            finish({ ok: false, status: 0, responseXml: 'pdf_iframe_src_failed' });
+        }
+
+        // Hard-stop in case the iframe never fires onload (rare,
+        // but happens if the browser can't decode the blob).
+        setTimeout(() => {
+            finish({ ok: false, status: 0, responseXml: 'pdf_iframe_timeout' });
+        }, 30_000);
+    });
+}
+
 // Brother transport. Render the label HTML inside a hidden iframe
 // and trigger window.print(). User picks the Brother via AirPrint
 // in the system dialog. We can't read the result (print dialog is
@@ -891,6 +1185,10 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFo
 // Must be called from a user gesture (button click), because some
 // browsers block window.print() outside of one. All our call sites
 // are click-handlers so this is fine.
+//
+// Kept for non-Brother paths / future debugging; the live Brother
+// path now uses sendBrotherPdfToBrowserPrintDialog above.
+// eslint-disable-next-line no-unused-vars
 async function sendToBrowserPrintDialog(htmlString) {
     if (typeof document === 'undefined') {
         return { ok: false, status: 0, responseXml: 'no_document' };
@@ -1078,13 +1376,18 @@ export async function printFreeText({
 
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
-            const html = buildBrotherPrintDoc({
+            // Andrew 2026-05-21: switched from HTML-print to PDF-
+            // print because iOS AirPrint ignored the HTML @page
+            // size and defaulted to letter. PDFs carry page size in
+            // the MediaBox header — AirPrint honors that reliably.
+            const pdfBlob = await buildBrotherPrintPdfBlob({
                 widthMm:  presetDims?.widthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
                 heightMm: presetDims?.heightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
-                bodyHtml: renderFreeTextHtmlBody(freePayload),
+                payload: freePayload,
                 copies: c,
+                kind: 'freetext',
             });
-            res = await sendToBrowserPrintDialog(html);
+            res = await sendBrotherPdfToBrowserPrintDialog(pdfBlob);
         } else {
             const xml = renderFreeTextXml(freePayload);
             res = await sendToPrinter(printer, xml);
@@ -1217,17 +1520,16 @@ export async function printPrepLabel({
 
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
-            const html = buildBrotherPrintDoc({
-                // Preset stamps physical dimensions when staff picks
-                // a size tab — overrides the printer's configured
-                // default roll dims. Falls back to printer config if
-                // no preset is active.
+            // PDF path (Andrew 2026-05-21) — explicit page size in
+            // PDF MediaBox so AirPrint can't reflow to letter.
+            const pdfBlob = await buildBrotherPrintPdfBlob({
                 widthMm:  payload._presetWidthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
                 heightMm: payload._presetHeightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
-                bodyHtml: renderPrepLabelHtmlBody(payload),
+                payload,
                 copies: c,
+                kind: 'prep',
             });
-            res = await sendToBrowserPrintDialog(html);
+            res = await sendBrotherPdfToBrowserPrintDialog(pdfBlob);
         } else {
             const xml = renderEposXml(payload, c);
             res = await sendToPrinter(printer, xml);
@@ -1311,17 +1613,16 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
 
         let res;
         if (type === PRINTER_TYPES.BROTHER_QL) {
-            const html = buildBrotherPrintDoc({
-                // Preset stamps physical dimensions when staff picks
-                // a size tab — overrides the printer's configured
-                // default roll dims. Falls back to printer config if
-                // no preset is active.
+            // PDF path (Andrew 2026-05-21) — same as the regular
+            // print path so the test print exercises the same code.
+            const pdfBlob = await buildBrotherPrintPdfBlob({
                 widthMm:  payload._presetWidthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
                 heightMm: payload._presetHeightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
-                bodyHtml: renderPrepLabelHtmlBody(payload),
+                payload,
                 copies: 1,
+                kind: 'prep',
             });
-            res = await sendToBrowserPrintDialog(html);
+            res = await sendBrotherPdfToBrowserPrintDialog(pdfBlob);
         } else {
             const xml = renderEposXml(payload);
             res = await sendToPrinter(printer, xml);
