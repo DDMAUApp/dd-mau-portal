@@ -191,16 +191,22 @@ export const EPSON_LABEL_PRESETS = Object.freeze([
         nameEs: 'Pequeña',
         widthIn: 3, heightIn: 1.5,
         widthMm: 80, heightMm: 38,
-        // Keep only the essentials: date + title + use-by.
+        // Keep only the essentials. Andrew 2026-05-20: "in the small
+        // sticker print there is no name. add it next to the date".
+        // Small label is 38mm tall — there's no vertical room for
+        // "PREPPED" + time + dividers + tiny title before the printer
+        // cuts the paper. Solution: drop PREP-label + time, bump title
+        // scale so the name renders next to (right under) the date.
         showIngredients: false,
         showNotes: false,
         showAllergens: false,
         showLocation: false,
         showByName: false,
-        // Slightly smaller title so the date still dominates a 1.5"
-        // tall label.
-        titleScale: 1,
-        dateNumberScale: 4,
+        showTime: false,
+        showPreppedLabel: false,
+        // Both date and title at scale 3 — readable + same prominence.
+        titleScale: 3,
+        dateNumberScale: 3,
     },
     {
         id: 'medium',
@@ -231,15 +237,23 @@ export const BROTHER_LABEL_PRESETS = Object.freeze([
         nameEs: 'Pequeña',
         widthIn: 2.4, heightIn: 1,
         widthMm: 62, heightMm: 25,
+        // Andrew 2026-05-20: "in the small sticker print there is
+        // no name. add it next to the date". 1"-tall label has no
+        // room for PREP label + time + dividers + tiny title — they
+        // all fight for the same 25mm. Drop the non-essentials so
+        // date + name dominate. (Brother's title font is sized by
+        // % of label width — see buildBrotherPrintDoc's CSS — so
+        // titleScale is only honored by the Epson path. Setting it
+        // here anyway for consistency.)
         showIngredients: false,
         showNotes: false,
         showAllergens: false,
         showLocation: false,
         showByName: false,
-        // Smaller title + date so they fit a 1"-tall label without
-        // running off the cut edge.
-        titleScale: 1,
-        dateNumberScale: 3,
+        showTime: false,
+        showPreppedLabel: false,
+        titleScale: 3,
+        dateNumberScale: 2,
     },
     {
         id: 'medium',
@@ -287,8 +301,12 @@ export function applyLabelSizePreset(format, presetId, printerType) {
     if (!preset) return format || {};
     const out = { ...(format || {}) };
     // Override section toggles + scales when the preset specifies.
+    // showPreppedLabel added 2026-05-20 — Small preset uses it to
+    // drop the "PREPPED" line on tight 1"-tall labels so the item
+    // name has room to print next to the date.
     for (const k of ['showIngredients', 'showNotes', 'showAllergens',
         'showLocation', 'showByName', 'showTime', 'showTitle',
+        'showPreppedLabel',
         'titleScale', 'dateNumberScale']) {
         if (k in preset) out[k] = preset[k];
     }
@@ -516,6 +534,17 @@ export function buildLabelPayload({
         // Pass through size scales so renderers can apply them.
         dateNumberScale: Number(format?.dateNumberScale) || 5,
         titleScale:      Number(format?.titleScale) || 2,
+        // Bug fix 2026-05-20: forward the preset's physical dims +
+        // id from the format to the payload. printPrepLabel /
+        // printFreeText / buildBrotherPrintDoc all read these off
+        // the payload to size the Brother @page rule. Without this
+        // forwarding the dims were dropped between applyLabelSize
+        // Preset and the printer, so the Brother always printed at
+        // the admin's saved printer-config dims regardless of which
+        // Small/Medium/Large tab staff picked.
+        _presetId:       format?._presetId       || null,
+        _presetWidthMm:  format?._presetWidthMm  || null,
+        _presetHeightMm: format?._presetHeightMm || null,
     };
 }
 
