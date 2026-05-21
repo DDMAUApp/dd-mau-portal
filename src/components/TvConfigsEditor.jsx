@@ -691,7 +691,18 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                         imageUrls={imageUrls}
                         initialZones={imageHitZones}
                         language={tx('en', 'es') === 'es' ? 'es' : 'en'}
-                        onSave={(zones) => setImageHitZones(zones)}
+                        onSave={(result) => {
+                            // result = { zones, imageUrls }. The imageUrls
+                            // entry may have been swapped if the editor's
+                            // save flow baked price overrides into the
+                            // image — bring both back into modal state.
+                            if (result && Array.isArray(result.zones)) {
+                                setImageHitZones(result.zones);
+                            }
+                            if (result && Array.isArray(result.imageUrls)) {
+                                setImageUrls(result.imageUrls);
+                            }
+                        }}
                         onClose={() => setHitZoneEditorOpen(false)} />
                 </Suspense>
             )}

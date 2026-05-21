@@ -72,6 +72,118 @@ export async function uploadImageBlobs({ blobs, folder, slugPrefix }) {
     return urls;
 }
 
+// Bake price overlays directly into a menu image, returning the
+// download URL of the new (rendered) image.
+//
+// Andrew 2026-05-20: "with the pricing i need that to change the
+// pdf at its core so it can[t] accidentally revert back to the old
+// pricing". The overlay approach (PriceOverlay in MenuDisplay) is
+// fragile — if the hit zone or override field gets cleared, the
+// printed price shows through. This bakes the overlays into the
+// PNG itself so the new prices are part of the image data, not a
+// reversible layer.
+//
+// Workflow:
+//   • Admin sets a new price on a hit zone in HitZoneEditor.
+//   • Live preview uses PriceOverlay (CSS) so admin sees the
+//     result without committing.
+//   • When admin clicks Save, HitZoneEditor calls this for every
+//     page that has price-override zones. The function:
+//       1. Loads the existing image (Firebase Storage URL)
+//       2. Draws a white sticker + bold green price text at each
+//          override zone (same layout as PriceOverlay)
+//       3. Exports the canvas as a PNG blob
+//       4. Uploads the new PNG to Storage under tv_images/
+//       5. Returns the new download URL
+//   • Caller swaps the page's imageUrl + clears the priceOverride
+//     fields. The "current image" now reflects the new prices
+//     intrinsically.
+//
+// CORS: Image must load via crossOrigin='anonymous' so the canvas
+// stays untainted and we can call toBlob(). Firebase Storage's
+// cors.json (per cors-setup script) allows the GitHub Pages
+// origin, so this works in prod.
+export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPrefix = 'menu' }) {
+    if (!imageUrl) throw new Error('imageUrl required');
+    if (!Array.isArray(priceZones) || priceZones.length === 0) {
+        return imageUrl;   // nothing to bake — return original
+    }
+
+    // Load image with CORS so canvas is exportable.
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error(`failed to load image for baking: ${imageUrl}`));
+        img.src = imageUrl;
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas 2d context unavailable');
+
+    // Paint the original image first.
+    ctx.drawImage(img, 0, 0);
+
+    // Layout constants — mirror the runtime PriceOverlay component
+    // so the baked image looks identical to the live overlay.
+    const STICKER_WIDTH_FRAC = 0.30;      // right ~30% of the zone
+    const STICKER_BG_RGBA   = 'rgba(255, 255, 255, 0.98)';
+    const STICKER_BORDER    = 'rgba(0, 0, 0, 0.10)';
+    const TEXT_COLOR        = '#15803d';   // dd-green-700 equivalent
+
+    for (const zone of priceZones) {
+        if (!zone.priceOverride) continue;
+        const widthFrac = STICKER_WIDTH_FRAC;
+        const x = (zone.x + zone.width * (1 - widthFrac)) * canvas.width;
+        const y = zone.y * canvas.height;
+        const w = zone.width * widthFrac * canvas.width;
+        const h = zone.height * canvas.height;
+
+        // White sticker.
+        ctx.fillStyle = STICKER_BG_RGBA;
+        ctx.fillRect(x, y, w, h);
+        // Hairline border so the sticker reads as deliberate.
+        ctx.strokeStyle = STICKER_BORDER;
+        ctx.lineWidth = Math.max(1, canvas.width / 1200);
+        ctx.strokeRect(x, y, w, h);
+
+        // Price text — auto-fit to the sticker dims.
+        // 65% of height is a safe text size that doesn't kiss the
+        // sticker edges; pick the smaller of height-based and
+        // width-based so very narrow stickers don't overflow.
+        const heightBasedFont = h * 0.65;
+        // Estimate text width: ~0.55 char-width for digits/$ at this weight.
+        const text = String(zone.priceOverride);
+        const widthBasedFont = (w * 0.85) / (text.length * 0.55);
+        const fontSize = Math.max(8, Math.min(heightBasedFont, widthBasedFont));
+
+        ctx.font = `900 ${fontSize}px Arial, "Helvetica Neue", sans-serif`;
+        ctx.fillStyle = TEXT_COLOR;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(text, x + w / 2, y + h / 2);
+    }
+
+    // Export to PNG blob. Resampling 0.95 keeps the file small but
+    // preserves the original menu pixels.
+    const blob = await new Promise((resolve) => {
+        canvas.toBlob((b) => resolve(b), 'image/png', 0.95);
+    });
+    if (!blob) throw new Error('canvas.toBlob returned null (image may be tainted)');
+
+    // Upload the baked image as a fresh file. We don't replace the
+    // original URL — Storage keeps the old file so admin could
+    // theoretically re-link it if needed. (We don't surface that
+    // path; the simple recovery is "re-upload the PDF".)
+    const path = `tv_images/${slugPrefix}_baked_${Date.now()}.png`;
+    const pref = storageRef(storage, path);
+    await uploadBytes(pref, blob);
+    return await getDownloadURL(pref);
+}
+
 // One-shot: take a user-picked File, render pages (PDF) or wrap a
 // single image, and upload all results. Returns the URLs.
 export async function uploadMenuFile({ file, folder = 'tv_images', slugPrefix }) {

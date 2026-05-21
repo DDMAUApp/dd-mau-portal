@@ -18,6 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { MENU_DATA } from '../data/menu';
+import { bakePriceOverlaysIntoImage } from '../data/menuImageUpload';
 import { toast } from '../toast';
 
 // Default hit zone size when admin single-clicks (fraction of image):
@@ -42,6 +43,8 @@ export default function HitZoneEditor({
     const [zones, setZones] = useState(initialZones);
     const [pickerForZoneIdx, setPickerForZoneIdx] = useState(null);
     const [pickerFilter, setPickerFilter] = useState('');
+    const [baking, setBaking] = useState(false);
+    const [bakeProgress, setBakeProgress] = useState('');
 
     // Live drag state — only set during a mouse-down → up sequence.
     const [dragStart, setDragStart] = useState(null);   // { x, y } in fractions
@@ -177,9 +180,22 @@ export default function HitZoneEditor({
     };
 
     // ── Save ───────────────────────────────────────────────────
-    const save = () => {
-        // Drop any orphan zones with no itemName (admin opened picker but
-        // didn't pick anything).
+    // If any zones have priceOverride, we BAKE those overlays into
+    // the menu image before saving — so the new prices become part
+    // of the image data and can't accidentally revert. Andrew's
+    // concern: "with the pricing i need that to change the pdf at
+    // its core so it can[t] accidentally revert back to the old
+    // pricing".
+    //
+    // For each page that has price overrides:
+    //   1. Render the current image + overlays to a new PNG.
+    //   2. Upload the PNG to Storage.
+    //   3. Replace imageUrls[page] with the new URL.
+    //   4. Clear priceOverride on those zones (the image now IS
+    //      the new price; no overlay needed at runtime).
+    // Zones themselves stay — needed for SOLD OUT support.
+    const save = async () => {
+        // Drop any orphan zones with no itemName.
         const cleaned = zones.filter(z => z.itemName);
         const orphans = zones.length - cleaned.length;
         if (orphans > 0) {
@@ -189,9 +205,69 @@ export default function HitZoneEditor({
             ));
             if (!ok) return;
         }
-        onSave(cleaned);
-        toast(tx(`✓ Saved ${cleaned.length} hit zones`, `✓ Guardadas ${cleaned.length} zonas`), { kind: 'success' });
-        onClose();
+
+        // Plan: which pages need re-baking? Group zones by page.
+        const pagesWithPrices = new Set();
+        for (const z of cleaned) {
+            if (z.priceOverride && String(z.priceOverride).trim()) {
+                pagesWithPrices.add(z.page ?? 0);
+            }
+        }
+
+        if (pagesWithPrices.size > 0) {
+            const ok = window.confirm(tx(
+                `You changed ${[...cleaned].filter(z => z.priceOverride).length} price(s). The new prices will be permanently rendered into the menu image — even if a hit zone gets deleted later, the new price stays. Continue?`,
+                `Cambiaste precios. Los nuevos precios se renderizarán permanentemente en la imagen del menú. ¿Continuar?`,
+            ));
+            if (!ok) return;
+            setBaking(true);
+        }
+
+        let updatedUrls = [...imageUrls];
+        let updatedZones = cleaned;
+        try {
+            for (const pageIdx of pagesWithPrices) {
+                const url = updatedUrls[pageIdx];
+                if (!url) continue;
+                const zonesForPage = updatedZones.filter(z =>
+                    (z.page ?? 0) === pageIdx && z.priceOverride);
+                if (zonesForPage.length === 0) continue;
+                setBakeProgress(tx(
+                    `Baking page ${pageIdx + 1}…`,
+                    `Generando página ${pageIdx + 1}…`,
+                ));
+                const newUrl = await bakePriceOverlaysIntoImage({
+                    imageUrl: url,
+                    priceZones: zonesForPage,
+                    slugPrefix: `page${pageIdx + 1}`,
+                });
+                updatedUrls[pageIdx] = newUrl;
+                // Clear priceOverride on zones we just baked.
+                updatedZones = updatedZones.map(z => {
+                    if ((z.page ?? 0) === pageIdx && z.priceOverride) {
+                        const { priceOverride, ...rest } = z;
+                        return rest;
+                    }
+                    return z;
+                });
+            }
+            onSave({ zones: updatedZones, imageUrls: updatedUrls });
+            toast(tx(
+                pagesWithPrices.size > 0
+                    ? `✓ Saved · ${pagesWithPrices.size} page(s) re-rendered with new prices`
+                    : `✓ Saved ${updatedZones.length} hit zones`,
+                pagesWithPrices.size > 0
+                    ? `✓ Guardado · ${pagesWithPrices.size} página(s) regeneradas`
+                    : `✓ Guardadas ${updatedZones.length} zonas`,
+            ), { kind: 'success' });
+            onClose();
+        } catch (err) {
+            console.warn('save / bake failed:', err);
+            toast(tx(`Save failed: ${err?.message || 'unknown'}`, `Error al guardar: ${err?.message || ''}`), { kind: 'error' });
+        } finally {
+            setBaking(false);
+            setBakeProgress('');
+        }
     };
 
     // ── Render ─────────────────────────────────────────────────
@@ -421,13 +497,18 @@ export default function HitZoneEditor({
                             <> · <span className="text-red-600 font-bold">{zones.length - zones.filter(z => z.itemName).length} {tx('unpicked', 'sin item')}</span></>
                         )}
                     </span>
-                    <button onClick={onClose}
-                        className="ml-auto px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg">
+                    {baking && bakeProgress && (
+                        <span className="text-[11px] text-amber-700 font-bold italic">
+                            🔥 {bakeProgress}
+                        </span>
+                    )}
+                    <button onClick={onClose} disabled={baking}
+                        className="ml-auto px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg disabled:opacity-40">
                         {tx('Cancel', 'Cancelar')}
                     </button>
-                    <button onClick={save}
-                        className="px-4 py-2 rounded-lg bg-sky-600 text-white font-bold hover:bg-sky-700">
-                        {tx('Save zones', 'Guardar zonas')}
+                    <button onClick={save} disabled={baking}
+                        className="px-4 py-2 rounded-lg bg-sky-600 text-white font-bold hover:bg-sky-700 disabled:opacity-60">
+                        {baking ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
                     </button>
                 </footer>
             </div>
