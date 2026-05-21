@@ -213,31 +213,27 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 lastUpdate: new Date().toISOString(),
             });
         } catch (e) { console.warn('setDocStatus failed', e); }
-        // Notify admins on fresh-submit transitions. Andrew 2026-05-21:
-        // "why i just 6 notifications for enzo" — the tag used to be
-        // per-doc (`hire_doc_submitted:${hireId}:${docId}`) which meant
-        // every doc Enzo submitted produced a NEW OS notification and
-        // they stacked up six-deep on the admin's phone. Switched to a
-        // hire-level tag so the OS REPLACES the previous push with
-        // each new one — admin sees a single live notification per
-        // hire that updates to whatever was just submitted. Bell-
-        // drawer history still keeps every individual entry.
-        if (next === DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.APPROVED) {
-            try {
-                const docDef = ONBOARDING_DOCS.find(d => d.id === docId);
-                const docLabel = docDef ? docDef.en : docId;
-                const firstName = (hire?.name || '').split(' ')[0] || hire?.name || tx('A hire', 'Un contratado');
-                await notifyAdmins({
-                    type: 'onboarding_doc_submitted',
-                    title: `📄 ${firstName} — onboarding`,
-                    body: tx(`Just submitted: ${docLabel}. Tap to review.`,
-                              `Acaba de enviar: ${docLabel}. Toca para revisar.`),
-                    link: '/onboarding',
-                    tag: `hire_progress:${hireId}`,
-                    createdBy: 'onboarding_portal',
-                });
-            } catch (e) { console.warn('admin notify failed:', e); }
-        }
+        // Andrew 2026-05-21: "enzo only had 2 direct deposit doc to
+        // turn in" yet got 6 pushes — 2 docs × 3 of Andrew's devices
+        // (iPad/iPhone/Mac). The hire-level tag (set earlier today)
+        // already collapses visible stacking down to one active
+        // notification per device, but each device still rings once
+        // per event = 6 dings.
+        //
+        // Decision: stop pushing for incremental doc submissions.
+        // Admins get pushes for the bookends only — new application
+        // (onboarding_application) and final certification
+        // (onboarding_certified). Mid-stream progress is visible on
+        // the Onboarding page (every hire's checklist + counts) so
+        // there's no information loss; it just lives in-app instead
+        // of on the lockscreen.
+        //
+        // If we ever want a "bell-drawer entry without a push" path,
+        // see the silentPush flag approach: keep the /notifications
+        // doc create, add silentPush:true, have dispatchNotification
+        // skip FCM. For now nothing is created at all for incremental
+        // submissions — keeps the change client-only (no Cloud
+        // Function redeploy).
     };
 
     // Save a form-kind doc (personal info / emergency contact). Stores
@@ -263,27 +259,10 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         });
         try { await updateDoc(doc(db, 'onboarding_hires', hireId), patch); }
         catch (e) { console.warn('saveForm failed', e); }
-        // Ping admins on first submit (don't re-ping on edit-and-save).
-        // Tag is hire-level (not doc-level) — see comment block above
-        // in setDocStatus for the rationale: per-doc tags stacked 6
-        // pushes for one hire; per-hire tag collapses to one live push
-        // that updates as the hire progresses.
-        if (prevStatus !== DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.APPROVED) {
-            try {
-                const docDef = ONBOARDING_DOCS.find(d => d.id === docId);
-                const docLabel = docDef ? docDef.en : docId;
-                const firstName = (hire?.name || '').split(' ')[0] || hire?.name || tx('A hire', 'Un contratado');
-                await notifyAdmins({
-                    type: 'onboarding_doc_submitted',
-                    title: `📄 ${firstName} — onboarding`,
-                    body: tx(`Just submitted: ${docLabel}. Tap to review.`,
-                              `Acaba de enviar: ${docLabel}. Toca para revisar.`),
-                    link: '/onboarding',
-                    tag: `hire_progress:${hireId}`,
-                    createdBy: 'onboarding_portal',
-                });
-            } catch (e) { console.warn('admin notify failed:', e); }
-        }
+        // Andrew 2026-05-21: same decision as setDocStatus above —
+        // no push for incremental doc submissions. Bookends only
+        // (application + certification). See setDocStatus's comment
+        // for the full reasoning.
     };
 
     if (status === 'loading') {
