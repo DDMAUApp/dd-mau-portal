@@ -348,29 +348,14 @@ export default function PrintLabelModal({
                         </div>
                     </div>
 
-                    {/* Slot selector — Kitchen vs Office printer.
-                        Andrew 2026-05-20. Defaults to last choice from
-                        localStorage. Resubscribes the printer state
-                        strip when toggled. */}
-                    <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                            {tx('Print to', 'Imprimir en')}
-                        </label>
-                        <div className="flex gap-1">
-                            {[
-                                { k: 'kitchen', en: '🍳 Kitchen', es: '🍳 Cocina' },
-                                { k: 'office',  en: '🏢 Office',  es: '🏢 Oficina' },
-                            ].map(s => (
-                                <button key={s.k}
-                                    onClick={() => setSlotPersistent(s.k)}
-                                    className={`flex-1 px-3 py-2 rounded-lg text-sm font-bold border-2 transition ${slot === s.k
-                                        ? 'bg-dd-text text-white border-dd-text'
-                                        : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
-                                    {isEs ? s.es : s.en}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
+                    {/* Slot selector REMOVED 2026-05-20 — Andrew: "the
+                        label printers in the admin page i only need the
+                        kitchen section for each location". Slot now
+                        defaults to 'kitchen' for every print; office is
+                        kept in the data layer for future re-enablement
+                        but isn't surfaced to staff. setSlotPersistent
+                        still exists in case admin re-enables office
+                        later without a code change. */}
 
                     {/* Printer state strip */}
                     <div className={`rounded-lg p-2.5 text-[11px] ${

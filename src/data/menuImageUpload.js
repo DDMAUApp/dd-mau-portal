@@ -129,17 +129,19 @@ export async function bakePriceOverlaysIntoImage({ imageUrl, priceZones, slugPre
 
     // Layout constants — mirror the runtime PriceOverlay component
     // so the baked image looks identical to the live overlay.
-    const STICKER_WIDTH_FRAC = 0.30;      // right ~30% of the zone
+    // Andrew 2026-05-20 (later) — bumped coverage from right-30%
+    // to FULL zone after "when i overlay a box over a price and
+    // change it it doesnt overlay it" — admin draws small precise
+    // zones over prices; the zone IS the overlay area.
     const STICKER_BG_RGBA   = 'rgba(255, 255, 255, 0.98)';
     const STICKER_BORDER    = 'rgba(0, 0, 0, 0.10)';
     const TEXT_COLOR        = '#15803d';   // dd-green-700 equivalent
 
     for (const zone of priceZones) {
         if (!zone.priceOverride) continue;
-        const widthFrac = STICKER_WIDTH_FRAC;
-        const x = (zone.x + zone.width * (1 - widthFrac)) * canvas.width;
+        const x = zone.x * canvas.width;
         const y = zone.y * canvas.height;
-        const w = zone.width * widthFrac * canvas.width;
+        const w = zone.width * canvas.width;
         const h = zone.height * canvas.height;
 
         // White sticker.

@@ -373,26 +373,10 @@ export default function PrintCenter({
                             </div>
                         )}
 
-                        {/* Slot — kitchen vs office. Always visible. */}
-                        <div>
-                            <span className="block text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">
-                                {tx('Printer slot', 'Impresora')}
-                            </span>
-                            <div className="flex gap-1">
-                                {[
-                                    { k: 'kitchen', en: '🍳 Kitchen', es: '🍳 Cocina' },
-                                    { k: 'office',  en: '🏢 Office',  es: '🏢 Oficina' },
-                                ].map(s => (
-                                    <button key={s.k}
-                                        onClick={() => setSlotPersistent(s.k)}
-                                        className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-bold border transition ${printSlot === s.k
-                                            ? 'bg-dd-text text-white border-dd-text'
-                                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
-                                        {isEs ? s.es : s.en}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
+                        {/* Slot selector REMOVED 2026-05-20 — Andrew:
+                            "i only need the kitchen section for each
+                            location". Slot defaults to 'kitchen' from
+                            state init; toggle hidden from staff UI. */}
 
                         {/* Recent prints */}
                         {recents.length > 0 && (

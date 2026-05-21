@@ -59,26 +59,23 @@ function PrintersConfigSection({ language, byName }) {
             </div>
             <p className="text-[11px] text-purple-700 mb-3">
                 {tx(
-                    'Two printer types supported: Epson TM-L100 (linerless 80mm, prints directly via Wi-Fi — no driver, no dialog) and Brother QL-820NWB (DK adhesive rolls, prints through the OS print dialog via AirPrint — one extra tap, but the labels stick to freezer/walk-in surfaces). Set one or both per location.',
-                    'Dos tipos de impresoras: Epson TM-L100 (sin liner 80mm, imprime directo por Wi-Fi — sin driver, sin diálogo) y Brother QL-820NWB (rollos DK con adhesivo, imprime por el diálogo del sistema vía AirPrint — un toque extra, pero las etiquetas se pegan en superficies de congelador/walk-in). Configura una o ambas por ubicación.',
+                    'One kitchen label printer per location. Epson TM-L100 (linerless 80mm, prints directly via Wi-Fi — no driver, no dialog) or Brother QL-820NWB (DK adhesive rolls, prints through the OS print dialog via AirPrint — for freezer/walk-in surfaces).',
+                    'Una impresora de cocina por ubicación. Epson TM-L100 (sin liner 80mm, directo por Wi-Fi) o Brother QL-820NWB (rollos DK con adhesivo, vía AirPrint — para congelador/walk-in).',
                 )}
             </p>
             <div className="space-y-3">
+                {/* Andrew 2026-05-20: "the label printers in the admin
+                    page i only need the kitchen section for each
+                    location". Office slot dropped from admin UI; data
+                    layer + modals also defaulted to kitchen-only. */}
                 {LOCATIONS.map(loc => (
-                    <div key={loc} className="space-y-1.5">
-                        <div className="text-[10px] font-black uppercase tracking-widest text-purple-700 pl-1">
-                            {LOC_LABEL[loc]}
-                        </div>
-                        {['kitchen', 'office'].map(slot => (
-                            <PrinterConfigRow key={`${loc}-${slot}`}
-                                location={loc}
-                                slot={slot}
-                                locationLabel={`${LOC_LABEL[loc]} · ${slot === 'kitchen' ? tx('Kitchen', 'Cocina') : tx('Office', 'Oficina')}`}
-                                tx={tx}
-                                byName={byName}
-                            />
-                        ))}
-                    </div>
+                    <PrinterConfigRow key={loc}
+                        location={loc}
+                        slot="kitchen"
+                        locationLabel={LOC_LABEL[loc]}
+                        tx={tx}
+                        byName={byName}
+                    />
                 ))}
             </div>
             <p className="text-[10px] text-purple-700/70 italic mt-2">

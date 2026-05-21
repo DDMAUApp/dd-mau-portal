@@ -657,40 +657,45 @@ function QrOverlay({ zone }) {
 
 // ── Price overlay — covers the printed price on the menu image ──
 // Andrew 2026-05-20: "i also want to be able to change pricing".
-// Renders an opaque white sticker on the right ~30% of the hit
-// zone, with bold green text showing the new price. Designed to
-// fully cover the printed price (most menus put prices flush
-// right on each row) while leaving the item name + the rest of
-// the menu design untouched.
+// Renders an opaque white sticker covering the FULL hit zone, with
+// bold green text showing the new price.
 //
-// If a zone is shorter/wider than typical (e.g. wide bowls layout),
-// admin can tighten the zone to bound the price area more precisely
-// in the HitZoneEditor.
+// 2026-05-20 (later) — Andrew reported "when i overlay a box over
+// a price and change it it doesnt overlay it". Root cause: the
+// previous version covered only the right 30% of the zone, which
+// worked for full-item-row zones but failed when admin drew a
+// small zone precisely over a price (30% of a tiny box = nothing
+// covered). Updated to 100% coverage so the zone IS the overlay
+// area — admin draws zones where they want the sticker to go.
+//
+// For full-row SOLD OUT support: admin can still draw a big zone
+// over the whole item; the SOLD OUT stamp covers it fully. To
+// also change the price, admin can draw a SECOND small zone over
+// just the printed price (with the new price) — that small zone
+// gets its own targeted sticker.
 function PriceOverlay({ zone }) {
-    // Right-aligned 30% of the zone width; full zone height.
-    const widthFrac = 0.30;
-    const leftFrac = 1 - widthFrac;
     return (
         <div className="absolute pointer-events-none flex items-center justify-center"
             style={{
-                left: `${(zone.x + zone.width * leftFrac) * 100}%`,
+                left: `${zone.x * 100}%`,
                 top: `${zone.y * 100}%`,
-                width: `${zone.width * widthFrac * 100}%`,
+                width: `${zone.width * 100}%`,
                 height: `${zone.height * 100}%`,
-                // White sticker with subtle border. We use a slightly
-                // off-white to nudge against pure-paper menus and a
-                // hairline border so the sticker reads as deliberate.
                 background: 'rgba(255, 255, 255, 0.98)',
                 border: '1px solid rgba(0, 0, 0, 0.08)',
                 borderRadius: '2px',
                 boxShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+                // Enable container query units (cqh) on the inner
+                // text so font auto-scales to the zone's height.
+                // Small zones get small text, large zones get large
+                // text — overlay font ~ printed price font.
+                containerType: 'size',
             }}>
             <span className="font-black tabular-nums whitespace-nowrap text-dd-green-700"
                 style={{
-                    // Auto-scale price font to zone height. Use clamp so
-                    // tiny zones don't get unreadable + huge zones don't
-                    // get hideous.
-                    fontSize: 'clamp(11px, 2.4vw, 26px)',
+                    // 70% of zone height; falls back gracefully for
+                    // browsers that don't support cqh (very rare now).
+                    fontSize: 'min(70cqh, 70cqw)',
                     lineHeight: 1,
                 }}>
                 {zone.priceOverride}
