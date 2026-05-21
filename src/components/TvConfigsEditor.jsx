@@ -40,20 +40,14 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
 
     return (
         <div className="mt-6 mb-4 bg-white border-2 border-sky-200 rounded-xl p-4">
-            <div className="flex items-center justify-between mb-1 flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                    <span className="text-2xl">📺</span>
-                    <h3 className="text-base font-bold text-sky-900">
-                        {tx('Menu TV displays', 'Pantallas de menú')}
-                    </h3>
-                    <span className="text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-300">
-                        {configs.length} {tx('configured', 'configuradas')}
-                    </span>
-                </div>
-                <button onClick={() => setEditing('new')}
-                    className="px-3 py-1.5 rounded-lg bg-sky-600 text-white text-xs font-bold hover:bg-sky-700">
-                    + {tx('Add TV', 'Agregar TV')}
-                </button>
+            <div className="flex items-center gap-2 mb-1 flex-wrap">
+                <span className="text-2xl">📺</span>
+                <h3 className="text-base font-bold text-sky-900">
+                    {tx('Menu TV displays', 'Pantallas de menú')}
+                </h3>
+                <span className="text-[10px] font-bold text-sky-700 bg-sky-50 px-2 py-0.5 rounded-full border border-sky-300">
+                    {configs.length} {tx('configured', 'configuradas')}
+                </span>
             </div>
             <p className="text-[11px] text-sky-700 mb-3 leading-snug">
                 {tx(
@@ -62,64 +56,90 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
                 )}
             </p>
 
-            {/* Quick-start: the two reserved defaults */}
-            <div className="bg-sky-50 border border-sky-200 rounded-lg p-2.5 mb-3">
-                <div className="text-[10px] font-black uppercase tracking-widest text-sky-800 mb-1.5">
-                    {tx('Default kiosk URLs', 'URLs por defecto')}
-                </div>
-                <div className="space-y-1.5">
-                    {['webster', 'maryland'].map(loc => {
-                        // Has admin already created a custom config that
-                        // overrides this default? If so, show the custom
-                        // row instead so the layout/mode it already has
-                        // is reflected (and Edit takes admin to that doc).
-                        const existing = configs.find(c => c.tvId === loc);
-                        if (existing) {
-                            return (
-                                <TvConfigRow key={loc}
-                                    cfg={{ ...existing, label: `${existing.label || LOC_LABEL[loc]} (default override)` }}
-                                    baseUrl={baseUrl}
-                                    onEdit={() => setEditing({ existing })}
-                                    tx={tx} />
-                            );
-                        }
-                        return (
-                            <div key={loc} className="space-y-0.5">
-                                <KioskUrlRow
-                                    label={`${LOC_LABEL[loc]} (default)`}
-                                    url={`${baseUrl}/?tv=${loc}`}
-                                    tx={tx} />
-                                <div className="pl-32">
-                                    <button onClick={() => setEditing({ presetForDefault: loc })}
-                                        className="text-[10px] font-bold text-sky-700 hover:underline">
-                                        ✏ {tx(`Override ${LOC_LABEL[loc]} default with a custom config (image / layout / categories)`, `Personalizar ${LOC_LABEL[loc]}`)}
-                                    </button>
+            {/* Location-grouped TV list. Each location (Webster /
+                MD Heights) gets its own panel showing:
+                  • the default URL row (or override config if admin
+                    already replaced the default)
+                  • every custom TV config tied to that location
+                  • a "+ Add TV here" button with the location preset
+                Layout matches Andrew's mental model of "this
+                restaurant has these screens" — easier to scan when
+                you've got 3+ TVs at one location. */}
+            <div className="space-y-3">
+                {['webster', 'maryland'].map(loc => {
+                    // Default override (admin saved a config at id='webster'
+                    // or id='maryland' to replace the synthetic fallback).
+                    const defaultOverride = configs.find(c => c.tvId === loc);
+                    // Custom TVs for this location (excluding the
+                    // default-override one — that one's rendered separately).
+                    const customsForLoc = configs.filter(c =>
+                        c.location === loc && c.tvId !== loc);
+                    const totalCount = (defaultOverride ? 1 : 0) + customsForLoc.length;
+                    return (
+                        <div key={loc} className="bg-sky-50 border-2 border-sky-200 rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-base">🏠</span>
+                                    <h4 className="text-sm font-black uppercase tracking-widest text-sky-900">
+                                        {LOC_LABEL[loc]}
+                                    </h4>
+                                    <span className="text-[10px] font-bold text-sky-700 bg-white px-2 py-0.5 rounded-full border border-sky-300">
+                                        {totalCount} {totalCount === 1 ? tx('TV', 'TV') : tx('TVs', 'TVs')}
+                                    </span>
                                 </div>
+                                <button onClick={() => setEditing({ presetLocation: loc })}
+                                    className="px-2.5 py-1 rounded-lg bg-sky-600 text-white text-[11px] font-bold hover:bg-sky-700">
+                                    + {tx(`Add ${LOC_LABEL[loc]} TV`, `Agregar TV`)}
+                                </button>
                             </div>
-                        );
-                    })}
-                </div>
-            </div>
 
-            {/* Custom configured TVs */}
-            {configs.length > 0 ? (
-                <div className="space-y-1.5">
-                    {configs.map(cfg => (
-                        <TvConfigRow key={cfg.tvId}
-                            cfg={cfg}
-                            baseUrl={baseUrl}
-                            onEdit={() => setEditing({ existing: cfg })}
-                            tx={tx} />
-                    ))}
-                </div>
-            ) : (
-                <p className="text-[11px] text-sky-700/70 italic px-2 py-3">
-                    {tx(
-                        'No custom TVs configured yet. The default Webster + MD Heights URLs above work fine for one TV per restaurant. Add a custom TV if you want a 2nd screen, a different layout, or a category filter.',
-                        'Sin TVs personalizadas. Las URLs por defecto bastan para una TV por tienda. Añade una personalizada para 2da pantalla, layout distinto o filtrar categorías.',
-                    )}
-                </p>
-            )}
+                            <div className="space-y-1.5">
+                                {/* Default URL row — show as TvConfigRow if
+                                    overridden, otherwise as a KioskUrlRow with
+                                    an "Override default" link. */}
+                                {defaultOverride ? (
+                                    <TvConfigRow
+                                        cfg={{ ...defaultOverride, label: `${defaultOverride.label || LOC_LABEL[loc]} (default URL)` }}
+                                        baseUrl={baseUrl}
+                                        onEdit={() => setEditing({ existing: defaultOverride })}
+                                        tx={tx} />
+                                ) : (
+                                    <div className="space-y-0.5">
+                                        <KioskUrlRow
+                                            label={`${LOC_LABEL[loc]} default`}
+                                            url={`${baseUrl}/?tv=${loc}`}
+                                            tx={tx} />
+                                        <div className="pl-32">
+                                            <button onClick={() => setEditing({ presetForDefault: loc })}
+                                                className="text-[10px] font-bold text-sky-700 hover:underline">
+                                                ✏ {tx('Override this default URL with an image / custom layout', 'Personalizar')}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Custom TVs for this location */}
+                                {customsForLoc.map(cfg => (
+                                    <TvConfigRow key={cfg.tvId}
+                                        cfg={cfg}
+                                        baseUrl={baseUrl}
+                                        onEdit={() => setEditing({ existing: cfg })}
+                                        tx={tx} />
+                                ))}
+
+                                {customsForLoc.length === 0 && !defaultOverride && (
+                                    <p className="text-[10px] text-sky-700/60 italic pl-2 pt-1">
+                                        {tx(
+                                            `No extra TVs configured for ${LOC_LABEL[loc]} yet. Use "Add ${LOC_LABEL[loc]} TV" for a 2nd or 3rd screen (e.g. pictures TV + menu TV + drinks TV).`,
+                                            `Sin TVs adicionales para ${LOC_LABEL[loc]}. Usa "Agregar TV" para más pantallas.`,
+                                        )}
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
 
             {editing && (
                 <EditTvConfigModal
@@ -136,6 +156,20 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
                                     location: editing.presetForDefault,
                                     mode: MODES.IMAGE,
                                     _isPresetForDefault: true,
+                                }
+                            : editing.presetLocation
+                                ? {
+                                    // Preset for "+ Add Webster TV" / "+ Add MD
+                                    // Heights TV" — fresh new TV but with the
+                                    // location pre-filled so admin doesn't have
+                                    // to pick. tvId stays editable (admin types
+                                    // e.g. "webster-pictures") so they can have
+                                    // multiple TVs at the same location.
+                                    tvId: '',
+                                    label: '',
+                                    location: editing.presetLocation,
+                                    mode: MODES.MENU,
+                                    _isPresetForLocation: true,
                                 }
                             : null
                     }
@@ -223,18 +257,22 @@ function KioskUrlRow({ url, label, tx }) {
 }
 
 function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
-    // Three modes for the modal:
-    //   • brand-new   — initial null. Both tvId + label editable, no Delete.
-    //   • preset-for-default — initial.tvId is webster/maryland and the doc
-    //     doesn't exist yet. tvId locked (we WANT the slug to be exactly
-    //     webster/maryland to override the default), no Delete (nothing
-    //     to delete), title says "Override default".
-    //   • editing existing — initial is the real doc. tvId locked, Delete
-    //     button shown.
-    const isPreset = !!initial?._isPresetForDefault;
-    const docExists = !!initial && !isPreset;
-    const isNew = !initial;
-    const tvIdLocked = !isNew;     // both preset + editing-existing lock the slug
+    // Four modes for the modal:
+    //   • brand-new           — initial null. Both tvId + label editable, no Delete.
+    //   • preset-for-default  — initial.tvId is webster/maryland and doc doesn't
+    //                            exist yet. tvId locked (slug MUST stay so it
+    //                            overrides the synthetic default), no Delete.
+    //   • preset-for-location — initial.location is preset, but tvId is blank
+    //                            and editable. Used by "+ Add Webster TV". No
+    //                            Delete (no doc yet).
+    //   • editing existing    — initial is the real doc. tvId locked, Delete
+    //                            button shown.
+    const isPresetForDefault = !!initial?._isPresetForDefault;
+    const isPresetForLocation = !!initial?._isPresetForLocation;
+    const isPreset = isPresetForDefault;     // legacy alias; only default-override locks slug
+    const docExists = !!initial && !isPresetForDefault && !isPresetForLocation;
+    const isNew = !initial || isPresetForLocation;    // location-preset acts like new
+    const tvIdLocked = !isNew;
     const [tvId, setTvId] = useState(initial?.tvId || '');
     const [label, setLabel] = useState(initial?.label || '');
     const [location, setLocation] = useState(initial?.location || 'webster');
