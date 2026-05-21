@@ -136,6 +136,15 @@ export const DEFAULT_BROTHER_LABEL_HEIGHT_MM = 90;
 // print screen for the labels. 3x3 3x2 3x1.5 or something like that
 // depending on the printer and paper size".
 //
+// 2026-05-20 update: Andrew is loading the Brother QL-820NWB with
+// MarkDomain DK-4205-compatible continuous removable rolls — 2.4"
+// (62mm) wide × 100ft. The roll is the only paper Andrew has on
+// order for the Brother, so the 3 presets are sized to FIT that
+// roll. The roll is continuous so we can cut to any length; the
+// heights below are just the cut lengths each preset asks for.
+// Epson uses its own thermal stock at its native width (also ~58–
+// 62mm), so the same widths still render correctly there.
+//
 // Three preset sizes the staff picks at print time. Each preset:
 //   • Has physical dimensions (inch + mm) so the Brother HTML @page
 //     can size correctly and the Epson knows roughly how much
@@ -149,19 +158,19 @@ export const DEFAULT_BROTHER_LABEL_HEIGHT_MM = 90;
 export const LABEL_SIZE_PRESETS = Object.freeze([
     {
         id: 'full',
-        nameEn: '3×3 Full',
-        nameEs: '3×3 Completa',
-        widthIn: 3, heightIn: 3,
-        widthMm: 76, heightMm: 76,
+        nameEn: '2.4×2.4 Full',
+        nameEs: '2.4×2.4 Completa',
+        widthIn: 2.4, heightIn: 2.4,
+        widthMm: 62, heightMm: 62,
         // No section overrides — uses admin's saved format as-is.
         // Default scales unchanged.
     },
     {
         id: 'medium',
-        nameEn: '3×2 Medium',
-        nameEs: '3×2 Media',
-        widthIn: 3, heightIn: 2,
-        widthMm: 76, heightMm: 51,
+        nameEn: '2.4×1.5 Medium',
+        nameEs: '2.4×1.5 Media',
+        widthIn: 2.4, heightIn: 1.5,
+        widthMm: 62, heightMm: 38,
         // Drop the two biggest section blocks so date+title still pop.
         showIngredients: false,
         showNotes: false,
@@ -169,20 +178,20 @@ export const LABEL_SIZE_PRESETS = Object.freeze([
     },
     {
         id: 'small',
-        nameEn: '3×1.5 Small',
-        nameEs: '3×1.5 Pequeña',
-        widthIn: 3, heightIn: 1.5,
-        widthMm: 76, heightMm: 38,
+        nameEn: '2.4×1 Small',
+        nameEs: '2.4×1 Pequeña',
+        widthIn: 2.4, heightIn: 1,
+        widthMm: 62, heightMm: 25,
         // Keep only the essentials: date + title + use-by.
         showIngredients: false,
         showNotes: false,
         showAllergens: false,
         showLocation: false,
         showByName: false,
-        // Slightly smaller title so the date still dominates a 1.5"
-        // tall label.
+        // Smaller title + date so they fit a 1"-tall label without
+        // running off the cut edge.
         titleScale: 1,
-        dateNumberScale: 4,
+        dateNumberScale: 3,
     },
 ]);
 
