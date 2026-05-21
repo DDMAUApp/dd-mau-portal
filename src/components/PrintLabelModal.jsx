@@ -338,13 +338,18 @@ export default function PrintLabelModal({
                         </div>
                     </div>
 
-                    {/* Preview — mimics the linerless thermal label */}
+                    {/* Preview — mimics the linerless thermal label
+                        with the actual sizing the printer uses (date
+                        HUGE, label small, body medium). Andrew
+                        2026-05-20: "im looking at the preview of what
+                        prints and the prepped date is still same size.
+                        i want it bold and bigger." */}
                     <div>
                         <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
                             {tx('Preview (what prints)', 'Vista previa')}
                         </div>
-                        <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 font-mono text-[11px] leading-tight text-dd-text whitespace-pre-wrap">
-                            {renderLabelPreview(previewPayload)}
+                        <div className="bg-white border-2 border-dashed border-dd-line rounded-lg p-3 text-dd-text">
+                            <LabelPreview payload={previewPayload} />
                         </div>
                     </div>
 
@@ -405,47 +410,85 @@ export default function PrintLabelModal({
     );
 }
 
-// Render the label preview as plain text. Mirrors the new layout:
-// BIG prep date at the top (for FIFO scanning), divider, item name,
-// then meta block. Andrew 2026-05-20.
-function renderLabelPreview(payload) {
-    const lines = [];
-    if (payload.prepDateBig) {
-        lines.push(centerLine('▲▲▲▲▲▲ ' + payload.prepDateBig + ' ▲▲▲▲▲▲', 30));
-    }
-    if (payload.prepTimeBig) {
-        lines.push(centerLine(payload.prepTimeBig, 30));
-    }
-    lines.push('==============================');
-    for (const t of payload.titleLines) {
-        lines.push(centerLine(t, 30));
-    }
-    lines.push('------------------------------');
-    for (const m of payload.metaLines) lines.push(m);
-    if (payload.allergens.length > 0) {
-        lines.push('------------------------------');
-        lines.push(`ALLERGENS: ${payload.allergens.join(', ')}`);
-    }
-    if (payload.ingredients.length > 0) {
-        lines.push('------------------------------');
-        for (const ing of payload.ingredients) {
-            lines.push(`- ${ing.slice(0, 30)}`);
-        }
-    }
-    if (payload.notes) {
-        lines.push('------------------------------');
-        lines.push(payload.notes);
-    }
-    lines.push('==============================');
-    lines.push(centerLine(payload.footer || 'DD MAU', 30));
-    return lines.join('\n');
-}
-
-function centerLine(s, w) {
-    const t = String(s || '');
-    if (t.length >= w) return t;
-    const pad = Math.floor((w - t.length) / 2);
-    return ' '.repeat(pad) + t;
+// Label preview — JSX with REAL relative font sizes so admin sees
+// how the date dominates the sticker at a glance. Mirrors the
+// renderer in src/data/labelPrinting.js:
+//   • prepDateLabel ("PREPPED")     — small, bold
+//   • prepDateNumber ("05/20/26")   — HUGE, black, the focal point
+//   • prepTimeBig ("2:15p")         — medium
+//   • title                          — medium-bold
+//   • meta / allergens / ingredients — small
+//   • footer (DD MAU)                — small bold
+function LabelPreview({ payload }) {
+    return (
+        <div className="text-center font-sans">
+            {payload.prepDateLabel && (
+                <div className="text-[10px] font-bold uppercase tracking-widest text-dd-text-2">
+                    {payload.prepDateLabel}
+                </div>
+            )}
+            {payload.prepDateNumber ? (
+                <div className="font-black tabular-nums text-dd-text leading-none mb-0.5"
+                    style={{ fontSize: '40px', letterSpacing: '-1px' }}>
+                    {payload.prepDateNumber}
+                </div>
+            ) : payload.prepDateBig ? (
+                <div className="font-black tabular-nums text-dd-text leading-none mb-0.5"
+                    style={{ fontSize: '24px' }}>
+                    {payload.prepDateBig}
+                </div>
+            ) : null}
+            {payload.prepTimeBig && (
+                <div className="text-[14px] font-bold text-dd-text-2 tabular-nums mb-1">
+                    {payload.prepTimeBig}
+                </div>
+            )}
+            <hr className="border-t border-dashed border-dd-line my-1.5" />
+            {payload.titleLines && payload.titleLines.length > 0 && (
+                <div className="text-[14px] font-bold text-dd-text leading-tight">
+                    {payload.titleLines.map((t, i) => (
+                        <div key={i}>{t}</div>
+                    ))}
+                </div>
+            )}
+            <hr className="border-t border-dotted border-dd-line my-1.5" />
+            <div className="text-[11px] text-dd-text font-mono text-left leading-snug">
+                {payload.metaLines && payload.metaLines.map((m, i) => (
+                    <div key={i}>{m}</div>
+                ))}
+            </div>
+            {payload.allergens && payload.allergens.length > 0 && (
+                <>
+                    <hr className="border-t border-dotted border-dd-line my-1.5" />
+                    <div className="text-[11px] font-bold text-dd-text text-left">
+                        ALLERGENS: {payload.allergens.join(', ')}
+                    </div>
+                </>
+            )}
+            {payload.ingredients && payload.ingredients.length > 0 && (
+                <>
+                    <hr className="border-t border-dotted border-dd-line my-1.5" />
+                    <div className="text-[11px] text-dd-text text-left">
+                        {payload.ingredients.map((ing, i) => (
+                            <div key={i}>• {String(ing).slice(0, 30)}</div>
+                        ))}
+                    </div>
+                </>
+            )}
+            {payload.notes && (
+                <>
+                    <hr className="border-t border-dotted border-dd-line my-1.5" />
+                    <div className="text-[11px] italic text-dd-text-2 text-left">
+                        {payload.notes}
+                    </div>
+                </>
+            )}
+            <hr className="border-t border-dashed border-dd-line my-1.5" />
+            <div className="text-[11px] font-black tracking-wider text-dd-text">
+                {payload.footer || 'DD MAU'}
+            </div>
+        </div>
+    );
 }
 
 function pickIngredientsForLabel(recipe, language) {
