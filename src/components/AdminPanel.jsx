@@ -25,6 +25,7 @@ const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
 const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
 const MenuEditor = reactLazy(() => import('./MenuEditor'));
 const TvConfigsEditor = reactLazy(() => import('./TvConfigsEditor'));
+const ToastSyncSection = reactLazy(() => import('./ToastSyncSection'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -3896,6 +3897,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                     </ReactSuspense>
                     <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading TV displays…</div>}>
                         <TvConfigsEditor language={language} byName={staffName} />
+                    </ReactSuspense>
+                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading Toast sync…</div>}>
+                        <ToastSyncSection language={language} byName={staffName} />
                     </ReactSuspense>
 
                     {/* ── DANGER ZONE — System Refresh broadcast ────────────────────

@@ -48,6 +48,24 @@ const TWILIO_FROM_NUMBER = defineSecret("TWILIO_FROM_NUMBER");
 // roughly $0.0015 each at restaurant-scale inventory size.
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
+// Toast Connect API credentials per location. Powers syncToastMenuStatus
+// below — pulls 86 status from Toast every 5 min so staff don't have to
+// double-enter it in our 86 dashboard. Andrew 2026-05-20.
+//
+// Setup:
+//   firebase functions:secrets:set TOAST_WEBSTER_CLIENT_ID
+//   firebase functions:secrets:set TOAST_WEBSTER_CLIENT_SECRET
+//   firebase functions:secrets:set TOAST_MARYLAND_CLIENT_ID
+//   firebase functions:secrets:set TOAST_MARYLAND_CLIENT_SECRET
+//
+// Restaurant External IDs (GUIDs) are stored in Firestore at
+// /config/toast_<location> so they can be edited from the admin UI
+// without redeploying.
+const TOAST_WEBSTER_CLIENT_ID     = defineSecret("TOAST_WEBSTER_CLIENT_ID");
+const TOAST_WEBSTER_CLIENT_SECRET = defineSecret("TOAST_WEBSTER_CLIENT_SECRET");
+const TOAST_MARYLAND_CLIENT_ID    = defineSecret("TOAST_MARYLAND_CLIENT_ID");
+const TOAST_MARYLAND_CLIENT_SECRET= defineSecret("TOAST_MARYLAND_CLIENT_SECRET");
+
 const smsHelpers = require("./sms");
 const {
     renderSmsTemplate,
@@ -2475,6 +2493,282 @@ exports.checkTvHeartbeats = onSchedule(
             }
         }
         logger.info(`checkTvHeartbeats: alerted=${alerted} recovered=${recovered} totalHeartbeats=${snap.size}`);
+    }
+);
+
+// ── 2026-05-20 — syncToastMenuStatus: auto-86 from Toast POS ─────
+// Andrew: "is there a way to tag the menu items straight to toast.
+// so if we change a menu item on toast it changes on the menu?"
+//
+// When staff marks an item out-of-stock in Toast, this function picks
+// it up within ~5 minutes and writes it into /ops/86_<location>. The
+// existing 86 Dashboard + Menu TV SOLD OUT overlays then surface it
+// automatically — no double-entry between Toast and our app.
+//
+// API endpoints (Toast Connect v1):
+//   POST /authentication/v1/authentication/login  — OAuth token
+//   GET  /stock/v1/inventory?status=OUT_OF_STOCK  — current 86'd items
+//   GET  /menus/v2/menus                          — GUID → name lookup
+//
+// Config:
+//   /config/toast_<location> = {
+//     enabled:        boolean
+//     restaurantGuid: string   // Toast-Restaurant-External-ID
+//     lastSyncedAt:   Timestamp
+//     lastSyncOk:     boolean
+//     lastSyncError:  string?
+//     menuItemNames:  { [guid]: name }  // cached name map
+//     menuCacheUpdatedAt: Timestamp     // refresh once an hour
+//   }
+//
+// Schema notes:
+//   Existing 86 entries (from manual staff strikes) carry no `source`
+//   field. Toast-sourced entries are stamped with source='toast' so we
+//   can distinguish them and never overwrite a manual strike.
+//
+// Constraint:
+//   • Toast 86 → adds Toast-sourced entries to /ops/86_<location>
+//   • Toast back-in-stock → removes Toast-sourced entries
+//   • Manual entries (no source, or source='manual') are NEVER touched
+const TOAST_API_HOST = "https://ws-api.toasttab.com";
+const TOAST_MENU_CACHE_TTL_MS = 60 * 60 * 1000;   // 1 hour
+
+async function getToastAccessToken(clientId, clientSecret) {
+    const resp = await fetch(`${TOAST_API_HOST}/authentication/v1/authentication/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            clientId,
+            clientSecret,
+            userAccessType: "TOAST_MACHINE_CLIENT",
+        }),
+    });
+    if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Toast auth ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const token = data?.token?.accessToken;
+    if (!token) throw new Error("Toast auth response missing accessToken");
+    return token;
+}
+
+// Pull the full menu structure and build a GUID → display-name map.
+// Toast's stock endpoint returns item GUIDs only; we need names to
+// match against our 86 dashboard. Cached for an hour because menu
+// structures change slowly.
+async function getToastMenuItemNames(accessToken, restaurantGuid) {
+    const resp = await fetch(`${TOAST_API_HOST}/menus/v2/menus`, {
+        headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Toast-Restaurant-External-ID": restaurantGuid,
+        },
+    });
+    if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Toast menus ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const map = {};
+    // Toast's /menus/v2/menus shape:
+    //   { menus: [ { menuGroups: [ { menuItems: [ { guid, name, ... } ] } ] } ] }
+    // Defensive walk — fields can vary by API version + customer config.
+    const menus = Array.isArray(data?.menus) ? data.menus
+        : Array.isArray(data) ? data : [];
+    for (const menu of menus) {
+        const groups = Array.isArray(menu?.menuGroups) ? menu.menuGroups : [];
+        for (const grp of groups) {
+            const items = Array.isArray(grp?.menuItems) ? grp.menuItems : [];
+            for (const it of items) {
+                if (it?.guid && it?.name) {
+                    map[it.guid] = String(it.name);
+                }
+                // Nested subgroups (some Toast configs)
+                const subGroups = Array.isArray(grp?.menuGroups) ? grp.menuGroups : [];
+                for (const sg of subGroups) {
+                    const subItems = Array.isArray(sg?.menuItems) ? sg.menuItems : [];
+                    for (const sIt of subItems) {
+                        if (sIt?.guid && sIt?.name) map[sIt.guid] = String(sIt.name);
+                    }
+                }
+            }
+        }
+    }
+    return map;
+}
+
+async function getToastOutOfStockGuids(accessToken, restaurantGuid) {
+    const resp = await fetch(`${TOAST_API_HOST}/stock/v1/inventory?status=OUT_OF_STOCK`, {
+        headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Toast-Restaurant-External-ID": restaurantGuid,
+        },
+    });
+    if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Toast stock ${resp.status}: ${text.slice(0, 200)}`);
+    }
+    const data = await resp.json();
+    const items = Array.isArray(data) ? data : (Array.isArray(data?.items) ? data.items : []);
+    return items
+        .filter(i => i?.guid && (i?.status === "OUT_OF_STOCK" || !i?.status))
+        .map(i => ({ guid: i.guid, quantity: i.quantity ?? null }));
+}
+
+// Merge Toast OOS items into /ops/86_<location>.
+// Three operations:
+//   1. ADD — Toast says OOS, we don't have it → push new entry, source='toast'
+//   2. KEEP — Toast says OOS, we already have it → no change
+//   3. REMOVE — We have a source='toast' entry, but Toast no longer
+//      reports it as OOS → remove that entry
+// Manual entries are NEVER touched.
+async function applyToastOOSToFirestore(location, toastOOSNames) {
+    const docRef = db.doc(`ops/86_${location}`);
+    const snap = await docRef.get();
+    const data = snap.exists() ? (snap.data() || {}) : {};
+    const existingItems = Array.isArray(data.items) ? data.items : [];
+
+    const toastSet = new Set(toastOOSNames.map(n => n.toLowerCase()));
+
+    // Start with everything that's NOT toast-sourced (preserves manual).
+    const next = existingItems.filter(it => {
+        // Toast-sourced entries — keep only if still in toastSet.
+        if (it?.source === "toast") {
+            return it?.name && toastSet.has(String(it.name).toLowerCase());
+        }
+        // Manual/legacy entries — always keep.
+        return true;
+    });
+
+    // Add Toast-OOS items that aren't already in the list (by name).
+    const presentNames = new Set(next.map(i => String(i?.name || "").toLowerCase()));
+    for (const name of toastOOSNames) {
+        if (!presentNames.has(name.toLowerCase())) {
+            next.push({
+                name,
+                status: "OUT_OF_STOCK",
+                source: "toast",
+                outAt: FieldValue.serverTimestamp(),
+                outBy: ["Toast POS"],
+            });
+        }
+    }
+
+    await docRef.set({
+        items: next,
+        updatedAt: FieldValue.serverTimestamp(),
+        lastToastSyncAt: FieldValue.serverTimestamp(),
+    }, { merge: true });
+
+    return { total: next.length, fromToast: toastOOSNames.length };
+}
+
+// Pull cached menu names from /config/toast_<location>, falling back
+// to a fresh fetch when the cache is stale or empty.
+async function getMenuItemNamesCached(location, accessToken, restaurantGuid) {
+    const cfgRef = db.doc(`config/toast_${location}`);
+    const cfg = (await cfgRef.get()).data() || {};
+    const cachedAt = cfg.menuCacheUpdatedAt?.toMillis
+        ? cfg.menuCacheUpdatedAt.toMillis() : 0;
+    const age = Date.now() - cachedAt;
+    if (cfg.menuItemNames && age < TOAST_MENU_CACHE_TTL_MS) {
+        return cfg.menuItemNames;
+    }
+    const fresh = await getToastMenuItemNames(accessToken, restaurantGuid);
+    if (Object.keys(fresh).length > 0) {
+        await cfgRef.set({
+            menuItemNames: fresh,
+            menuCacheUpdatedAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+    }
+    return fresh;
+}
+
+exports.syncToastMenuStatus = onSchedule(
+    {
+        schedule: "every 5 minutes",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        secrets: [
+            TOAST_WEBSTER_CLIENT_ID, TOAST_WEBSTER_CLIENT_SECRET,
+            TOAST_MARYLAND_CLIENT_ID, TOAST_MARYLAND_CLIENT_SECRET,
+        ],
+    },
+    async (event) => {
+        const LOCS = [
+            { id: "webster",  clientId: TOAST_WEBSTER_CLIENT_ID,  clientSecret: TOAST_WEBSTER_CLIENT_SECRET  },
+            { id: "maryland", clientId: TOAST_MARYLAND_CLIENT_ID, clientSecret: TOAST_MARYLAND_CLIENT_SECRET },
+        ];
+
+        for (const loc of LOCS) {
+            const cfgRef = db.doc(`config/toast_${loc.id}`);
+            const cfgSnap = await cfgRef.get();
+            const cfg = cfgSnap.exists() ? (cfgSnap.data() || {}) : {};
+
+            if (cfg.enabled !== true) {
+                continue;     // not opted in — skip
+            }
+            const restaurantGuid = cfg.restaurantGuid;
+            if (!restaurantGuid) {
+                logger.warn(`syncToastMenuStatus: ${loc.id} enabled but missing restaurantGuid`);
+                await cfgRef.set({
+                    lastSyncOk: false,
+                    lastSyncError: "missing restaurantGuid",
+                    lastSyncedAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+                continue;
+            }
+
+            let clientId, clientSecret;
+            try {
+                clientId = loc.clientId.value();
+                clientSecret = loc.clientSecret.value();
+            } catch (e) {
+                logger.warn(`syncToastMenuStatus: ${loc.id} secret not set`);
+                await cfgRef.set({
+                    lastSyncOk: false,
+                    lastSyncError: "Toast secrets not configured",
+                    lastSyncedAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+                continue;
+            }
+            if (!clientId || !clientSecret) {
+                await cfgRef.set({
+                    lastSyncOk: false,
+                    lastSyncError: "empty client_id or client_secret",
+                    lastSyncedAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+                continue;
+            }
+
+            try {
+                const accessToken = await getToastAccessToken(clientId, clientSecret);
+                const guidToName = await getMenuItemNamesCached(loc.id, accessToken, restaurantGuid);
+                const oosItems = await getToastOutOfStockGuids(accessToken, restaurantGuid);
+                const oosNames = oosItems
+                    .map(i => guidToName[i.guid])
+                    .filter(Boolean);
+
+                const result = await applyToastOOSToFirestore(loc.id, oosNames);
+
+                await cfgRef.set({
+                    lastSyncOk: true,
+                    lastSyncError: FieldValue.delete(),
+                    lastSyncedAt: FieldValue.serverTimestamp(),
+                    lastSyncToastOOSCount: oosNames.length,
+                    lastSyncTotalOOSCount: result.total,
+                }, { merge: true });
+
+                logger.info(`syncToastMenuStatus: ${loc.id} ok — ${oosNames.length} from Toast, ${result.total} total OOS`);
+            } catch (e) {
+                logger.error(`syncToastMenuStatus: ${loc.id} failed:`, e?.message || e);
+                await cfgRef.set({
+                    lastSyncOk: false,
+                    lastSyncError: String(e?.message || e).slice(0, 300),
+                    lastSyncedAt: FieldValue.serverTimestamp(),
+                }, { merge: true });
+            }
+        }
     }
 );
 
