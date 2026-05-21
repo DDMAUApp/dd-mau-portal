@@ -37,6 +37,10 @@ const VendorCsvImportModal = lazy(() => import('./VendorCsvImportModal'));
 // inventory / checklist work; only managers using the Assign view pull
 // in this chunk.
 const AssignTasksPanel = lazy(() => import('./AssignTasksPanel'));
+// Wall Tasks admin sub-tab — edits the short list shown on the
+// kitchen wall tablet (TaskDisplay rendered at ?display=walltasks).
+// Lazy: only managers using the wall pull in this chunk.
+const WallTasksAdmin = lazy(() => import('./WallTasksAdmin'));
 
 // Constants
 // Time-period concept (morning/afternoon/night) was tried and abandoned — only
@@ -4598,6 +4602,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         {[
                             { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
                             { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
+                            { id: 'wall',      en: 'Wall',      es: 'Muro',       icon: '📺' },
                             { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
                             { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
                             { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
@@ -4653,6 +4658,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 language={language}
                                 staffName={staffName}
                                 staffList={staffList}
+                                isAdmin={currentIsAdmin}
+                            />
+                        </Suspense>
+                    )}
+
+                    {activeTab === "wall" && (
+                        <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
+                            <WallTasksAdmin
+                                language={language}
+                                staffName={staffName}
+                                staffList={staffList}
+                                storeLocation={storeLocation}
                                 isAdmin={currentIsAdmin}
                             />
                         </Suspense>

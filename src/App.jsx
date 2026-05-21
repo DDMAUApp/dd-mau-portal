@@ -65,6 +65,10 @@ const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
 const RequiredTaskFlow = lazy(() => import('./components/RequiredTaskFlow'));
 const MenuDisplay = lazy(() => import('./components/MenuDisplay'));
+// Wall-mount kitchen task display. Public URL (?display=walltasks&...)
+// bypasses the PIN, mirrors the ?tv= MenuDisplay pattern. Andrew 5/21:
+// "small monitor that i can hang up that we can put today task on".
+const TaskDisplay = lazy(() => import('./components/TaskDisplay'));
 
 // Pre-warmed chunk fetchers. React.lazy() above only fetches a chunk
 // when the component first renders. Calling these import() URLs
@@ -368,6 +372,25 @@ function readTvMode() {
     return null;
 }
 
+// ?display=walltasks&side=FOH|BOH&location=webster|maryland — kiosk
+// view for the wall-mounted kitchen task tablet. Public, no PII;
+// scoped to one (side, location) pair via URL so the wall is locked
+// to its assigned data. Garbage / partial params → null → fall
+// through to normal PIN flow.
+function readTaskDisplayMode() {
+    if (typeof window === 'undefined') return null;
+    try {
+        const params = new URLSearchParams(window.location.search);
+        if ((params.get('display') || '').toLowerCase() !== 'walltasks') return null;
+        const side = (params.get('side') || '').toUpperCase();
+        const location = (params.get('location') || '').toLowerCase();
+        if (side !== 'FOH' && side !== 'BOH') return null;
+        if (location !== 'webster' && location !== 'maryland') return null;
+        return { side, location };
+    } catch {}
+    return null;
+}
+
 // Detect onboarding URL params at mount time. Three apply-mode triggers
 // (all equivalent — the canonical short URL is apply.ddmaustl.com which
 // Squarespace 302-forwards to ?apply=1; we rewrite the URL bar to /apply
@@ -447,6 +470,10 @@ export default function App() {
     // /?tv=<location>. Read once at mount; the kiosk browser is a
     // long-lived tab that never navigates away.
     const [tvMode] = useState(() => readTvMode());
+    // Wall-mount kitchen task display mode — locked to one (side, location)
+    // via URL. PIN bypassed, no nav chrome. Public read+write to the
+    // wall_tasks doc (small list, low value). Same precedent as tvMode.
+    const [taskDisplayMode] = useState(() => readTaskDisplayMode());
     // Clean up the URL on apply-mode entry — applicants landed via the
     // Squarespace 302 forward from apply.ddmaustl.com which leaves them
     // at app.ddmaustl.com/?apply=1. We can't change the hostname (browser
@@ -914,6 +941,17 @@ export default function App() {
         return (
             <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
                 <MenuDisplay tvId={tvMode.tvId} />
+            </Suspense>
+        );
+    }
+
+    // Wall-mount kitchen task tablet. Bypasses the PIN, full-screen
+    // dark kiosk view. URL: ?display=walltasks&side=FOH|BOH
+    // &location=webster|maryland. Andrew 2026-05-21.
+    if (taskDisplayMode) {
+        return (
+            <Suspense fallback={<div className="fixed inset-0 bg-[#111315]" />}>
+                <TaskDisplay side={taskDisplayMode.side} location={taskDisplayMode.location} />
             </Suspense>
         );
     }
