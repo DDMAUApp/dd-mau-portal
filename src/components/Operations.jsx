@@ -32,6 +32,11 @@ import { toast, undoToast } from '../toast';
 // CSV importer — lazy so the parser doesn't bloat the Operations chunk
 // for the common case where nobody clicks Import.
 const VendorCsvImportModal = lazy(() => import('./VendorCsvImportModal'));
+// Assign Tasks sub-tab — manager-side task assignment with a growing,
+// searchable library of past tasks. Lazy because most ops sessions are
+// inventory / checklist work; only managers using the Assign view pull
+// in this chunk.
+const AssignTasksPanel = lazy(() => import('./AssignTasksPanel'));
 
 // Constants
 // Time-period concept (morning/afternoon/night) was tried and abandoned — only
@@ -4592,6 +4597,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     <div className="flex gap-1 mb-4 bg-white border border-dd-line rounded-lg p-1 shadow-card overflow-x-auto">
                         {[
                             { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
+                            { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
                             { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
                             { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
                             { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
@@ -4640,6 +4646,17 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     )}
 
                     {activeTab === "checklist" && renderChecklist()}
+
+                    {activeTab === "assign" && (
+                        <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
+                            <AssignTasksPanel
+                                language={language}
+                                staffName={staffName}
+                                staffList={staffList}
+                                isAdmin={currentIsAdmin}
+                            />
+                        </Suspense>
+                    )}
 
                     {activeTab === "saucelog" && (
                         <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>

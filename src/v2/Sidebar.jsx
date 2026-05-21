@@ -30,6 +30,10 @@ const NAV_GROUPS = [
         items: [
             { tab: 'home',       icon: '🏠', en: 'Home',       es: 'Inicio' },
             { tab: 'schedule',   icon: '📅', en: 'Schedule',   es: 'Horario' },
+            // 2026-05-21 — Andrew: managers assign tasks from Operations →
+            // Assign Tasks; staff see their list here. Sits right under
+            // Schedule because both answer "what do I have to do today?".
+            { tab: 'mytasks',    icon: '✅', en: 'My Tasks',   es: 'Mis Tareas' },
             // Chat is available to ALL staff — no role gate. Team messaging,
             // FOH/BOH channels, DMs, groups. See ChatCenter.jsx.
             { tab: 'chat',       icon: '💬', en: 'Chat',       es: 'Chat' },

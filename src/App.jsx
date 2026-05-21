@@ -42,6 +42,9 @@ const TrainingHub = lazy(() => import('./components/TrainingHub').then(m => ({ d
 // access-gate useMemo block below stabilizes the boolean props so
 // memo's shallow compare can actually catch the no-op renders.
 const Operations = lazy(() => import('./components/Operations').then(m => ({ default: memo(m.default) })));
+// Staff-facing personal task list — what's been assigned to me by managers
+// via Operations → Assign Tasks. Visible to every signed-in staff member.
+const MyTasksPanel = lazy(() => import('./components/MyTasksPanel').then(m => ({ default: memo(m.default) })));
 const MenuReference = lazy(() => import('./components/MenuReference').then(m => ({ default: memo(m.default) })));
 const DateStickerPrinter = lazy(() => import('./components/DateStickerPrinter').then(m => ({ default: memo(m.default) })));
 const Schedule = lazy(() => import('./components/Schedule').then(m => ({ default: memo(m.default) })));
@@ -1045,6 +1048,7 @@ export default function App() {
             if (activeTab === 'chat') return <ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} />;
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
             if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'mytasks') return <MyTasksPanel language={language} staffName={staffName} staffList={staffList} />;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;
             if (activeTab === 'datestickers') return <DateStickerPrinter language={language} staffName={staffName} storeLocation={effectiveLocation} staffList={staffList} />;
             if (activeTab === 'schedule') return <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />;
