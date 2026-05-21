@@ -34,6 +34,7 @@ import {
     subscribePrinterConfig,
     printPrepLabel,
 } from '../data/labelPrinting';
+import { subscribeLabelFormat, DEFAULT_LABEL_FORMAT } from '../data/labelFormat';
 
 // Props:
 //   recipe       — recipe-shaped object (titleEn, titleEs, allergens,
@@ -119,6 +120,13 @@ export default function PrintLabelModal({
         return subscribePrinterConfig(location, setPrinter, slot);
     }, [location, slot]);
 
+    // Subscribe to the global label format so the preview reflects
+    // admin's saved choices (section toggles, sizes, text overrides).
+    // Andrew 2026-05-20 — "make a label edit button so i can go in
+    // and edit all the labels format at once".
+    const [labelFormat, setLabelFormat] = useState({ ...DEFAULT_LABEL_FORMAT });
+    useEffect(() => subscribeLabelFormat(setLabelFormat), []);
+
     // Build the preview payload — same builder the print path uses,
     // so what the user sees IS what prints. In editable mode this
     // pulls from the local edit state via effectiveRecipe.
@@ -133,7 +141,8 @@ export default function PrintLabelModal({
         ingredients: pickIngredientsForLabel(effectiveRecipe, language),
         language,
         notes,
-    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes]);
+        format: labelFormat,
+    }), [effectiveRecipe, shelfLifeDays, staffName, location, language, notes, labelFormat]);
 
     // "Ready" = enabled and (Brother [browser print dialog, no IP needed]
     // OR Epson with an IP filled in). The slot's type comes from the
@@ -429,7 +438,13 @@ function LabelPreview({ payload }) {
             )}
             {payload.prepDateNumber ? (
                 <div className="font-black tabular-nums text-dd-text leading-none mb-0.5"
-                    style={{ fontSize: '40px', letterSpacing: '-1px' }}>
+                    style={{
+                        // 8px per Epson scale unit so admin's chosen
+                        // size (2..8) maps to a meaningful preview
+                        // size (16..64px). Default scale 5 → 40px.
+                        fontSize: `${8 * (Number(payload.dateNumberScale) || 5)}px`,
+                        letterSpacing: '-1px',
+                    }}>
                     {payload.prepDateNumber}
                 </div>
             ) : payload.prepDateBig ? (

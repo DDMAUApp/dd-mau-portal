@@ -47,6 +47,7 @@
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { recordAudit } from './audit';
+import { getLabelFormat } from './labelFormat';
 
 // ── Public types ──────────────────────────────────────────────
 // PrinterConfig shape — see header. Defaults applied at print time
@@ -254,19 +255,31 @@ export function buildLabelPayload({
     ingredients = [],
     language = 'en',
     notes = '',
+    // Andrew 2026-05-20: "make a label edit button so i can go in
+    // and edit all the labels format at once". `format` carries the
+    // admin's saved label preferences — section toggles, sizes, text
+    // overrides, date/time formats. Defaults applied when missing.
+    format = null,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const useByDate = new Date(prepDate.getTime() + shelfLifeDays * 86400_000);
+
+    const dateFmtIsDayFirst = format?.dateFormat === 'dd/mm/yy';
+    const timeFmt24h = format?.timeFormat === '24h';
+    const showWeekday = format?.showUseByWeekday !== false;
 
     const fmtDate = (d) => {
         // Short month/day plus 2-digit year — fits on a 80mm label.
         const mm = String(d.getMonth() + 1).padStart(2, '0');
         const dd = String(d.getDate()).padStart(2, '0');
         const yy = String(d.getFullYear()).slice(-2);
-        return `${mm}/${dd}/${yy}`;
+        return dateFmtIsDayFirst ? `${dd}/${mm}/${yy}` : `${mm}/${dd}/${yy}`;
     };
     const fmtTime = (d) => {
+        if (timeFmt24h) {
+            return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
         let h = d.getHours();
         const ampm = h >= 12 ? 'p' : 'a';
         h = h % 12 || 12;
@@ -277,34 +290,53 @@ export function buildLabelPayload({
     const titleLine = (isEs && itemNameEs) ? itemNameEs : itemName;
     const titleLines = wrapWords(String(titleLine || 'Item').toUpperCase(), 18);
 
-    // Big prep date at the top — for FIFO scanning. Andrew
-    // 2026-05-20: "lets make the date at the very top in bold and
-    // larger". Updated to split the label ("PREPPED") from the
-    // date number ("05/20/26") so renderers can print the label
-    // small + the date HUGE without wrapping. prepDateBig kept
-    // for back-compat with any caller that wants them on one line.
-    const prepDateLabel  = tx('PREPPED', 'HECHO');
+    // Big prep date at the top — for FIFO scanning. Format-aware:
+    // admin can override the "PREPPED" prefix text (e.g. "MADE",
+    // "PREP") via /config/label_format.
+    const prepDateLabel  = format?.showPreppedLabel === false
+        ? ''
+        : isEs
+            ? (format?.preppedLabelTextEs || 'HECHO')
+            : (format?.preppedLabelTextEn || 'PREPPED');
     const prepDateNumber = fmtDate(prepDate);
-    const prepDateBig    = `${prepDateLabel} ${prepDateNumber}`;
-    const prepTimeBig    = fmtTime(prepDate);
+    const prepDateBig    = prepDateLabel
+        ? `${prepDateLabel} ${prepDateNumber}`
+        : prepDateNumber;
+    const prepTimeBig    = format?.showTime === false ? '' : fmtTime(prepDate);
 
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
-    const metaLines = [
-        `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`,
-        `${tx('By', 'Por')}:     ${(preppedBy || '').slice(0, 22)}`,
-    ];
-    if (location) metaLines.push(`${tx('Loc', 'Loc')}:    ${location}`);
+    const metaLines = [];
+    if (format?.showUseBy !== false) {
+        const useByLine = showWeekday
+            ? `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)} (${isEs ? weekdayEs : weekday})`
+            : `${tx('Use by', 'Caduca')}: ${fmtDate(useByDate)}`;
+        metaLines.push(useByLine);
+    }
+    if (format?.showByName !== false) {
+        metaLines.push(`${tx('By', 'Por')}:     ${(preppedBy || '').slice(0, 22)}`);
+    }
+    if (location && format?.showLocation !== false) {
+        metaLines.push(`${tx('Loc', 'Loc')}:    ${location}`);
+    }
 
     // Trim allergen list to fit. Allergens go LAST visually so a
     // line that overflows still keeps the date info readable.
-    const allergenList = (allergens || []).filter(Boolean).slice(0, 8);
+    const allergenList = format?.showAllergens === false
+        ? []
+        : (allergens || []).filter(Boolean).slice(0, 8);
 
     // Top ingredients — keep first 4 to avoid 4-inch-tall labels.
-    const ingredientList = (ingredients || []).filter(Boolean).slice(0, 4);
+    const ingredientList = format?.showIngredients === false
+        ? []
+        : (ingredients || []).filter(Boolean).slice(0, 4);
+
+    const footer = format?.showFooter === false
+        ? ''
+        : (format?.footerText || 'DD MAU');
 
     return {
-        titleLines,
+        titleLines: format?.showTitle === false ? [] : titleLines,
         metaLines,
         prepDateLabel,    // e.g. "PREPPED" — small text above the date number
         prepDateNumber,   // e.g. "05/20/26" — printed HUGE
@@ -312,8 +344,11 @@ export function buildLabelPayload({
         prepTimeBig,
         allergens: allergenList,
         ingredients: ingredientList,
-        notes: String(notes || '').slice(0, 120),
-        footer: 'DD MAU',
+        notes: format?.showNotes === false ? '' : String(notes || '').slice(0, 120),
+        footer,
+        // Pass through size scales so renderers can apply them.
+        dateNumberScale: Number(format?.dateNumberScale) || 5,
+        titleScale:      Number(format?.titleScale) || 2,
     };
 }
 
@@ -387,10 +422,11 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text>${escapeXml(payload.prepDateLabel)}&#10;</text>`);
     }
     if (payload.prepDateNumber) {
-        // width=5 height=5 — ~10 char capacity on 80mm. "05/20/26"
-        // is 8 chars so it fits with margin. If we ever need 2-digit
-        // year + weekday on one line, drop to width=4.
-        lines.push(`<text width="5" height="5"/>`);
+        // Dynamic scale from format config (default 5). Epson supports
+        // 1..8 — we clamp to a safe range. Admin can dial up/down via
+        // the Label Format editor.
+        const dateScale = Math.max(2, Math.min(8, Number(payload.dateNumberScale) || 5));
+        lines.push(`<text width="${dateScale}" height="${dateScale}"/>`);
         lines.push(`<text>${escapeXml(payload.prepDateNumber)}&#10;</text>`);
     } else if (payload.prepDateBig) {
         // Back-compat fallback if caller didn't set prepDateNumber.
@@ -407,18 +443,25 @@ function renderPrepLabelBody(payload) {
     lines.push(`<text width="1" height="1"/>`);
     lines.push(`<text>==============================&#10;</text>`);
 
-    // ── Item title (medium) ──────────────────────────────────
-    lines.push(`<text width="2" height="2"/>`);
-    for (const t of payload.titleLines) {
-        lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+    // ── Item title (admin-scalable) ──────────────────────────
+    if (payload.titleLines && payload.titleLines.length > 0) {
+        const titleScale = Math.max(1, Math.min(4, Number(payload.titleScale) || 2));
+        lines.push(`<text width="${titleScale}" height="${titleScale}"/>`);
+        for (const t of payload.titleLines) {
+            lines.push(`<text>${escapeXml(t)}&#10;</text>`);
+        }
+        lines.push(`<text width="1" height="1"/>`);
+        lines.push(`<text align="left"/>`);
+        lines.push(`<text>------------------------------&#10;</text>`);
+    } else {
+        lines.push(`<text align="left"/>`);
     }
-    lines.push(`<text width="1" height="1"/>`);
-    lines.push(`<text align="left"/>`);
-    lines.push(`<text>------------------------------&#10;</text>`);
 
     // ── Meta (use-by, by, location) ──────────────────────────
-    for (const m of payload.metaLines) {
-        lines.push(`<text>${escapeXml(m)}&#10;</text>`);
+    if (payload.metaLines && payload.metaLines.length > 0) {
+        for (const m of payload.metaLines) {
+            lines.push(`<text>${escapeXml(m)}&#10;</text>`);
+        }
     }
     if (payload.allergens.length > 0) {
         lines.push(`<text>------------------------------&#10;</text>`);
@@ -436,11 +479,13 @@ function renderPrepLabelBody(payload) {
         lines.push(`<text>------------------------------&#10;</text>`);
         lines.push(`<text>${escapeXml(payload.notes)}&#10;</text>`);
     }
-    lines.push(`<text>------------------------------&#10;</text>`);
-    lines.push(`<text align="center"/>`);
-    lines.push(`<text em="true"/>`);
-    lines.push(`<text>${escapeXml(payload.footer || 'DD MAU')}&#10;</text>`);
-    lines.push(`<text em="false"/>`);
+    if (payload.footer) {
+        lines.push(`<text>------------------------------&#10;</text>`);
+        lines.push(`<text align="center"/>`);
+        lines.push(`<text em="true"/>`);
+        lines.push(`<text>${escapeXml(payload.footer)}&#10;</text>`);
+        lines.push(`<text em="false"/>`);
+    }
     lines.push(`<feed line="1"/>`);
     lines.push(`<cut type="feed"/>`);
     return lines.join('');
@@ -918,9 +963,10 @@ export async function printPrepLabel({
         if (printer.enabled === false) {
             return { ok: false, error: 'printer_disabled' };
         }
+        const format = await getLabelFormat();
         const days = Number.isFinite(shelfLifeDays) && shelfLifeDays > 0
             ? Math.floor(shelfLifeDays)
-            : resolveShelfLifeDays(recipe);
+            : (resolveShelfLifeDays(recipe) || format?.defaultShelfLifeDays || DEFAULT_SHELF_LIFE_DAYS);
         const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
 
         const payload = buildLabelPayload({
@@ -934,6 +980,7 @@ export async function printPrepLabel({
             ingredients: pickIngredientsForLabel(recipe, language),
             language,
             notes,
+            format,
         });
 
         let res;
@@ -1012,6 +1059,7 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
         if (type !== PRINTER_TYPES.BROTHER_QL && !printer.ip) {
             return { ok: false, error: 'no_printer_configured' };
         }
+        const format = await getLabelFormat();
         const payload = buildLabelPayload({
             itemName: 'Printer Test',
             prepDate: new Date(),
@@ -1022,6 +1070,7 @@ export async function testPrint({ location, slot = DEFAULT_PRINTER_SLOT, byName 
             ingredients: ['if you see this, printing works'],
             language: 'en',
             notes: 'Test print from DD Mau app',
+            format,
         });
 
         let res;

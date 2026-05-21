@@ -26,6 +26,7 @@ const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
 const MenuEditor = reactLazy(() => import('./MenuEditor'));
 const TvConfigsEditor = reactLazy(() => import('./TvConfigsEditor'));
 const ToastSyncSection = reactLazy(() => import('./ToastSyncSection'));
+const LabelFormatEditor = reactLazy(() => import('./LabelFormatEditor'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -3880,6 +3881,10 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         DD Mau app (browser) sends labels directly to the
                         printer's HTTP server — no middleware, no driver. */}
                     <PrintersConfigSection language={language} byName={staffName} />
+
+                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading label format editor…</div>}>
+                        <LabelFormatEditor language={language} byName={staffName} />
+                    </ReactSuspense>
 
                     {/* ── Menu TV editors ─────────────────────────────────────────
                         MenuEditor — admin-editable overlay on top of MENU_DATA.
