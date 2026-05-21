@@ -278,9 +278,15 @@ export function buildLabelPayload({
     const titleLines = wrapWords(String(titleLine || 'Item').toUpperCase(), 18);
 
     // Big prep date at the top — for FIFO scanning. Andrew
-    // 2026-05-20. Format: "PREPPED 05/20/26" + smaller time line.
-    const prepDateBig = `${tx('PREPPED', 'HECHO')} ${fmtDate(prepDate)}`;
-    const prepTimeBig = fmtTime(prepDate);
+    // 2026-05-20: "lets make the date at the very top in bold and
+    // larger". Updated to split the label ("PREPPED") from the
+    // date number ("05/20/26") so renderers can print the label
+    // small + the date HUGE without wrapping. prepDateBig kept
+    // for back-compat with any caller that wants them on one line.
+    const prepDateLabel  = tx('PREPPED', 'HECHO');
+    const prepDateNumber = fmtDate(prepDate);
+    const prepDateBig    = `${prepDateLabel} ${prepDateNumber}`;
+    const prepTimeBig    = fmtTime(prepDate);
 
     const weekday = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][useByDate.getDay()];
     const weekdayEs = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'][useByDate.getDay()];
@@ -300,7 +306,9 @@ export function buildLabelPayload({
     return {
         titleLines,
         metaLines,
-        prepDateBig,
+        prepDateLabel,    // e.g. "PREPPED" — small text above the date number
+        prepDateNumber,   // e.g. "05/20/26" — printed HUGE
+        prepDateBig,      // legacy combined "PREPPED 05/20/26"
         prepTimeBig,
         allergens: allergenList,
         ingredients: ingredientList,
@@ -366,10 +374,27 @@ function renderPrepLabelBody(payload) {
     const lines = [];
 
     // ── HUGE prep date at the top ────────────────────────────
+    // 2026-05-20 — Andrew: "lets make the date at the very top in
+    // bold and larger". Split into two lines so the date NUMBER
+    // (e.g. "05/20/26") fits at width=5 height=5 without wrapping:
+    //   PREPPED       ← width=2 height=2, bold
+    //   05/20/26      ← width=5 height=5, bold (the HUGE date)
+    //   2:15p         ← width=2 height=2
     lines.push(`<text align="center"/>`);
     lines.push(`<text em="true"/>`);
-    lines.push(`<text width="3" height="3"/>`);
-    if (payload.prepDateBig) {
+    if (payload.prepDateLabel) {
+        lines.push(`<text width="2" height="2"/>`);
+        lines.push(`<text>${escapeXml(payload.prepDateLabel)}&#10;</text>`);
+    }
+    if (payload.prepDateNumber) {
+        // width=5 height=5 — ~10 char capacity on 80mm. "05/20/26"
+        // is 8 chars so it fits with margin. If we ever need 2-digit
+        // year + weekday on one line, drop to width=4.
+        lines.push(`<text width="5" height="5"/>`);
+        lines.push(`<text>${escapeXml(payload.prepDateNumber)}&#10;</text>`);
+    } else if (payload.prepDateBig) {
+        // Back-compat fallback if caller didn't set prepDateNumber.
+        lines.push(`<text width="3" height="3"/>`);
         lines.push(`<text>${escapeXml(payload.prepDateBig)}&#10;</text>`);
     }
     lines.push(`<text em="false"/>`);
@@ -474,9 +499,21 @@ function renderPrepLabelHtmlBody(payload) {
     const ingredientsHtml = (payload.ingredients && payload.ingredients.length)
         ? payload.ingredients.map(i => '&bull; ' + escapeHtml(i)).join('<br>')
         : '';
+    // 2026-05-20 — Andrew: "lets make the date at the very top in
+    // bold and larger". Split into label + number; the date number
+    // gets its own .prep-date-number style at much bigger font.
+    const dateLabel = payload.prepDateLabel
+        ? `<div class="prep-date-label">${escapeHtml(payload.prepDateLabel)}</div>`
+        : '';
+    const dateNumber = payload.prepDateNumber
+        ? `<div class="prep-date-number">${escapeHtml(payload.prepDateNumber)}</div>`
+        : (payload.prepDateBig
+            ? `<div class="prep-date">${escapeHtml(payload.prepDateBig)}</div>`
+            : '');
     return [
         '<div class="label">',
-        `<div class="prep-date">${escapeHtml(payload.prepDateBig || '')}</div>`,
+        dateLabel,
+        dateNumber,
         payload.prepTimeBig ? `<div class="prep-time">${escapeHtml(payload.prepTimeBig)}</div>` : '',
         '<div class="divider"></div>',
         `<div class="title">${titleHtml}</div>`,
@@ -548,6 +585,10 @@ html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFo
 .page { width: ${w}mm; height: ${h}mm; padding: ${mm(Math.min(2, w * 0.04))}; page-break-after: always; overflow: hidden; }
 .page:last-child { page-break-after: auto; }
 .label { display: flex; flex-direction: column; height: 100%; gap: ${mm(w * 0.015)}; }
+/* 2026-05-20 — Andrew: date BIG at top. Label small ("PREPPED"),
+   number HUGE (~28% of label width — covers ~8 chars on 62mm). */
+.prep-date-label { font-size: ${mm(w * 0.08)}; font-weight: 700; text-align: center; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1; }
+.prep-date-number { font-size: ${mm(w * 0.28)}; font-weight: 900; text-align: center; letter-spacing: -1px; line-height: 0.95; }
 .prep-date { font-size: ${mm(w * 0.16)}; font-weight: 900; text-align: center; letter-spacing: -0.5px; line-height: 1.05; }
 .prep-time { font-size: ${mm(w * 0.10)}; text-align: center; }
 .divider { border-top: 1.5px dashed #000; margin: ${mm(w * 0.01)} 0; }
