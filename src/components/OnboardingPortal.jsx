@@ -213,9 +213,15 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 lastUpdate: new Date().toISOString(),
             });
         } catch (e) { console.warn('setDocStatus failed', e); }
-        // Notify admins on fresh-submit transitions. Tag is stable so
-        // re-submits (the same hire re-signing the same doc) replace
-        // the previous notification instead of stacking.
+        // Notify admins on fresh-submit transitions. Andrew 2026-05-21:
+        // "why i just 6 notifications for enzo" — the tag used to be
+        // per-doc (`hire_doc_submitted:${hireId}:${docId}`) which meant
+        // every doc Enzo submitted produced a NEW OS notification and
+        // they stacked up six-deep on the admin's phone. Switched to a
+        // hire-level tag so the OS REPLACES the previous push with
+        // each new one — admin sees a single live notification per
+        // hire that updates to whatever was just submitted. Bell-
+        // drawer history still keeps every individual entry.
         if (next === DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.APPROVED) {
             try {
                 const docDef = ONBOARDING_DOCS.find(d => d.id === docId);
@@ -223,11 +229,11 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 const firstName = (hire?.name || '').split(' ')[0] || hire?.name || tx('A hire', 'Un contratado');
                 await notifyAdmins({
                     type: 'onboarding_doc_submitted',
-                    title: `📄 ${firstName}: ${docLabel}`,
-                    body: tx(`${firstName} submitted ${docLabel}. Tap to review.`,
-                              `${firstName} envió ${docLabel}. Toca para revisar.`),
+                    title: `📄 ${firstName} — onboarding`,
+                    body: tx(`Just submitted: ${docLabel}. Tap to review.`,
+                              `Acaba de enviar: ${docLabel}. Toca para revisar.`),
                     link: '/onboarding',
-                    tag: `hire_doc_submitted:${hireId}:${docId}`,
+                    tag: `hire_progress:${hireId}`,
                     createdBy: 'onboarding_portal',
                 });
             } catch (e) { console.warn('admin notify failed:', e); }
@@ -258,6 +264,10 @@ export default function OnboardingPortal({ token, language = 'en' }) {
         try { await updateDoc(doc(db, 'onboarding_hires', hireId), patch); }
         catch (e) { console.warn('saveForm failed', e); }
         // Ping admins on first submit (don't re-ping on edit-and-save).
+        // Tag is hire-level (not doc-level) — see comment block above
+        // in setDocStatus for the rationale: per-doc tags stacked 6
+        // pushes for one hire; per-hire tag collapses to one live push
+        // that updates as the hire progresses.
         if (prevStatus !== DOC_STATUS.SUBMITTED && prevStatus !== DOC_STATUS.APPROVED) {
             try {
                 const docDef = ONBOARDING_DOCS.find(d => d.id === docId);
@@ -265,11 +275,11 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                 const firstName = (hire?.name || '').split(' ')[0] || hire?.name || tx('A hire', 'Un contratado');
                 await notifyAdmins({
                     type: 'onboarding_doc_submitted',
-                    title: `📄 ${firstName}: ${docLabel}`,
-                    body: tx(`${firstName} submitted ${docLabel}. Tap to review.`,
-                              `${firstName} envió ${docLabel}. Toca para revisar.`),
+                    title: `📄 ${firstName} — onboarding`,
+                    body: tx(`Just submitted: ${docLabel}. Tap to review.`,
+                              `Acaba de enviar: ${docLabel}. Toca para revisar.`),
                     link: '/onboarding',
-                    tag: `hire_doc_submitted:${hireId}:${docId}`,
+                    tag: `hire_progress:${hireId}`,
                     createdBy: 'onboarding_portal',
                 });
             } catch (e) { console.warn('admin notify failed:', e); }
