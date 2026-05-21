@@ -191,19 +191,20 @@ export const EPSON_LABEL_PRESETS = Object.freeze([
         nameEs: 'Pequeña',
         widthIn: 3, heightIn: 1.5,
         widthMm: 80, heightMm: 38,
-        // Keep only the essentials. Andrew 2026-05-20: "in the small
-        // sticker print there is no name. add it next to the date".
-        // Small label is 38mm tall — there's no vertical room for
-        // "PREPPED" + time + dividers + tiny title before the printer
-        // cuts the paper. Solution: drop PREP-label + time, bump title
-        // scale so the name renders next to (right under) the date.
+        // Keep only the essentials. Andrew (5/20) "add [the title]
+        // next to the date" + (5/21) "small still doesnt have the
+        // staff name on it fix it". Show: date, title, use-by, by-
+        // name. Hide: ingredients, notes, allergens, location, time,
+        // and the "PREPPED" header line (the date number speaks
+        // for itself at scale 3).
         showIngredients: false,
         showNotes: false,
         showAllergens: false,
         showLocation: false,
-        showByName: false,
         showTime: false,
         showPreppedLabel: false,
+        // showByName left at default (true) so prep cook's initials
+        // print on every small sticker.
         // Both date and title at scale 3 — readable + same prominence.
         titleScale: 3,
         dateNumberScale: 3,
@@ -237,21 +238,22 @@ export const BROTHER_LABEL_PRESETS = Object.freeze([
         nameEs: 'Pequeña',
         widthIn: 2.4, heightIn: 1,
         widthMm: 62, heightMm: 25,
-        // Andrew 2026-05-20: "in the small sticker print there is
-        // no name. add it next to the date". 1"-tall label has no
-        // room for PREP label + time + dividers + tiny title — they
-        // all fight for the same 25mm. Drop the non-essentials so
-        // date + name dominate. (Brother's title font is sized by
-        // % of label width — see buildBrotherPrintDoc's CSS — so
-        // titleScale is only honored by the Epson path. Setting it
-        // here anyway for consistency.)
+        // Andrew (5/20) "no name. add it next to the date" + (5/21)
+        // "small still doesnt have the staff name on it fix it".
+        // Brother's CSS sizes the date by % of width (~17mm tall on
+        // 62mm wide) which would overflow a 25mm label once we add
+        // by-name + use-by. buildBrotherPrintDoc detects short
+        // labels (h < 35mm) and switches to a `.compact` rule that
+        // scales the date down to fit. titleScale here is honored
+        // only by Epson; Brother's title font is in CSS too.
         showIngredients: false,
         showNotes: false,
         showAllergens: false,
         showLocation: false,
-        showByName: false,
         showTime: false,
         showPreppedLabel: false,
+        // showByName left at default (true) so prep cook's initials
+        // print on every small sticker.
         titleScale: 3,
         dateNumberScale: 2,
     },
@@ -814,8 +816,17 @@ function buildBrotherPrintDoc({ widthMm, heightMm, bodyHtml, copies = 1 }) {
     const w = Math.max(20, Math.min(200, Number(widthMm) || DEFAULT_BROTHER_LABEL_WIDTH_MM));
     const h = Math.max(20, Math.min(300, Number(heightMm) || DEFAULT_BROTHER_LABEL_HEIGHT_MM));
     const c = Math.max(1, Math.min(20, Math.floor(Number(copies) || 1)));
+    // Andrew 2026-05-21: "small still doesnt have the staff name on
+    // it fix it". Brother small (62 × 25mm) was overflowing once
+    // we re-enabled by-name. The default `.prep-date-number` font
+    // is 28% of WIDTH = 17mm on 62mm — eats most of a 25mm label
+    // before title/meta/by-name even get a chance. Detect short
+    // labels (h < 35mm) and emit a `.compact` class on the page
+    // that re-scales the typography off label HEIGHT instead.
+    const compact = h < 35;
+    const pageClass = compact ? 'page compact' : 'page';
     const pages = Array.from({ length: c },
-        () => `<section class="page">${bodyHtml}</section>`).join('');
+        () => `<section class="${pageClass}">${bodyHtml}</section>`).join('');
     const mm = (x) => `${(Math.max(0, x)).toFixed(2)}mm`;
     return `<!doctype html>
 <html><head><meta charset="utf-8"><title>DD Mau Label</title>
@@ -824,22 +835,35 @@ function buildBrotherPrintDoc({ widthMm, heightMm, bodyHtml, copies = 1 }) {
 * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 html, body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; color: #000; background: #fff; }
 .page { width: ${w}mm; height: ${h}mm; padding: ${mm(Math.min(2, w * 0.04))}; page-break-after: always; overflow: hidden; }
+.page.compact { padding: ${mm(Math.min(1.5, w * 0.02))}; }
 .page:last-child { page-break-after: auto; }
 .label { display: flex; flex-direction: column; height: 100%; gap: ${mm(w * 0.015)}; }
+.page.compact .label { gap: ${mm(h * 0.02)}; }
 /* 2026-05-20 — Andrew: date BIG at top. Label small ("PREPPED"),
-   number HUGE (~28% of label width — covers ~8 chars on 62mm). */
+   number HUGE (~28% of label width — covers ~8 chars on 62mm).
+   2026-05-21 — short labels (h < 35mm) get .compact overrides
+   that size the date + title off HEIGHT so 4 lines (date / title
+   / use-by / by-name) all fit on a 25mm-tall Brother small. */
 .prep-date-label { font-size: ${mm(w * 0.08)}; font-weight: 700; text-align: center; letter-spacing: 0.5px; text-transform: uppercase; line-height: 1; }
 .prep-date-number { font-size: ${mm(w * 0.28)}; font-weight: 900; text-align: center; letter-spacing: -1px; line-height: 0.95; }
+.page.compact .prep-date-number { font-size: ${mm(h * 0.36)}; line-height: 1; }
 .prep-date { font-size: ${mm(w * 0.16)}; font-weight: 900; text-align: center; letter-spacing: -0.5px; line-height: 1.05; }
 .prep-time { font-size: ${mm(w * 0.10)}; text-align: center; }
 .divider { border-top: 1.5px dashed #000; margin: ${mm(w * 0.01)} 0; }
 .divider.thin { border-top-style: solid; border-top-width: 0.5px; }
+.page.compact .divider, .page.compact .divider.thin { margin: ${mm(h * 0.01)} 0; border-top-width: 0.5px; }
 .title { font-size: ${mm(w * 0.09)}; font-weight: 700; text-align: center; line-height: 1.1; }
+.page.compact .title { font-size: ${mm(h * 0.18)}; line-height: 1; }
 .meta { font-size: ${mm(w * 0.055)}; line-height: 1.25; font-variant-numeric: tabular-nums; }
+.page.compact .meta { font-size: ${mm(h * 0.10)}; line-height: 1.15; text-align: center; }
 .allergens { font-size: ${mm(w * 0.055)}; font-weight: 700; }
 .ingredients { font-size: ${mm(w * 0.05)}; }
 .notes { font-size: ${mm(w * 0.05)}; font-style: italic; }
 .footer { font-size: ${mm(w * 0.055)}; font-weight: 700; text-align: center; margin-top: auto; padding-top: ${mm(w * 0.01)}; }
+/* Hide the trailing "DD MAU" footer on compact labels — every mm
+   counts and the brand on the sticker is low-value next to date /
+   item / use-by / staff name. */
+.page.compact .footer { display: none; }
 .freetext { white-space: pre-wrap; word-break: break-word; }
 .freetext.small  { font-size: ${mm(w * 0.06)}; }
 .freetext.normal { font-size: ${mm(w * 0.10)}; }
