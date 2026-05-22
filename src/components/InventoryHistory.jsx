@@ -354,7 +354,8 @@ export default function InventoryHistory({ language, customInventory: customInve
                             {/* Action buttons */}
                             <div className="flex gap-2">
                                 <button onClick={() => { if (histEditMode) { saveHistEdits(); } else { setHistEditMode(true); } setShowAddPicker(false); }}
-                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition ${histEditMode ? "bg-green-700 text-white" : "bg-blue-700 text-white"}`}>
+                                    disabled={saving}
+                                    className={`flex-1 py-2 rounded-lg text-xs font-bold transition disabled:opacity-50 ${histEditMode ? "bg-green-700 text-white" : "bg-blue-700 text-white"}`}>
                                     {histEditMode
                                         ? (language === "es" ? "✓ Guardar" : "✓ Save")
                                         : (language === "es" ? "✏️ Editar Lista" : "✏️ Edit List")}
