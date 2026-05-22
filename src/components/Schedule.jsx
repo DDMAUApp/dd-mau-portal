@@ -535,6 +535,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Each filled slot becomes a real shift.
     const [staffingNeeds, setStaffingNeeds] = useState([]);
     const [showNeedModal, setShowNeedModal] = useState(false);
+    // Optional date prefill for the StaffingNeedModal. Set when the manager
+    // clicks the "+ slot" button on a specific day cell in the unassigned
+    // row — pre-populates the date field so they don't have to set it
+    // manually. Null = no prefill (open with the default-to-weekStart date).
+    const [prefillNeedDate, setPrefillNeedDate] = useState(null);
     const [fillingNeed, setFillingNeed] = useState(null); // need being filled when AvailableStaffModal is open
     const [editingNeed, setEditingNeed] = useState(null); // existing staffing_need being edited (start/end/count)
     // When manager taps "+" on a staff cell that has matching open slots, we
@@ -4302,10 +4307,10 @@ ${dayBlocks}
                                 }}
                                 onTakeShift={handleTakeShift}
                                 onCancelOffer={handleCancelOffer}
-                                /* Speed template add — day/list views */
-                                scheduleTemplates={scheduleTemplates}
-                                onApplyTemplate={handleApplyTemplate}
-                                onOpenTemplateModal={() => setShowApplyTemplate(true)}
+                                /* Speed slot add — day/list views. Click a "+ slot"
+                                   chip on a day cell → opens the StaffingNeedModal
+                                   pre-filled to that date. */
+                                onAddSlot={(dStr) => { setPrefillNeedDate(dStr); setShowNeedModal(true); }}
                             />
                             <OpenShiftsCalendarBar
                                 mode="available"
@@ -4385,15 +4390,11 @@ ${dayBlocks}
                                         ));
                                     }
                                 }}
-                                /* Speed template add — propagate templates +
-                                    handlers so each unassigned-row day cell can
-                                    render its own "+ template" popover. The
-                                    onOpenTemplateModal fallback re-opens the
-                                    full multi-day picker when the speed-add
-                                    popover isn't enough. */
-                                scheduleTemplates={scheduleTemplates}
-                                onApplyTemplate={handleApplyTemplate}
-                                onOpenTemplateModal={() => setShowApplyTemplate(true)}
+                                /* Speed slot add — wires the "+ slot" inline
+                                    button on each unassigned-row day cell to
+                                    open the StaffingNeedModal pre-filled with
+                                    that day's date. */
+                                onAddSlot={(dStr) => { setPrefillNeedDate(dStr); setShowNeedModal(true); }}
                                 selectedShiftIds={selectedShiftIds}
                                 onToggleShiftSelection={toggleShiftSelection}
                                 onCellClick={(staff, dateStr) => {
@@ -4775,12 +4776,17 @@ ${dayBlocks}
             )}
             {showNeedModal && canEdit && (
                 <StaffingNeedModal
-                    onClose={() => setShowNeedModal(false)}
-                    onSave={handleAddNeed}
+                    onClose={() => { setShowNeedModal(false); setPrefillNeedDate(null); }}
+                    onSave={(form) => { handleAddNeed(form); setPrefillNeedDate(null); }}
                     storeLocation={storeLocation}
                     side={side}
                     weekStart={weekStart}
                     isEn={isEn}
+                    /* Per-day prefill from the "+ slot" inline button in the
+                       unassigned row. Without an id the modal renders in
+                       "Add" mode (not Edit) so handleAddNeed still gets
+                       called on save. */
+                    initial={prefillNeedDate ? { date: prefillNeedDate, side } : undefined}
                 />
             )}
             {editingNeed && canEdit && (
@@ -5230,9 +5236,9 @@ function OpenShiftsCalendarBar({
     weekStart, staffingNeeds, shifts, side, storeLocation, isEn,
     canEdit, currentStaffName, blocksByDate,
     onFillSlot, onTakeShift, onCancelOffer,
-    // Speed template add (unassigned mode only — managers tap a "+ template"
-    // chip per day to drop a saved template onto that single date).
-    scheduleTemplates = [], onApplyTemplate, onOpenTemplateModal,
+    // Speed slot add (unassigned mode only — managers tap a "+ slot"
+    // chip per day to open the StaffingNeedModal pre-filled to that date).
+    onAddSlot,
 }) {
     const tx = (en, es) => (isEn ? en : es);
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
@@ -5264,9 +5270,9 @@ function OpenShiftsCalendarBar({
         ? openSlots.reduce((sum, n) => sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)
         : openOffers.length;
     // Keep the unassigned bar visible for managers even when nothing is
-    // unfilled, so the "+ template" speed-add stays reachable. Available-
+    // unfilled, so the "+ slot" speed-add stays reachable. Available-
     // mode bar still hides on empty (no manager action to surface there).
-    const showSpeedAdd = isUnassigned && canEdit && typeof onApplyTemplate === 'function';
+    const showSpeedAdd = isUnassigned && canEdit && typeof onAddSlot === 'function';
     if (total === 0 && !showSpeedAdd) return null;
 
     const itemsByDate = new Map();
@@ -5395,18 +5401,14 @@ function OpenShiftsCalendarBar({
                                     );
                                 })}
 
-                                {/* Speed template add — same component the
-                                    weekly-grid uses. Renders only in unassigned
-                                    mode + when a manager is viewing. */}
+                                {/* Speed slot add — same button the weekly grid
+                                    uses. Renders only in unassigned mode + when
+                                    a manager is viewing. */}
                                 {showSpeedAdd && !closed && (
-                                    <QuickAddTemplate
-                                        templates={scheduleTemplates}
-                                        side={side}
+                                    <QuickAddSlot
                                         dateStr={dStr}
-                                        dayId={DAY_IDS[d.getDay()]}
                                         isEn={isEn}
-                                        onApply={onApplyTemplate}
-                                        onOpenFullModal={onOpenTemplateModal}
+                                        onAddSlot={onAddSlot}
                                     />
                                 )}
                                 {items.length === 0 && !showSpeedAdd && (
@@ -5429,104 +5431,22 @@ function OpenShiftsCalendarBar({
     );
 }
 
-// Speed template add — small + button in the unassigned row's day cells.
-// One tap → popover of matching templates → one tap → applied to that day.
-// Bypasses the full Apply Template modal for the common case (single day,
-// known template). Falls through to the modal via "More templates…" if
-// the manager needs the multi-day picker or to edit a template first.
-//
-// Filters templates two ways:
-//   1. Side must match (FOH templates only on the FOH view, etc.)
-//   2. Templates tagged for this day-of-week sort to the top; untagged
-//      templates ("any day") follow; other-day templates are dimmed.
-//
-// All-in component (button + popover + outside-click close) so callers
-// just drop <QuickAddTemplate ... /> wherever they want it.
-function QuickAddTemplate({ templates, side, dateStr, dayId, isEn, onApply, onOpenFullModal }) {
-    const [open, setOpen] = useState(false);
+// Speed slot-add — single-tap "+ slot" button in each day cell of the
+// unassigned row. Opens the StaffingNeedModal pre-filled to this date so
+// the manager just sets time + count + role and saves. Replaced the
+// earlier QuickAddTemplate popover (2026-05-21, Andrew: "switch the
+// template plus to slots plus") — direct slot creation is the common
+// case; the multi-day template apply still lives in More Actions →
+// Apply Template for power use.
+function QuickAddSlot({ dateStr, isEn, onAddSlot }) {
     const tx = (en, es) => (isEn ? en : es);
-
-    const sided = (templates || []).filter(t => t.side === side);
-    // Sort: matching-day first (alphabetical), untagged second (alphabetical),
-    // off-day templates last (alphabetical + dimmed). The bar's main use case
-    // is "I'm building Friday — give me the Friday templates first."
-    const sorted = useMemo(() => {
-        const score = (t) => {
-            const days = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
-            if (days.length === 0) return 1;        // any-day
-            if (days.includes(dayId)) return 0;     // matches this day
-            return 2;                                // off-day
-        };
-        return [...sided].sort((a, b) => {
-            const d = score(a) - score(b);
-            if (d !== 0) return d;
-            return (a.name || '').localeCompare(b.name || '');
-        });
-    }, [sided, dayId]);
-
     return (
-        <div className="relative">
-            <button
-                onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
-                title={tx('Add template to this day', 'Añadir plantilla a este día')}
-                className="w-full rounded-md border border-dashed border-blue-300 text-blue-600 hover:bg-blue-100 hover:border-blue-400 px-1.5 py-1 text-[10px] font-bold leading-none transition active:scale-95">
-                + {tx('template', 'plantilla')}
-            </button>
-            {open && (
-                <>
-                    {/* Backdrop catches outside clicks. Mirror of the More
-                        Actions menu pattern elsewhere in this file. */}
-                    <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-                    <div className="absolute z-50 left-0 top-full mt-1 w-56 max-h-72 overflow-y-auto bg-white border border-dd-line rounded-lg shadow-lg p-1.5">
-                        <div className="text-[10px] font-bold text-dd-text-2 uppercase tracking-wide px-2 py-1 border-b border-dd-line mb-1">
-                            {tx(`Apply to ${dateStr}`, `Aplicar a ${dateStr}`)}
-                        </div>
-                        {sorted.length === 0 ? (
-                            <div className="text-[11px] text-dd-text-2 px-2 py-3 text-center">
-                                {tx(`No ${side.toUpperCase()} templates yet.`, `Sin plantillas ${side.toUpperCase()} aún.`)}
-                            </div>
-                        ) : (
-                            <div className="space-y-0.5">
-                                {sorted.map(t => {
-                                    const days = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
-                                    const isMatch = days.length === 0 || days.includes(dayId);
-                                    const blocks = (t.blocks || []).length;
-                                    const totalSlots = (t.blocks || []).reduce(
-                                        (sum, b) => sum + (b.slots || []).reduce((s, sl) => s + (sl.count || 0), 0), 0
-                                    );
-                                    return (
-                                        <button key={t.id}
-                                            onClick={() => { setOpen(false); onApply(t, [dateStr]); }}
-                                            className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition hover:bg-dd-bg active:scale-[0.99] ${
-                                                isMatch ? 'text-dd-text' : 'text-dd-text-2 opacity-70'
-                                            }`}>
-                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                                <span className="font-bold truncate">{t.name}</span>
-                                                {!isMatch && days.length > 0 && (
-                                                    <span className="text-[8px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded">
-                                                        {tx('off-day', 'fuera')}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <div className="text-[10px] text-dd-text-2 mt-0.5">
-                                                {blocks} {tx(blocks === 1 ? 'block' : 'blocks', 'bloque(s)')} · {totalSlots} {tx('slots', 'slots')}
-                                            </div>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-                        <div className="border-t border-dd-line mt-1 pt-1">
-                            <button
-                                onClick={() => { setOpen(false); onOpenFullModal && onOpenFullModal(); }}
-                                className="w-full text-left px-2 py-1.5 rounded-md text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50">
-                                {tx('More templates / multi-day…', 'Más plantillas / varios días…')}
-                            </button>
-                        </div>
-                    </div>
-                </>
-            )}
-        </div>
+        <button
+            onClick={(e) => { e.stopPropagation(); onAddSlot(dateStr); }}
+            title={tx(`Add an open slot on ${dateStr}`, `Añadir espacio el ${dateStr}`)}
+            className="w-full rounded-md border border-dashed border-blue-300 text-blue-600 hover:bg-blue-100 hover:border-blue-400 px-1.5 py-1 text-[10px] font-bold leading-none transition active:scale-95">
+            + {tx('slot', 'espacio')}
+        </button>
     );
 }
 
@@ -5537,10 +5457,11 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     // openOffers: from shifts.offerStatus === 'open', per-day chips ("📣 Sara")
     openSlots = [], openOffers = [], side = 'foh', storeLocation = 'webster',
     onFillSlot,
-    // Speed template add — surfaces a "+ template" button in each
-    // unassigned-row day cell. Always visible when canEdit so managers
-    // can drop templates onto a fresh empty week in one tap each.
-    scheduleTemplates = [], onApplyTemplate, onOpenTemplateModal,
+    // Speed slot add — surfaces a "+ slot" button in each unassigned-row
+    // day cell. Always visible when canEdit so managers can drop slots
+    // onto a fresh empty week in one tap each. (Replaced earlier
+    // template-add popover — Apply Template still lives in More Actions.)
+    onAddSlot,
     // Multi-select pass-through for ShiftCube children
     selectedShiftIds, onToggleShiftSelection,
 }) {
@@ -5882,7 +5803,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         </div>
                                         <div className="text-[10px] font-semibold text-blue-700/70 leading-tight mt-0.5">
                                             {openSlots.length === 0
-                                                ? (isEn ? '+ template' : '+ plantilla')
+                                                ? (isEn ? '+ slot' : '+ espacio')
                                                 : `${openSlots.reduce((s, n) => s + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)} ${isEn ? 'open' : 'abiertos'}`}
                                         </div>
                                     </div>
@@ -5893,7 +5814,6 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
                                 const closed = dayBlocks.some(b => b.type === 'closed');
                                 const slots = openSlots.filter(n => n.date === dStr);
-                                const dayId = DAY_IDS[d.getDay()];
                                 return (
                                     <td key={i} className={`border-b border-r border-dd-line align-top p-1 ${closed ? 'bg-dd-bg' : 'bg-blue-50/40'}`}>
                                         <div className="space-y-1">
@@ -5921,18 +5841,15 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     </button>
                                                 );
                                             })}
-                                            {/* Speed template add — single-tap apply to this
-                                                day. Manager only; closed days hide it (the
-                                                blackout already says "don't schedule here"). */}
-                                            {canEdit && !closed && onApplyTemplate && (
-                                                <QuickAddTemplate
-                                                    templates={scheduleTemplates}
-                                                    side={side}
+                                            {/* Speed slot add — single-tap opens StaffingNeedModal
+                                                pre-filled with this day's date. Manager only;
+                                                closed days hide it (the blackout already says
+                                                "don't schedule here"). */}
+                                            {canEdit && !closed && onAddSlot && (
+                                                <QuickAddSlot
                                                     dateStr={dStr}
-                                                    dayId={dayId}
                                                     isEn={isEn}
-                                                    onApply={onApplyTemplate}
-                                                    onOpenFullModal={onOpenTemplateModal}
+                                                    onAddSlot={onAddSlot}
                                                 />
                                             )}
                                             {slots.length === 0 && !canEdit && !closed && (
