@@ -108,7 +108,11 @@ VERSION = "1.0.0"
 # print_bridge/config.json (see setup.sh) — don't bake new IPs into
 # this file.
 DEFAULT_BROTHER_IP = "192.168.1.34"
-DEFAULT_BROTHER_MODEL = "QL-820NW"   # brother_ql model id; close enough to 820NWB
+# brother_ql is picky about model strings — it knows "QL-820NWB" (Andrew's
+# actual unit) but NOT "QL-820NW" (a different printer without Bluetooth).
+# An invalid model id throws BrotherQLUnknownModel and the print silently
+# fails with an empty error. Confirmed 2026-05-22 via journalctl trace.
+DEFAULT_BROTHER_MODEL = "QL-820NWB"
 DEFAULT_LABEL_TYPE = "62"            # 62mm continuous tape (DK-2205 / DK-4205)
 DEFAULT_DPI = 300                    # Brother QL-820 supports 300 DPI native
 

@@ -161,7 +161,7 @@ if [[ ! -f /etc/print_bridge/config.json ]]; then
     cat <<'EOF' | sudo tee /etc/print_bridge/config.json > /dev/null
 {
   "brother_ip": "192.168.1.34",
-  "brother_model": "QL-820NW",
+  "brother_model": "QL-820NWB",
   "label_type": "62"
 }
 EOF
