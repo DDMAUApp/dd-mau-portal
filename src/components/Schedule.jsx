@@ -2736,7 +2736,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 }
                 const anchorWeek = startOfWeek(anchorDate);
                 const diffMs = weekStart.getTime() - anchorWeek.getTime();
-                const weeksSince = Math.floor(diffMs / (7 * 24 * 60 * 60 * 1000));
+                // FIX (review 2026-05-22): Math.floor on raw ms is off by one
+                // across DST. anchorWeek and weekStart are both local-midnight
+                // (startOfWeek) dates, so a DST transition between them makes
+                // diffMs equal N*168h ± 1h; Math.floor((N*168h - 1h)/168h)
+                // returns N-1 and flips the even/odd parity, so a bi-weekly
+                // rule generates on the wrong week. The delta is always within
+                // ±1h of a whole number of weeks, so round() recovers the
+                // correct week count DST-safely.
+                const weeksSince = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000));
                 if (weeksSince < 0 || (weeksSince % 2) !== 0) {
                     skipped.push(`${rule.staffName}: bi-weekly off-week`);
                     continue;
