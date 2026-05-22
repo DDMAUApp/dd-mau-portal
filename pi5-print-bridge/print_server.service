@@ -1,0 +1,51 @@
+# systemd unit for the DD Mau print bridge.
+#
+# Installed to /etc/systemd/system/print_server.service by setup.sh,
+# then enabled with:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable print_server
+#   sudo systemctl start print_server
+#
+# Runs as the `print_bridge` system user (created by setup.sh) so a
+# bug in the Flask app can't escalate to the main `ddmau` SSH user.
+#
+# Restarts on crash (Restart=on-failure) with a 5-second back-off so
+# we don't spin forever if the script is genuinely broken.
+
+[Unit]
+Description=DD Mau Print Bridge — Brother QL-820NWB Flask HTTPS service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=print_bridge
+Group=print_bridge
+
+# The Flask app lives under /opt/print_bridge (system path, not the
+# ddmau user's home). venv keeps brother_ql + flask + pillow isolated
+# from system Python.
+WorkingDirectory=/opt/print_bridge
+ExecStart=/opt/print_bridge/venv/bin/python /opt/print_bridge/print_server.py
+
+# Restart on any non-zero exit. 5s back-off so a tight crash loop
+# doesn't hammer journald.
+Restart=on-failure
+RestartSec=5
+
+# Output flows into journald. Tail with:
+#   sudo journalctl -u print_server -f
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — defensive defaults, all standard systemd flags.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# /etc/print_bridge is read-only for the service (config + api_key)
+# Allow reading /etc/print_bridge but nothing else writable in /etc.
+ReadOnlyPaths=/etc/print_bridge
+
+[Install]
+WantedBy=multi-user.target

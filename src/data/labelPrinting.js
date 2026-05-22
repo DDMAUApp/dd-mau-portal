@@ -48,6 +48,13 @@ import { db } from '../firebase';
 import { doc, getDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { recordAudit } from './audit';
 import { getLabelFormat } from './labelFormat';
+// Pi 5 print bridge — Andrew 2026-05-22. When configured, all Brother
+// QL-820NWB prints try the bridge FIRST (HTTPS POST to a Tailscale
+// Funnel URL → Flask on the Pi → brother_ql raster → printer). If the
+// bridge is disabled, unreachable, or the Brother is offline, we fall
+// through to the existing PDF + Web Share Sheet path so date stickers
+// still work. See src/data/printBridge.js + /pi5-print-bridge/.
+import { tryPrintViaBridge } from './printBridge';
 
 // ── Public types ──────────────────────────────────────────────
 // PrinterConfig shape — see header. Defaults applied at print time
@@ -450,7 +457,15 @@ export function buildLabelPayload({
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
-    const useByDate = new Date(prepDate.getTime() + shelfLifeDays * 86400_000);
+    // FIX (review 2026-05-22): adding a fixed `shelfLifeDays * 86400000` ms is
+    // off by one calendar day across a DST transition. prepDate is a local
+    // wall-clock date; near spring-forward a late-night prep overshoots past
+    // midnight and prints a use-by date one day too LATE (a food-safety risk),
+    // and the (Wed) weekday below is then wrong too. setDate() does true
+    // calendar-date arithmetic on the local civil date — DST-safe, preserves
+    // the prep time-of-day, and rolls month/year correctly.
+    const useByDate = new Date(prepDate);
+    useByDate.setDate(useByDate.getDate() + shelfLifeDays);
 
     const dateFmtIsDayFirst = format?.dateFormat === 'dd/mm/yy';
     const timeFmt24h = format?.timeFormat === '24h';
@@ -1428,22 +1443,44 @@ export async function printFreeText({
         const presetDims = getLabelSizePresets(type).find(p => p.id === presetId);
 
         let res;
+        let transport = null;
         if (type === PRINTER_TYPES.BROTHER_QL) {
-            // Andrew 2026-05-21: switched from HTML-print to PDF-
-            // print because iOS AirPrint ignored the HTML @page
-            // size and defaulted to letter. PDFs carry page size in
-            // the MediaBox header — AirPrint honors that reliably.
-            const pdfBlob = await buildBrotherPrintPdfBlob({
-                widthMm:  presetDims?.widthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
-                heightMm: presetDims?.heightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
-                payload: freePayload,
+            // 1. Try the Pi print bridge first. Free-text goes through
+            //    its own bridge endpoint (POST /print/free-text) so the
+            //    Pi can render it tighter than the prep-label layout.
+            const bridgeAttempt = await tryPrintViaBridge({
                 copies: c,
-                kind: 'freetext',
+                freeText: {
+                    text: trimmed,
+                    sizeMm: {
+                        widthMm:  presetDims?.widthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                        heightMm: presetDims?.heightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                    },
+                    copies: c,
+                },
             });
-            res = await sendBrotherPdfViaShareSheet(pdfBlob, `DD-Mau-FreeText.pdf`);
+            if (bridgeAttempt.ok) {
+                res = { ok: true, status: 200, via: 'bridge' };
+                transport = 'bridge';
+            } else {
+                if (!bridgeAttempt.fallback) {
+                    return { ok: false, error: bridgeAttempt.reason || 'bridge_rejected' };
+                }
+                // 2. Fallback — PDF + iOS Share Sheet (existing path).
+                const pdfBlob = await buildBrotherPrintPdfBlob({
+                    widthMm:  presetDims?.widthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                    heightMm: presetDims?.heightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                    payload: freePayload,
+                    copies: c,
+                    kind: 'freetext',
+                });
+                res = await sendBrotherPdfViaShareSheet(pdfBlob, `DD-Mau-FreeText.pdf`);
+                transport = `pdf_share_sheet (bridge fallback: ${bridgeAttempt.reason})`;
+            }
         } else {
             const xml = renderFreeTextXml(freePayload);
             res = await sendToPrinter(printer, xml);
+            transport = 'epson_epos';
         }
         recordAudit({
             action: 'print.freetext',
@@ -1458,6 +1495,7 @@ export async function printFreeText({
                 size, bold, align, copies: c,
                 printerOk: res.ok,
                 printerStatus: res.status,
+                transport, // 'bridge' | 'pdf_share_sheet (...)' | 'epson_epos'
             },
         });
         if (!res.ok) return { ok: false, error: 'printer_rejected' };
@@ -1572,24 +1610,48 @@ export async function printPrepLabel({
         });
 
         let res;
+        // Tracks how the label got printed for the audit log — useful
+        // when debugging "did it go via the bridge or fall back?"
+        let transport = null;
         if (type === PRINTER_TYPES.BROTHER_QL) {
-            // PDF path (Andrew 2026-05-21) — explicit page size in
-            // PDF MediaBox so AirPrint can't reflow to letter.
-            const pdfBlob = await buildBrotherPrintPdfBlob({
-                widthMm:  payload._presetWidthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
-                heightMm: payload._presetHeightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
-                payload,
-                copies: c,
-                kind: 'prep',
-            });
-            // Use the printed item name in the share-sheet preview
-            // so the user can see what they're about to print.
-            const safeName = String(recipe?.titleEn || 'Label')
-                .replace(/[^A-Za-z0-9-]+/g, '-').slice(0, 40);
-            res = await sendBrotherPdfViaShareSheet(pdfBlob, `DD-Mau-${safeName}.pdf`);
+            // 1. Try the Pi print bridge first (Andrew 2026-05-22).
+            //    Fully automatic, prints to Brother in ~2s, correct
+            //    label dimensions every time. The bridge probes /healthz
+            //    first; if Pi or Brother is unreachable it cleanly
+            //    returns { fallback: true } and we drop to the
+            //    PDF/share-sheet path below — staff never see a hang.
+            const bridgeAttempt = await tryPrintViaBridge({ payload, copies: c });
+            if (bridgeAttempt.ok) {
+                res = { ok: true, status: 200, via: 'bridge' };
+                transport = 'bridge';
+            } else {
+                if (!bridgeAttempt.fallback) {
+                    // Bridge said "no — and don't try the fallback either"
+                    // (e.g. malformed payload). Bubble the error up rather
+                    // than printing a broken label via share-sheet.
+                    return { ok: false, error: bridgeAttempt.reason || 'bridge_rejected' };
+                }
+                // 2. Fallback — PDF + iOS Share Sheet. Pre-existing path
+                //    from before the bridge existed. Manual taps but
+                //    works offline-from-the-bridge.
+                const pdfBlob = await buildBrotherPrintPdfBlob({
+                    widthMm:  payload._presetWidthMm  || printer.labelWidthMm  || DEFAULT_BROTHER_LABEL_WIDTH_MM,
+                    heightMm: payload._presetHeightMm || printer.labelHeightMm || DEFAULT_BROTHER_LABEL_HEIGHT_MM,
+                    payload,
+                    copies: c,
+                    kind: 'prep',
+                });
+                // Use the printed item name in the share-sheet preview
+                // so the user can see what they're about to print.
+                const safeName = String(recipe?.titleEn || 'Label')
+                    .replace(/[^A-Za-z0-9-]+/g, '-').slice(0, 40);
+                res = await sendBrotherPdfViaShareSheet(pdfBlob, `DD-Mau-${safeName}.pdf`);
+                transport = `pdf_share_sheet (bridge fallback: ${bridgeAttempt.reason})`;
+            }
         } else {
             const xml = renderEposXml(payload, c);
             res = await sendToPrinter(printer, xml);
+            transport = 'epson_epos';
         }
         recordAudit({
             action: 'print.label',
@@ -1606,6 +1668,7 @@ export async function printPrepLabel({
                 source, // 'recipe' | 'datestickers' | 'operations'
                 printerOk: res.ok,
                 printerStatus: res.status,
+                transport, // 'bridge' | 'pdf_share_sheet (...)' | 'epson_epos'
             },
         });
         if (!res.ok) {
