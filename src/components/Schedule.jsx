@@ -1991,6 +1991,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 offerStatus: 'open',
                 offeredBy: staffName,
                 offeredAt: serverTimestamp(),
+                // Casual offer — clear any prior cover-request flag so the
+                // visual / push semantics revert to plain "up for grabs".
+                coverNeeded: false,
                 pendingClaimBy: null,
                 claimedAt: null,
                 updatedAt: serverTimestamp(),
@@ -1998,6 +2001,99 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         } catch (e) {
             console.error('Offer shift failed:', e);
             toast(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message);
+        }
+    };
+
+    // Find Cover — staff actively can't make a shift. Same data model as
+    // a casual offer (offerStatus: 'open' so the existing claim flow keeps
+    // working), but layered with coverNeeded: true so the UI gets the red
+    // urgent treatment AND we fan out FCM push to every qualified staffer
+    // immediately. First to tap "I'll take it" still races through
+    // handleTakeShift's transaction — no changes to claim/approval needed.
+    //
+    // Qualification filter (mirrors auto-fill engine + manual fill chooser):
+    //   • Active (not deactivated)
+    //   • Not the offerer themself
+    //   • Resolves to the same side as the shift
+    //   • Location-compatible (single-store staff only see their store; 'both'
+    //     staff see both)
+    //   • Not already on approved time-off for that date
+    //
+    // No OT / availability filter here — we'd rather push to slightly more
+    // people and let them self-select than miss the one staffer who'd say yes.
+    // Manager still gets the final word at approval time.
+    const handleRequestCover = async (shift) => {
+        if (!shift) return;
+        const shiftSide = shift.side || resolveStaffSide((staffList || []).find(s => s.name === shift.staffName));
+        const sideLabel = shiftSide === 'boh' ? 'BOH' : 'FOH';
+        const ok = confirm(tx(
+            `🆘 Push a cover request to all qualified ${sideLabel} staff for your ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} shift?\n\nThey'll get a push notification immediately. First to claim wins (pending manager approval). You're still responsible for the shift until someone takes it.`,
+            `🆘 ¿Enviar solicitud de cobertura a todo el personal ${sideLabel} para tu turno del ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}?\n\nRecibirán una notificación push de inmediato. El primero en tomarlo gana (con aprobación del gerente). Sigues siendo responsable hasta que alguien lo tome.`,
+        ));
+        if (!ok) return;
+        try {
+            await updateDoc(doc(db, 'shifts', shift.id), {
+                offerStatus: 'open',
+                coverNeeded: true,
+                coverNeededAt: serverTimestamp(),
+                offeredBy: staffName,
+                offeredAt: serverTimestamp(),
+                pendingClaimBy: null,
+                claimedAt: null,
+                updatedAt: serverTimestamp(),
+            });
+
+            // Fan-out push. Build the qualified list, then notify each in
+            // parallel (Promise.all). notify() already handles per-staff
+            // FCM token lookup + off-shift gating + delivery retry, so we
+            // just call it once per recipient and swallow individual fails
+            // so one bad push doesn't block the rest.
+            const shiftLoc = shift.location || 'webster';
+            const qualified = (staffList || []).filter(s =>
+                s && s.name && s.active !== false &&
+                s.name !== staffName &&
+                resolveStaffSide(s) === shiftSide &&
+                (shiftLoc === 'both' || s.location === 'both' || s.location === shiftLoc) &&
+                !isStaffOffOn(s.name, shift.date)
+            );
+
+            const pushPromises = qualified.map(s =>
+                notify(s.name, 'cover_request',
+                    { en: `🆘 ${staffName} needs cover`,
+                      es: `🆘 ${staffName} necesita cobertura` },
+                    { en: `${shift.date} • ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} • Tap to claim`,
+                      es: `${shift.date} • ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} • Toca para tomar` },
+                    '/schedule',
+                    { tagSuffix: `cover:${shift.id}` }
+                ).catch(() => {})
+            );
+            await Promise.all(pushPromises);
+
+            // Manager roll-up (separate channel, not as aggressive — just an
+            // FYI ping so any manager opening the app sees pending requests).
+            notifyManagement({
+                type: 'cover_requested',
+                title: { en: `🆘 Cover requested: ${staffName}`,
+                         es: `🆘 Cobertura solicitada: ${staffName}` },
+                body: { en: `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} ${sideLabel} • pushed to ${qualified.length} staff`,
+                        es: `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} ${sideLabel} • enviado a ${qualified.length}` },
+                link: '/schedule',
+                deepLink: 'schedule',
+                tag: `cover_req:${shift.id}`,
+                createdBy: staffName,
+            }).catch(() => {});
+
+            toast(tx(
+                qualified.length === 0
+                    ? `⚠ No qualified ${sideLabel} staff available. Try contacting a manager directly.`
+                    : `📣 Cover request sent to ${qualified.length} ${sideLabel} staff member${qualified.length === 1 ? '' : 's'}.`,
+                qualified.length === 0
+                    ? `⚠ No hay personal ${sideLabel} disponible. Contacta a un gerente directamente.`
+                    : `📣 Solicitud enviada a ${qualified.length} miembro${qualified.length === 1 ? '' : 's'} de ${sideLabel}.`
+            ));
+        } catch (e) {
+            console.error('Request cover failed:', e);
+            toast(tx('Could not request cover: ', 'No se pudo solicitar cobertura: ') + e.message);
         }
     };
 
@@ -2123,6 +2219,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 offerStatus: null,
                 offeredBy: null,
                 offeredAt: null,
+                // Also clears any cover-request flag — same UX for "cancel
+                // offer" and "cancel cover request" since both come from
+                // the same shift state.
+                coverNeeded: false,
+                coverNeededAt: null,
                 pendingClaimBy: null,
                 claimedAt: null,
                 updatedAt: serverTimestamp(),
@@ -4360,6 +4461,10 @@ ${dayBlocks}
                                 onOfferShift={handleOfferShift}
                                 onTakeShift={handleTakeShift}
                                 onCancelOffer={handleCancelOffer}
+                                /* Find Cover — urgent push to qualified staff.
+                                   See handleRequestCover above for filter logic
+                                   (same side, location-compat, not on PTO). */
+                                onRequestCover={handleRequestCover}
                                 blocksByDate={blocksByDate}
                                 eventsByDate={eventsByDate}
                                 onDropShift={handleDropShift}
@@ -4401,6 +4506,7 @@ ${dayBlocks}
                                         onOfferShift={handleOfferShift}
                                         onTakeShift={handleTakeShift}
                                         onCancelOffer={handleCancelOffer}
+                                        onRequestCover={handleRequestCover}
                                     />
                                 )}
                                 {viewMode === 'list' && (
@@ -4414,6 +4520,7 @@ ${dayBlocks}
                                         onOfferShift={handleOfferShift}
                                         onTakeShift={handleTakeShift}
                                         onCancelOffer={handleCancelOffer}
+                                        onRequestCover={handleRequestCover}
                                     />
                                 )}
                                 {viewMode === 'pto' && (
@@ -5423,7 +5530,7 @@ function QuickAddTemplate({ templates, side, dateStr, dayId, isEn, onApply, onOp
     );
 }
 
-function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
+function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, onRequestCover, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
     // openSlots: from staffingNeeds, per-day chips ("📋 4p")
@@ -6021,7 +6128,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             })()}
                                             {cellShifts.map(sh => (
                                                 <ShiftCube key={sh.id} shift={sh} staffRole={s.role} staffScheduleSide={s.scheduleSide} isMinor={s.isMinor} isShiftLead={s.shiftLead} canEdit={canEdit} onDelete={onDeleteShift} isEn={isEn} compact
-                                                    currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer}
+                                                    currentStaffName={currentStaffName} onOfferShift={onOfferShift} onCancelOffer={onCancelOffer} onRequestCover={onRequestCover}
                                                     draggable={canEdit}
                                                     isDoubleDay={cellShifts.length >= 2}
                                                     dayShiftCount={cellShifts.length}
@@ -6111,7 +6218,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
 // arrive as new refs each render — future pass can useCallback them
 // at the parent for full benefit, but memo costs ~nothing so it's
 // fine to land it now.
-const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
+const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, onRequestCover, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
     // Multi-select: shift+click toggles. Parent owns the Set of selected ids.
     isSelected = false, onToggleSelection,
 }) {
@@ -6192,6 +6299,14 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
     const isMine = shift.staffName === currentStaffName;
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
+    // Cover request — distinct from a casual offer. Set by the staff-side
+    // "Find cover" button when they actively can't make a shift; triggers
+    // an aggressive push to qualified available staff. Always paired with
+    // offerStatus === 'open' on the same shift so the existing claim flow
+    // (handleTakeShift) keeps working untouched.
+    const isCoverRequest = isOffered && !!shift.coverNeeded;
+    const isCasualOffer = isOffered && !isCoverRequest;
+    const isDraft = shift.published === false;
     // Cross-side = this shift's side differs from the staff's home side.
     // Shown as a small badge so managers spot it at a glance.
     const homeSide = staffScheduleSide || (BOH_ROLE_HINTS.has(staffRole) ? 'boh' : 'foh');
@@ -6231,7 +6346,35 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
             onTouchMove={cancelLongPress}
             onTouchCancel={cancelLongPress}
             title={auditLines.join('\n') || undefined}
-            className={`schedule-shift-cube relative rounded-md shadow-sm ${shift.published === false ? 'border-2 border-dashed border-dd-text-2/40 opacity-80' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-white' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-white' : ''} ${isSelected ? 'ring-2 ring-dd-green ring-offset-1 ring-offset-white' : ''} ${colors.bg} ${colors.text} px-2 py-1.5 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} hover:shadow-card-hov hover:-translate-y-px transition group/cube`}>
+            className={`schedule-shift-cube relative rounded-md shadow-sm ${isDraft ? 'border-2 border-dashed border-dd-text-2/50 opacity-70' : 'border'} ${hasWarning ? 'border-amber-500 border-2' : colors.border} ${isCoverRequest ? 'ring-2 ring-red-500 ring-offset-1 ring-offset-white' : isCasualOffer ? 'ring-2 ring-blue-400 ring-offset-1 ring-offset-white' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-white' : ''} ${isSelected ? 'ring-2 ring-dd-green ring-offset-1 ring-offset-white' : ''} ${colors.bg} ${colors.text} px-2 py-1.5 ${compact ? 'text-[10px] leading-tight' : 'text-xs'} ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} hover:shadow-card-hov hover:-translate-y-px transition group/cube`}>
+            {/* Status ribbon — single corner badge that wins by priority:
+                cover-needed > swap-pending > casual-offer > draft. Gives
+                managers a 100ms read of the shift's state without having
+                to interpret 3 different ring colors. Placed inside the
+                cube (top-left) so it doesn't fight with the delete × in
+                top-right. */}
+            {(isCoverRequest || isPending || isCasualOffer || isDraft) && !editingTimes && (
+                <div className={`absolute -top-1.5 -left-1 z-10 print:hidden inline-flex items-center gap-0.5 px-1 py-px rounded text-[8px] font-black uppercase tracking-wider leading-none shadow-sm ${
+                    isCoverRequest ? 'bg-red-500 text-white' :
+                    isPending     ? 'bg-purple-500 text-white' :
+                    isCasualOffer ? 'bg-blue-500 text-white' :
+                                    'bg-dd-text-2/80 text-white'
+                }`}
+                    title={
+                        isCoverRequest ? (isEn ? 'Cover needed — staff cannot make this shift' : 'Se necesita cobertura') :
+                        isPending      ? (isEn ? `Pending takeover by ${shift.pendingClaimBy || '?'}` : `Pendiente: ${shift.pendingClaimBy || '?'}`) :
+                        isCasualOffer  ? (isEn ? 'Offered up for grabs' : 'Disponible para tomar') :
+                                         (isEn ? 'Draft — not yet published' : 'Borrador — no publicado')
+                    }>
+                    {isCoverRequest ? '🆘' : isPending ? '🤝' : isCasualOffer ? '📣' : '✏️'}
+                    <span className="hidden sm:inline">
+                        {isCoverRequest ? 'Cover' :
+                         isPending      ? 'Pend' :
+                         isCasualOffer  ? 'Open' :
+                                          'Draft'}
+                    </span>
+                </div>
+            )}
             {editingTimes ? (
                 <div onClick={(e) => e.stopPropagation()} className="space-y-1">
                     <div className="flex items-center gap-1">
@@ -6300,12 +6443,29 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
             {hasWarning && (
                 <div className="text-[9px] mt-1 font-bold text-amber-700">⚠ {warnings.join(' • ')}</div>
             )}
-            {/* Offer / cancel-offer buttons (own-shift only, not when pending) */}
+            {/* Inline staff actions (own-shift, not pending).
+                - If shift is NOT offered yet: two buttons stacked:
+                    🆘 Find cover (urgent — red, pushes to all qualified)
+                    📣 Give up   (casual — blue, marketplace only)
+                - If already offered/cover-requested: single "Cancel" button
+                  that clears both flags via handleCancelOffer.
+                Surfaced inline (not just in context menu) so staff on mobile
+                can find it without long-pressing.  */}
             {isMine && !isPending && onOfferShift && (
-                <button onClick={(e) => { e.stopPropagation(); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
-                    className={`mt-1 w-full text-[9px] font-bold px-1 py-1 rounded print:hidden transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
-                    {isOffered ? (isEn ? 'Cancel offer' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
-                </button>
+                <div className="mt-1 space-y-1 print:hidden">
+                    {!isOffered && onRequestCover && (
+                        <button onClick={(e) => { e.stopPropagation(); onRequestCover(shift); }}
+                            className="w-full text-[9px] font-bold px-1 py-1 rounded bg-red-600 text-white hover:bg-red-700 shadow-sm transition">
+                            {isEn ? '🆘 Find cover' : '🆘 Cobertura'}
+                        </button>
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
+                        className={`w-full text-[9px] font-bold px-1 py-1 rounded transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
+                        {isOffered
+                            ? (isEn ? (isCoverRequest ? 'Cancel cover' : 'Cancel offer') : 'Cancelar')
+                            : (isEn ? '📣 Give up' : '📣 Liberar')}
+                    </button>
+                </div>
             )}
             {canEdit && !confirmingDelete && (
                 <button onClick={(e) => { e.stopPropagation(); setConfirmingDelete(true); }}
@@ -6397,10 +6557,21 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                             className="w-full px-3 py-2 text-left text-xs font-semibold text-dd-text hover:bg-dd-bg flex items-center gap-2">
                             <span>⏱</span>{isEn ? 'Edit times' : 'Editar horas'}
                         </button>
+                        {/* Find Cover — urgent push to all qualified staff. Only
+                            shown when the shift isn't already up for grabs or
+                            pending. Once requested, the "Cancel offer" button
+                            below handles both casual offers and cover requests
+                            (handleCancelOffer clears both flags). */}
+                        {isMine && !isPending && !isOffered && onRequestCover && (
+                            <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onRequestCover(shift); }}
+                                className="w-full px-3 py-2 text-left text-xs font-bold text-red-700 hover:bg-red-50 flex items-center gap-2">
+                                <span>🆘</span>{isEn ? 'Find cover (urgent)' : 'Buscar cobertura (urgente)'}
+                            </button>
+                        )}
                         {isMine && !isPending && onOfferShift && (
                             <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
                                 className="w-full px-3 py-2 text-left text-xs font-semibold text-blue-700 hover:bg-blue-50 flex items-center gap-2">
-                                <span>📣</span>{isOffered ? (isEn ? 'Cancel offer' : 'Cancelar') : (isEn ? 'Give up shift' : 'Liberar turno')}
+                                <span>📣</span>{isOffered ? (isEn ? (isCoverRequest ? 'Cancel cover request' : 'Cancel offer') : 'Cancelar') : (isEn ? 'Give up shift' : 'Liberar turno')}
                             </button>
                         )}
                         {onUpdateShiftTimes && (
@@ -6420,7 +6591,7 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
     );
 });
 
-function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer }) {
+function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer, onRequestCover }) {
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
     const dayLabelsFull = isEn ? DAYS_FULL_EN : DAYS_FULL_ES;
     const dayLabels = isEn ? DAYS_EN : DAYS_ES;
@@ -6490,6 +6661,7 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
                                 currentStaffName={currentStaffName}
                                 onOfferShift={onOfferShift}
                                 onCancelOffer={onCancelOffer}
+                                onRequestCover={onRequestCover}
                                 dayShiftCount={dayCount} />
                         );
                     })}
@@ -6499,7 +6671,7 @@ function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staff
     );
 }
 
-function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer, dayShiftCount }) {
+function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdit, onDelete, isEn, currentStaffName, onOfferShift, onCancelOffer, onRequestCover, dayShiftCount }) {
     const warnings = isMinor ? minorShiftWarnings(shift, isEn) : [];
     const colors = roleColors(staffRole, isShiftLead);
     // Auto-double = 2+ shifts on same day. Show raw shift hours; the per-day
@@ -6511,8 +6683,14 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
     const isMine = shift.staffName === currentStaffName;
     const isOffered = shift.offerStatus === 'open';
     const isPending = shift.offerStatus === 'pending';
+    // Match the ShiftCube visual taxonomy in the list view: cover-needed
+    // overrides casual-offer (red beats blue); drafts get a dashed border
+    // + 70% opacity wash.
+    const isCoverRequest = isOffered && !!shift.coverNeeded;
+    const isCasualOffer = isOffered && !isCoverRequest;
+    const isDraft = shift.published === false;
     return (
-        <div className={`flex items-center justify-between gap-2 p-3 rounded-lg border-2 transition shadow-sm hover:shadow-card-hov ${colors.border} ${isCurrentStaff ? 'bg-dd-green-50' : colors.bg} ${warnings.length ? 'ring-2 ring-amber-400 ring-offset-1' : ''} ${isOffered ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1' : ''}`}>
+        <div className={`flex items-center justify-between gap-2 p-3 rounded-lg border-2 transition shadow-sm hover:shadow-card-hov ${isDraft ? 'border-dashed border-dd-text-2/40 opacity-70' : colors.border} ${isCurrentStaff ? 'bg-dd-green-50' : colors.bg} ${warnings.length ? 'ring-2 ring-amber-400 ring-offset-1' : ''} ${isCoverRequest ? 'ring-2 ring-red-500 ring-offset-1' : isCasualOffer ? 'ring-2 ring-blue-400 ring-offset-1' : ''} ${isPending ? 'ring-2 ring-purple-400 ring-offset-1' : ''}`}>
             <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 flex-wrap">
                     <span className={`font-bold ${isCurrentStaff ? 'text-dd-green-700' : colors.text}`}>
@@ -6522,7 +6700,9 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
                     {shift.isShiftLead && <span title="Shift Lead">🛡️</span>}
                     {shift.isDouble && <span title="Double shift">⏱</span>}
                     {isAutoDouble && <span title={isEn ? "Double day — two shifts. 1h unpaid break deducted from total." : "Día doble — dos turnos. Se resta 1h de descanso del total."} className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">🔁 {isEn ? 'Double day' : 'Día doble'}</span>}
-                    {isOffered && <span className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">📣 {isEn ? 'Up for grabs' : 'Disponible'}</span>}
+                    {isDraft && <span title={isEn ? 'Draft — not yet published to staff' : 'Borrador — no publicado'} className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-dd-bg text-dd-text-2 border border-dd-line">✏️ {isEn ? 'Draft' : 'Borrador'}</span>}
+                    {isCoverRequest && <span className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200 animate-pulse">🆘 {isEn ? 'Needs cover' : 'Necesita cobertura'}</span>}
+                    {isCasualOffer && <span className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">📣 {isEn ? 'Up for grabs' : 'Disponible'}</span>}
                     {isPending && <span className="inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">⏳ → {shift.pendingClaimBy?.split(' ')[0]}</span>}
                 </div>
                 <div className="text-xs text-dd-text-2 mt-0.5 tabular-nums">
@@ -6535,10 +6715,18 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
                 )}
             </div>
             <div className="flex items-center gap-1.5 print:hidden">
+                {isMine && !isPending && !isOffered && onRequestCover && (
+                    <button onClick={() => onRequestCover(shift)}
+                        className="px-2.5 py-1.5 text-xs rounded-md font-bold transition bg-red-600 text-white hover:bg-red-700 shadow-sm">
+                        {isEn ? '🆘 Cover' : '🆘 Cobertura'}
+                    </button>
+                )}
                 {isMine && !isPending && onOfferShift && (
                     <button onClick={() => isOffered ? onCancelOffer(shift) : onOfferShift(shift)}
                         className={`px-2.5 py-1.5 text-xs rounded-md font-bold transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
-                        {isOffered ? (isEn ? 'Cancel' : 'Cancelar') : (isEn ? '📣 Give up' : '📣 Liberar')}
+                        {isOffered
+                            ? (isEn ? (isCoverRequest ? 'Cancel cover' : 'Cancel') : 'Cancelar')
+                            : (isEn ? '📣 Give up' : '📣 Liberar')}
                     </button>
                 )}
                 {canEdit && (
@@ -6552,7 +6740,7 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
     );
 }
 
-function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staffSummary, onOfferShift, onTakeShift, onCancelOffer }) {
+function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staffSummary, onOfferShift, onTakeShift, onCancelOffer, onRequestCover }) {
     const [sortKey, setSortKey] = useState('date');
     const [filterStaff, setFilterStaff] = useState('');
 
@@ -6644,6 +6832,13 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                                     {warnings.length > 0 && <div className="text-amber-700 font-bold">⚠ {warnings.join(' • ')}</div>}
                                 </div>
                                 <div className="flex items-center gap-1 print:hidden">
+                                    {sh.staffName === currentStaffName && sh.offerStatus !== 'pending' && sh.offerStatus !== 'open' && onRequestCover && (
+                                        <button onClick={() => onRequestCover(sh)}
+                                            className="px-2 py-1.5 rounded-md font-bold text-[11px] transition bg-red-600 text-white hover:bg-red-700 shadow-sm"
+                                            title={isEn ? 'Find cover (urgent push to qualified staff)' : 'Buscar cobertura urgente'}>
+                                            🆘
+                                        </button>
+                                    )}
                                     {sh.staffName === currentStaffName && sh.offerStatus !== 'pending' && onOfferShift && (
                                         <button onClick={() => sh.offerStatus === 'open' ? onCancelOffer(sh) : onOfferShift(sh)}
                                             className={`px-2 py-1.5 rounded-md font-bold text-[11px] transition ${sh.offerStatus === 'open' ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
