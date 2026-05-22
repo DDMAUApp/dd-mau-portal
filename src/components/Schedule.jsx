@@ -4201,6 +4201,10 @@ ${dayBlocks}
                                 }}
                                 onTakeShift={handleTakeShift}
                                 onCancelOffer={handleCancelOffer}
+                                /* Speed template add — day/list views */
+                                scheduleTemplates={scheduleTemplates}
+                                onApplyTemplate={handleApplyTemplate}
+                                onOpenTemplateModal={() => setShowApplyTemplate(true)}
                             />
                             <OpenShiftsCalendarBar
                                 mode="available"
@@ -4280,6 +4284,15 @@ ${dayBlocks}
                                         ));
                                     }
                                 }}
+                                /* Speed template add — propagate templates +
+                                    handlers so each unassigned-row day cell can
+                                    render its own "+ template" popover. The
+                                    onOpenTemplateModal fallback re-opens the
+                                    full multi-day picker when the speed-add
+                                    popover isn't enough. */
+                                scheduleTemplates={scheduleTemplates}
+                                onApplyTemplate={handleApplyTemplate}
+                                onOpenTemplateModal={() => setShowApplyTemplate(true)}
                                 selectedShiftIds={selectedShiftIds}
                                 onToggleShiftSelection={toggleShiftSelection}
                                 onCellClick={(staff, dateStr) => {
@@ -5110,6 +5123,9 @@ function OpenShiftsCalendarBar({
     weekStart, staffingNeeds, shifts, side, storeLocation, isEn,
     canEdit, currentStaffName, blocksByDate,
     onFillSlot, onTakeShift, onCancelOffer,
+    // Speed template add (unassigned mode only — managers tap a "+ template"
+    // chip per day to drop a saved template onto that single date).
+    scheduleTemplates = [], onApplyTemplate, onOpenTemplateModal,
 }) {
     const tx = (en, es) => (isEn ? en : es);
     const days = DAYS_EN.map((_, i) => addDays(weekStart, i));
@@ -5140,7 +5156,11 @@ function OpenShiftsCalendarBar({
     const total = isUnassigned
         ? openSlots.reduce((sum, n) => sum + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)
         : openOffers.length;
-    if (total === 0) return null;
+    // Keep the unassigned bar visible for managers even when nothing is
+    // unfilled, so the "+ template" speed-add stays reachable. Available-
+    // mode bar still hides on empty (no manager action to surface there).
+    const showSpeedAdd = isUnassigned && canEdit && typeof onApplyTemplate === 'function';
+    if (total === 0 && !showSpeedAdd) return null;
 
     const itemsByDate = new Map();
     if (isUnassigned) {
@@ -5268,7 +5288,21 @@ function OpenShiftsCalendarBar({
                                     );
                                 })}
 
-                                {items.length === 0 && (
+                                {/* Speed template add — same component the
+                                    weekly-grid uses. Renders only in unassigned
+                                    mode + when a manager is viewing. */}
+                                {showSpeedAdd && !closed && (
+                                    <QuickAddTemplate
+                                        templates={scheduleTemplates}
+                                        side={side}
+                                        dateStr={dStr}
+                                        dayId={DAY_IDS[d.getDay()]}
+                                        isEn={isEn}
+                                        onApply={onApplyTemplate}
+                                        onOpenFullModal={onOpenTemplateModal}
+                                    />
+                                )}
+                                {items.length === 0 && !showSpeedAdd && (
                                     <div className="text-center text-dd-text-2/30 text-[10px] py-2 leading-none">
                                         {closed ? '🚫' : '·'}
                                     </div>
@@ -5288,6 +5322,107 @@ function OpenShiftsCalendarBar({
     );
 }
 
+// Speed template add — small + button in the unassigned row's day cells.
+// One tap → popover of matching templates → one tap → applied to that day.
+// Bypasses the full Apply Template modal for the common case (single day,
+// known template). Falls through to the modal via "More templates…" if
+// the manager needs the multi-day picker or to edit a template first.
+//
+// Filters templates two ways:
+//   1. Side must match (FOH templates only on the FOH view, etc.)
+//   2. Templates tagged for this day-of-week sort to the top; untagged
+//      templates ("any day") follow; other-day templates are dimmed.
+//
+// All-in component (button + popover + outside-click close) so callers
+// just drop <QuickAddTemplate ... /> wherever they want it.
+function QuickAddTemplate({ templates, side, dateStr, dayId, isEn, onApply, onOpenFullModal }) {
+    const [open, setOpen] = useState(false);
+    const tx = (en, es) => (isEn ? en : es);
+
+    const sided = (templates || []).filter(t => t.side === side);
+    // Sort: matching-day first (alphabetical), untagged second (alphabetical),
+    // off-day templates last (alphabetical + dimmed). The bar's main use case
+    // is "I'm building Friday — give me the Friday templates first."
+    const sorted = useMemo(() => {
+        const score = (t) => {
+            const days = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
+            if (days.length === 0) return 1;        // any-day
+            if (days.includes(dayId)) return 0;     // matches this day
+            return 2;                                // off-day
+        };
+        return [...sided].sort((a, b) => {
+            const d = score(a) - score(b);
+            if (d !== 0) return d;
+            return (a.name || '').localeCompare(b.name || '');
+        });
+    }, [sided, dayId]);
+
+    return (
+        <div className="relative">
+            <button
+                onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
+                title={tx('Add template to this day', 'Añadir plantilla a este día')}
+                className="w-full rounded-md border border-dashed border-blue-300 text-blue-600 hover:bg-blue-100 hover:border-blue-400 px-1.5 py-1 text-[10px] font-bold leading-none transition active:scale-95">
+                + {tx('template', 'plantilla')}
+            </button>
+            {open && (
+                <>
+                    {/* Backdrop catches outside clicks. Mirror of the More
+                        Actions menu pattern elsewhere in this file. */}
+                    <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+                    <div className="absolute z-50 left-0 top-full mt-1 w-56 max-h-72 overflow-y-auto bg-white border border-dd-line rounded-lg shadow-lg p-1.5">
+                        <div className="text-[10px] font-bold text-dd-text-2 uppercase tracking-wide px-2 py-1 border-b border-dd-line mb-1">
+                            {tx(`Apply to ${dateStr}`, `Aplicar a ${dateStr}`)}
+                        </div>
+                        {sorted.length === 0 ? (
+                            <div className="text-[11px] text-dd-text-2 px-2 py-3 text-center">
+                                {tx(`No ${side.toUpperCase()} templates yet.`, `Sin plantillas ${side.toUpperCase()} aún.`)}
+                            </div>
+                        ) : (
+                            <div className="space-y-0.5">
+                                {sorted.map(t => {
+                                    const days = Array.isArray(t.daysOfWeek) ? t.daysOfWeek : [];
+                                    const isMatch = days.length === 0 || days.includes(dayId);
+                                    const blocks = (t.blocks || []).length;
+                                    const totalSlots = (t.blocks || []).reduce(
+                                        (sum, b) => sum + (b.slots || []).reduce((s, sl) => s + (sl.count || 0), 0), 0
+                                    );
+                                    return (
+                                        <button key={t.id}
+                                            onClick={() => { setOpen(false); onApply(t, [dateStr]); }}
+                                            className={`w-full text-left px-2 py-1.5 rounded-md text-xs transition hover:bg-dd-bg active:scale-[0.99] ${
+                                                isMatch ? 'text-dd-text' : 'text-dd-text-2 opacity-70'
+                                            }`}>
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <span className="font-bold truncate">{t.name}</span>
+                                                {!isMatch && days.length > 0 && (
+                                                    <span className="text-[8px] font-bold uppercase tracking-wider text-amber-700 bg-amber-50 border border-amber-200 px-1 rounded">
+                                                        {tx('off-day', 'fuera')}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="text-[10px] text-dd-text-2 mt-0.5">
+                                                {blocks} {tx(blocks === 1 ? 'block' : 'blocks', 'bloque(s)')} · {totalSlots} {tx('slots', 'slots')}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        <div className="border-t border-dd-line mt-1 pt-1">
+                            <button
+                                onClick={() => { setOpen(false); onOpenFullModal && onOpenFullModal(); }}
+                                className="w-full text-left px-2 py-1.5 rounded-md text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50">
+                                {tx('More templates / multi-day…', 'Más plantillas / varios días…')}
+                            </button>
+                        </div>
+                    </div>
+                </>
+            )}
+        </div>
+    );
+}
+
 function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, canEdit, isManagerOrAdmin, onCellClick, onDeleteShift, onStaffClick, onOfferShift, onTakeShift, onCancelOffer, blocksByDate, eventsByDate, onDropShift, isStaffOffOn, onDayHeaderClick, onToggleDateOpen, dateHasOpenOverride, dateClosedByRecurring, timeOff, weekNeeds, quickAddCell, onQuickAddSelect, onQuickAddCustom, onQuickAddClose, onUpdateShiftTimes,
     // Open Shifts data — rendered as Sling-style rows AT THE TOP of the
     // schedule table so they share column widths with the days below.
@@ -5295,6 +5430,10 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
     // openOffers: from shifts.offerStatus === 'open', per-day chips ("📣 Sara")
     openSlots = [], openOffers = [], side = 'foh', storeLocation = 'webster',
     onFillSlot,
+    // Speed template add — surfaces a "+ template" button in each
+    // unassigned-row day cell. Always visible when canEdit so managers
+    // can drop templates onto a fresh empty week in one tap each.
+    scheduleTemplates = [], onApplyTemplate, onOpenTemplateModal,
     // Multi-select pass-through for ShiftCube children
     selectedShiftIds, onToggleShiftSelection,
 }) {
@@ -5620,7 +5759,12 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                         with the day columns of the schedule grid below.
                         Visually: each row's day cell sits directly above the
                         Mon/Tue/Wed/etc cells in the staff rows underneath. */}
-                    {openSlots.length > 0 && (
+                    {/* Unassigned row — Sling-style. Always visible to managers
+                        (canEdit) so the "+ template" speed-add button is
+                        reachable on a fresh empty week. Read-only viewers
+                        only see this row when there are actual unfilled
+                        slots (otherwise it's noise). */}
+                    {(openSlots.length > 0 || canEdit) && (
                         <tr className="bg-blue-50/40">
                             <td className="sticky left-0 z-10 bg-blue-50 border-b border-r border-dd-line px-2.5 py-2 align-middle">
                                 <div className="flex items-center gap-1.5">
@@ -5630,7 +5774,9 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                             {isEn ? 'Unassigned' : 'Sin asignar'}
                                         </div>
                                         <div className="text-[10px] font-semibold text-blue-700/70 leading-tight mt-0.5">
-                                            {openSlots.reduce((s, n) => s + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)} {isEn ? 'open' : 'abiertos'}
+                                            {openSlots.length === 0
+                                                ? (isEn ? '+ template' : '+ plantilla')
+                                                : `${openSlots.reduce((s, n) => s + Math.max(0, (n.count || 0) - (n.filledStaff || []).length), 0)} ${isEn ? 'open' : 'abiertos'}`}
                                         </div>
                                     </div>
                                 </div>
@@ -5640,6 +5786,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                 const dayBlocks = (blocksByDate && blocksByDate.get(dStr)) || [];
                                 const closed = dayBlocks.some(b => b.type === 'closed');
                                 const slots = openSlots.filter(n => n.date === dStr);
+                                const dayId = DAY_IDS[d.getDay()];
                                 return (
                                     <td key={i} className={`border-b border-r border-dd-line align-top p-1 ${closed ? 'bg-dd-bg' : 'bg-blue-50/40'}`}>
                                         <div className="space-y-1">
@@ -5667,7 +5814,21 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                     </button>
                                                 );
                                             })}
-                                            {slots.length === 0 && !closed && (
+                                            {/* Speed template add — single-tap apply to this
+                                                day. Manager only; closed days hide it (the
+                                                blackout already says "don't schedule here"). */}
+                                            {canEdit && !closed && onApplyTemplate && (
+                                                <QuickAddTemplate
+                                                    templates={scheduleTemplates}
+                                                    side={side}
+                                                    dateStr={dStr}
+                                                    dayId={dayId}
+                                                    isEn={isEn}
+                                                    onApply={onApplyTemplate}
+                                                    onOpenFullModal={onOpenTemplateModal}
+                                                />
+                                            )}
+                                            {slots.length === 0 && !canEdit && !closed && (
                                                 <div className="text-center text-blue-700/20 text-[10px] py-1 leading-none">·</div>
                                             )}
                                         </div>
