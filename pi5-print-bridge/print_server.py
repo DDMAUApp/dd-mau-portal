@@ -354,6 +354,47 @@ def send_to_brother(image, copies=1):
 app = Flask(__name__)
 
 
+# ── CORS ───────────────────────────────────────────────────────────────
+#
+# The DD Mau web app at https://app.ddmaustl.com hits this service at
+# https://<machine>.<tailnet>.ts.net — different origins, so the browser
+# enforces CORS preflight. Without these headers, curl works fine
+# (curl ignores CORS) but the web app silently falls back to the
+# iOS share-sheet path because the browser blocks the fetch.
+#
+# Andrew confirmed this exact symptom 2026-05-22 — curl prints
+# successfully, app shows share sheet.
+
+ALLOWED_ORIGINS = {
+    "https://app.ddmaustl.com",
+    "http://localhost:5173",   # vite dev
+    "https://localhost:5173",
+}
+
+
+@app.after_request
+def add_cors_headers(response):
+    origin = request.headers.get("Origin", "")
+    if origin in ALLOWED_ORIGINS:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Vary"] = "Origin"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Key"
+        response.headers["Access-Control-Max-Age"] = "86400"
+    return response
+
+
+# Explicit OPTIONS handlers for the routes the web app calls. Flask's
+# default behavior is to 405 OPTIONS on routes that only registered
+# GET/POST, which fails preflight. Returning 204 with the CORS headers
+# (added by the after_request hook above) is the standard fix.
+@app.route("/print/label", methods=["OPTIONS"])
+@app.route("/print/free-text", methods=["OPTIONS"])
+@app.route("/healthz", methods=["OPTIONS"])
+def cors_preflight():
+    return ("", 204)
+
+
 @app.errorhandler(Exception)
 def handle_unexpected(e):
     log.exception(f"Unhandled error in {request.path}")
