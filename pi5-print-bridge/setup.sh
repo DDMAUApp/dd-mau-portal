@@ -139,8 +139,11 @@ sudo mkdir -p /etc/print_bridge
 
 # Generate a fresh API key only if one doesn't exist (re-runs preserve key).
 if [[ ! -f /etc/print_bridge/api_key ]]; then
-    # 32 random bytes -> 64 hex chars. /dev/urandom is fine here.
-    API_KEY="$(head -c 32 /dev/urandom | xxd -p -c 64)"
+    # 32 random bytes -> 64 hex chars. openssl rand is preferred over
+    # `head /dev/urandom | xxd` because Trixie (Debian 13) no longer ships
+    # xxd in the default install — it's a separate package now. openssl is
+    # always present (we apt-upgraded it above).
+    API_KEY="$(openssl rand -hex 32)"
     echo -n "$API_KEY" | sudo tee /etc/print_bridge/api_key > /dev/null
     ok "Generated new API key"
 else
