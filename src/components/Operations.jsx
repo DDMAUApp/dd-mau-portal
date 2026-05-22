@@ -2620,45 +2620,96 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // updateInventoryCount(itemId, newCount, delta?)
             //
-            // newCount: the post-update absolute value (used for the
-            //   optimistic local state + audit log)
+            // newCount: the post-update absolute value (used by the
+            //   text-input onChange — typing "24" jumps the count to
+            //   24 outright). Ignored when `delta` is ±1.
             // delta: optional. If +1 / -1 is passed, we write via
             //   FieldValue.increment so two simultaneous +1 taps from
-            //   different devices BOTH land (AUDIT OPS-004 fix). If
-            //   omitted, falls back to the old absolute-set behavior
-            //   (no current call site needs this; kept for safety).
+            //   different devices BOTH land (AUDIT OPS-004 fix), AND
+            //   we compute the next local count from the latest state
+            //   via a functional setInventory — see race-fix below.
             //
-            // Race-fix history (2026-05-17): previously every call
-            // wrote `counts.${itemId} = newCount` as an absolute value.
-            // If two staff +1'd the same item between snapshot ticks,
-            // both read prev=5 from local state, both wrote 6 → one
-            // +1 lost. With increment, both writes apply atomically
-            // at the Firestore layer and the final count is 7.
+            // Race-fix history:
+            //
+            // 2026-05-17 — every call wrote `counts.${itemId} = newCount`
+            // as an absolute value. If two staff +1'd the same item
+            // between snapshot ticks, both read prev=5 from local state,
+            // both wrote 6 → one +1 lost. Fixed with FieldValue.increment.
+            //
+            // 2026-05-22 — Andrew: "glitchy adding items to the cart,
+            // sometimes its slower." Same-device rapid-tap race that the
+            // 5-17 increment fix didn't cover. The +/- buttons compute
+            // `count` from render-time closure (`const count = inventory
+            // [item.id] || 0`) and pass `count + 1` in. If the user
+            // tapped + twice before React committed the next render,
+            // BOTH click handlers saw the same `count` and called
+            // updateInventoryCount with the same `newCount`. Inside,
+            // `const prevCount = inventory[itemId]` ALSO read stale
+            // closure state, and `setInventory({ ...inventory, [id]:
+            // count })` spread stale state with an absolute value. So
+            // local stayed at 1 across two fast taps while Firestore
+            // (correctly, via increment) ticked to 2. The snapshot
+            // listener then jumped local from 1 → 2 a beat late =
+            // visible "glitch."
+            //
+            // Fix: use functional setInventory + setInvCountMeta so the
+            // setter callback gets the LATEST committed state, then
+            // recompute next from prev when a delta is supplied. The
+            // absolute-set path (text input) is unaffected. Also
+            // fire-and-forget the audit doc write so rapid taps don't
+            // pile up awaiting two writes per click (audit is best-
+            // effort by design — the comment below already noted that).
             const updateInventoryCount = async (itemId, newCount, delta = null) => {
                 const count = parseInt(newCount) || 0;
-                const prevCount = inventory[itemId] || 0;
-                // Decrement guard: if the user is decrementing and our
-                // local view says count is already 0, no-op. Avoids
-                // momentarily writing -1 even though Firestore would
-                // accept it (we clamp via UI but the increment path
-                // doesn't know about the clamp).
-                if (delta === -1 && prevCount <= 0) return;
-                const newInventory = { ...inventory, [itemId]: count };
-                setInventory(newInventory);
+                const isDelta = delta === 1 || delta === -1;
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-                const newMeta = { ...invCountMeta, [itemId]: { by: staffName, at: timeStr } };
-                if (count === 0) delete newMeta[itemId];
-                setInvCountMeta(newMeta);
 
-                // ── Audit trail ───────────────────────────────────────
+                // Capture prev/next inside the functional setter so rapid
+                // taps don't read stale closure state. These vars are
+                // populated synchronously by the setState callback —
+                // they're ready to use right after setInventory returns.
+                let prevCount = 0;
+                let nextCount = count;
+                let skipped = false;
+                setInventory(prev => {
+                    prevCount = prev[itemId] || 0;
+                    if (isDelta) nextCount = prevCount + delta;
+                    else nextCount = count;
+                    // Decrement guard: if user is decrementing and the
+                    // latest state says 0, no-op. (Moved inside the
+                    // functional setter so the check sees fresh state,
+                    // not stale closure inventory.)
+                    if (delta === -1 && prevCount <= 0) {
+                        skipped = true;
+                        return prev;
+                    }
+                    return { ...prev, [itemId]: nextCount };
+                });
+                if (skipped) return;
+
+                setInvCountMeta(prev => {
+                    if (nextCount === 0) {
+                        const next = { ...prev };
+                        delete next[itemId];
+                        return next;
+                    }
+                    return { ...prev, [itemId]: { by: staffName, at: timeStr } };
+                });
+
+                // ── Audit trail (best-effort, fire-and-forget) ──────
                 // Every count change writes an immutable row to
                 // inventory_audits_{location}. Use case Andrew flagged:
                 // "why weren't eggs ordered but it was on the list before"
                 // — with many hands on the inventory page, individual
                 // tweaks (someone bumping eggs down then forgetting) can
                 // be reconstructed. Audit is append-only via rules.
-                if (prevCount !== count) {
+                //
+                // 2026-05-22: stopped awaiting the addDoc here. Awaiting
+                // it serialized two Firestore writes per +1 tap (audit,
+                // then main update), so rapid tapping felt sluggish. The
+                // audit doc isn't user-visible — fire-and-forget is fine.
+                if (prevCount !== nextCount) {
                     try {
                         // Resolve a human-readable item name for the audit row
                         // so future renames don't make the log inscrutable.
@@ -2667,20 +2718,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             const f = cat.items.find(it => it.id === itemId);
                             if (f) { itemName = f.nameEn || f.name || itemId; break; }
                         }
-                        await addDoc(collection(db, 'inventory_audits_' + storeLocation), {
+                        addDoc(collection(db, 'inventory_audits_' + storeLocation), {
                             itemId,
                             itemName,
                             previous: prevCount,
-                            next: count,
-                            delta: count - prevCount,
+                            next: nextCount,
+                            delta: nextCount - prevCount,
                             byStaff: staffName,
                             at: serverTimestamp(),
                             atLocal: timeStr,
                             dateKey: now.toISOString().slice(0, 10),
-                        });
+                        }).catch(e => console.warn('inventory audit write failed', e));
                     } catch (e) {
-                        // Audit is best-effort — don't block the count save if
-                        // the audit write fails for any reason.
                         console.warn('inventory audit write failed', e);
                     }
                 }
@@ -2690,10 +2739,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // When a delta is provided (+1 / -1 from the bump buttons), use
                 // Firestore's atomic FieldValue.increment so simultaneous taps
                 // from two devices both land. Falls back to absolute set for
-                // any caller that doesn't pass a delta (none today).
+                // the text-input path.
                 const update = {
-                    [`counts.${itemId}`]: delta === 1 || delta === -1 ? increment(delta) : count,
-                    [`countMeta.${itemId}`]: count === 0 ? deleteField() : { by: staffName, at: timeStr },
+                    [`counts.${itemId}`]: isDelta ? increment(delta) : count,
+                    [`countMeta.${itemId}`]: nextCount === 0 ? deleteField() : { by: staffName, at: timeStr },
                     date: new Date().toISOString(),
                 };
                 try {
@@ -2702,7 +2751,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // Doc may not exist yet on first write to a fresh location.
                     if (err?.code === "not-found") {
                         try {
-                            await setDoc(ref, { counts: newInventory, countMeta: newMeta, customInventory, date: new Date().toISOString() });
+                            // Rebuild the full counts/meta map from the latest
+                            // local state (read via the functional setter
+                            // pattern so we don't snapshot stale closure).
+                            let fullCounts = {};
+                            let fullMeta = {};
+                            setInventory(prev => { fullCounts = prev; return prev; });
+                            setInvCountMeta(prev => { fullMeta = prev; return prev; });
+                            await setDoc(ref, { counts: fullCounts, countMeta: fullMeta, customInventory, date: new Date().toISOString() });
                         } catch (e) { console.error("Error creating inventory:", e); }
                     } else {
                         console.error("Error updating inventory:", err);
