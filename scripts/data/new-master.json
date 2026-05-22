@@ -1,0 +1,1415 @@
+{
+  "sourceFile": "Inventory 9.12.25.xlsx",
+  "parsedAt": "2026-05-22T18:39:45.736572",
+  "totalItems": 171,
+  "categories": [
+    {
+      "name": "Proteins",
+      "items": [
+        {
+          "en": "Beef Ball Tip (LG & FR)",
+          "es": "Punta De Bola De Ternera",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Beef Bones (PHO)",
+          "es": "Huesos De Res (PHO)",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Beef Brisket (PHO)",
+          "es": "Pechuga De Ternera (PHO)",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Beef Flank (PHO)",
+          "es": "Falda De Ternera (PHO)",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Beef Meatball (PHO)",
+          "es": "Albondiga De Ternera (PHO)",
+          "tues": true,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Chicken Breast (Unfrozen)",
+          "es": "Pechuga De Pollo",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Chicken Dark Leg Meat",
+          "es": "Pierna Oscura De Pollo",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "21/25 Shrimp-Tail OFF",
+          "es": "21/25 Camaron",
+          "tues": false,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "21/25 Shrimp-Tail ON",
+          "es": "21/25 Camaron Con Cola",
+          "tues": true,
+          "fri": false,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "31/40 Shrimp (P&D)",
+          "es": "31/40 Camaron (P&D)",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Ham",
+          "es": "Jamon",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Firm Tofu",
+          "es": "Tofu Firme",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Imitation Crab-Sticks Flakes",
+          "es": "Imitacion De Cangrejo",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Jumbo Party Wings",
+          "es": "Alas De Pollo (JUMBO)",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Boneless Pork Butt",
+          "es": "Lomo De Cerdo Deshuesado",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Salmon",
+          "es": "Salmon",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Fabulous Fish",
+          "vendor2": ""
+        },
+        {
+          "en": "Scallops",
+          "es": "Vieiras",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Vegan Shrimp",
+          "es": "Camaron Vegano",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Vegan Chicken",
+          "es": "Pollo Vegano",
+          "tues": false,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Vegan Beef",
+          "es": "Carne De Res Vegano",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Yellowstone",
+          "vendor2": ""
+        },
+        {
+          "en": "Squid Tubes U10",
+          "es": "Tubos De Calamar U10",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "SWAI Fish",
+          "es": "Pescado",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "VEGGIES",
+      "items": [
+        {
+          "en": "Bean Sprouts",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Broccoli (Iceless)",
+          "es": "Brocoli",
+          "tues": true,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "US Foods"
+        },
+        {
+          "en": "Carrots 50lbs",
+          "es": "Zanahoria",
+          "tues": true,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "US Foods"
+        },
+        {
+          "en": "Cilantro (Iceless)",
+          "es": "Cilantro",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Cucumbers",
+          "es": "Pepino",
+          "tues": true,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "US Foods"
+        },
+        {
+          "en": "Daikon/ Turnip",
+          "es": "Daikon",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Ginger",
+          "es": "Ginger",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Green Cabbage",
+          "es": "Repollo Verde",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Green Onion (Iceless)",
+          "es": "Cebolla Verde",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Iceberg Lettuce",
+          "es": "Lechuga",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Jalapenos",
+          "es": "Jalapenos",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "King Oyster Mushroom",
+          "es": "Champinon REY",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Lemongrass-Chopped",
+          "es": "Hierba De Limon-Picada",
+          "tues": true,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": "Pan Asia"
+        },
+        {
+          "en": "Lemongrass-Fresh",
+          "es": "Hierba De Limon-Fresca",
+          "tues": true,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": "Pan Asia"
+        },
+        {
+          "en": "Limes",
+          "es": "Limas",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": "Costco Business"
+        },
+        {
+          "en": "Peeled Garlic",
+          "es": "Ajo Pelado",
+          "tues": true,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Costco Business"
+        },
+        {
+          "en": "Red Cabbage",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Shallots Fresh",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Spring Mix",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Thai Basil",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": "Pan Asia"
+        },
+        {
+          "en": "White Onion",
+          "es": "Cebolla Blanca",
+          "tues": true,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "US Foods"
+        },
+        {
+          "en": "Cayenne Pepper",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "DAIRY",
+      "items": [
+        {
+          "en": "Whole Milk",
+          "es": "Leche",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Almond Milk",
+          "es": "Leche De Almendra",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Oat Milk",
+          "es": "Leche De Avena",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Buttermilk",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Creamcheese - Raska",
+          "es": "Queso Crema",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Half & Half",
+          "es": "Leche Mitad Y Mitad",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Heavy Cream",
+          "es": "Crema Espesa",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Sour Cream",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Vegan Cream Cheese",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "Whole Foods",
+          "vendor2": "Jays"
+        },
+        {
+          "en": "\"Sweetened\" Condensed Milk",
+          "es": "Leche Condensada",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Evaporated Milk",
+          "es": "Leche Evaporada",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "SAUCES/ CONDIMENTS",
+      "items": [
+        {
+          "en": "All-Purpose Flour",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Baking Powder",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Black Pepper Granulated",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Brown Sugar",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Bun Bo Hue Seasoning",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Cayenne Pepper PACKETS***",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Chicken Bouillon",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Chop Suey Sauce \"BIG BUDDAH\"",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Wing Hing",
+          "vendor2": ""
+        },
+        {
+          "en": "Cornstarch",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Dark THICK Sauce",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Garlic Powder - Granulated",
+          "es": "Ajo En Polvo",
+          "tues": false,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Green Szechuan Peppercorn",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Hellman's Mayo",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Hoisn Sauce",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Honey",
+          "es": "Miel",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Hot Sauce (Buffalo)",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": "US Foods"
+        },
+        {
+          "en": "Hoisin Sauce PACKETS*",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Kikoman Soy Sauce",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Costco Business"
+        },
+        {
+          "en": "Mae Ploy Sweet Chili",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "MSG",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Oyster Sauce LKK",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "PANKO Bread Crumbs",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Creamy ** Peanut Butter",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": "STL Wholesale"
+        },
+        {
+          "en": "RAW Peanuts - Whole",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Red Szechuan Peppercorn",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Rice Cooking Wine",
+          "es": "Vino de Arroz",
+          "tues": false,
+          "fri": false,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Rock Sugar",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Salt",
+          "es": "Sal",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Sambal Chili Sauce",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Sesame Oil - KADOYA",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Soy Sauce Packets",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Squid Fish Sauce",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Pan Asia"
+        },
+        {
+          "en": "Squid Fish Sauce VEGAN***",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Sriracha Sauce",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Sriracha Sauce PACKETS**",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Sugar",
+          "es": "Azucar",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Costco Business"
+        },
+        {
+          "en": "Sweet & Sour Packets",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Sweet Rice Powder",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Olive Market"
+        },
+        {
+          "en": "Soybean OIL",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Deep Fryer OIL",
+          "es": "Aceite Para Freir",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "White Vinegar",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "DRY ITEMS",
+      "items": [
+        {
+          "en": "Coconut Shreds",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Fried Shallots",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Fried Rice",
+          "es": "Arroz Frito",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Jasmine Rice",
+          "es": "Arroz Jazmin",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Costco Business"
+        },
+        {
+          "en": "Multi-Purpose Oil Spray",
+          "es": "Multiuso Speay De Aceite",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Rice Paper -- 3 Ladies",
+          "es": "Papel de Arroz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Jays"
+        },
+        {
+          "en": "Woodear Mushroom",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Vermicelli Noodles",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Bean Thread Noodles",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Brown Rice",
+          "es": "Arroz Integral",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "COLD ITEMS",
+      "items": [
+        {
+          "en": "Sweet Potatoes Fries",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Bailey Wonton Skin -- Regular",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Egg Yolks",
+          "es": "Yemas de Huevos",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Restaurant Depot",
+          "vendor2": "US Foods"
+        },
+        {
+          "en": "XL Eggs",
+          "es": "XL Huevos",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": "Costco Business"
+        },
+        {
+          "en": "Pho Noodles",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Sesame Balls",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Weichuan Spring Roll Paper",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Banh Mi (LBB)",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Yellowstone",
+          "vendor2": ""
+        },
+        {
+          "en": "BAOS",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Churros",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Frozen Strawberries",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Frozen Mangos",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Roti Tacos",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "White Chocolate",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "SUPPLIES",
+      "items": [
+        {
+          "en": "12oz PET Cups",
+          "es": "Taza de 12oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "16oz PET Cups",
+          "es": "Taza de 16oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "16oz PET Lids",
+          "es": "Tapas de 16oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "BAG #8 - Kraft",
+          "es": "Bolsa #8",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "BAG #12 - Kraft",
+          "es": "Bolsa #12",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "BAG #25 - Kraft",
+          "es": "Bolsa #25",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "17\" Bread Paper",
+          "es": "Papel De Pan 17\"",
+          "tues": false,
+          "fri": true,
+          "vendor1": "Restaurant Depot",
+          "vendor2": ""
+        },
+        {
+          "en": "2oz Cups",
+          "es": "Taza de 2 Onzas",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "2oz Lids",
+          "es": "Tapas de 2 Onzas",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "1oz Cups",
+          "es": "Taza de 1 Onza",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "1oz Lids",
+          "es": "Tapas de 1 Onza",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "24oz Clear Hinged Container - Spring Rolls",
+          "es": "Contenedors de 24oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "32oz Soup Container",
+          "es": "Contenedor de Sopa 32oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "16oz Soup Container",
+          "es": "Contenedor de Sopa 16oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "8oz Soup Container",
+          "es": "Contenedor de Sopa 8oz",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Black Bowls - 36oz",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "4' Knotted Bamboo Toothpicks - BAOS",
+          "es": "Palillos de Bambu",
+          "tues": true,
+          "fri": false,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Paper Towels",
+          "es": "Papel de Mano",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Wax Paper for Trays",
+          "es": "Papel Encerdado",
+          "tues": false,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "BAG #57 - Kraft",
+          "es": "Bolsa #57",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Black Trash Bags 55 Gallon",
+          "es": "Bolsas de Basura",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Drink Carrier",
+          "es": "Portador De Bebidas",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Heavy Duty Forks",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "Restaurant Depot",
+          "vendor2": ""
+        },
+        {
+          "en": "Heavy Duty Spoons",
+          "es": "Cuchara",
+          "tues": false,
+          "fri": true,
+          "vendor1": "Restaurant Depot",
+          "vendor2": ""
+        },
+        {
+          "en": "Heavy Duty Knives",
+          "es": "Cuchillo",
+          "tues": false,
+          "fri": true,
+          "vendor1": "Restaurant Depot",
+          "vendor2": ""
+        },
+        {
+          "en": "HOT* Cups 12oz",
+          "es": "Vasos de Bebidas Caliente",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "HOT* Lids 12oz",
+          "es": "Tapas de Bebidas Caliente",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Ice Bags",
+          "es": "Bolsas de Hielo",
+          "tues": false,
+          "fri": true,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "STL-868W (FR)",
+          "es": "Contenedor de FR",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Napkins - Tork",
+          "es": "Servilletas",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "Take Out BOX #1",
+          "es": "Caja #1",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Take Out BOX #8",
+          "es": "Caja #8",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "DF2200 - To-go Trays",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "GLOVES S, M & L",
+          "es": "Guantes S, M y L",
+          "tues": false,
+          "fri": false,
+          "vendor1": "Jays",
+          "vendor2": ""
+        },
+        {
+          "en": "Verm Bags",
+          "es": "Bolsa de Vermicelli",
+          "tues": true,
+          "fri": false,
+          "vendor1": "US Foods",
+          "vendor2": ""
+        },
+        {
+          "en": "White** Gassline Bag 3lb",
+          "es": "Bolsa de Glassine - Blanca",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "S Poly Bags",
+          "es": "",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        },
+        {
+          "en": "Chinese Style Soup Spoon - Black",
+          "es": "Cuchara Negras Para Sopa",
+          "tues": false,
+          "fri": true,
+          "vendor1": "STL Wholesale",
+          "vendor2": ""
+        }
+      ]
+    },
+    {
+      "name": "CLEANING SUPPLIES",
+      "items": [
+        {
+          "en": "Bleach",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Dish Soap - Kirkland",
+          "es": "",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Dishwasher Detergent",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Dishwasher Rinse Aid",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Dishwasher Sanitizer",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Pot & Pan Soap - Dishwasher",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Pot & Pan Sanitizer - Dishwasher",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Cleaner Degreaser - High Temp",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Glass Cleaner",
+          "es": "Limpiavidrios",
+          "tues": true,
+          "fri": true,
+          "vendor1": "Costco Business",
+          "vendor2": ""
+        },
+        {
+          "en": "Sanitizer Tablets",
+          "es": "",
+          "tues": true,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Cleaner Floor Alkine - No Rinse",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Delimer Descaler Lime",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        },
+        {
+          "en": "Degreaser",
+          "es": "",
+          "tues": false,
+          "fri": false,
+          "vendor1": "",
+          "vendor2": ""
+        }
+      ]
+    }
+  ]
+}
