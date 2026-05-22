@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, collection, query, orderBy, limit, addDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -456,6 +456,9 @@ export default function CateringOrder({ language, staffName }) {
             const [cart, setCart] = useState([]);
             const [errors, setErrors] = useState({});
             const [submitted, setSubmitted] = useState(false);
+            // Guards against double-tap / slow-network re-entry into submitOrder
+            // creating a DUPLICATE catering order + duplicate manager push.
+            const submittingRef = useRef(false);
             const [orderHistory, setOrderHistory] = useState([]);
             const [showHistory, setShowHistory] = useState(false);
             const [specialNotes, setSpecialNotes] = useState("");
@@ -579,6 +582,14 @@ export default function CateringOrder({ language, staffName }) {
             const getTotal = () => getSubtotal() + getUtensilCost() + getDelFee() + getTax();
             const submitOrder = async () => {
                 if (cart.length === 0) return;
+                // FIX (review 2026-05-20): re-entry guard. The submit button was only
+                // disabled on an empty cart, so a second tap before the addDoc await
+                // resolved called addDoc() twice -> duplicate catering order + a
+                // duplicate manager push. The ref is set synchronously so it blocks
+                // the second tap within the same tick; it is reset in the finally
+                // below so a failed save can still be retried.
+                if (submittingRef.current) return;
+                submittingRef.current = true;
                 const utensilInfo = {};
                 if (wantPlates && plateCount > 0) utensilInfo.plates = plateCount;
                 if (wantChopsticks && chopstickCount > 0) utensilInfo.chopsticks = chopstickCount;
@@ -656,6 +667,8 @@ export default function CateringOrder({ language, staffName }) {
                         ? `Error al guardar pedido: ${err.message || err}. Intenta de nuevo.`
                         : `Order save failed: ${err.message || err}. Try again.`,
                         { kind: 'error', duration: 8000 });
+                } finally {
+                    submittingRef.current = false;
                 }
             };
             const resetForm = () => {
