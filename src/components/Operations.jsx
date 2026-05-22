@@ -434,6 +434,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // cart rows into an /order_sessions doc and walks the manager
             // through ordering each item, vendor by vendor.
             const [orderModeRows, setOrderModeRows] = useState(null);
+            // Stable close handler for the OrderMode modal. Without
+            // useCallback this was a fresh arrow ref on every Operations
+            // re-render (which fires on every inventory tap / labor
+            // snapshot), so the OrderMode prop diff always reported
+            // changed → memo benefits inside OrderMode got partially
+            // defeated. Setter is already stable, so [] deps is fine.
+            const closeOrderMode = useCallback(() => setOrderModeRows(null), []);
             // (echo from local writes is now suppressed via snapshot.metadata.hasPendingWrites in the inventory listener)
             // Split list state: overrides move items between people, writeIns are custom items per person
             const [splitOverrides, setSplitOverrides] = useState({}); // {itemId: personName}
@@ -5582,7 +5589,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         staffName={staffName}
                                         customInventory={customInventory}
                                         cartItems={orderModeRows}
-                                        onClose={() => setOrderModeRows(null)}
+                                        onClose={closeOrderMode}
                                     />
                                 </Suspense>
                             )}

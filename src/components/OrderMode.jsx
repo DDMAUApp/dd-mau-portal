@@ -14,7 +14,7 @@
 // Multi-device safe: the session lives in Firestore, so two managers
 // can co-pilot from different devices (rare but supported).
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react';
 import {
     ITEM_STATUS, ORDER_STATUS,
     createOrderSession,
@@ -225,28 +225,20 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         await setCurrentVendor({ sessionId, vendor: v === currentVendor ? null : v });
     };
 
-    const markItem = async (itemId, status) => {
-        // When marking ordered/partial, attribute to the current vendor.
-        // When marking OOS, also attach the current vendor — that's WHO
-        // told us it was out (so we know not to re-ask the same vendor).
-        const vendor = currentVendor || null;
-        await updateSessionItem({
-            sessionId, itemId, status, vendor, byName: staffName,
-        });
-    };
-
-    // Partial flow: open the qty dialog instead of marking directly.
-    // The dialog calls splitItemForPartial on save, which handles the
-    // three outcomes (zero → OOS, full → ordered, in-between → split).
-    const openPartialDialog = (itemId) => {
-        const orig = items[itemId];
-        if (!orig) return;
-        setPartialDialog({
-            itemId,
-            originalQty: Number(orig.qty) || 0,
-            itemName: orig.itemName,
-        });
-    };
+    // Perf-fix 2026-05-22 — Andrew: "very slow" in order mode.
+    //
+    // Mirror currentVendor + items into refs so the row-level dispatch
+    // handler below is STABLE across renders. Without these, the
+    // useCallback below would have to depend on currentVendor + items
+    // — both of which change on every Firestore snapshot — and every
+    // row's memoization would bust every tap. The disabled-state of
+    // a row's buttons still depends on currentVendor (legitimate
+    // re-render when the user toggles vendor); but typing a note or
+    // tapping Ordered on row #5 no longer re-renders rows #1-4.
+    const currentVendorRef = useRef(currentVendor);
+    const itemsRef = useRef(items);
+    useEffect(() => { currentVendorRef.current = currentVendor; }, [currentVendor]);
+    useEffect(() => { itemsRef.current = items; }, [items]);
 
     const applyPartial = async (fulfilledQty) => {
         if (!partialDialog) return;
@@ -255,7 +247,7 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
             await splitItemForPartial({
                 sessionId, itemId,
                 fulfilledQty,
-                vendor: currentVendor || null,
+                vendor: currentVendorRef.current || null,
                 byName: staffName,
             });
             setPartialDialog(null);
@@ -265,13 +257,50 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         }
     };
 
-    const editQty = async (itemId, newQty) => {
-        await updateSessionItem({ sessionId, itemId, qty: newQty });
-    };
-
-    const editNote = async (itemId, newNote) => {
-        await updateSessionItem({ sessionId, itemId, note: newNote });
-    };
+    // One stable dispatcher for every row action. Passing six separate
+    // callback props each render created six new closures per row, which
+    // defeated React.memo on OrderItemRow. Now the row only sees one
+    // function ref + its own itemId + an item snapshot — memo sticks.
+    const handleAction = useCallback(async (itemId, kind, value) => {
+        const vendor = currentVendorRef.current || null;
+        const liveItems = itemsRef.current;
+        switch (kind) {
+            case 'ordered':
+                await updateSessionItem({ sessionId, itemId, status: ITEM_STATUS.ORDERED, vendor, byName: staffName });
+                return;
+            case 'oos':
+                await updateSessionItem({ sessionId, itemId, status: ITEM_STATUS.OOS, vendor, byName: staffName });
+                return;
+            case 'pending':
+                // Undo path — clear the vendor attribution too so the next
+                // mark cleanly attributes to whoever's currently picked.
+                await updateSessionItem({ sessionId, itemId, status: ITEM_STATUS.PENDING, vendor: null, byName: staffName });
+                return;
+            case 'partial': {
+                const orig = liveItems[itemId];
+                if (!orig) return;
+                setPartialDialog({
+                    itemId,
+                    originalQty: Number(orig.qty) || 0,
+                    itemName: orig.itemName,
+                });
+                return;
+            }
+            case 'editQty': {
+                const n = Number(value);
+                if (!Number.isFinite(n)) return;
+                if (n === liveItems[itemId]?.qty) return;
+                await updateSessionItem({ sessionId, itemId, qty: n });
+                return;
+            }
+            case 'editNote':
+                if (value === (liveItems[itemId]?.note || '')) return;
+                await updateSessionItem({ sessionId, itemId, note: value });
+                return;
+            default:
+                return;
+        }
+    }, [sessionId, staffName]);
 
     const submit = async () => {
         if (submitting) return;
@@ -305,9 +334,11 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
         }
     };
 
-    const visibleEntries = statusFilter === 'all'
-        ? sortedEntries
-        : sortedEntries.filter(([, it]) => it.status === statusFilter);
+    const visibleEntries = useMemo(() => (
+        statusFilter === 'all'
+            ? sortedEntries
+            : sortedEntries.filter(([, it]) => it.status === statusFilter)
+    ), [sortedEntries, statusFilter]);
 
     return (
         <>
@@ -401,14 +432,8 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                         itemId={itemId}
                         item={it}
                         isEs={isEs}
-                        tx={tx}
                         currentVendor={currentVendor}
-                        onOrdered={() => markItem(itemId, ITEM_STATUS.ORDERED)}
-                        onPartial={() => openPartialDialog(itemId)}
-                        onOos={() => markItem(itemId, ITEM_STATUS.OOS)}
-                        onPending={() => markItem(itemId, ITEM_STATUS.PENDING)}
-                        onEditQty={(q) => editQty(itemId, q)}
-                        onEditNote={(n) => editNote(itemId, n)}
+                        onAction={handleAction}
                     />
                 ))}
             </div>
@@ -564,7 +589,24 @@ function PartialQtyDialog({ tx, itemName, originalQty, currentVendor, onClose, o
 }
 
 // ── Item row ────────────────────────────────────────────────────────
-function OrderItemRow({ itemId, item, isEs, tx, currentVendor, onOrdered, onPartial, onOos, onPending, onEditQty, onEditNote }) {
+//
+// Perf-fix 2026-05-22 — Andrew: "very slow" in order mode.
+//
+// The row is memoized with an explicit field-by-field comparator
+// because Firestore deserializes the whole `items` map fresh on every
+// onSnapshot tick — meaning even rows whose data didn't change get
+// a NEW item reference. Default React.memo (shallow ref compare)
+// would bail every render and we'd re-render every row on every
+// tap. With this comparator, only rows whose actual field values
+// changed re-render.
+//
+// Props collapsed to a single `onAction(itemId, kind, value?)` so
+// the row sees one stable function ref instead of six per-render
+// closures — that was the other half of the memo problem. The row
+// builds its tiny per-tap closures internally, which is fine because
+// the row itself doesn't re-render unless its data changes.
+function OrderItemRowInner({ itemId, item, isEs, currentVendor, onAction }) {
+    const tx = (en, es) => isEs ? es : en;
     const [noteDraft, setNoteDraft] = useState(item.note || '');
     const [qtyDraft, setQtyDraft] = useState(String(item.qty ?? ''));
 
@@ -614,10 +656,7 @@ function OrderItemRow({ itemId, item, isEs, tx, currentVendor, onOrdered, onPart
                         inputMode="decimal"
                         value={qtyDraft}
                         onChange={e => setQtyDraft(e.target.value)}
-                        onBlur={() => {
-                            const n = Number(qtyDraft);
-                            if (Number.isFinite(n) && n !== item.qty) onEditQty(n);
-                        }}
+                        onBlur={() => onAction(itemId, 'editQty', Number(qtyDraft))}
                         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                         className="w-14 text-center px-1 py-0.5 border border-dd-line rounded text-sm font-bold"
                     />
@@ -629,25 +668,25 @@ function OrderItemRow({ itemId, item, isEs, tx, currentVendor, onOrdered, onPart
             <div className="mt-2 flex gap-1 flex-wrap">
                 {item.status === ITEM_STATUS.PENDING ? (
                     <>
-                        <button onClick={onOrdered}
+                        <button onClick={() => onAction(itemId, 'ordered')}
                             disabled={!currentVendor}
                             title={!currentVendor ? tx('Pick a vendor first', 'Elige un proveedor primero') : ''}
                             className="flex-1 min-w-[70px] py-1.5 rounded-md bg-green-600 text-white text-xs font-bold hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed">
                             ✓ {tx('Ordered', 'Pedido')}
                         </button>
-                        <button onClick={onPartial}
+                        <button onClick={() => onAction(itemId, 'partial')}
                             disabled={!currentVendor}
                             className="flex-1 min-w-[70px] py-1.5 rounded-md bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed">
                             ◐ {tx('Partial', 'Parcial')}
                         </button>
-                        <button onClick={onOos}
+                        <button onClick={() => onAction(itemId, 'oos')}
                             disabled={!currentVendor}
                             className="flex-1 min-w-[70px] py-1.5 rounded-md bg-red-600 text-white text-xs font-bold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
                             🚫 {tx('Out', 'Agotado')}
                         </button>
                     </>
                 ) : (
-                    <button onClick={onPending}
+                    <button onClick={() => onAction(itemId, 'pending')}
                         className="px-3 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 text-xs font-bold hover:bg-dd-bg">
                         ↺ {tx('Undo', 'Deshacer')}
                     </button>
@@ -660,9 +699,7 @@ function OrderItemRow({ itemId, item, isEs, tx, currentVendor, onOrdered, onPart
                 type="text"
                 value={noteDraft}
                 onChange={e => setNoteDraft(e.target.value)}
-                onBlur={() => {
-                    if (noteDraft !== (item.note || '')) onEditNote(noteDraft);
-                }}
+                onBlur={() => onAction(itemId, 'editNote', noteDraft)}
                 onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                 placeholder={tx('Note (e.g. "only 5 available")', 'Nota (ej. "solo 5 disponibles")')}
                 className="w-full mt-1.5 px-2 py-1 border border-dd-line rounded text-xs"
@@ -679,6 +716,40 @@ function OrderItemRow({ itemId, item, isEs, tx, currentVendor, onOrdered, onPart
         </div>
     );
 }
+
+// Custom equality for OrderItemRow — compares the fields the row
+// actually renders. Firestore re-serializes the items map on every
+// snapshot, so item references are NEW per render even when nothing
+// in this row changed — default shallow compare would bail every
+// time and the memo would be useless. This comparator returns
+// true (skip re-render) only when none of the visible fields moved.
+const OrderItemRow = memo(OrderItemRowInner, (prev, next) => {
+    if (prev.itemId !== next.itemId) return false;
+    if (prev.isEs !== next.isEs) return false;
+    if (prev.currentVendor !== next.currentVendor) return false;
+    if (prev.onAction !== next.onAction) return false;
+    const a = prev.item, b = next.item;
+    if (a === b) return true;
+    if (!a || !b) return a === b;
+    // NOTE: checkedAt + checkedBy are intentionally NOT compared.
+    // checkedAt is a Firestore Timestamp — the SDK rebuilds a fresh
+    // Timestamp object on every snapshot, so `a.checkedAt === b.checkedAt`
+    // is always false even when nothing changed (different JS ref, same
+    // millis). Including it would defeat the memo. checkedAt + checkedBy
+    // only change together with status (see updateSessionItem in
+    // orderSession.js), so the status comparison below already triggers
+    // a re-render when those need updating.
+    return a.status === b.status
+        && a.qty === b.qty
+        && a.note === b.note
+        && a.vendor === b.vendor
+        && a.itemName === b.itemName
+        && a.itemNameEs === b.itemNameEs
+        && a.category === b.category
+        && a.subcat === b.subcat
+        && a.pack === b.pack
+        && a.preferredVendor === b.preferredVendor;
+});
 
 // ── Vendor editor — admin-managed names ─────────────────────────────
 function VendorEditor({ tx, configVendors, derivedVendors, staffName, onClose }) {
