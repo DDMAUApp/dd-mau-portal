@@ -105,8 +105,9 @@ async function loadCategories() {
 }
 
 function buildPageData(categories) {
-    // For each category: flatten items, cluster, return cluster
-    // arrays with metadata for rendering.
+    // For each category: flatten items, cluster, return clusters PLUS
+    // singletons (every item not in a multi-item cluster) so Andrew
+    // can scan the full list and spot dupes the heuristic missed.
     const out = [];
     for (const cat of categories) {
         const items = (cat.items || []).map(it => ({
@@ -128,54 +129,53 @@ function buildPageData(categories) {
                 }
             }
         }
-        // Bucket by root
         const buckets = new Map();
         for (let i = 0; i < items.length; i++) {
             const r = uf.find(i);
             if (!buckets.has(r)) buckets.set(r, []);
             buckets.get(r).push(items[i]);
         }
-        const clusters = [...buckets.values()]
-            .filter(c => c.length > 1)
-            // Pick the most "shared" word as the cluster headline
-            .map(c => {
-                const wordCounts = new Map();
-                for (const it of c) for (const w of it.wordSet) {
-                    wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
-                }
-                const headline = [...wordCounts.entries()]
-                    .filter(([, n]) => n === c.length)  // shared by all
-                    .sort((a, b) => b[0].length - a[0].length)
-                    .map(([w]) => w)
-                    .slice(0, 3)
-                    .join(' + ') || '(varies)';
-                return {
-                    headline,
-                    items: c.map(it => ({
-                        id: it.id,
-                        name: it.name,
-                        nameEs: it.nameEs,
-                        subcat: it.subcat,
-                        vendor: it.vendor,
-                        preferredVendor: it.preferredVendor,
-                        pack: it.pack,
-                        price: it.price,
-                    })).sort((a, b) => a.name.localeCompare(b.name)),
-                };
-            })
-            .sort((a, b) => b.items.length - a.items.length);
-        if (clusters.length > 0) {
-            out.push({
-                categoryId: cat.id,
-                categoryName: cat.name,
-                clusters,
-                totalItemsInCategory: items.length,
-                itemsInClusters: clusters.reduce((s, c) => s + c.items.length, 0),
+        const clusters = [];
+        const inCluster = new Set();
+        for (const bucket of buckets.values()) {
+            if (bucket.length < 2) continue;
+            for (const it of bucket) inCluster.add(it.id);
+            const wordCounts = new Map();
+            for (const it of bucket) for (const w of it.wordSet) {
+                wordCounts.set(w, (wordCounts.get(w) || 0) + 1);
+            }
+            const headline = [...wordCounts.entries()]
+                .filter(([, n]) => n === bucket.length)
+                .sort((a, b) => b[0].length - a[0].length)
+                .map(([w]) => w)
+                .slice(0, 3)
+                .join(' + ') || '(varies)';
+            clusters.push({
+                headline,
+                items: bucket.map(stripWordSet).sort(byName),
             });
         }
+        clusters.sort((a, b) => b.items.length - a.items.length);
+        const singletons = items
+            .filter(it => !inCluster.has(it.id))
+            .map(stripWordSet)
+            .sort(byName);
+        out.push({
+            categoryId: cat.id,
+            categoryName: cat.name,
+            clusters,
+            singletons,
+            totalItemsInCategory: items.length,
+            itemsInClusters: clusters.reduce((s, c) => s + c.items.length, 0),
+        });
     }
     return out;
 }
+function stripWordSet(it) {
+    const { wordSet, ...rest } = it;
+    return rest;
+}
+function byName(a, b) { return a.name.localeCompare(b.name); }
 
 // ── delete from inventory.js ────────────────────────────────────
 let backupTaken = false;
@@ -215,6 +215,7 @@ async function deleteIds(ids) {
 function renderPage(pageData, totalItems) {
     const totalClusters = pageData.reduce((s, c) => s + c.clusters.length, 0);
     const totalInClusters = pageData.reduce((s, c) => s + c.itemsInClusters, 0);
+    const totalSingletons = pageData.reduce((s, c) => s + c.singletons.length, 0);
     const dataJson = JSON.stringify(pageData).replace(/</g, '\\u003c');
     return `<!DOCTYPE html>
 <html lang="en">
@@ -257,6 +258,13 @@ function renderPage(pageData, totalItems) {
   .empty { text-align: center; color: var(--fg2); padding: 40px 0; }
   .hint { background: white; border-left: 3px solid var(--accent); padding: 8px 14px; margin-bottom: 18px; font-size: 12px; color: var(--fg2); border-radius: 0 6px 6px 0; }
   .hint b { color: var(--fg); }
+  .search { position: sticky; top: 56px; z-index: 9; background: var(--bg); padding: 12px 0; margin: -12px 0 4px; }
+  .search input { width: 100%; padding: 10px 14px; font-size: 14px; border: 2px solid var(--line); border-radius: 8px; background: white; outline: none; }
+  .search input:focus { border-color: var(--accent); }
+  .section-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg2); margin: 14px 0 6px; display: flex; align-items: center; gap: 8px; }
+  .section-label .pill { background: #e6e3da; color: var(--fg2); padding: 1px 8px; border-radius: 999px; font-weight: 700; }
+  .singletons { background: white; border: 1px solid var(--line); border-radius: 10px; padding: 6px 12px; }
+  .cat.hidden, .cluster.hidden, .singletons.hidden, .section-label.hidden, .row.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -264,16 +272,17 @@ function renderPage(pageData, totalItems) {
   <h1>🧹 DD Mau — Master List Dupe Cleaner</h1>
   <div class="stats">
     <span id="stat-total">${totalItems} items</span> &middot;
-    <span id="stat-clusters">${totalClusters} clusters with possible duplicates</span> &middot;
-    <span id="stat-affected">~${totalInClusters} items to review</span> &middot;
+    <span id="stat-clusters">${totalClusters} clusters</span> &middot;
+    <span id="stat-affected">${totalInClusters} clustered + ${totalSingletons} singleton</span> &middot;
     <span id="stat-deleted">0 deleted this session</span>
   </div>
 </header>
 <main>
   <div class="hint">
-    <b>How to use:</b> each card below is a cluster of items whose names share enough words that one might be a duplicate of another. Click <b>Delete</b> on the rows you want to remove. Items not in any cluster aren't shown (no candidates to compare to). When you're done, run <code>git diff src/data/inventory.js</code> in your terminal to review, and commit when happy.
-    <br><br>
-    <b>Backup:</b> the first delete this session creates <code>src/data/inventory.js.bak</code>. To undo everything, stop the server and run <code>mv src/data/inventory.js.bak src/data/inventory.js</code>.
+    <b>Top of each category</b> = the clusters my heuristic flagged as possible dupes (matching keyword pills shown). <b>Below</b> = every other item in the category, sorted by name — scan to spot dupes my heuristic missed. Use the search box to jump to a word ("shrimp", "cup", "sauce"). Each Delete edits <code>src/data/inventory.js</code> immediately. <b>Backup</b>: the first delete this session creates <code>src/data/inventory.js.bak</code>. Restore everything from this session with <code>mv src/data/inventory.js.bak src/data/inventory.js</code>.
+  </div>
+  <div class="search">
+    <input id="q" type="search" placeholder="🔍 Filter all items by name, vendor, or category (e.g. 'shrimp', 'cup', 'sysco')" autofocus />
   </div>
   <div id="root"></div>
 </main>
@@ -318,15 +327,74 @@ function renderCluster(cl) {
 function render() {
   const root = document.getElementById('root');
   if (!data || data.length === 0) {
-    root.innerHTML = '<div class="empty">🎉 No clusters detected — your master list looks clean.</div>';
+    root.innerHTML = '<div class="empty">No items found.</div>';
     return;
   }
-  root.innerHTML = data.map(cat => \`
-    <div class="cat" data-cat="\${escapeHtml(cat.categoryId)}">
-      <h2>\${escapeHtml(cat.categoryName)} <span style="color:#9c9c9c;font-weight:500;font-size:12px">— \${cat.clusters.length} cluster\${cat.clusters.length === 1 ? '' : 's'}</span></h2>
-      \${cat.clusters.map(renderCluster).join('')}
-    </div>
-  \`).join('');
+  root.innerHTML = data.map(cat => {
+    const clusterCount = cat.clusters.length;
+    const singletonCount = cat.singletons.length;
+    const clustersHtml = clusterCount > 0
+      ? '<div class="section-label">⚠ Possible duplicates <span class="pill">' + clusterCount + ' cluster' + (clusterCount === 1 ? '' : 's') + '</span></div>'
+        + cat.clusters.map(renderCluster).join('')
+      : '';
+    const singletonsHtml = singletonCount > 0
+      ? '<div class="section-label">All other items <span class="pill">' + singletonCount + '</span></div>'
+        + '<div class="singletons">' + cat.singletons.map(renderItem).join('') + '</div>'
+      : '';
+    return \`
+      <div class="cat" data-cat="\${escapeHtml(cat.categoryId)}">
+        <h2>\${escapeHtml(cat.categoryName)} <span style="color:#9c9c9c;font-weight:500;font-size:12px">— \${cat.totalItemsInCategory} items</span></h2>
+        \${clustersHtml}
+        \${singletonsHtml}
+      </div>
+    \`;
+  }).join('');
+}
+
+// Filter — hides any row whose haystack doesn't contain every token
+// in the query. Empty query restores everything. Also hides empty
+// clusters / singleton sections / categories so the view stays tidy.
+function applyFilter() {
+  const q = document.getElementById('q').value.trim().toLowerCase();
+  const tokens = q.split(/\\s+/).filter(Boolean);
+  document.querySelectorAll('.row').forEach(row => {
+    if (tokens.length === 0) {
+      row.classList.remove('hidden');
+      return;
+    }
+    const hay = row.textContent.toLowerCase();
+    const hit = tokens.every(t => hay.includes(t));
+    row.classList.toggle('hidden', !hit);
+  });
+  // Hide empty clusters / singleton boxes / categories.
+  document.querySelectorAll('.cluster').forEach(c => {
+    const anyVisible = c.querySelector('.row:not(.hidden)');
+    c.classList.toggle('hidden', !anyVisible);
+  });
+  document.querySelectorAll('.singletons').forEach(s => {
+    const anyVisible = s.querySelector('.row:not(.hidden)');
+    s.classList.toggle('hidden', !anyVisible);
+  });
+  document.querySelectorAll('.section-label').forEach(sl => {
+    const next = sl.nextElementSibling;
+    if (!next) return;
+    if (next.classList.contains('cluster')) {
+      // section is "possible duplicates" — check all sibling clusters until next section-label
+      let any = false;
+      let cur = next;
+      while (cur && !cur.classList.contains('section-label')) {
+        if (cur.classList.contains('cluster') && !cur.classList.contains('hidden')) { any = true; break; }
+        cur = cur.nextElementSibling;
+      }
+      sl.classList.toggle('hidden', !any);
+    } else if (next.classList.contains('singletons')) {
+      sl.classList.toggle('hidden', next.classList.contains('hidden'));
+    }
+  });
+  document.querySelectorAll('.cat').forEach(c => {
+    const anyVisible = c.querySelector('.row:not(.hidden)');
+    c.classList.toggle('hidden', !anyVisible);
+  });
 }
 
 function toast(msg, isErr) {
@@ -363,6 +431,7 @@ async function onDelete(btn, id) {
 }
 
 render();
+document.getElementById('q').addEventListener('input', applyFilter);
 </script>
 </body>
 </html>`;
