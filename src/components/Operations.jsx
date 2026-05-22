@@ -418,6 +418,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            // Saved Lists section at the bottom of the inventory tab is
+            // collapsed by default (Andrew 2026-05-22). It mounts the
+            // heavy InventoryHistory lazy chunk, so leaving it closed
+            // until the user explicitly opens it also makes the
+            // inventory page noticeably snappier on first load.
+            const [showSavedLists, setShowSavedLists] = useState(false);
             // 2026-05-20 — Quick date-code label printing. Opens an
             // editable PrintLabelModal so the receiver / cook can stick
             // a date label on ANY container without needing a recipe.
@@ -7080,15 +7086,43 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 </div>
                             )}
 
-                            {/* ── SAVED LISTS ── */}
+                            {/* ── SAVED LISTS ── collapsed by default; tap
+                                the header to expand. Keeps the heavy
+                                InventoryHistory chunk off the first paint
+                                of the inventory page. */}
                             <div className="mt-6 pt-4 border-t-2 border-gray-200">
-                                <h3 className="text-lg font-bold text-mint-700 mb-1">{"\u{1F4E6}"} {language === "es" ? "Listas Guardadas" : "Saved Lists"}</h3>
-                                <p className="text-xs text-gray-500 mb-3">{language === "es"
-                                    ? "Revisa conteos anteriores, marca lo que ya se pidió."
-                                    : "Review past counts, check off what's been ordered."}</p>
-                                <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
-                                    <InventoryHistory language={language} customInventory={customInventory} storeLocation={storeLocation} />
-                                </Suspense>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowSavedLists(v => !v)}
+                                    aria-expanded={showSavedLists}
+                                    className="w-full flex items-center justify-between gap-2 text-left -mx-1 px-1 py-1 rounded-lg hover:bg-gray-50 transition"
+                                >
+                                    <div className="flex-1 min-w-0">
+                                        <h3 className="text-lg font-bold text-mint-700">
+                                            {"\u{1F4E6}"} {language === "es" ? "Listas Guardadas" : "Saved Lists"}
+                                        </h3>
+                                        {!showSavedLists && (
+                                            <p className="text-xs text-gray-500 mt-0.5">
+                                                {language === "es"
+                                                    ? "Toca para ver conteos anteriores."
+                                                    : "Tap to see past counts."}
+                                            </p>
+                                        )}
+                                    </div>
+                                    <span className="text-gray-400 text-lg leading-none flex-shrink-0" aria-hidden="true">
+                                        {showSavedLists ? "\u{25BE}" : "\u{25B8}"}
+                                    </span>
+                                </button>
+                                {showSavedLists && (
+                                    <>
+                                        <p className="text-xs text-gray-500 mb-3 mt-1">{language === "es"
+                                            ? "Revisa conteos anteriores, marca lo que ya se pidió."
+                                            : "Review past counts, check off what's been ordered."}</p>
+                                        <Suspense fallback={<div className="h-32 bg-white rounded-xl border border-dd-line animate-pulse" />}>
+                                            <InventoryHistory language={language} customInventory={customInventory} storeLocation={storeLocation} />
+                                        </Suspense>
+                                    </>
+                                )}
                             </div>
                         </div>
                     )}
