@@ -76,7 +76,7 @@ sudo apt install -y python3 python3-venv python3-pip \
     python3-pil python3-flask \
     fonts-dejavu fonts-liberation \
     libopenjp2-7 \
-    chromium-browser unclutter xdotool
+    chromium unclutter xdotool
 
 # Create the venv first time
 sudo mkdir -p /opt/print_bridge
@@ -203,7 +203,7 @@ cat > "$AUTOSTART_DIR/media-kiosk.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=DD Mau Media Display
-Exec=/usr/bin/chromium-browser --kiosk --noerrdialogs --disable-infobars --check-for-update-interval=31536000 --incognito ${MEDIA_URL}
+Exec=/usr/bin/chromium --kiosk --noerrdialogs --disable-infobars --check-for-update-interval=31536000 --incognito ${MEDIA_URL}
 X-GNOME-Autostart-enabled=true
 EOF
 
