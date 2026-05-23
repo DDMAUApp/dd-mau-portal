@@ -22,11 +22,21 @@
 // Cash" rather than guessing. Better than no attribution at all and
 // better than a wrong guess.
 //
-// HOW IT INTEGRATES WITH THE EXISTING 86 BOARD:
-// /ops/86_{location} is currently written by the existing scraper
-// pipeline (items + count + updatedAt). This script does NOT overwrite
-// items[]. Instead it writes a sibling field:
+// HOW IT INTEGRATES WITH THE 86 BOARD (2026-05-23 — updated):
+// This script writes BOTH the items[] list AND the attribution sidecar
+// on /ops/86_{location}:
 //
+//   items: [
+//     {
+//       name: 'Avocado',
+//       status: 'OUT_OF_STOCK',
+//       source: 'toast',          // distinguishes from manual entries
+//       addedBy: 'Toast POS',     // overwritten via attribution below
+//       addedAt: '2026-05-23T…',
+//     },
+//     ...
+//     // Manual entries (source != 'toast') are NEVER touched here.
+//   ],
 //   attribution: {
 //     [itemName]: {
 //       outBy: [staffName, ...],    // clocked-in BOH at out-time
@@ -37,9 +47,16 @@
 //     ...
 //   }
 //
-// Eighty6Dashboard reads attribution[item.name] and renders names when
-// present. Falls back to nothing when missing (e.g., legacy items, or
-// items that transitioned before this script ran).
+// Why ONE script does both: the syncToastMenuStatus Cloud Function used
+// to write items[] but was a buggy duplicate of the Toast Connect API
+// path AND it 401'd in production. Deleted 2026-05-23. To avoid leaving
+// items[] dangling with no writer, we folded that responsibility into
+// this script. One source of truth for Toast → /ops/86_*.
+//
+// Eighty6Dashboard reads attribution[item.name] FIRST and falls back to
+// item.addedBy/item.addedAt — so on the first run the dashboard shows
+// "Marked by Toast POS · at <time>", and as transitions get attributed
+// (subsequent runs), the dashboard shows real clocked-in staff names.
 //
 // CURSOR DOC:
 // /ops/toast_86_cursor_{location} stores:
@@ -279,6 +296,65 @@ for (const r of RESTAURANTS) {
     }
     console.log(`  • Currently 86'd: ${currentOutNames.size} item(s)`);
 
+    // 2.5 — Sync items[] on /ops/86_<location> to match Toast's current
+    //       OOS state. This is the actual list the Eighty6Dashboard reads;
+    //       without this step Toast 86s never show up on the 86 board.
+    //
+    // Rules:
+    //   • Keep manual entries (source != 'toast') as-is. Staff strikes
+    //     made via chat 🚫 must NEVER be wiped by Toast sync — they're
+    //     authoritative on items Toast doesn't know about.
+    //   • Drop Toast-sourced entries whose name is no longer in Toast's
+    //     OOS set (item came back in stock in Toast).
+    //   • Add new Toast-sourced entries with source='toast', addedBy=
+    //     'Toast POS', addedAt=now. The Eighty6Dashboard reads these
+    //     fields to render "Marked by Toast POS · at 4:23pm". If/when
+    //     the attribution sidecar gets populated (step 6 below, on a
+    //     subsequent run that detects a transition), the dashboard's
+    //     renderAttribution() prefers attribution[itemName].outBy over
+    //     item.addedBy — so Toast POS gets replaced by real clocked-in
+    //     names.
+    //
+    // We do this BEFORE the first-run early-return so admins see the
+    // initial 86 list on day one, even before any transitions occur.
+    // Andrew + Claude 2026-05-23 — added after realizing the deleted
+    // syncToastMenuStatus Cloud Function was the ONLY thing writing
+    // items[] from Toast, and nothing replaced it.
+    const eightySixRef = db.collection('ops').doc(`86_${r.location}`);
+    {
+        const snap = await eightySixRef.get();
+        const data = snap.exists ? (snap.data() || {}) : {};
+        const existingItems = Array.isArray(data.items) ? data.items : [];
+        // Preserve manual entries; drop stale Toast entries.
+        const kept = existingItems.filter(it => {
+            if (it?.source === 'toast') {
+                return it?.name && currentOutNames.has(String(it.name));
+            }
+            return true;
+        });
+        // Add new Toast entries (dedup by lowercased name).
+        const presentNames = new Set(kept.map(i => String(i?.name || '').toLowerCase()));
+        const nowIso = new Date().toISOString();
+        for (const name of currentOutNames) {
+            if (!presentNames.has(String(name).toLowerCase())) {
+                kept.push({
+                    name,
+                    status: 'OUT_OF_STOCK',
+                    source: 'toast',
+                    addedBy: 'Toast POS',
+                    addedAt: nowIso,
+                });
+            }
+        }
+        await eightySixRef.set({
+            items: kept,
+            updatedAt: FieldValue.serverTimestamp(),
+            lastToastSyncAt: FieldValue.serverTimestamp(),
+        }, { merge: true });
+        const fromToast = kept.filter(i => i?.source === 'toast').length;
+        console.log(`  • Wrote items[]: ${kept.length} total (${fromToast} from Toast)`);
+    }
+
     // 3. Read the previous cursor to detect transitions.
     const cursorRef = db.collection('ops').doc(`toast_86_cursor_${r.location}`);
     const cursorSnap = await cursorRef.get();
@@ -330,7 +406,7 @@ for (const r of RESTAURANTS) {
     //    lookup which adds another API call. Better: write ALL clocked-in
     //    names and let the manager filter by sight. Future improvement
     //    could narrow by jobReference → job title → BOH heuristic.
-    const eightySixRef = db.collection('ops').doc(`86_${r.location}`);
+    //    (eightySixRef declared above in the items[] sync block.)
     const patch = {};
     for (const itemName of newlyOut) {
         patch[`attribution.${itemName}.outBy`] = clockedInNames;
