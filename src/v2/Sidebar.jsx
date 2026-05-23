@@ -81,6 +81,10 @@ const NAV_GROUPS = [
             // because it's an operator-facing surface, not a
             // settings tweak.
             { tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas',   requires: 'admin' },
+            // System Health — read-only status dashboard for admins.
+            // Lives in BUSINESS because it's "is the platform up?"
+            // observability, not a Settings tweak.
+            { tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado',      requires: 'admin' },
             { tab: 'catering',  icon: '🥘', en: 'Orders',        es: 'Pedidos' },
             { tab: 'ai',        icon: '🤖', en: 'AI Assistant',  es: 'Asistente AI' },
         ],

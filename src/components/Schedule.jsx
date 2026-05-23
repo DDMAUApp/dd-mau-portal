@@ -374,6 +374,14 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const [shifts, setShifts] = useState([]);
     const [loading, setLoading] = useState(true);
+    // Tracks whether the grid is currently rendering localStorage-
+    // cached data vs a live Firestore snapshot. Surfaced as a small
+    // amber badge near the week header so users on flaky Wi-Fi know
+    // they might be looking at a stale view. `liveAt` rolls forward
+    // on every snapshot so the relative-time label stays fresh.
+    const [scheduleCacheStatus, setScheduleCacheStatus] = useState({
+        usingCache: false, cachedAt: null, liveAt: null,
+    });
     // Default view mode: week-grid on every device (Andrew 2026-05-17 —
     // "when you start the schedule page lets start it in the week view
     // not day view"). The previous default flipped to 'day' on mobile
@@ -658,10 +666,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     setShifts(cached.items.map(rehydrateShiftTimestamps));
                     setLoading(false);
                     hadCache = true;
+                    // Surface "we're showing cached data" so a user
+                    // viewing a stale week (Wi-Fi flaky / Firestore
+                    // slow) knows what they're looking at. Cleared
+                    // when the first live snapshot lands below.
+                    setScheduleCacheStatus({ usingCache: true, cachedAt: cached.savedAt, liveAt: null });
                 }
             }
         } catch { /* storage broken — fall through to live query */ }
-        if (!hadCache) setLoading(true);
+        if (!hadCache) {
+            setLoading(true);
+            setScheduleCacheStatus({ usingCache: false, cachedAt: null, liveAt: null });
+        }
 
         // Fetch by date range. Location filter applied client-side because
         // managers (location='both') need to see both stores at once.
@@ -675,6 +691,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setShifts(items);
             setLoading(false);
+            // First live snapshot — cached badge can drop, real
+            // "last updated" timestamp lights up. Subsequent ticks
+            // bump liveAt so the user sees the relative-time label
+            // roll forward.
+            setScheduleCacheStatus(prev => ({ usingCache: false, cachedAt: prev.cachedAt, liveAt: Date.now() }));
             try {
                 // Strip Firestore Timestamps before caching — the
                 // serializer turns them into plain objects without
@@ -4043,8 +4064,30 @@ ${dayBlocks}
             <div className="flex items-start justify-between mb-4 print:hidden">
                 <div>
                     <h2 className="text-2xl font-bold text-dd-text">📅 {tx('Schedule', 'Horario')}</h2>
-                    <p className="text-xs text-dd-text-2 mt-0.5">
-                        📍 {LOCATION_LABELS[storeLocation] || storeLocation} · {side === 'foh' ? tx('Front of House', 'Front of House') : tx('Back of House', 'Back of House')}
+                    <p className="text-xs text-dd-text-2 mt-0.5 flex items-center gap-2 flex-wrap">
+                        <span>📍 {LOCATION_LABELS[storeLocation] || storeLocation} · {side === 'foh' ? tx('Front of House', 'Front of House') : tx('Back of House', 'Back of House')}</span>
+                        {/* Cache + freshness indicator. Shown only after the
+                            page has settled (no flash on cold load). Three
+                            states:
+                              • usingCache=true → amber pill: "Cached · 4m old".
+                                User is looking at last-known schedule until
+                                Firestore answers. Disappears on first live tick.
+                              • liveAt set, no cache flag → green dot + "Live ·
+                                synced 30s ago". Roll-forward keeps the user
+                                aware the feed is current.
+                              • Neither → render nothing (cold load skeleton
+                                covers that case visually). */}
+                        {scheduleCacheStatus.usingCache ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-bold">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                {tx('Cached', 'Caché')}
+                            </span>
+                        ) : scheduleCacheStatus.liveAt ? (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[10px] font-bold" title={tx('Last live update', 'Última actualización en vivo')}>
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                {tx('Live', 'En vivo')}
+                            </span>
+                        ) : null}
                     </p>
                 </div>
                 {/* Schedule's own notification bell — opens the schedule-specific

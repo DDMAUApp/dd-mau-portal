@@ -353,10 +353,105 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // All other documents inherit a permissive default (matches current
-    // app behavior). Tighten per-collection as the app evolves.
+    // ── Chats — tombstone deletes only ─────────────────────────────────
+    // Chat documents (group/DM metadata) and their messages should never
+    // be hard-deleted from clients. The chat surface deletes via tombstone
+    // (set `deletedAt` and `deletedReason`); the rules enforce that the
+    // doc itself stays around so audit replay can reconstruct who sent
+    // what and when. This was always the app's intent — the rule just
+    // makes it server-enforceable. (Andrew 2026-05-23.)
+    //
+    // Message-level: same posture — the existing client code only updates
+    // a message's `deleted: true` tombstone field, never calls deleteDoc.
+    // Codifying that here closes the gap where a buggy or hostile client
+    // could permanently erase chat history.
+    match /chats/{chatId} {
+      allow read: if true;
+      allow create, update: if request.resource.data is map;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if true;
+        allow create, update: if request.resource.data is map;
+        allow delete: if false;
+      }
+    }
+
+    // ── Notifications — append + soft-update only ──────────────────────
+    // /notifications is the FCM/SMS fan-out queue. Every doc is created
+    // by a client (or a Cloud Function), processed by dispatchNotification,
+    // and marked `read` later. Hard-deleting one would lose the audit
+    // trail of "did this push actually fire?". Block delete here; the
+    // scheduledFirestoreBackup function uses admin SDK and bypasses
+    // these rules if we ever want to prune old notifications server-side.
+    match /notifications/{notifId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && (request.resource.data.createdAt == null
+                        || request.resource.data.createdAt == request.time);
+      allow update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
+    // ── TV displays + devices ──────────────────────────────────────────
+    // tv_configs is the menu-board config (label, layout, dayparts).
+    // tv_heartbeats is written by MenuDisplay every 60s. Both should be
+    // narrowed: the catch-all below would otherwise allow anyone with
+    // the apiKey to wipe the entire signage system.
+    //
+    // Heartbeat writes must include the tvId on the doc itself + a
+    // request-time lastSeenAt to prevent forging "device was here"
+    // entries with backdated timestamps. Block delete entirely on
+    // heartbeats — admin can let stale entries age out naturally
+    // (checkTvHeartbeats CF prunes them server-side).
+    match /tv_configs/{tvId} {
+      allow read: if true;
+      allow create, update: if request.resource.data is map;
+      allow delete: if true;   // admin removes TVs via the dashboard
+    }
+    match /tv_heartbeats/{tvId} {
+      allow read: if true;
+      allow create, update: if request.resource.data.tvId is string
+                            && (request.resource.data.lastSeenAt == null
+                                || request.resource.data.lastSeenAt == request.time);
+      allow delete: if false;
+    }
+
+    // ── PTO / time off — shape-validated, no delete ────────────────────
+    // /time_off rows are PTO requests with staff name + date range +
+    // approval status. Block delete so the request history stays in
+    // place even if a manager later decides to "tidy up". Updates
+    // are open shape so the existing approve/deny flow still works.
+    match /time_off/{requestId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && (request.resource.data.createdAt == null
+                        || request.resource.data.createdAt == request.time);
+      allow update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
+    // ── Catch-all ──────────────────────────────────────────────────────
+    // Every other collection inherits a permissive default. KNOWN GAP:
+    // this is the single biggest security weakness in the rules — any
+    // collection not explicitly listed above (shifts, vendor_*,
+    // staff_todos, swap_requests, tardies, scheduled_messages,
+    // required_tasks, calendar_events, etc.) is fully writable by
+    // anyone holding the public Firebase apiKey. The Phase 2 roadmap
+    // at the top of this file is the correct fix — Firebase Auth +
+    // custom claims + App Check. Until that lands, casual abuse is
+    // mitigated by: (a) the audit logs on each meaningful action,
+    // (b) the PIN screen + idle relock keeping random walkup access
+    // out, and (c) write-shape validation on the highest-PII paths
+    // immediately above this rule.
+    //
+    // The narrowing applied here: every catch-all write must at least
+    // be a map (rejects raw-string and null-payload writes that come
+    // from bugs). It's a tiny improvement but catches the kind of
+    // typo that produced the 2026-05-09 staff-list wipe.
     match /{document=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if request.resource.data is map || request.method == 'delete';
     }
   }
 }

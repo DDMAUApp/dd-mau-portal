@@ -19,7 +19,7 @@
 // notify everyone except the sender, with @mentions getting a louder
 // "you were mentioned" badge.
 
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { Component, useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
@@ -68,7 +68,63 @@ const MAX_VIDEO_BYTES = 50 * 1024 * 1024;  // 50MB cap on video uploads
 // normally — the user just sees the recorder snap closed.
 const MAX_RECORD_MS = 5 * 60 * 1000;
 
-export default function ChatThread({
+// ─── Chat error boundary ─────────────────────────────────────────────
+// Catches any synchronous render error inside the thread and shows
+// a recoverable fallback ("Something went wrong loading this chat ·
+// [Back to chats]") instead of letting the whole Chat tab crash to
+// the global ErrorBoundary in App.jsx. The chat surface is the most
+// complex tree in the app (3000+ lines, dozens of message types,
+// lazy modals, MediaRecorder, mentions, polls, coverage) so a single
+// bad message can poison a single conversation — we want that
+// damage contained to one chat, not the whole chat experience.
+//
+// componentDidCatch only fires for sync render errors; async errors
+// (failed image loads, Firestore rejections inside effects) are
+// already handled at their call sites.
+//
+// onReset: when the user taps "Back to chats", we both unblock the
+// boundary AND tell the parent ChatCenter to close this thread. The
+// parent's onBack handler is threaded through props by ChatCenter.
+class ChatThreadErrorBoundary extends Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error, info) {
+        console.error('ChatThread render crashed:', error, info);
+    }
+    render() {
+        if (this.state.hasError) {
+            return (
+                <div className="flex flex-col items-center justify-center h-full bg-dd-bg text-center px-6 py-12 gap-3">
+                    <div className="text-5xl">💬</div>
+                    <h3 className="text-base font-black text-dd-text">
+                        Something went wrong loading this chat
+                    </h3>
+                    <p className="text-sm text-dd-text-2 max-w-md">
+                        The rest of your chats are fine. Tap back to the chat list
+                        and try opening this one again — if it keeps crashing,
+                        a manager can check the audit log.
+                    </p>
+                    <button
+                        onClick={() => {
+                            this.setState({ hasError: false, error: null });
+                            this.props.onReset?.();
+                        }}
+                        className="mt-2 px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
+                        ← Back to chats
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+function ChatThreadInner({
     chat, language, staffName, staffList, isAdmin, isManager,
     viewer, viewerTier, onBack, onOpenSettings,
     jumpToMessageId,   // optional id to scroll-into-view + highlight on mount
@@ -1559,6 +1615,22 @@ export default function ChatThread({
                 />
             )}
         </div>
+    );
+}
+
+// Default export — wraps the thread in an error boundary so a render
+// crash in one chat doesn't kill the whole Chat tab. Re-keys the
+// inner component on chat.id so React tears down + remounts when
+// the user switches chats; without the key, error-boundary state
+// would persist across chats ("this chat is broken" sticking even
+// after navigating to a different chat). Added 2026-05-23 after the
+// audit flagged chat as the highest-risk surface.
+export default function ChatThread(props) {
+    const chatId = props?.chat?.id || 'no-chat';
+    return (
+        <ChatThreadErrorBoundary key={chatId} onReset={props?.onBack}>
+            <ChatThreadInner {...props} />
+        </ChatThreadErrorBoundary>
     );
 }
 

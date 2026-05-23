@@ -64,6 +64,10 @@ const ChatCenter = lazy(() => import('./components/ChatCenter').then(m => ({ def
 // promoted out of AdminPanel on 2026-05-23 so it has room to grow
 // into a Yodeck / OptiSigns / Raydiant-style dashboard.
 const MenuScreensPage = lazy(() => import('./components/MenuScreensPage').then(m => ({ default: memo(m.default) })));
+// Admin Health — read-only system status page (Firestore liveness,
+// TVs, backups, recent audit). Surfaces "is this broken or is it
+// me?" data in one place so admins stop hunting across 4 tabs.
+const AdminHealthPage = lazy(() => import('./components/AdminHealthPage').then(m => ({ default: memo(m.default) })));
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
@@ -763,7 +767,7 @@ export default function App() {
     // don't have permission for.
     useEffect(() => {
         if (!staffName) return;
-        if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens") && !staffIsAdmin) {
+        if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health") && !staffIsAdmin) {
             setActiveTab("home");
         }
         // tardies + handoff are manager-or-admin only — same defensive bounce.
@@ -1104,6 +1108,7 @@ export default function App() {
             if (activeTab === 'tardies' && isManager) return <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'menuscreens' && staffIsAdmin) return <MenuScreensPage language={language} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'health' && staffIsAdmin) return <AdminHealthPage language={language} staffName={staffName} />;
             if (activeTab === 'admin' && staffIsAdmin) return <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} />;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).

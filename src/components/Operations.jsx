@@ -401,6 +401,15 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [pricingVendor, setPricingVendor] = useState("sysco"); // "sysco" or "usfoods"
             const [showSaveConfirm, setShowSaveConfirm] = useState(false);
             const [inventorySaving, setInventorySaving] = useState(false);
+            // Per-item sync state map: { [itemId]: 'saving' | 'saved' | 'error' }.
+            // Drives the small dot rendered next to each inventory item's
+            // count chip so users get instant feedback that their tap
+            // actually wrote to Firestore. 'saving' shows on every
+            // updateInventoryCount call; 'saved' is set on Firestore
+            // ack and auto-clears 2s later; 'error' is sticky until the
+            // next successful save for that item. Map (not array) so
+            // O(1) lookup in the render loop.
+            const [inventorySyncStatus, setInventorySyncStatus] = useState({});
             // Recent inventory audits — subscribed below per location, drives
             // the "Recent changes" expander at the bottom of the inventory page.
             const [inventoryAudits, setInventoryAudits] = useState([]);
@@ -2720,6 +2729,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const now = new Date();
                 const timeStr = now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
+                // Per-item sync indicator — Andrew 2026-05-23 audit
+                // follow-up. Counts were optimistic-updated locally but
+                // the Firestore round-trip was invisible to the user, so
+                // a save that silently failed left them looking at a
+                // wrong count thinking it was saved. Now: flip the item
+                // to "saving" the moment a tap fires, "saved" on
+                // success, "error" on failure. The badge in the
+                // inventory grid reads this map and shows a tiny dot.
+                // Auto-clears the "saved" state 2s later so the grid
+                // doesn't stay decorated forever.
+                setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saving' }));
+
                 // Capture prev/next inside the functional setter so rapid
                 // taps don't read stale closure state. These vars are
                 // populated synchronously by the setState callback —
@@ -2802,6 +2823,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 };
                 try {
                     await updateDoc(ref, update);
+                    // Flip to "saved" and schedule a clear so the grid
+                    // settles back to neutral. The 2s window is long
+                    // enough that a user finishing a rapid +1+1+1 burst
+                    // sees the green confirmation, short enough that
+                    // the next interaction starts from a clean slate.
+                    setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saved' }));
+                    setTimeout(() => {
+                        setInventorySyncStatus(prev => {
+                            if (prev[itemId] !== 'saved') return prev;
+                            const next = { ...prev };
+                            delete next[itemId];
+                            return next;
+                        });
+                    }, 2000);
                 } catch (err) {
                     // Doc may not exist yet on first write to a fresh location.
                     if (err?.code === "not-found") {
@@ -2814,9 +2849,26 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             setInventory(prev => { fullCounts = prev; return prev; });
                             setInvCountMeta(prev => { fullMeta = prev; return prev; });
                             await setDoc(ref, { counts: fullCounts, countMeta: fullMeta, customInventory, date: new Date().toISOString() });
-                        } catch (e) { console.error("Error creating inventory:", e); }
+                            setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'saved' }));
+                            setTimeout(() => {
+                                setInventorySyncStatus(prev => {
+                                    if (prev[itemId] !== 'saved') return prev;
+                                    const next = { ...prev };
+                                    delete next[itemId];
+                                    return next;
+                                });
+                            }, 2000);
+                        } catch (e) {
+                            console.error("Error creating inventory:", e);
+                            setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'error' }));
+                        }
                     } else {
                         console.error("Error updating inventory:", err);
+                        // Sticky error state — no auto-clear. Stays
+                        // visible until the user successfully retries
+                        // the change, so a silently-failed save can't
+                        // hide behind subsequent successful ones.
+                        setInventorySyncStatus(prev => ({ ...prev, [itemId]: 'error' }));
                     }
                 }
             };
@@ -6372,6 +6424,33 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             </div>
                                                                             {invCountMeta[item.id] && count > 0 && (
                                                                                 <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
+                                                                            )}
+                                                                            {/* Per-item sync indicator — surfaces Firestore
+                                                                                round-trip state so staff aren't guessing
+                                                                                whether their tap stuck. Three states:
+                                                                                  • saving (amber pulse) — currently writing
+                                                                                  • saved  (green, 2s auto-clear) — confirmed
+                                                                                  • error  (red, sticky) — Firestore rejected
+                                                                                    or network failed; will stay visible
+                                                                                    until the next successful save for
+                                                                                    this item, so failed writes don't hide. */}
+                                                                            {inventorySyncStatus[item.id] === 'saving' && (
+                                                                                <p className="text-[11px] text-amber-700 mt-0.5 inline-flex items-center gap-1">
+                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                                                                                    {language === "es" ? "Guardando…" : "Saving…"}
+                                                                                </p>
+                                                                            )}
+                                                                            {inventorySyncStatus[item.id] === 'saved' && (
+                                                                                <p className="text-[11px] text-emerald-700 mt-0.5 inline-flex items-center gap-1">
+                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                                                                    {language === "es" ? "Guardado" : "Saved"}
+                                                                                </p>
+                                                                            )}
+                                                                            {inventorySyncStatus[item.id] === 'error' && (
+                                                                                <p className="text-[11px] text-red-700 mt-0.5 inline-flex items-center gap-1 font-bold">
+                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                                                                                    {language === "es" ? "Error al guardar — toca de nuevo" : "Save failed — tap again"}
+                                                                                </p>
                                                                             )}
                                                                             {/* Last ordered badge — read-only, sourced from
                                                                                 inventoryHistory snapshots. Most recent date

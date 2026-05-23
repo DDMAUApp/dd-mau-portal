@@ -229,6 +229,8 @@ export default function MobileHome({
         ...(isAdmin   ? [{ tab: 'labor',   icon: '📊', en: 'Labor',   es: 'Mano Obra' }] : []),
         // Menu Screens — admin tile for the new TV signage dashboard.
         ...(isAdmin   ? [{ tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas' }] : []),
+        // System Health — admin status dashboard.
+        ...(isAdmin   ? [{ tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado' }] : []),
         { tab: 'ai',         icon: '🤖', en: 'AI Assist',    es: 'Asistente AI' },
         { tab: 'maintenance',icon: '🔧', en: 'Maintenance',  es: 'Mantenimiento' },
         { tab: 'insurance',  icon: '📑', en: 'Insurance',    es: 'Seguro' },
