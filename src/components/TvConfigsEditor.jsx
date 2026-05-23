@@ -35,6 +35,38 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
         return unsub;
     }, []);
 
+    // Cross-component edit trigger. MenuScreensPage's cards
+    // dispatch `ddmau:openTvEditor` when admin clicks "Edit" so
+    // this editor jumps straight into the right config without
+    // requiring admin to re-find the row below. The detail payload
+    // is { tvId, presetLocation }: tvId null → new screen with
+    // location preselected; tvId set → edit that existing config.
+    // Side-channel rather than props because the dashboard renders
+    // the editor lazily through <Suspense> and prop drilling would
+    // mean threading state through both halves of the page.
+    useEffect(() => {
+        function onOpen(ev) {
+            const { tvId, presetLocation } = (ev && ev.detail) || {};
+            if (tvId) {
+                // Defer one tick so configs are populated if the
+                // editor just mounted in the same frame.
+                setTimeout(() => {
+                    setConfigs(prev => {
+                        const existing = prev.find(c => c.tvId === tvId);
+                        if (existing) setEditing({ existing });
+                        else if (tvId === 'webster' || tvId === 'maryland') setEditing({ presetForDefault: tvId });
+                        else setEditing({ presetLocation: presetLocation || 'webster' });
+                        return prev;
+                    });
+                }, 0);
+            } else {
+                setEditing({ presetLocation: presetLocation || 'webster' });
+            }
+        }
+        window.addEventListener('ddmau:openTvEditor', onOpen);
+        return () => window.removeEventListener('ddmau:openTvEditor', onOpen);
+    }, []);
+
     const baseUrl = useMemo(() => {
         try { return `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, '')}`.replace(/\/$/, ''); }
         catch { return 'https://app.ddmaustl.com'; }

@@ -227,6 +227,8 @@ export default function MobileHome({
         ...(isManager ? [{ tab: 'tardies', icon: '⏰', en: 'Tardies', es: 'Tardanzas' }] : []),
         ...(isManager ? [{ tab: 'handoff', icon: '🤝', en: 'Handoff', es: 'Entrega' }] : []),
         ...(isAdmin   ? [{ tab: 'labor',   icon: '📊', en: 'Labor',   es: 'Mano Obra' }] : []),
+        // Menu Screens — admin tile for the new TV signage dashboard.
+        ...(isAdmin   ? [{ tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas' }] : []),
         { tab: 'ai',         icon: '🤖', en: 'AI Assist',    es: 'Asistente AI' },
         { tab: 'maintenance',icon: '🔧', en: 'Maintenance',  es: 'Mantenimiento' },
         { tab: 'insurance',  icon: '📑', en: 'Insurance',    es: 'Seguro' },

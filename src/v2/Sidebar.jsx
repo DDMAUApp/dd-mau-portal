@@ -75,6 +75,12 @@ const NAV_GROUPS = [
         labelEn: 'BUSINESS', labelEs: 'NEGOCIO',
         items: [
             { tab: 'labor',     icon: '📊', en: 'Labor',         es: 'Mano Obra',   requires: 'admin' },
+            // Menu Screens — admin-only TV signage dashboard. Owners
+            // manage every TV menu board from one page (compare:
+            // Yodeck / OptiSigns / Raydiant). Lives in BUSINESS
+            // because it's an operator-facing surface, not a
+            // settings tweak.
+            { tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas',   requires: 'admin' },
             { tab: 'catering',  icon: '🥘', en: 'Orders',        es: 'Pedidos' },
             { tab: 'ai',        icon: '🤖', en: 'AI Assistant',  es: 'Asistente AI' },
         ],

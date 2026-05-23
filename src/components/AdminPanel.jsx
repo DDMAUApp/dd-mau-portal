@@ -24,7 +24,10 @@ import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
 const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
 const MenuEditor = reactLazy(() => import('./MenuEditor'));
-const TvConfigsEditor = reactLazy(() => import('./TvConfigsEditor'));
+// TvConfigsEditor moved to MenuScreensPage (top-level tab 'menuscreens')
+// 2026-05-23. The breadcrumb card below renders an "→ Menu Screens" link
+// in place of the old embed; the editor chunk only loads when the
+// dedicated page mounts it.
 const ToastSyncSection = reactLazy(() => import('./ToastSyncSection'));
 const LabelFormatEditor = reactLazy(() => import('./LabelFormatEditor'));
 
@@ -4187,20 +4190,39 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         <LabelFormatEditor language={language} byName={staffName} />
                     </ReactSuspense>
 
-                    {/* ── Menu TV editors ─────────────────────────────────────────
-                        MenuEditor — admin-editable overlay on top of MENU_DATA.
-                        Lets owners change prices, descriptions, photos, add
-                        custom items, and hide items WITHOUT editing code.
-                        TvConfigsEditor — per-TV settings (label, location,
-                        layout, photos, category filter) + kiosk URL copy.
-                        Both lazy-loaded; heavy components don't enter the
-                        chunk graph until admin opens this section. */}
+                    {/* ── Menu data editor ────────────────────────────────────────
+                        MenuEditor — admin-editable overlay on top of MENU_DATA
+                        (prices, descriptions, photos, custom items, hidden flag).
+                        The OUTPUT of this editor drives every TV (mode='menu').
+                        Lazy-loaded so the chunk only enters the graph when an
+                        admin opens this section. */}
                     <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading menu editor…</div>}>
                         <MenuEditor language={language} byName={staffName} />
                     </ReactSuspense>
-                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading TV displays…</div>}>
-                        <TvConfigsEditor language={language} byName={staffName} />
-                    </ReactSuspense>
+
+                    {/* ── TV displays — moved to its own page ────────────────────
+                        Andrew 2026-05-23 promoted the TvConfigsEditor block out
+                        of this long-scroll admin sheet into a dedicated "Menu
+                        Screens" page (sidebar entry · tab='menuscreens'). This
+                        card is the breadcrumb so anyone still hunting the old
+                        location knows where it went. */}
+                    <button
+                        type="button"
+                        onClick={() => onNavigate?.('menuscreens')}
+                        className="w-full text-left mt-6 mb-4 bg-white border-2 border-sky-200 rounded-xl p-4 hover:bg-sky-50 active:bg-sky-100 transition flex items-center gap-3">
+                        <span className="text-2xl shrink-0">📺</span>
+                        <div className="min-w-0 flex-1">
+                            <div className="text-sm font-black text-sky-900">
+                                {language === 'es' ? 'Pantallas de menú' : 'Menu TV displays'}
+                            </div>
+                            <div className="text-[11px] text-sky-700 leading-snug mt-0.5">
+                                {language === 'es'
+                                    ? 'Ahora tiene su propia página con un panel de control. Toca para abrir.'
+                                    : 'Now has its own page with a dashboard view (status pills, live previews, per-screen actions). Tap to open.'}
+                            </div>
+                        </div>
+                        <span className="text-sky-700 text-lg shrink-0">→</span>
+                    </button>
                     <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading Toast sync…</div>}>
                         <ToastSyncSection language={language} byName={staffName} />
                     </ReactSuspense>
