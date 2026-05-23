@@ -98,6 +98,21 @@ export default defineConfig({
         // no longer ships ~900 KB of PDF infrastructure that 99% of
         // sessions never touch.
         manualChunks: (id) => {
+          // TranslatableText is used by ChatThread + ChatPinsDrawer +
+          // ChatAckDashboard (the first static, the others lazy from
+          // ChatThread). Without this rule Vite inlines it into
+          // ChatThread's chunk and emits a dual-export (`C as <default>`
+          // and `T as TranslatableText`) namespace-wrapper pair.
+          // Safari then hit a TDZ on `t.C` when ChatCenter tried to
+          // render the lazy ChatThread ("Cannot access 'C' before
+          // initialization", Andrew 2026-05-22 outage). Forcing
+          // TranslatableText into its own chunk gives ChatThread a
+          // clean single default export and breaks the failure mode.
+          // The translation data layer goes with it so the chunk is
+          // self-contained (no extra round-trip for the cache helpers).
+          if (id.includes('/TranslatableText.jsx') || id.includes('/data/translation.js')) {
+            return 'translatable-text';
+          }
           if (!id.includes('node_modules')) return;
           // React + scheduler — app-wide, stable.
           if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {

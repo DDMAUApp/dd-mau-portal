@@ -43,13 +43,18 @@ import TranslatableText, { renderWithMentions } from './TranslatableText';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
 // the common case where the user just scrolls + types.
-const ChatAckDashboard = lazy(() => import('./ChatAckDashboard'));
-const ChatPinsDrawer = lazy(() => import('./ChatPinsDrawer'));
-const ChatTaskFromMessageModal = lazy(() => import('./ChatTaskFromMessageModal'));
-const ChatPollModal = lazy(() => import('./ChatPollModal'));
-const ChatScheduleModal = lazy(() => import('./ChatScheduleModal'));
-const ChatEmojiPicker = lazy(() => import('./ChatEmojiPicker'));
-const ChatEightySixModal = lazy(() => import('./ChatEightySixModal'));
+// Use the explicit `.then(m => ({default: m.default}))` form — see
+// the comment above the same pattern in ChatCenter.jsx. The bare
+// `lazy(() => import('./X'))` form was crashing Safari with a TDZ
+// "Cannot access 'C' before initialization" on the auto-generated
+// namespace-wrapper export Vite emits for dynamically-imported chunks.
+const ChatAckDashboard = lazy(() => import('./ChatAckDashboard').then(m => ({ default: m.default })));
+const ChatPinsDrawer = lazy(() => import('./ChatPinsDrawer').then(m => ({ default: m.default })));
+const ChatTaskFromMessageModal = lazy(() => import('./ChatTaskFromMessageModal').then(m => ({ default: m.default })));
+const ChatPollModal = lazy(() => import('./ChatPollModal').then(m => ({ default: m.default })));
+const ChatScheduleModal = lazy(() => import('./ChatScheduleModal').then(m => ({ default: m.default })));
+const ChatEmojiPicker = lazy(() => import('./ChatEmojiPicker').then(m => ({ default: m.default })));
+const ChatEightySixModal = lazy(() => import('./ChatEightySixModal').then(m => ({ default: m.default })));
 
 const TYPING_TTL_MS = 5000;          // typing heartbeat valid for 5s
 const MAX_IMAGE_DIM = 1600;          // resize images larger than this

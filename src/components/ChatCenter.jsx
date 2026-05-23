@@ -37,13 +37,27 @@ import { ChatAvatar, chatDisplayName } from './ChatShared';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 
-const ChatThread = lazy(() => import('./ChatThread'));
-const ChatSettingsModal = lazy(() => import('./ChatSettingsModal'));
-const ChatAnnouncementComposer = lazy(() => import('./ChatAnnouncementComposer'));
-const ChatCoverageRequestModal = lazy(() => import('./ChatCoverageRequestModal'));
-const ChatPhotoIssueModal = lazy(() => import('./ChatPhotoIssueModal'));
-const ChatSearchPanel = lazy(() => import('./ChatSearchPanel'));
-const ChatNotifSettings = lazy(() => import('./ChatNotifSettings'));
+// Lazy children. Andrew 2026-05-23: use the explicit `.then(m =>
+// ({ default: m.default }))` form instead of bare `lazy(() =>
+// import(...))`. The bare form is what Safari was TDZ-erroring on
+// ("Cannot access 'C' before initialization") — Vite was bundling it
+// as `import('./X.js').then(t => t.C)` where `C` is a generated
+// namespace-wrapper export. Some interaction with ChatThread's
+// chunk (which ALSO re-exports TranslatableText as `T`, so the chunk
+// has two namespace-wrapper exports `C` and `T`) made Safari throw
+// TDZ on the `C` access when the lazy fired. App.jsx already uses
+// the explicit `.then(m => ({default: m.default}))` form for every
+// other route and none of those crash — adopting it here forces Vite
+// to access `m.default` directly, sidestepping the wrapper entirely.
+// Don't revert to the bare form without re-running the Safari crash
+// repro.
+const ChatThread = lazy(() => import('./ChatThread').then(m => ({ default: m.default })));
+const ChatSettingsModal = lazy(() => import('./ChatSettingsModal').then(m => ({ default: m.default })));
+const ChatAnnouncementComposer = lazy(() => import('./ChatAnnouncementComposer').then(m => ({ default: m.default })));
+const ChatCoverageRequestModal = lazy(() => import('./ChatCoverageRequestModal').then(m => ({ default: m.default })));
+const ChatPhotoIssueModal = lazy(() => import('./ChatPhotoIssueModal').then(m => ({ default: m.default })));
+const ChatSearchPanel = lazy(() => import('./ChatSearchPanel').then(m => ({ default: m.default })));
+const ChatNotifSettings = lazy(() => import('./ChatNotifSettings').then(m => ({ default: m.default })));
 
 export default function ChatCenter({
     language = 'en',
