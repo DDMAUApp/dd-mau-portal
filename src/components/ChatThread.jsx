@@ -29,6 +29,9 @@ import {
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
+// Pure formatters lifted out 2026-05-23 — see chatThreadHelpers.js
+// for the rationale on the incremental ChatThread split.
+import { previewScheduledList, relativeTime, groupByDate } from './chatThreadHelpers';
 import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage } from '../data/chat';
 import { offShiftMembers } from '../data/offShift';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
@@ -3538,24 +3541,7 @@ function PollCard({ message, isMine, isEs, staffName, viewer, isAdmin, onVote, o
 
 // One-line preview for the scheduled-messages banner. Uses the FIRST
 // scheduled message's text + its sendAt time. Keeps the banner concise.
-function previewScheduledList(items, isEs) {
-    if (!Array.isArray(items) || items.length === 0) return '';
-    const first = items[0];
-    const text = (first?.payload?.text || '').replace(/\s+/g, ' ').trim();
-    const ts = first?.sendAt;
-    const ms = ts?.toMillis ? ts.toMillis() : (ts?.seconds ? ts.seconds * 1000 : 0);
-    if (!ms) return text.slice(0, 50);
-    const d = new Date(ms);
-    const today = new Date();
-    const sameDay = d.toDateString() === today.toDateString();
-    const tom = new Date(today.getTime() + 86400_000);
-    const isTomorrow = d.toDateString() === tom.toDateString();
-    const timeStr = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    const dayStr = sameDay ? (isEs ? 'hoy' : 'today')
-        : isTomorrow ? (isEs ? 'mañana' : 'tomorrow')
-        : d.toLocaleDateString(isEs ? 'es' : 'en', { month: 'short', day: 'numeric' });
-    return `${dayStr} ${timeStr} · ${text.slice(0, 40)}${text.length > 40 ? '…' : ''}`;
-}
+// previewScheduledList moved to chatThreadHelpers.js (2026-05-23).
 
 // Bottom-sheet listing pending scheduled messages with a cancel button
 // per row. Tapping cancel deletes the scheduled_messages doc; the
@@ -3617,22 +3603,7 @@ function ScheduledListDrawer({ items, isEs, onCancel, onClose }) {
     );
 }
 
-// Relative-time formatter for poll deadlines (short, viewer-language).
-// "in 2h", "in 3d", "1h ago" — kept inside ChatThread because nothing
-// else needs it; could lift if a second consumer appears.
-function relativeTime(ms, isEs) {
-    if (!ms) return '';
-    const diff = ms - Date.now();
-    const abs = Math.abs(diff);
-    const past = diff < 0;
-    let label;
-    if (abs < 60_000) label = isEs ? 'ahora' : 'now';
-    else if (abs < 3600_000) label = `${Math.round(abs / 60_000)}m`;
-    else if (abs < 86400_000) label = `${Math.round(abs / 3600_000)}h`;
-    else label = `${Math.round(abs / 86400_000)}d`;
-    if (label === (isEs ? 'ahora' : 'now')) return label;
-    return past ? (isEs ? `hace ${label}` : `${label} ago`) : (isEs ? `en ${label}` : `in ${label}`);
-}
+// relativeTime moved to chatThreadHelpers.js (2026-05-23).
 
 // Seen-by bottom sheet — shows who's read this message + when.
 // Sender excluded server-side (in getSeenByForMessage). On a DM with
@@ -3815,28 +3786,4 @@ function SeenBySheet({
     );
 }
 
-function groupByDate(messages, isEs) {
-    const groups = [];
-    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const todayKey = fmt(new Date());
-    const yKey = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return fmt(d); })();
-    for (const m of messages) {
-        const ts = m.createdAt;
-        const ms = ts?.toMillis ? ts.toMillis()
-            : (ts?.seconds ? ts.seconds * 1000 : 0);
-        const d = ms ? new Date(ms) : new Date();
-        const key = fmt(d);
-        const label = key === todayKey
-            ? (isEs ? 'Hoy' : 'Today')
-            : key === yKey
-            ? (isEs ? 'Ayer' : 'Yesterday')
-            : d.toLocaleDateString(isEs ? 'es' : 'en', { weekday: 'long', month: 'short', day: 'numeric' });
-        let last = groups[groups.length - 1];
-        if (!last || last.key !== key) {
-            last = { key, label, messages: [] };
-            groups.push(last);
-        }
-        last.messages.push(m);
-    }
-    return groups;
-}
+// groupByDate moved to chatThreadHelpers.js (2026-05-23).
