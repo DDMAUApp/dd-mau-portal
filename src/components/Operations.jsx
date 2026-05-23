@@ -4848,34 +4848,53 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         );
                     })()}
 
-                    {/* Operations sub-tabs — v2 segmented control matching the
-                        FOH/BOH selector + Schedule view tabs. Was: 5 wide
-                        gray pills with mint-700 active state. Now: clean
-                        segmented bar with dd-green active state, smaller
-                        emoji icons, consistent active scaling for tactile
-                        feedback. */}
-                    <div className="flex gap-1 mb-4 bg-white border border-dd-line rounded-lg p-1 shadow-card overflow-x-auto">
-                        {[
-                            { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
-                            { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
-                            { id: 'wall',      en: 'Wall',      es: 'Muro',       icon: '📺' },
-                            { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
-                            { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
-                            { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
-                            { id: 'prep',      en: 'Prep',      es: 'Prep',       icon: '🔪' },
-                        ].map(t2 => {
-                            const isActive = activeTab === t2.id;
-                            return (
-                                <button key={t2.id}
-                                    onClick={() => { setActiveTab(t2.id); setEditMode(false); setEditingIdx?.(null); setShowAddForm?.(false); }}
-                                    className={`flex-1 min-w-[72px] py-2 px-2 rounded-md font-bold text-sm transition active:scale-95 flex items-center justify-center gap-1 ${
-                                        isActive ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'
-                                    }`}>
-                                    <span className="text-xs opacity-80">{t2.icon}</span>
-                                    <span>{language === "es" ? t2.es : t2.en}</span>
-                                </button>
-                            );
-                        })}
+                    {/* Operations sub-tabs — underline style.
+                        Andrew 2026-05-23: was a single filled-pill bar that
+                        overflowed horizontally on phones ("one large line").
+                        Replaced with the Linear / Notion / GitHub pattern —
+                        text labels with a 2px dd-green underline on the
+                        active tab, a single hairline below the whole row
+                        as a separator. Reads as distinct sections, doesn't
+                        compete with page content the way filled pills do.
+                        Mechanics:
+                          • parent has `border-b border-dd-line` for the
+                            separator hairline.
+                          • inner flex row has `-mb-px` so each button's
+                            border-b-2 overlaps the parent border exactly,
+                            making the active tab's green line "replace"
+                            the gray separator at its column.
+                          • buttons are `shrink-0` + `whitespace-nowrap` so
+                            on a phone the row scrolls horizontally cleanly
+                            instead of trying to squeeze 7 labels into 380px.
+                            The scrollbar-thin pattern matches every other
+                            horizontally-scrollable strip in the app
+                            (ChatCenter sub-tabs, Schedule day strip). */}
+                    <div className="border-b border-dd-line mb-4">
+                        <div className="flex overflow-x-auto scrollbar-thin -mb-px">
+                            {[
+                                { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
+                                { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
+                                { id: 'wall',      en: 'Wall',      es: 'Muro',       icon: '📺' },
+                                { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
+                                { id: 'inventory', en: t('inventory', 'en'), es: t('inventory', 'es'), icon: '📦' },
+                                { id: 'breaks',    en: 'Breaks',    es: 'Descansos',  icon: '☕' },
+                                { id: 'prep',      en: 'Prep',      es: 'Prep',       icon: '🔪' },
+                            ].map(t2 => {
+                                const isActive = activeTab === t2.id;
+                                return (
+                                    <button key={t2.id}
+                                        onClick={() => { setActiveTab(t2.id); setEditMode(false); setEditingIdx?.(null); setShowAddForm?.(false); }}
+                                        className={`shrink-0 px-3 sm:px-4 py-2.5 text-sm font-bold whitespace-nowrap transition border-b-2 flex items-center gap-1.5 ${
+                                            isActive
+                                                ? 'text-dd-green border-dd-green'
+                                                : 'text-dd-text-2 border-transparent hover:text-dd-text hover:border-dd-line'
+                                        }`}>
+                                        <span className="opacity-90">{t2.icon}</span>
+                                        <span>{language === "es" ? t2.es : t2.en}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
                     </div>
 
                     {/* {"\u{2500}"}{"\u{2500}"} TASK DEADLINE ALERTS {"\u{2500}"}{"\u{2500}"} */}
