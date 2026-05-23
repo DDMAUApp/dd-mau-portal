@@ -2532,10 +2532,93 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // The slot stores a count plus a list of filledStaff names. Each fill
     // creates a real shift in the `shifts` collection so the rest of the app
     // (auto-fill, hours, swap, ICS export, etc.) treats it like any shift.
+    // Broadcast a "up for grabs" slot to every eligible staffer on
+    // the matching side + location. Andrew 2026-05-23: "the up for
+    // grabs also gets sent to all staff in the FOH if its a FOH
+    // shift and same for back through push notifications." We fan
+    // out one /notifications doc per recipient; dispatchNotification
+    // CF picks them up and delivers FCM pushes from there. Caller
+    // is the manager who created (or just-toggled) the slot — they
+    // shouldn't self-notify, so we skip their own name.
+    //
+    // Eligibility: a staffer matches a FOH slot if their
+    // scheduleSide/side='foh', OR they're scheduleSide='both', OR
+    // their role string matches the FOH role pattern. Same logic
+    // mirrored for BOH. Location must align too — Webster slots
+    // don't ping Maryland-only staff and vice versa. location='both'
+    // staff get pings for either store.
+    const broadcastUpForGrabs = async (need) => {
+        if (!need || !need.openToAllStaff) return;
+        const sideLc = String(need.side || 'foh').toLowerCase();
+        const needLoc = String(need.location || '').toLowerCase();
+        const sideMatches = (s) => {
+            const explicit = String(s?.scheduleSide || s?.side || '').toLowerCase();
+            if (explicit === sideLc) return true;
+            if (explicit === 'both') return true;
+            // Fallback to role inference when scheduleSide isn't set
+            // on the record — older staff docs from before the
+            // schedule rebuild may not carry the field.
+            const role = String(s?.role || '').toLowerCase();
+            if (sideLc === 'foh') return /foh|front|server|cashier|host|bartender/.test(role);
+            if (sideLc === 'boh') return /boh|kitchen|cook|prep|dish/.test(role);
+            return false;
+        };
+        const locMatches = (s) => {
+            if (!needLoc || needLoc === 'both') return true;
+            const sLoc = String(s?.location || '').toLowerCase();
+            if (!sLoc) return true; // unscoped staff get the broadcast too
+            return sLoc === needLoc || sLoc === 'both';
+        };
+        const targets = (staffList || []).filter(s => {
+            if (!s?.name) return false;
+            if (s.name === staffName) return false; // skip the manager who created it
+            if (!sideMatches(s)) return false;
+            if (!locMatches(s)) return false;
+            return true;
+        });
+        if (targets.length === 0) return;
+        const dayLabel = need.date || 'shift';
+        const range = `${need.startTime || '?'}–${need.endTime || '?'}`;
+        const sideName = sideLc === 'boh' ? 'BOH' : 'FOH';
+        try {
+            // Bounded fan-out — small restaurants top out around
+            // ~50 staff per side, so a plain loop is fine. Each
+            // write is independent; one failure doesn't block the
+            // rest because we await per-write and catch per-iteration.
+            for (const t of targets) {
+                try {
+                    await addDoc(collection(db, 'notifications'), {
+                        forStaff: t.name,
+                        type: 'shift_open',
+                        title: {
+                            en: `🙋 ${sideName} shift up for grabs · ${dayLabel} ${range}`,
+                            es: `🙋 Turno ${sideName} disponible · ${dayLabel} ${range}`,
+                        },
+                        body: {
+                            en: `Open in Schedule and tap "I want this" to add yourself to the pickup queue.`,
+                            es: `Abre Horario y toca "Lo quiero" para apuntarte.`,
+                        },
+                        createdAt: serverTimestamp(),
+                        read: false,
+                        location: need.location,
+                        side: need.side,
+                    });
+                } catch (e) {
+                    // Per-recipient failure is non-fatal; log + keep
+                    // going so a single bad-shape doc doesn't kill
+                    // the broadcast.
+                    console.warn('broadcastUpForGrabs notify failed for', t.name, e);
+                }
+            }
+        } catch (e) {
+            console.warn('broadcastUpForGrabs failed:', e);
+        }
+    };
+
     const handleAddNeed = async (need) => {
         if (!canEditSide(need?.side)) return;
         try {
-            await addDoc(collection(db, 'staffing_needs'), {
+            const docRef = await addDoc(collection(db, 'staffing_needs'), {
                 ...need,
                 filledStaff: [],
                 filledShiftIds: [],
@@ -2543,6 +2626,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 createdAt: serverTimestamp(),
             });
             setShowNeedModal(false);
+            // Fan out the broadcast notification AFTER the doc is
+            // committed. We don't await here because the notification
+            // writes can take a second or two for a big team and we
+            // want the modal to feel snappy — toasts confirm the
+            // creation, the pushes land asynchronously.
+            broadcastUpForGrabs({ id: docRef.id, ...need }).catch(() => {});
         } catch (e) {
             console.error('Add need failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
@@ -2568,12 +2657,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!canEdit || !need?.id) return;
         try {
             const { id, ...data } = need;
+            // Detect transition: false (or missing) → true on
+            // openToAllStaff so we can fan-out the broadcast push
+            // when a previously-private slot gets flipped to up-
+            // for-grabs after the fact. Editing an already-open
+            // slot doesn't re-spam — that would punish the manager
+            // for fixing a typo.
+            const prev = staffingNeeds.find(n => n.id === id);
+            const wasOpen = !!prev?.openToAllStaff;
+            const isOpenNow = !!data?.openToAllStaff;
             await updateDoc(doc(db, 'staffing_needs', id), {
                 ...data,
                 updatedAt: serverTimestamp(),
                 updatedBy: staffName,
             });
             setEditingNeed(null);
+            if (!wasOpen && isOpenNow) {
+                broadcastUpForGrabs({ id, ...data }).catch(() => {});
+            }
         } catch (e) {
             console.error('Edit need failed:', e);
             toast(tx('Could not update slot: ', 'No se pudo actualizar el espacio: ') + e.message);

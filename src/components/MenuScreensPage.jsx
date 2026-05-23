@@ -51,6 +51,12 @@ const PairDeviceModal = lazy(() =>
 // screen card. Lazy for the same chunk-cost reason.
 const TvConfigVersionsModal = lazy(() =>
     import('./TvConfigVersionsModal').then(m => ({ default: m.default })));
+// Templates gallery — opens from the "Templates" header button.
+// Picking a template creates a new tv_config doc and jumps the
+// admin into the editor. Lazy because the template payloads + UI
+// are dead weight for the common dashboard-view path.
+const TvTemplatesModal = lazy(() =>
+    import('./TvTemplatesModal').then(m => ({ default: m.default })));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -133,6 +139,9 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     // screen (not just tvId) so the modal can show label/etc.
     // without re-querying.
     const [historyTarget, setHistoryTarget] = useState(null);
+    // Templates gallery visibility. Same per-modal toggle pattern
+    // as the Pair + History modals.
+    const [showTemplatesModal, setShowTemplatesModal] = useState(false);
 
     // Pull the always-present "default URL" rows (webster / maryland
     // each work without a config doc) into the dashboard so the card
@@ -285,9 +294,9 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     </button>
                     <button
                         type="button"
-                        disabled
-                        title={tx('Coming soon — start a new screen from a template.', 'Próximamente — plantillas.')}
-                        className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text-2 opacity-60 cursor-not-allowed">
+                        onClick={() => setShowTemplatesModal(true)}
+                        title={tx('Start a new screen from a template — Food / Drinks / Specials / Photos / Promo / QR / Split.', 'Crea una pantalla desde una plantilla.')}
+                        className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text hover:bg-dd-bg active:scale-95 transition">
                         🎨 {tx('Templates', 'Plantillas')}
                     </button>
                 </div>
@@ -408,6 +417,19 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                         tvId={historyTarget.tvId}
                         label={historyTarget.label}
                         onClose={() => setHistoryTarget(null)} />
+                </Suspense>
+            )}
+
+            {/* Templates gallery — pick a starter config, name the
+                screen, create + drop into the editor. */}
+            {showTemplatesModal && (
+                <Suspense fallback={null}>
+                    <TvTemplatesModal
+                        language={language}
+                        staffName={staffName}
+                        defaultLocation={locFilter === 'all' ? 'webster' : locFilter}
+                        existingTvIds={configs.map(c => c.tvId)}
+                        onClose={() => setShowTemplatesModal(false)} />
                 </Suspense>
             )}
         </section>
