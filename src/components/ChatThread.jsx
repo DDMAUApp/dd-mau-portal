@@ -465,30 +465,102 @@ function ChatThreadInner({
     // before either setSending(true) committed, landing two
     // messages in Firestore. sendingRef updates synchronously.
     const sendingRef = useRef(false);
+
+    // ── Failed-send queue ──────────────────────────────────────────
+    // Audit follow-up 2026-05-23: previously a failed send just
+    // popped a toast and DROPPED the user's text — they'd retype
+    // from scratch with no idea what they'd written. Now: on any
+    // sendMessage rejection, we capture the body + replyTo on this
+    // queue and render a small "Failed to send · Retry" banner
+    // above the composer. The retry handler re-runs sendMessage
+    // with the captured payload; on success the entry leaves the
+    // queue. Per-chat (cleared on chat switch). Bounded to 5
+    // entries so a chronic-failure loop doesn't grow forever.
+    const [failedSends, setFailedSends] = useState([]);
+    useEffect(() => { setFailedSends([]); }, [chat?.id]);
+
     async function handleSendText() {
         const body = draft.trim();
         if (!body) return;
         if (sendingRef.current) return;
         sendingRef.current = true;
         setSending(true);
+        // Capture the payload before we mutate composer state — if
+        // the send fails we want to recover the EXACT body the
+        // user typed, even if they've started typing the next one.
+        const capturedReply = replyTarget;
+        const capturedNotify = notifyAnyway;
         try {
             await sendMessage({
                 chat, staffName, viewer, staffList,
                 type: 'text',
                 text: body,
-                replyTo: replyTarget,
-                forceDeliver: notifyAnyway,
+                replyTo: capturedReply,
+                forceDeliver: capturedNotify,
             });
             setDraft('');
             setReplyTarget(null);
             setNotifyAnyway(false);
         } catch (e) {
             console.warn('send text failed:', e);
-            toast(tx('Send failed', 'Error al enviar'), { kind: 'error' });
+            setFailedSends(prev => {
+                // Drop oldest if we'd exceed the cap. 5 is enough
+                // headroom for a brief outage; chronic failures
+                // signal a bigger problem the user should see fast.
+                const next = [...prev, {
+                    id: `f${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+                    body,
+                    replyTo: capturedReply,
+                    forceDeliver: capturedNotify,
+                    failedAt: Date.now(),
+                }];
+                return next.slice(-5);
+            });
+            toast(tx('Send failed — saved for retry', 'Error al enviar — guardado'), { kind: 'error' });
         } finally {
             sendingRef.current = false;
             setSending(false);
         }
+    }
+
+    // Retry a previously-failed text send. Drops from the queue on
+    // success; leaves it in place on failure so the user can keep
+    // trying. Uses the same sendingRef guard so a retry can't
+    // collide with an in-flight new send.
+    async function retryFailedSend(id) {
+        const item = failedSends.find(f => f.id === id);
+        if (!item) return;
+        if (sendingRef.current) return;
+        sendingRef.current = true;
+        try {
+            await sendMessage({
+                chat, staffName, viewer, staffList,
+                type: 'text',
+                text: item.body,
+                replyTo: item.replyTo,
+                forceDeliver: item.forceDeliver,
+            });
+            setFailedSends(prev => prev.filter(f => f.id !== id));
+        } catch (e) {
+            console.warn('retry send failed:', e);
+            toast(tx('Still failing — check your connection', 'Aún falla — revisa tu conexión'), { kind: 'error' });
+        } finally {
+            sendingRef.current = false;
+        }
+    }
+
+    // Drop a failed send the user has given up on. Also exposed
+    // as "Edit instead" via copying the body back to the composer.
+    function discardFailedSend(id) {
+        setFailedSends(prev => prev.filter(f => f.id !== id));
+    }
+    function recoverFailedSendToDraft(id) {
+        const item = failedSends.find(f => f.id === id);
+        if (!item) return;
+        // Append to existing draft if one's in progress, otherwise
+        // replace. Either way the user can edit before retrying.
+        setDraft(prev => (prev.trim() ? `${prev} ${item.body}` : item.body));
+        setFailedSends(prev => prev.filter(f => f.id !== id));
     }
 
     // ── Send media (photo / video) ────────────────────────────────
@@ -1541,6 +1613,50 @@ function ChatThreadInner({
                     </span>
                     <span className="text-xs text-dd-green-700 font-bold">{tx('View →', 'Ver →')}</span>
                 </button>
+            )}
+
+            {/* ── Failed sends queue ──────────────────────────────
+                Visible just above the composer so the user notices
+                immediately on the next render. Per-entry actions:
+                  • Retry  → resend; on success leaves the queue
+                  • Edit   → copy body back to draft, drop from queue
+                  • Dismiss→ drop from queue without sending
+                Hidden when there's nothing to retry — no chrome cost
+                during normal operation. */}
+            {failedSends.length > 0 && (
+                <div className="shrink-0 border-t border-red-200 bg-red-50 px-3 py-2 space-y-1.5">
+                    <div className="text-[11px] font-black text-red-700 uppercase tracking-wider">
+                        {tx(`${failedSends.length} message${failedSends.length === 1 ? '' : 's'} failed to send`,
+                            `${failedSends.length} mensaje${failedSends.length === 1 ? '' : 's'} no enviado${failedSends.length === 1 ? '' : 's'}`)}
+                    </div>
+                    {failedSends.map(item => (
+                        <div key={item.id} className="flex items-start gap-2 bg-white border border-red-200 rounded-lg px-2.5 py-1.5">
+                            <div className="flex-1 min-w-0">
+                                <div className="text-[13px] text-dd-text leading-snug truncate">
+                                    {item.body}
+                                </div>
+                                <div className="text-[10px] text-red-600 mt-0.5">
+                                    {tx('Tap retry, or edit and resend', 'Toca reintentar o edita y reenvía')}
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                                <button onClick={() => retryFailedSend(item.id)}
+                                    className="px-2 py-1 rounded-md bg-red-600 text-white text-[11px] font-bold hover:bg-red-700 active:scale-95 transition">
+                                    ↻ {tx('Retry', 'Reintentar')}
+                                </button>
+                                <button onClick={() => recoverFailedSendToDraft(item.id)}
+                                    className="px-2 py-1 rounded-md bg-white border border-red-200 text-red-700 text-[11px] font-bold hover:bg-red-100 transition">
+                                    ✎ {tx('Edit', 'Editar')}
+                                </button>
+                                <button onClick={() => discardFailedSend(item.id)}
+                                    title={tx('Discard', 'Descartar')}
+                                    className="px-1.5 py-1 rounded-md text-red-500 text-[12px] font-bold hover:bg-red-100 transition">
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    ))}
+                </div>
             )}
 
             {/* ── Composer ────────────────────────────────────── */}

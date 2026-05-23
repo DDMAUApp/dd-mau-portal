@@ -68,6 +68,13 @@ const MenuScreensPage = lazy(() => import('./components/MenuScreensPage').then(m
 // TVs, backups, recent audit). Surfaces "is this broken or is it
 // me?" data in one place so admins stop hunting across 4 tabs.
 const AdminHealthPage = lazy(() => import('./components/AdminHealthPage').then(m => ({ default: memo(m.default) })));
+// Per-page error boundary. Wraps the high-risk routes (Schedule,
+// Operations, ChatCenter, AdminPanel) so a sync render crash in
+// one tab leaves the rest of the app usable + offers Try Again /
+// Refresh recovery instead of falling through to the global
+// stale-chunk handler. Eager import — class component is ~2KB and
+// always needed at render time, no point lazy-loading it.
+import PageErrorBoundary from './components/PageErrorBoundary';
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
@@ -1091,13 +1098,13 @@ export default function App() {
             // sit on the sage page background; cards inside them stay white.
             // We negate the top-level dark backgrounds some legacy components
             // ship with via a CSS reset class that the tab itself defines.
-            if (activeTab === 'chat') return <ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} />;
+            if (activeTab === 'chat') return <PageErrorBoundary tabName="Chat" language={language}><ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
-            if (activeTab === 'operations' && hasOpsAccess) return <Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} />;
+            if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'mytasks') return <MyTasksPanel language={language} staffName={staffName} staffList={staffList} />;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;
             if (activeTab === 'datestickers') return <DateStickerPrinter language={language} staffName={staffName} storeLocation={effectiveLocation} staffList={staffList} />;
-            if (activeTab === 'schedule') return <Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} />;
+            if (activeTab === 'schedule') return <PageErrorBoundary tabName="Schedule" language={language}><Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} /></PageErrorBoundary>;
             if (activeTab === 'recipes' && hasRecipesAccess) return <Recipes language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} isAtDDMau={isAtDDMau} geoChecking={geoChecking} geoError={geoError} geoRetry={geoRetry} geoPermState={geoPermState} />;
             if (activeTab === 'labor' && staffIsAdmin) return <LaborDashboard language={language} storeLocation={effectiveLocation} />;
             if (activeTab === 'eighty6' && canSeePage(currentStaffRecord, 'eighty6')) return <Eighty6Dashboard language={language} storeLocation={effectiveLocation} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} />;
@@ -1107,9 +1114,9 @@ export default function App() {
             if (activeTab === 'ai' && canSeePage(currentStaffRecord, 'ai')) return <AiAssistant language={language} staffName={staffName} storeLocation={effectiveLocation} />;
             if (activeTab === 'tardies' && isManager) return <TardinessTracker language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
-            if (activeTab === 'menuscreens' && staffIsAdmin) return <MenuScreensPage language={language} staffName={staffName} storeLocation={effectiveLocation} />;
-            if (activeTab === 'health' && staffIsAdmin) return <AdminHealthPage language={language} staffName={staffName} />;
-            if (activeTab === 'admin' && staffIsAdmin) return <AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} />;
+            if (activeTab === 'menuscreens' && staffIsAdmin) return <PageErrorBoundary tabName="Menu Screens" language={language}><MenuScreensPage language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
+            if (activeTab === 'health' && staffIsAdmin) return <PageErrorBoundary tabName="System Health" language={language}><AdminHealthPage language={language} staffName={staffName} /></PageErrorBoundary>;
+            if (activeTab === 'admin' && staffIsAdmin) return <PageErrorBoundary tabName="Admin" language={language}><AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} /></PageErrorBoundary>;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).
             return isMobile ? (

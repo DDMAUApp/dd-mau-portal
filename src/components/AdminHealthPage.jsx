@@ -31,6 +31,7 @@ import { db } from '../firebase';
 import {
     collection, doc, query, where, orderBy, limit, onSnapshot,
 } from 'firebase/firestore';
+import { subscribePrinterConfig, PRINTER_SLOTS } from '../data/labelPrinting';
 
 // Heartbeat thresholds — keep in sync with MenuScreensPage and the
 // checkTvHeartbeats Cloud Function so the dashboard agrees with
@@ -173,6 +174,41 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
         return unsub;
     }, []);
 
+    // ── Printer configs ──────────────────────────────────────────
+    // We subscribe to /config/printers_{location}_{slot} for both
+    // stores × both slots so the dashboard surfaces all 4 printers
+    // (Webster kitchen, Webster office, Maryland kitchen, Maryland
+    // office). For each we record whether the doc exists + whether
+    // it's enabled. Network-reachability checks would need a live
+    // probe to the printer's HTTP endpoint, which is blocked by
+    // mixed-content rules in browsers (https app, http printer).
+    // The Pi bridge handles the actual print job; here we're just
+    // reporting "is the printer registered + enabled?".
+    const [printers, setPrinters] = useState({});
+    useEffect(() => {
+        const unsubs = [];
+        for (const loc of ['webster', 'maryland']) {
+            for (const slot of PRINTER_SLOTS) {
+                const key = `${loc}/${slot}`;
+                const u = subscribePrinterConfig(loc, (cfg) => {
+                    setPrinters(prev => ({ ...prev, [key]: cfg }));
+                }, slot);
+                unsubs.push(u);
+            }
+        }
+        return () => unsubs.forEach(u => { try { u(); } catch {} });
+    }, []);
+    const printerStats = useMemo(() => {
+        const entries = Object.entries(printers);
+        let configured = 0, enabled = 0;
+        for (const [, cfg] of entries) {
+            if (!cfg) continue;
+            configured++;
+            if (cfg.enabled !== false) enabled++;
+        }
+        return { total: entries.length || 4, configured, enabled };
+    }, [printers]);
+
     // ── Quick counts: staff, chats, shifts (current week) ────────
     const [chatCount, setChatCount] = useState(null);
     useEffect(() => {
@@ -232,6 +268,63 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
                     big={`${tvStats.live} / ${tvStats.total}`}
                     detail={`${tvStats.live} ${tx('live', 'en vivo')} · ${tvStats.stale} ${tx('stale', 'antiguos')} · ${tvStats.offline} ${tx('offline', 'sin conexión')}`}
                 />
+            </div>
+
+            {/* Printers + per-TV detail. The printers row sits above
+                the TV detail because a kitchen with no working label
+                printer is more visible to staff (stickers don't come
+                out) than a TV that didn't update overnight. */}
+            <div className="bg-white border border-dd-line rounded-2xl p-4">
+                <div className="flex items-baseline justify-between gap-2 mb-2">
+                    <h2 className="text-sm font-black text-dd-text">
+                        🏷 {tx('Printers', 'Impresoras')}
+                    </h2>
+                    <span className="text-[11px] text-dd-text-2 tabular-nums">
+                        {printerStats.configured} / {printerStats.total} {tx('configured', 'configuradas')}
+                        {printerStats.configured > 0 && (
+                            <> · {printerStats.enabled} {tx('enabled', 'habilitadas')}</>
+                        )}
+                    </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {['webster', 'maryland'].map(loc => (
+                        PRINTER_SLOTS.map(slot => {
+                            const cfg  = printers[`${loc}/${slot}`];
+                            const locLabel = loc === 'webster' ? 'Webster' : 'MD Heights';
+                            const slotLabel = slot === 'kitchen' ? tx('Kitchen', 'Cocina') : tx('Office', 'Oficina');
+                            const status = !cfg ? 'missing'
+                                        : cfg.enabled === false ? 'disabled'
+                                        : 'ok';
+                            const palette = status === 'ok'
+                                ? { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-700', dot: 'bg-emerald-500', label: tx('Configured', 'Lista') }
+                                : status === 'disabled'
+                                ? { bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-700',   dot: 'bg-amber-500',   label: tx('Disabled',  'Deshabilitada') }
+                                : { bg: 'bg-dd-bg',      border: 'border-dd-line',     text: 'text-dd-text-2',   dot: 'bg-gray-400',    label: tx('Not set up','Sin configurar') };
+                            return (
+                                <div key={`${loc}-${slot}`} className={`${palette.bg} border ${palette.border} rounded-lg p-2.5 flex items-center gap-2`}>
+                                    <span className={`w-2 h-2 rounded-full ${palette.dot} shrink-0`} />
+                                    <div className="min-w-0 flex-1">
+                                        <div className={`text-[12px] font-black ${palette.text} truncate`}>
+                                            {locLabel} · {slotLabel}
+                                        </div>
+                                        <div className="text-[10px] text-dd-text-2 truncate">
+                                            {cfg
+                                                ? (cfg.name || `${cfg.model || 'printer'}${cfg.ip ? ` @ ${cfg.ip}` : ''}`)
+                                                : tx('No printer registered for this slot', 'Sin impresora registrada')}
+                                        </div>
+                                    </div>
+                                    <span className={`text-[10px] font-bold ${palette.text} shrink-0`}>{palette.label}</span>
+                                </div>
+                            );
+                        })
+                    ))}
+                </div>
+                <p className="text-[10px] text-dd-text-2 mt-2 italic">
+                    {tx(
+                        'Status reflects /config/printers_{loc}_{slot} doc presence. Actual reachability is checked at print time by the Pi bridge.',
+                        'El estado refleja la presencia del doc /config/printers_{loc}_{slot}. La accesibilidad real se verifica en tiempo de impresión por el puente Pi.',
+                    )}
+                </p>
             </div>
 
             {/* Secondary counts row */}
