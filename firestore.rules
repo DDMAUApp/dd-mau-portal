@@ -445,13 +445,19 @@ service cloud.firestore {
     // out, and (c) write-shape validation on the highest-PII paths
     // immediately above this rule.
     //
-    // The narrowing applied here: every catch-all write must at least
-    // be a map (rejects raw-string and null-payload writes that come
-    // from bugs). It's a tiny improvement but catches the kind of
-    // typo that produced the 2026-05-09 staff-list wipe.
+    // The narrowing applied here: every catch-all CREATE/UPDATE must
+    // be a map payload. Rejects the kind of raw-string or null
+    // writes that come from buggy clients. Deletes stay open because
+    // the catch-all covers many collections that legitimately
+    // delete docs (shifts, date_blocks, staff_todos, swap_requests,
+    // scheduled_messages, recipe_views, etc.) — folding delete into
+    // a payload-shape check would silently break all of them
+    // (request.resource is null on delete, so `request.resource.data
+    // is map` evaluates to false).
     match /{document=**} {
       allow read: if true;
-      allow write: if request.resource.data is map || request.method == 'delete';
+      allow create, update: if request.resource.data is map;
+      allow delete: if true;
     }
   }
 }
