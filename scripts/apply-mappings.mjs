@@ -289,7 +289,6 @@ for (const [niceName, items] of catEntries) {
                 vendor: preferredVendor,
                 pack: primary?.pack || '',
                 price: primary?.price ?? null,
-                subcat: primary?.subcat || '',
                 preferredVendor,
                 vendorOptions,
             };
@@ -303,7 +302,6 @@ for (const [niceName, items] of catEntries) {
                 vendor: cur.vendor || '',
                 pack: cur.pack || '',
                 price: cur.price ?? null,
-                subcat: cur.subcat || '',
                 preferredVendor: cur.preferredVendor || cur.vendor || '',
                 vendorOptions: cur.vendorOptions || [],
             };

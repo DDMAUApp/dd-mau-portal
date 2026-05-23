@@ -643,7 +643,6 @@ function OrderItemRowInner({ itemId, item, isEs, currentVendor, onAction }) {
                     </div>
                     <div className="text-[10px] text-dd-text-2 mt-0.5">
                         {item.category}
-                        {item.subcat && ` · ${item.subcat}`}
                         {item.pack && ` · ${item.pack}`}
                         {item.preferredVendor && ` · pref ${item.preferredVendor}`}
                     </div>

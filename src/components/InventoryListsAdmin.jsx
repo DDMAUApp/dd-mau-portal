@@ -698,17 +698,12 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                             const itemsMatching = (masterCat.items || []).filter(it => itemMatchesUnion(it, masterCat.name));
                             if (hasQuery && itemsMatching.length === 0) return null;
 
-                            // Group by sub-cat, preserving first-seen order so
-                            // ES/EN renderings stay stable across edits.
-                            const subcatOrder = [];
-                            const subcatItems = {};
-                            for (const it of itemsMatching) {
-                                const sc = (it.subcat && it.subcat.trim()) || tx('Other', 'Otros');
-                                if (!subcatItems[sc]) { subcatItems[sc] = []; subcatOrder.push(sc); }
-                                subcatItems[sc].push(it);
-                            }
-                            // Top-level "X/Y added" count across the whole
-                            // category — gives the at-a-glance read.
+                            // Subcategories removed (Andrew 2026-05-22 —
+                            // "lets remove the sub categories i dont think
+                            // we need it"). Left pane now lists items flat
+                            // within each top-level category. The
+                            // X/Y-added count still shown at the category
+                            // header.
                             const totalInCat = itemsMatching.length;
                             const addedInCat = itemsMatching.reduce(
                                 (s, it) => s + (presentIds.has(it.id) ? 1 : 0), 0);
@@ -723,36 +718,19 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                                             {addedInCat > 0 ? `${addedInCat}/${totalInCat}` : totalInCat}
                                         </span>
                                     </div>
-                                    {subcatOrder.map(sc => {
-                                        const totalInSub = subcatItems[sc].length;
-                                        const addedInSub = subcatItems[sc].reduce(
-                                            (s, it) => s + (presentIds.has(it.id) ? 1 : 0), 0);
+                                    {itemsMatching.map(item => {
+                                        const inList = presentIds.has(item.id);
                                         return (
-                                            <div key={sc}>
-                                                <div className="px-2 py-0.5 bg-dd-bg/30 border-t border-dd-line/40 flex items-center justify-between">
-                                                    <span className="text-[10px] font-bold uppercase tracking-wide text-dd-text-2">
-                                                        {sc}
-                                                    </span>
-                                                    <span className={`text-[10px] font-bold ${addedInSub > 0 ? 'text-dd-green' : 'text-dd-text-2/60'}`}>
-                                                        {addedInSub > 0 ? `${addedInSub}/${totalInSub}` : totalInSub}
-                                                    </span>
-                                                </div>
-                                                {subcatItems[sc].map(item => {
-                                                    const inList = presentIds.has(item.id);
-                                                    return (
-                                                        <button key={item.id}
-                                                            onClick={() => toggleItem(masterCat, item)}
-                                                            className={`w-full text-left px-2 py-1.5 flex items-center gap-2 text-xs border-t border-dd-line/40 transition ${inList ? 'opacity-50 bg-gray-50 hover:bg-gray-100' : 'bg-white hover:bg-dd-bg'}`}>
-                                                            <span className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] font-black flex-shrink-0 ${inList ? 'bg-dd-green border-dd-green text-white' : 'border-dd-line bg-white text-transparent'}`}>
-                                                                ✓
-                                                            </span>
-                                                            <span className={`flex-1 min-w-0 truncate ${inList ? 'line-through' : ''}`}>
-                                                                {isEs ? (item.nameEs || item.name) : item.name}
-                                                            </span>
-                                                        </button>
-                                                    );
-                                                })}
-                                            </div>
+                                            <button key={item.id}
+                                                onClick={() => toggleItem(masterCat, item)}
+                                                className={`w-full text-left px-2 py-1.5 flex items-center gap-2 text-xs border-t border-dd-line/40 transition ${inList ? 'opacity-50 bg-gray-50 hover:bg-gray-100' : 'bg-white hover:bg-dd-bg'}`}>
+                                                <span className={`w-4 h-4 rounded border-2 flex items-center justify-center text-[10px] font-black flex-shrink-0 ${inList ? 'bg-dd-green border-dd-green text-white' : 'border-dd-line bg-white text-transparent'}`}>
+                                                    ✓
+                                                </span>
+                                                <span className={`flex-1 min-w-0 truncate ${inList ? 'line-through' : ''}`}>
+                                                    {isEs ? (item.nameEs || item.name) : item.name}
+                                                </span>
+                                            </button>
                                         );
                                     })}
                                 </div>

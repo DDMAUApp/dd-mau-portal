@@ -107,7 +107,6 @@ function regenerateInventory(categories) {
                 vendor: src.vendor || '',
                 pack: src.pack || '',
                 price: src.price ?? null,
-                subcat: src.subcat || '',
                 location: src.location || '',
                 preferredVendor: src.preferredVendor || src.vendor || '',
                 vendorOptions: src.vendorOptions || [],

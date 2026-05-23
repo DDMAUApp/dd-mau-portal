@@ -5663,31 +5663,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     itemIdxByIdInCat.set(category.items[i].id, i);
                                 }
 
-                                // Group by subcategory.
-                                //
-                                // Bug fix (Andrew 2026-05-17 — "i tried to move
-                                // the chicken bone to chicken and it didnt
-                                // work"): we used to walk items in order and
-                                // open a NEW group every time `subcat` changed.
-                                // So a category whose items were [Beef, Chicken,
-                                // Chicken, Pork, Chicken-bone-just-moved-here]
-                                // rendered as four groups: Beef / Chicken (2) /
-                                // Pork / Chicken (1). The moved item appeared
-                                // under a *second* "Chicken" header instead of
-                                // merging into the existing one — making moves
-                                // look broken even though the data was fine.
-                                //
-                                // Use a Map keyed by subcat name so same-named
-                                // groups collapse together regardless of how
-                                // the items are interleaved in storage. First-
-                                // appearance order is preserved.
-                                const subcatMap = new Map();
-                                filteredItems.forEach(item => {
-                                    const sub = item.subcat || "";
-                                    if (!subcatMap.has(sub)) subcatMap.set(sub, []);
-                                    subcatMap.get(sub).push(item);
-                                });
-                                const subcats = Array.from(subcatMap, ([name, items]) => ({ name, items }));
+                                // Subcategories removed (Andrew 2026-05-22 —
+                                // "lets remove the sub categories i dont think
+                                // we need it"). The inventory page now renders
+                                // items flat within each category — no
+                                // subcategory headers, no per-subcat drop
+                                // zones. We keep the subgroup data shape
+                                // (Array<{ name, items }>) so the existing
+                                // render code below still works; we just
+                                // produce a single unnamed group per category.
+                                // Items group by location instead, in the new
+                                // location-bubble filter bar at the top of
+                                // the page (separate change).
+                                const subcats = [{ name: "", items: filteredItems }];
 
                                 return (
                                 <div key={catIdx} className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
