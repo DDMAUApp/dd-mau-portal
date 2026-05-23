@@ -1,0 +1,40 @@
+# Railway / Nixpacks build config
+#
+# Why this file exists: by default Nixpacks auto-detects this repo as a
+# full-stack Vite app and tries to apt-get install heavy system deps
+# (fonts, Chromium libs, etc.) — fine for the main frontend build, but
+# we ALSO deploy this same repo as a tiny Node-only cron service
+# (sync-toast-86-attribution.mjs on Railway). That cron doesn't need
+# any of the apt-get stuff, and the install step was failing in
+# Railway's image build (apt-get update returning non-zero on some
+# mirrors), blocking the whole deploy.
+#
+# This config tells Nixpacks: just Node 22 + npm install, no system
+# packages, no build step, just start the script. Keep it minimal.
+#
+# Andrew 2026-05-23 — added after the Railway service for the Toast
+# 86 attribution cron failed its first build with:
+#   [3/7] RUN apt-get update && apt-get install -y wget ca-certificates font...
+#   process "/bin/sh -c apt-get update && ..." failed with non-zero
+#
+# If you ever want to use this repo for a different Railway service
+# (e.g. a web preview of the Vite build), either fork this nixpacks.toml
+# or use Railway's "Root Directory" setting to scope per-service.
+
+[providers]
+node = "22"
+
+[phases.setup]
+# Override Nixpacks' auto-detected aptPkgs list (was trying to pull
+# Chromium font deps). Empty list = nothing installed via apt.
+aptPkgs = []
+
+[phases.install]
+cmds = ["npm install --omit=dev --no-audit --no-fund"]
+
+[phases.build]
+# Skip — no build step needed for running a single Node script.
+cmds = []
+
+[start]
+cmd = "node scripts/sync-toast-86-attribution.mjs"
