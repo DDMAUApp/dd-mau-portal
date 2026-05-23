@@ -34,13 +34,13 @@ export default function ToastSyncSection({ language = 'en', byName }) {
                     {tx('Toast POS → 86 sync', 'Toast POS → sync de 86')}
                 </h3>
                 <span className="text-[10px] font-bold text-orange-700 bg-orange-50 px-2 py-0.5 rounded-full border border-orange-300">
-                    {tx('Auto-strikes items from Toast', 'Auto desde Toast')}
+                    {tx('Powers 86 board + TV menus + chat alerts', 'Tablero 86 + menús TV + chat')}
                 </span>
             </div>
             <p className="text-[11px] text-orange-700 mb-3 leading-snug">
                 {tx(
-                    'When staff marks an item out-of-stock in Toast, our 86 dashboard auto-strikes it within ~5 min — no double entry. Manual 86s in our app are never overwritten by Toast sync.',
-                    'Cuando se marca un item out-of-stock en Toast, nuestro tablero de 86 lo sincroniza en ~5 min. Los 86 manuales nunca se sobrescriben.',
+                    'ONE Toast sync covers everything. When staff marks an item out-of-stock in Toast, the 86 board, the menu TV boards (SOLD OUT overlay on the matching hit zone), and the chat 86-alerts all update from the same /ops/86_{location} doc within ~5 min. You don\'t set this up per-TV — set it up here once and every menu screen benefits. Manual 86s in our app are never overwritten by Toast sync.',
+                    'UN sync de Toast cubre todo. Cuando se marca un item out-of-stock en Toast, el tablero de 86, las pantallas TV (SOLD OUT en la zona) y los avisos en chat se actualizan del mismo doc /ops/86_{location} en ~5 min. No se configura por TV — configúralo aquí una vez y todas las pantallas se benefician. Los 86 manuales nunca se sobrescriben.',
                 )}
             </p>
 
