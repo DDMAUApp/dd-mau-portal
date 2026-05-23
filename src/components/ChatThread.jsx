@@ -1349,7 +1349,7 @@ export default function ChatThread({
                                 && msg.createdAt?.toMillis && prev?.createdAt?.toMillis
                                 && (msg.createdAt.toMillis() - prev.createdAt.toMillis()) < 5 * 60 * 1000;
                             return (
-                                <MessageBubble
+                                <MessageBubbleInner
                                     key={msg.id}
                                     message={msg}
                                     chat={chat}

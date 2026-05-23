@@ -404,7 +404,7 @@ export default function ChatCenter({
                         </div>
                     ) : (
                         filteredChats.map(c => (
-                            <ChatListItem
+                            <ChatListItemInner
                                 key={c.id}
                                 chat={c}
                                 viewerName={staffName}
