@@ -234,6 +234,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             //
             // Map shape: { itemId: { date: 'Mon May 12', qty: 3, dateIso: '2026-05-12T...' } }
             const [lastEnteredByItem, setLastEnteredByItem] = useState({});
+            // Suggested order qty per item — average of the last N
+            // non-zero qty entries from inventoryHistory snapshots,
+            // computed inside the same walk as lastEnteredByItem.
+            // Audit follow-up 2026-05-23: managers were guessing how
+            // much to order each cycle. A historical average gives
+            // them a baseline. Shape: { [itemId]: { avg, n } } where
+            // n is how many data points contributed (we hide the
+            // hint when n < 2 to avoid suggesting "12" from a
+            // single one-off order).
+            const [suggestedByItem, setSuggestedByItem] = useState({});
             // Per-vendor latest import timestamp — populated from the
             // same inventoryHistory walk as lastEnteredByItem. Keyed by
             // the vendor slug the CSV / PDF importer stamps onto each
@@ -3001,6 +3011,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const slice = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     const summary = {};
                     const vendorImports = {};
+                    // Per-item rolling history of non-zero qtys for
+                    // the smart-order average. We collect up to 6
+                    // most-recent data points per item (walking
+                    // newest-first via the limit(30) snapshot scan),
+                    // then average them in the post-loop pass below.
+                    const qtyHistory = {};
+                    const SUGGEST_SAMPLE_SIZE = 6;
                     for (const d of slice) {
                         const counts = d.counts || {};
                         const iso = d.date || (d.id ? d.id.slice(0, 10) : null);
@@ -3010,8 +3027,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             : (d.id || '');
                         for (const [itemId, qty] of Object.entries(counts)) {
                             const n = Number(qty);
-                            if (n > 0 && !summary[itemId]) {
-                                summary[itemId] = { date: dateLabel, qty: n, dateIso: iso };
+                            if (n > 0) {
+                                if (!summary[itemId]) {
+                                    summary[itemId] = { date: dateLabel, qty: n, dateIso: iso };
+                                }
+                                // Append to the rolling sample, cap
+                                // at SUGGEST_SAMPLE_SIZE. We're walking
+                                // newest-first so the first N we see
+                                // are the freshest.
+                                if (!qtyHistory[itemId]) qtyHistory[itemId] = [];
+                                if (qtyHistory[itemId].length < SUGGEST_SAMPLE_SIZE) {
+                                    qtyHistory[itemId].push(n);
+                                }
                             }
                         }
                         // Track the most recent import per vendor.
@@ -3024,8 +3051,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             };
                         }
                     }
+                    // Average pass — round to nearest int (managers
+                    // think in whole units, not decimals). Hide the
+                    // suggestion when n < 2 to avoid a one-off order
+                    // setting a fake baseline.
+                    const suggestions = {};
+                    for (const [itemId, qtys] of Object.entries(qtyHistory)) {
+                        if (qtys.length < 2) continue;
+                        const sum = qtys.reduce((s, x) => s + x, 0);
+                        suggestions[itemId] = {
+                            avg: Math.max(1, Math.round(sum / qtys.length)),
+                            n: qtys.length,
+                        };
+                    }
                     setLastEnteredByItem(summary);
                     setLastVendorImport(vendorImports);
+                    setSuggestedByItem(suggestions);
                 } catch (err) {
                     console.warn('reloadLastEnteredByItem failed:', err);
                 }
@@ -6663,6 +6704,30 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             {lastEnteredByItem[item.id] && (
                                                                                 <p className="text-[11px] text-mint-700 mt-0.5">
                                                                                     📦 {language === "es" ? "Último pedido" : "Last ordered"}: {lastEnteredByItem[item.id].date} · <span className="font-bold tabular-nums">{lastEnteredByItem[item.id].qty}</span>
+                                                                                </p>
+                                                                            )}
+                                                                            {/* Smart-order suggestion. Mean of the last
+                                                                                up-to-6 non-zero order qtys from
+                                                                                inventoryHistory. Tap "Use" to fill
+                                                                                the count input with the suggested
+                                                                                value — only shown when the current
+                                                                                count differs from the suggestion
+                                                                                (no point suggesting what's already
+                                                                                there). Hidden in edit mode (the
+                                                                                inputs above own the row) and when
+                                                                                only 1 data point exists. */}
+                                                                            {!isEditing && suggestedByItem[item.id] && suggestedByItem[item.id].avg !== count && (
+                                                                                <p className="text-[11px] text-blue-700 mt-0.5 inline-flex items-center gap-1.5">
+                                                                                    <span>📊</span>
+                                                                                    <span>
+                                                                                        {language === "es" ? "Sugerido" : "Suggested"}: <span className="font-bold tabular-nums">{suggestedByItem[item.id].avg}</span>
+                                                                                        <span className="opacity-60"> (avg of {suggestedByItem[item.id].n})</span>
+                                                                                    </span>
+                                                                                    <button
+                                                                                        onClick={() => updateInventoryCount(item.id, suggestedByItem[item.id].avg)}
+                                                                                        className="ml-0.5 px-1.5 py-0 rounded bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold text-[10px]">
+                                                                                        {language === "es" ? "Usar" : "Use"}
+                                                                                    </button>
                                                                                 </p>
                                                                             )}
                                                                             </>
