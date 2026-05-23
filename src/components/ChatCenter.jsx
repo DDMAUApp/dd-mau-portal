@@ -21,7 +21,7 @@
 // the three /chats/channel_{key} docs so they always exist with
 // up-to-date membership. Cheap (3 writes + only when membership drifts).
 
-import { useState, useEffect, useMemo, useRef, memo, lazy, Suspense } from 'react';
+import { useState, useEffect, useMemo, useRef, memo, lazy, Suspense, useDeferredValue } from 'react';
 import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
