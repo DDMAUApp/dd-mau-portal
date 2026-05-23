@@ -440,6 +440,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
             const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
+            // Filter to ONLY items currently flagged low-stock
+            // (count > 0 && count <= min). Mirrors the "Counted Only"
+            // toggle pattern so the rest of the page filtering logic
+            // composes naturally. Useful when admin is scanning
+            // "what do I need to put on the order list this week?"
+            // without scrolling through every other item.
+            const [invShowOnlyLow, setInvShowOnlyLow] = useState(false);
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
@@ -2731,6 +2738,81 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // fire-and-forget the audit doc write so rapid taps don't
             // pile up awaiting two writes per click (audit is best-
             // effort by design — the comment below already noted that).
+            // Push notification fan-out when an item crosses its
+            // low-stock threshold. Andrew 2026-05-23 audit follow-up.
+            // Argument shape mirrors the call site: { itemId,
+            // prevCount, nextCount, delta }. We resolve the item's
+            // `min` field from customInventory (the same source of
+            // truth the per-item indicator reads), then check the
+            // SPECIFIC crossing condition:
+            //
+            //   prevCount > min && nextCount <= min && nextCount > 0
+            //
+            // The `> 0` clause excludes "ran out completely" because
+            // the 86 board flow already handles that path. We focus
+            // on the "we're getting low — order more" case.
+            //
+            // Recipients: managers of this location + admins. Same
+            // fan-out pattern as the up-for-grabs broadcast — one
+            // /notifications doc per recipient, dispatchNotification
+            // CF handles FCM delivery.
+            const notifyLowStockIfCrossed = async ({ itemId, prevCount, nextCount, delta }) => {
+                if (!itemId) return;
+                if (!(delta < 0)) return;            // only on decrements
+                if (nextCount <= 0) return;          // out, not low — different alert class
+                // Find the item to read its min + display name.
+                let item = null;
+                for (const cat of customInventory || []) {
+                    const f = (cat.items || []).find(it => it.id === itemId);
+                    if (f) { item = f; break; }
+                }
+                if (!item) return;
+                const min = Number(item.min);
+                if (!Number.isFinite(min) || min <= 0) return;
+                if (!(prevCount > min && nextCount <= min)) return;
+                // Eligible recipients — admins (ID 40/41) + managers
+                // at this location. Skip the staffer who triggered
+                // the save so they don't get pinged about their own
+                // count change.
+                const targets = (staffList || []).filter(s => {
+                    if (!s?.name) return false;
+                    if (s.name === staffName) return false;
+                    if (s.id === 40 || s.id === 41) return true;
+                    if (s.role && /manager/i.test(s.role)) {
+                        return !s.location || s.location === storeLocation || s.location === 'both';
+                    }
+                    return false;
+                });
+                if (targets.length === 0) return;
+                const itemName = item.name || item.nameEn || itemId;
+                const locLabel = storeLocation === 'maryland' ? 'MD Heights' : 'Webster';
+                for (const t of targets) {
+                    try {
+                        await addDoc(collection(db, 'notifications'), {
+                            forStaff: t.name,
+                            type: 'inventory_low_stock',
+                            title: {
+                                en: `📉 ${itemName} is low (${nextCount} left, min ${min})`,
+                                es: `📉 ${itemName} bajo (quedan ${nextCount}, mín ${min})`,
+                            },
+                            body: {
+                                en: `${locLabel} inventory — time to add to the next order.`,
+                                es: `Inventario ${locLabel} — agrega al próximo pedido.`,
+                            },
+                            createdAt: serverTimestamp(),
+                            read: false,
+                            location: storeLocation,
+                            itemId,
+                            itemName,
+                            nextCount,
+                            min,
+                        });
+                    } catch (e) {
+                        console.warn('low-stock notify failed for', t.name, e);
+                    }
+                }
+            };
+
             const updateInventoryCount = async (itemId, newCount, delta = null) => {
                 const count = parseInt(newCount) || 0;
                 const isDelta = delta === 1 || delta === -1;
@@ -2845,6 +2927,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             return next;
                         });
                     }, 2000);
+                    // Low-stock threshold-cross push. Fires when an
+                    // item dropped FROM above-min TO at-or-below
+                    // min on this save. Threshold-crossing semantics
+                    // (rather than "below min" predicate) naturally
+                    // dedups: bumping count from 2→1 when min=3
+                    // doesn't re-spam because we were already below.
+                    // Only fires for the negative direction — going
+                    // up never triggers an alert. Fire-and-forget;
+                    // a failed notification doesn't block the save.
+                    notifyLowStockIfCrossed({
+                        itemId,
+                        prevCount,
+                        nextCount,
+                        delta: nextCount - prevCount,
+                    }).catch(() => {});
                 } catch (err) {
                     // Doc may not exist yet on first write to a fresh location.
                     if (err?.code === "not-found") {
@@ -5665,10 +5762,16 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             {"\u{1F6D2}"} {totalQty} {language === "es" ? "total" : "total"} ({itemCount} {language === "es" ? "artículos" : "items"})
                                             <span className="text-xs text-mint-500 ml-1">{language === "es" ? "ver ▸" : "view ▸"}</span>
                                         </button>
-                                        <button onClick={() => setInvShowOnlyCounted(!invShowOnlyCounted)}
-                                            className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyCounted ? "bg-mint-700 text-white" : "bg-mint-100 text-mint-700 hover:bg-mint-200"}`}>
-                                            {invShowOnlyCounted ? (language === "es" ? "Ver Todo" : "Show All") : (language === "es" ? "Solo Contados" : "Counted Only")}
-                                        </button>
+                                        <div className="flex items-center gap-1.5">
+                                            <button onClick={() => setInvShowOnlyLow(v => !v)}
+                                                className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyLow ? "bg-amber-600 text-white" : "bg-amber-100 text-amber-800 hover:bg-amber-200"}`}>
+                                                📉 {invShowOnlyLow ? (language === "es" ? "Mostrar Todo" : "Show All") : (language === "es" ? "Solo Bajos" : "Low Only")}
+                                            </button>
+                                            <button onClick={() => setInvShowOnlyCounted(!invShowOnlyCounted)}
+                                                className={`text-xs font-bold px-2 py-1 rounded-lg transition ${invShowOnlyCounted ? "bg-mint-700 text-white" : "bg-mint-100 text-mint-700 hover:bg-mint-200"}`}>
+                                                {invShowOnlyCounted ? (language === "es" ? "Ver Todo" : "Show All") : (language === "es" ? "Solo Contados" : "Counted Only")}
+                                            </button>
+                                        </div>
                                     </div>
                                 );
                             })()}
@@ -6117,8 +6220,16 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 if (invShowOnlyCounted) {
                                     filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
                                 }
+                                if (invShowOnlyLow) {
+                                    filteredItems = filteredItems.filter(item => {
+                                        const min = Number(item?.min);
+                                        if (!Number.isFinite(min) || min <= 0) return false;
+                                        const c = Number(inventory[item.id] || 0);
+                                        return c > 0 && c <= min;
+                                    });
+                                }
                                 // Hide the whole category card when a filter is active and nothing matches.
-                                if ((searchLower || invShowOnlyCounted) && filteredItems.length === 0) return null;
+                                if ((searchLower || invShowOnlyCounted || invShowOnlyLow) && filteredItems.length === 0) return null;
 
                                 const catKey = "cat-" + catIdx;
                                 const isCollapsed = collapsedCats[catKey] && !searchLower;
@@ -6986,6 +7097,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         ? category.items.filter(item => itemMatchesSearchAi(item, searchLower))
                                                         : category.items;
                                                     if (invShowOnlyCounted) filteredItems = filteredItems.filter(item => (inventory[item.id] || 0) > 0);
+                                                    if (invShowOnlyLow) {
+                                                        filteredItems = filteredItems.filter(item => {
+                                                            const min = Number(item?.min);
+                                                            if (!Number.isFinite(min) || min <= 0) return false;
+                                                            const c = Number(inventory[item.id] || 0);
+                                                            return c > 0 && c <= min;
+                                                        });
+                                                    }
                                                     if (filteredItems.length === 0) return null;
                                                     const countedInCat = category.items.filter(i => (inventory[i.id] || 0) > 0).length;
                                                     return (
