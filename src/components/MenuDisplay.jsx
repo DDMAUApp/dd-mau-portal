@@ -28,7 +28,7 @@
 //   • spotlight — one big featured category + others compact
 //                 (good for "today's specials" feel)
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useEffect, useMemo, useRef, useState } from 'react';
 import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
@@ -38,6 +38,140 @@ import {
     subscribeTvConfig, MODES, resolveActiveDaypart,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
 } from '../data/tvConfigs';
+
+// ─── Offline failsafe ──────────────────────────────────────────────
+// Restaurants have flaky Wi-Fi. A blank TV during dinner rush is
+// worse than a stale one. Everything below this comment block keeps
+// the menu visible when the Pi loses its Firestore connection.
+//
+// What we cache, when, and where:
+//   • tvConfig (layout, dayparts, image URLs) — on every successful
+//     onSnapshot. Keyed by tvId so multiple TVs on one Pi can't step
+//     on each other.
+//   • menu overrides (admin price/desc/photo edits + custom items)
+//     — on every successful snapshot. Stored as serialized Map.
+//   • 86 list — on every successful snapshot. Stored as serialized Set.
+//
+// What we DON'T cache:
+//   • Firebase Storage image URLs themselves — the browser HTTP cache
+//     handles that. Images that loaded successfully once stay in the
+//     Pi's Chromium disk cache. New images uploaded during a Wi-Fi
+//     outage won't appear (we don't have them yet), but the LAST
+//     working menu image keeps rendering.
+//
+// How render-from-cache works:
+//   • useState initializers read localStorage synchronously on first
+//     render. If we have a cached config, the TV paints the last
+//     working menu IMMEDIATELY — before Firestore even tries to
+//     connect. Bootstrapping a rebooted-but-offline Pi works.
+//
+// Boundaries / failure modes still on the table:
+//   • Cold boot with NO previous successful connection + Wi-Fi down
+//     → there's nothing to render. We show a friendly "Reconnecting"
+//     splash with the DD Mau logo, not white. SW caching the app
+//     shell would help here, future work.
+//   • Browser localStorage disabled (quota, private mode) → cache
+//     reads/writes silently fail; behavior degrades to pre-fix.
+
+const CACHE_PREFIX = 'ddmau:tv_cache:';
+
+function loadJSON(key) {
+    try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+}
+
+function saveJSON(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); }
+    catch { /* quota or disabled — ignore */ }
+}
+
+function loadCachedTvConfig(tvId) {
+    return loadJSON(CACHE_PREFIX + 'config:' + tvId);
+}
+function saveCachedTvConfig(tvId, cfg) {
+    if (!cfg) return;
+    // Firestore Timestamps survive JSON as {seconds, nanoseconds};
+    // we never call toMillis() on them in this file's render path,
+    // so a round-trip through JSON is safe.
+    saveJSON(CACHE_PREFIX + 'config:' + tvId, cfg);
+}
+
+function loadCachedOverrides(tvId) {
+    const arr = loadJSON(CACHE_PREFIX + 'overrides:' + tvId);
+    return new Map(Array.isArray(arr) ? arr : []);
+}
+function saveCachedOverrides(tvId, map) {
+    if (!(map instanceof Map)) return;
+    saveJSON(CACHE_PREFIX + 'overrides:' + tvId, Array.from(map.entries()));
+}
+
+function loadCachedSixed(tvId) {
+    const arr = loadJSON(CACHE_PREFIX + '86:' + tvId);
+    return new Set(Array.isArray(arr) ? arr : []);
+}
+function saveCachedSixed(tvId, set) {
+    if (!(set instanceof Set)) return;
+    saveJSON(CACHE_PREFIX + '86:' + tvId, Array.from(set));
+}
+
+// ─── Error boundary ──────────────────────────────────────────────
+// Catches any render error in the menu tree and falls back to the
+// "we'll be right back" splash instead of letting Chromium show the
+// raw error overlay (or worse, a blank white viewport). Logs the
+// error to console for the next time admin VNCs into the Pi to
+// debug. componentDidCatch only fires for synchronous render errors;
+// async errors (failed image loads, etc.) don't trigger it, which
+// is fine — those don't blank the screen anyway.
+class TvErrorBoundary extends Component {
+    constructor(props) {
+        super(props);
+        this.state = { hasError: false, error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { hasError: true, error };
+    }
+    componentDidCatch(error, info) {
+        console.error('MenuDisplay render crashed:', error, info);
+    }
+    render() {
+        if (this.state.hasError) return <ReconnectingSplash subtitle="Display reloading" />;
+        return this.props.children;
+    }
+}
+
+// ─── Reconnecting splash ─────────────────────────────────────────
+// Full-screen brand-colored placeholder for the first-paint-no-cache
+// case (and the error boundary fallback). Never shows a plain white
+// viewport to a customer standing at the counter.
+function ReconnectingSplash({ subtitle = 'Connecting…' }) {
+    return (
+        <div className="fixed inset-0 bg-dd-green text-white flex flex-col items-center justify-center">
+            <div className="text-7xl font-black tracking-tight leading-none">DD MAU</div>
+            <div className="text-2xl font-bold opacity-80 mt-3">{subtitle}</div>
+            <div className="text-base opacity-60 mt-8 animate-pulse">●  ●  ●</div>
+        </div>
+    );
+}
+
+// ─── Offline indicator ───────────────────────────────────────────
+// Small corner badge shown when we haven't received a Firestore
+// snapshot in a while. Auto-hides when the next tick arrives. Sits
+// in the corner so it's visible to staff (who know what it means)
+// but doesn't dominate the customer's view of the menu.
+function OfflineBadge({ minutesAgo }) {
+    return (
+        <div
+            className="fixed bottom-3 right-3 z-40 bg-red-600 text-white px-3 py-1.5 rounded-full text-xs font-bold shadow-lg flex items-center gap-1.5 pointer-events-none"
+            style={{ opacity: 0.92 }}
+        >
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            Offline · {minutesAgo < 1 ? 'just now' : `${minutesAgo} min`}
+            <span className="opacity-70">· cached</span>
+        </div>
+    );
+}
 
 const LOC_LABEL = {
     webster: 'Webster',
@@ -55,17 +189,33 @@ function normalizeName(s) {
         .trim();
 }
 
-export default function MenuDisplay({ tvId = 'webster' }) {
-    const [tvConfig, setTvConfig] = useState(null);
-    const [overrides, setOverrides] = useState(() => new Map());
-    const [sixed, setSixed] = useState(() => new Set());
+function MenuDisplayInner({ tvId = 'webster' }) {
+    // Initial state reads from localStorage SYNCHRONOUSLY on first
+    // render. If the Pi previously cached a working config, the TV
+    // paints the last good menu before Firestore even attempts a
+    // connection — so a Wi-Fi-down reboot doesn't blank the screen.
+    const [tvConfig, setTvConfig] = useState(() => loadCachedTvConfig(tvId));
+    const [overrides, setOverrides] = useState(() => loadCachedOverrides(tvId));
+    const [sixed, setSixed] = useState(() => loadCachedSixed(tvId));
     const [sixedUpdatedAt, setSixedUpdatedAt] = useState(null);
     const [now, setNow] = useState(() => new Date());
 
+    // Last time ANY Firestore snapshot fired successfully. Used to
+    // decide whether we're offline (no ticks in >60s) and how stale
+    // the cached data is. Updated in every snapshot callback below.
+    const [lastSnapshotAt, setLastSnapshotAt] = useState(() => Date.now());
+
     // Subscribe to the TV's config doc. Falls back to defaults for
     // the reserved 'webster'/'maryland' ids when no doc exists.
+    // Every successful snapshot writes through to localStorage so a
+    // subsequent reboot can render the last known config without
+    // the network.
     useEffect(() => {
-        const unsub = subscribeTvConfig(tvId, (cfg) => setTvConfig(cfg));
+        const unsub = subscribeTvConfig(tvId, (cfg) => {
+            setTvConfig(cfg);
+            saveCachedTvConfig(tvId, cfg);
+            setLastSnapshotAt(Date.now());
+        });
         return unsub;
     }, [tvId]);
 
@@ -99,23 +249,55 @@ export default function MenuDisplay({ tvId = 'webster' }) {
 
     // Subscribe to admin menu overrides (price/desc/photo edits +
     // custom items). Pure overlay, no Firestore reads in render.
+    // Cached locally so the menu still reflects the last known
+    // price/86/custom-item state during a Wi-Fi outage.
     useEffect(() => {
-        const unsub = subscribeMenuOverrides(setOverrides);
+        const unsub = subscribeMenuOverrides((next) => {
+            setOverrides(next);
+            saveCachedOverrides(tvId, next);
+            setLastSnapshotAt(Date.now());
+        });
         return unsub;
-    }, []);
+    }, [tvId]);
 
-    // Subscribe to the location's 86 list.
+    // Subscribe to the location's 86 list. Cached per-tvId so the
+    // SOLD-OUT overlays survive a reboot — customers shouldn't see
+    // a "this item is available" message for something the kitchen
+    // already 86'd, just because the Pi rebooted offline.
     useEffect(() => {
         const ref = doc(db, 'ops', `86_${location}`);
         const unsub = onSnapshot(ref, (snap) => {
             const data = snap.exists() ? snap.data() : null;
             const items = Array.isArray(data?.items) ? data.items : [];
             const outOfStock = items.filter(i => i?.status === 'OUT_OF_STOCK' && i?.name);
-            setSixed(new Set(outOfStock.map(i => normalizeName(i.name))));
+            const nextSet = new Set(outOfStock.map(i => normalizeName(i.name)));
+            setSixed(nextSet);
+            saveCachedSixed(tvId, nextSet);
             setSixedUpdatedAt(new Date());
+            setLastSnapshotAt(Date.now());
         }, (err) => console.warn('86 listener failed:', err));
         return unsub;
-    }, [location]);
+    }, [location, tvId]);
+
+    // Online/offline detection. Combines navigator.onLine (cheap,
+    // reactive to OS-level changes) with a "haven't seen Firestore
+    // in >60s" check (catches the case where Wi-Fi reports online
+    // but the connection can't actually reach the Firestore
+    // servers). Either signal flips the offline badge on.
+    const [navOnline, setNavOnline] = useState(() => typeof navigator !== 'undefined' ? navigator.onLine !== false : true);
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        function on()  { setNavOnline(true); }
+        function off() { setNavOnline(false); }
+        window.addEventListener('online', on);
+        window.addEventListener('offline', off);
+        return () => {
+            window.removeEventListener('online', on);
+            window.removeEventListener('offline', off);
+        };
+    }, []);
+    const minutesSinceSnap = Math.max(0, Math.round((now.getTime() - lastSnapshotAt) / 60000));
+    const showOfflineBadge = !navOnline || minutesSinceSnap >= 2;
 
     // Live clock — also a "feed alive" cue. Frozen clock = reboot.
     useEffect(() => {
@@ -219,6 +401,7 @@ export default function MenuDisplay({ tvId = 'webster' }) {
                     daypartLabel={activeDaypart?.label || null}
                 />
                 <PromoStrip promoStrip={tvConfig?.promoStrip} />
+                {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceSnap} />}
             </>
         );
     }
@@ -239,6 +422,7 @@ export default function MenuDisplay({ tvId = 'webster' }) {
                     label={tvConfig?.label || LOC_LABEL[location] || location}
                 />
                 <PromoStrip promoStrip={tvConfig?.promoStrip} />
+                {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceSnap} />}
             </>
         );
     }
@@ -257,7 +441,20 @@ export default function MenuDisplay({ tvId = 'webster' }) {
                 {footerNode}
             </div>
             <PromoStrip promoStrip={tvConfig?.promoStrip} />
+            {showOfflineBadge && <OfflineBadge minutesAgo={minutesSinceSnap} />}
         </>
+    );
+}
+
+// Default export wraps the menu in an error boundary so any render
+// crash falls back to the brand-colored "we'll be right back" splash
+// instead of a blank white viewport. Customers should never see a
+// raw error in a restaurant.
+export default function MenuDisplay(props) {
+    return (
+        <TvErrorBoundary>
+            <MenuDisplayInner {...props} />
+        </TvErrorBoundary>
     );
 }
 
