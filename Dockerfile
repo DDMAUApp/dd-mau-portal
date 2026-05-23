@@ -25,8 +25,14 @@ WORKDIR /app
 
 # Install dependencies FIRST (separate from copying source) so Docker's
 # layer cache reuses the npm install layer on subsequent code changes.
+#
+# Note: we DON'T pass --omit=dev. firebase-admin is in devDependencies
+# in this repo (it's only used by admin scripts + Firebase Functions,
+# not by the Vite frontend), and the sync-toast-86-attribution.mjs
+# script imports it. Installing devDeps in the cron container is fine —
+# the image is throwaway and we don't ship it anywhere.
 COPY package.json package-lock.json* ./
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm install --no-audit --no-fund
 
 # Copy only what the script needs. Keeps the image small and avoids
 # shipping the full Vite frontend, Firebase Functions, etc.
