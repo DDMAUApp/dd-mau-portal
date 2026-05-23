@@ -16,7 +16,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
 import { collection, collectionGroup, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { chatDisplayName, ChatAvatar } from './ChatCenter';
+import { chatDisplayName, ChatAvatar } from './ChatShared';
 import { expandQueryTerms, buildHaystack, haystackMatches } from '../data/chatSearch';
 
 export default function ChatSearchPanel({

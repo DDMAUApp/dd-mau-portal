@@ -28,7 +28,7 @@ import {
     Timestamp,
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { ChatAvatar, chatDisplayName } from './ChatCenter';
+import { ChatAvatar, chatDisplayName } from './ChatShared';
 import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage } from '../data/chat';
 import { offShiftMembers } from '../data/offShift';
 import { INVENTORY_CATEGORIES } from '../data/inventory';

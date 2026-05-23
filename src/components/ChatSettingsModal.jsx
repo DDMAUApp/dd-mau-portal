@@ -22,7 +22,7 @@ import { canEditChat, SEEN_VISIBILITY_OPTIONS, getSeenByVisibility } from '../da
 import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
-import { ChatAvatar, chatDisplayName } from './ChatCenter';
+import { ChatAvatar, chatDisplayName } from './ChatShared';
 
 export default function ChatSettingsModal({
     chat, language, staffName, staffList, isAdmin, viewer, onClose, onDeleted,

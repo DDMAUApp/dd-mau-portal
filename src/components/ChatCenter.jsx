@@ -33,6 +33,7 @@ import {
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
+import { ChatAvatar, chatDisplayName } from './ChatShared';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 
@@ -735,55 +736,15 @@ function ChatListItemInner({ chat, viewerName, active, onClick, onLongPress, isE
 }
 const ChatListItem = memo(ChatListItemInner);
 
-// Avatar — channel emoji, group emoji, or DM initials. Stays a circle
-// at every size; falls back to a sage-tinted background when no emoji.
-export function ChatAvatar({ chat, viewerName, size = 40 }) {
-    if (!chat) return null;
-    const px = `${size}px`;
-    const fontSize = `${Math.round(size * 0.46)}px`;
-    if (chat.type === 'channel' || (chat.type === 'group' && chat.emoji)) {
-        return (
-            <span
-                className="inline-flex items-center justify-center rounded-full bg-dd-sage-50 border border-dd-line shrink-0"
-                style={{ width: px, height: px, fontSize }}
-            >
-                {chat.emoji || '👥'}
-            </span>
-        );
-    }
-    if (chat.type === 'group') {
-        return (
-            <span
-                className="inline-flex items-center justify-center rounded-full bg-dd-charcoal text-white font-black shrink-0"
-                style={{ width: px, height: px, fontSize: `${Math.round(size * 0.38)}px` }}
-            >
-                {((chat.name || '').slice(0, 2) || '?').toUpperCase()}
-            </span>
-        );
-    }
-    // DM — initials of the OTHER person.
-    const other = (chat.members || []).find(m => m !== viewerName) || '?';
-    const initials = other.split(' ').filter(Boolean).map(p => p[0]).slice(0, 2).join('').toUpperCase();
-    return (
-        <span
-            className="inline-flex items-center justify-center rounded-full bg-dd-green text-white font-black shrink-0"
-            style={{ width: px, height: px, fontSize: `${Math.round(size * 0.38)}px` }}
-        >
-            {initials || '?'}
-        </span>
-    );
-}
-
-// Display name for a chat from the viewer's perspective.
-// DM → the OTHER person. Channel/group → their stored name.
-export function chatDisplayName(chat, viewerName) {
-    if (!chat) return '';
-    if (chat.type === 'dm') {
-        const other = (chat.members || []).find(m => m !== viewerName);
-        return other || '(empty)';
-    }
-    return chat.name || '(unnamed)';
-}
+// ChatAvatar + chatDisplayName moved to ./ChatShared.jsx (2026-05-22)
+// to break a circular import that crashed Safari with a TDZ on a
+// minified binding when the user clicked into a chat. See ChatShared
+// header comment for the full story. Importing here for local use,
+// re-exporting so any straggler `import { ChatAvatar } from
+// './ChatCenter'` keeps working. The cycle is broken because the
+// child modules (ChatThread, ChatSearchPanel, ChatSettingsModal)
+// now import directly from ChatShared, not from ChatCenter.
+export { ChatAvatar, chatDisplayName };
 
 function subtitleFor(chat, isEs) {
     if (!chat) return '';
