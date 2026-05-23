@@ -39,6 +39,11 @@ import { subscribeTvConfigs, subscribeTvHeartbeats, MODES } from '../data/tvConf
 // below the dashboard for v1 so create + edit still work today.
 const TvConfigsEditor = lazy(() =>
     import('./TvConfigsEditor').then(m => ({ default: m.default })));
+// Pair Device modal — opens when admin taps the "Pair device"
+// button. Lazy because most dashboard visits never open it; saves
+// the chunk cost on every Menu Screens load.
+const PairDeviceModal = lazy(() =>
+    import('./PairDeviceModal').then(m => ({ default: m.default })));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -110,6 +115,12 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     // narrows to that store. Defaults to the admin's current store
     // so opening the page lands on the most-relevant set.
     const [locFilter, setLocFilter] = useState(() => storeLocation || 'all');
+
+    // Pair Device modal visibility. The modal does its own code
+    // generation + Firestore writes — we just toggle it open here
+    // and pass the live configs + heartbeats so it can show a
+    // current "pick a TV" list without re-subscribing.
+    const [showPairModal, setShowPairModal] = useState(false);
 
     // Pull the always-present "default URL" rows (webster / maryland
     // each work without a config doc) into the dashboard so the card
@@ -252,9 +263,12 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     </button>
                     <button
                         type="button"
-                        disabled
-                        title={tx('Coming soon — pair a Raspberry Pi by code instead of pasting a URL.', 'Próximamente — vincular Pi por código.')}
-                        className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text-2 opacity-60 cursor-not-allowed">
+                        onClick={() => setShowPairModal(true)}
+                        title={tx(
+                            'Generate a 6-digit code, type it on the Pi at /?pair=1, and the screen pairs itself.',
+                            'Genera un código de 6 dígitos, escríbelo en el Pi en /?pair=1, y la pantalla se vincula sola.',
+                        )}
+                        className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text hover:bg-dd-bg active:scale-95 transition">
                         🔗 {tx('Pair device', 'Vincular')}
                     </button>
                     <button
@@ -351,6 +365,23 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     <TvConfigsEditor language={language} byName={staffName} />
                 </Suspense>
             </div>
+
+            {/* Pair Device modal — lazy-loaded. Renders only when
+                showPairModal is true so the chunk doesn't enter the
+                graph for the common dashboard-view case. The modal
+                handles its own Firestore writes; we just pass the
+                live configs + heartbeats so it can render the
+                "pick a TV" list without re-subscribing. */}
+            {showPairModal && (
+                <Suspense fallback={null}>
+                    <PairDeviceModal
+                        language={language}
+                        staffName={staffName}
+                        configs={configs}
+                        heartbeats={heartbeats}
+                        onClose={() => setShowPairModal(false)} />
+                </Suspense>
+            )}
         </section>
     );
 }

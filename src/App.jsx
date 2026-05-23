@@ -80,6 +80,10 @@ const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
 const RequiredTaskFlow = lazy(() => import('./components/RequiredTaskFlow'));
 const MenuDisplay = lazy(() => import('./components/MenuDisplay'));
+// Pi-side pairing screen — full-screen 6-digit code entry. Lazy
+// because only a TV that's deliberately hitting /?pair=1 ever needs
+// this chunk, and the rest of the app should never carry the cost.
+const PairDevicePage = lazy(() => import('./components/PairDevicePage'));
 // Wall-mount kitchen task display. Public URL (?display=walltasks&...)
 // bypasses the PIN, mirrors the ?tv= MenuDisplay pattern. Andrew 5/21:
 // "small monitor that i can hang up that we can put today task on".
@@ -392,6 +396,19 @@ function readTvMode() {
 // scoped to one (side, location) pair via URL so the wall is locked
 // to its assigned data. Garbage / partial params → null → fall
 // through to normal PIN flow.
+// ?pair=1 — Pi-side TV pairing entry. Bypasses the PIN (it's a
+// public-facing kiosk page like ?tv= and ?apply=). Surfaces the
+// 6-digit code entry form that completes the loop with the admin's
+// PairDeviceModal in Menu Screens. See src/data/devicePairing.js
+// for the full flow rationale.
+function readPairMode() {
+    if (typeof window === 'undefined') return false;
+    try {
+        const params = new URLSearchParams(window.location.search);
+        return params.get('pair') === '1' || params.get('pair') === 'true';
+    } catch { return false; }
+}
+
 function readTaskDisplayMode() {
     if (typeof window === 'undefined') return null;
     try {
@@ -485,6 +502,9 @@ export default function App() {
     // /?tv=<location>. Read once at mount; the kiosk browser is a
     // long-lived tab that never navigates away.
     const [tvMode] = useState(() => readTvMode());
+    // Pi-side pairing entry. Bypasses the PIN like ?tv= and ?apply=.
+    // Once paired, PairDevicePage navigates away to ?tv=<assignedId>.
+    const [pairMode] = useState(() => readPairMode());
     // Wall-mount kitchen task display mode — locked to one (side, location)
     // via URL. PIN bypassed, no nav chrome. Public read+write to the
     // wall_tasks doc (small list, low value). Same precedent as tvMode.
@@ -956,6 +976,17 @@ export default function App() {
         return (
             <Suspense fallback={<div className="fixed inset-0 bg-white" />}>
                 <MenuDisplay tvId={tvMode.tvId} />
+            </Suspense>
+        );
+    }
+
+    // TV pairing flow — Pi-side entry. ?pair=1 lands here, also PIN-
+    // free since the Pi is a public kiosk. Lazy chunk so the page
+    // doesn't enter the bundle graph for normal staff sessions.
+    if (pairMode) {
+        return (
+            <Suspense fallback={<div className="fixed inset-0 bg-dd-charcoal text-white flex items-center justify-center font-bold">Loading…</div>}>
+                <PairDevicePage />
             </Suspense>
         );
     }
