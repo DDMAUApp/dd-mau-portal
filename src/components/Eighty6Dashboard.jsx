@@ -183,6 +183,7 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         return () => unsubscribe();
     }, [storeLocation]);
 
+    // Compact relative format — used in the header "Updated X min ago".
     const formatTime = (ts) => {
         if (!ts) return "—";
         try {
@@ -192,6 +193,34 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
             if (diffMin < 1) return tx('just now', 'ahora');
             if (diffMin < 60) return tx(`${diffMin} min ago`, `hace ${diffMin} min`);
             return d.toLocaleTimeString(isEs ? 'es' : 'en', { hour: 'numeric', minute: '2-digit' });
+        } catch { return "—"; }
+    };
+
+    // Full "Today/Yesterday/MMM D at h:mma" format — used in the per-item
+    // attribution line. Andrew 2026-05-23: wants the date alongside the
+    // time on 86 cards so admins can tell at-a-glance whether an item
+    // went 86 today vs lingering from earlier in the week.
+    const formatDateTime = (ts) => {
+        if (!ts) return "—";
+        try {
+            const d = ts.toDate ? ts.toDate() : new Date(ts);
+            const now = new Date();
+            const isSameDay = (a, b) => a.toDateString() === b.toDateString();
+            const yesterday = new Date(now);
+            yesterday.setDate(yesterday.getDate() - 1);
+            const timeStr = d.toLocaleTimeString(isEs ? 'es' : 'en', {
+                hour: 'numeric', minute: '2-digit',
+            });
+            if (isSameDay(d, now)) {
+                return tx(`Today at ${timeStr}`, `Hoy a las ${timeStr}`);
+            }
+            if (isSameDay(d, yesterday)) {
+                return tx(`Yesterday at ${timeStr}`, `Ayer a las ${timeStr}`);
+            }
+            const dateStr = d.toLocaleDateString(isEs ? 'es' : 'en', {
+                month: 'short', day: 'numeric',
+            });
+            return tx(`${dateStr} at ${timeStr}`, `${dateStr} a las ${timeStr}`);
         } catch { return "—"; }
     };
 
@@ -273,7 +302,7 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                             tone="danger"
                             items={out}
                             attribution={attribution}
-                            formatTime={formatTime}
+                            formatTime={formatDateTime}
                             isEs={isEs}
                         />
                     )}
@@ -284,7 +313,7 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                             tone="warn"
                             items={low}
                             attribution={attribution}
-                            formatTime={formatTime}
+                            formatTime={formatDateTime}
                             isEs={isEs}
                         />
                     )}
