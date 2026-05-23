@@ -297,42 +297,40 @@ for (const r of RESTAURANTS) {
     console.log(`  • Currently 86'd: ${currentOutNames.size} item(s)`);
 
     // 2.5 — Sync items[] on /ops/86_<location> to match Toast's current
-    //       OOS state. This is the actual list the Eighty6Dashboard reads;
-    //       without this step Toast 86s never show up on the 86 board.
+    //       OOS state. This is what the Eighty6Dashboard reads. Andrew
+    //       2026-05-23: wants the bulk Toast list visible on the board.
     //
-    // Rules:
-    //   • Keep manual entries (source != 'toast') as-is. Staff strikes
-    //     made via chat 🚫 must NEVER be wiped by Toast sync — they're
-    //     authoritative on items Toast doesn't know about.
-    //   • Drop Toast-sourced entries whose name is no longer in Toast's
-    //     OOS set (item came back in stock in Toast).
-    //   • Add new Toast-sourced entries with source='toast', addedBy=
-    //     'Toast POS', addedAt=now. The Eighty6Dashboard reads these
-    //     fields to render "Marked by Toast POS · at 4:23pm". If/when
-    //     the attribution sidecar gets populated (step 6 below, on a
-    //     subsequent run that detects a transition), the dashboard's
-    //     renderAttribution() prefers attribution[itemName].outBy over
-    //     item.addedBy — so Toast POS gets replaced by real clocked-in
-    //     names.
+    // Each Toast-sourced item carries:
+    //   • source: 'toast'         — distinguishes from manual chat 86s
+    //   • addedBy: 'Toast POS'    — placeholder; the attribution map
+    //                               (written below in step 6 for items
+    //                               that TRANSITION) carries real
+    //                               clocked-in staff names. The dashboard
+    //                               prefers attribution[name].outBy when
+    //                               present, else falls back to addedBy.
+    //   • addedAt: <ISO>          — when this script first saw the item
+    //                               as OOS. Not when it actually went OOS
+    //                               in Toast (we'd need lastUpdated from
+    //                               the stock API for that, future work).
     //
-    // We do this BEFORE the first-run early-return so admins see the
-    // initial 86 list on day one, even before any transitions occur.
-    // Andrew + Claude 2026-05-23 — added after realizing the deleted
-    // syncToastMenuStatus Cloud Function was the ONLY thing writing
-    // items[] from Toast, and nothing replaced it.
+    // Manual entries (source != 'toast') are NEVER touched — staff chat
+    // 86s are authoritative on items Toast doesn't know about.
+    //
+    // Idempotent: this block re-adds the SAME items each tick if they're
+    // already in items[] (dedup by lowercased name). No notification
+    // storm: the realtime86 trigger diffs before vs after the write, and
+    // sees no change when the same items are present.
     const eightySixRef = db.collection('ops').doc(`86_${r.location}`);
     {
         const snap = await eightySixRef.get();
         const data = snap.exists ? (snap.data() || {}) : {};
         const existingItems = Array.isArray(data.items) ? data.items : [];
-        // Preserve manual entries; drop stale Toast entries.
         const kept = existingItems.filter(it => {
             if (it?.source === 'toast') {
                 return it?.name && currentOutNames.has(String(it.name));
             }
             return true;
         });
-        // Add new Toast entries (dedup by lowercased name).
         const presentNames = new Set(kept.map(i => String(i?.name || '').toLowerCase()));
         const nowIso = new Date().toISOString();
         for (const name of currentOutNames) {
@@ -352,7 +350,7 @@ for (const r of RESTAURANTS) {
             lastToastSyncAt: FieldValue.serverTimestamp(),
         }, { merge: true });
         const fromToast = kept.filter(i => i?.source === 'toast').length;
-        console.log(`  • Wrote items[]: ${kept.length} total (${fromToast} from Toast)`);
+        console.log(`  • Synced items[]: ${kept.length} total (${fromToast} from Toast)`);
     }
 
     // 3. Read the previous cursor to detect transitions.
