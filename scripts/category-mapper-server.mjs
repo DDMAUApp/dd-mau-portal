@@ -211,6 +211,28 @@ function renderPage(categories) {
   .toast.err { background: var(--red); }
   .toast.ok { background: var(--green); }
   .dirty-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); margin-right: 6px; vertical-align: middle; }
+  /* Quick-assign sticky bar — tap an item to flick it into the
+     selected category/subcat/location combo. */
+  .quick-assign { position: sticky; top: 64px; z-index: 25; background: linear-gradient(180deg, #fffceb, #fef9e0); border: 1px solid #facc15; border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.05); }
+  .quick-assign .label { font-size: 13px; font-weight: 800; color: #854d0e; display: flex; align-items: center; gap: 6px; }
+  .quick-assign .label .pin { font-size: 16px; }
+  .quick-assign .tgt { display: flex; flex-direction: column; gap: 2px; }
+  .quick-assign .tgt span { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #854d0e; }
+  .quick-assign select { font: inherit; font-size: 12px; padding: 5px 8px; border: 1px solid #facc15; border-radius: 5px; background: white; min-width: 130px; font-weight: 700; }
+  .quick-assign select.set { background: #fffbeb; }
+  .quick-assign select.cat.set { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+  .quick-assign select.subcat.set { background: var(--blue-bg); color: var(--blue); border-color: var(--blue); }
+  .quick-assign select.loc.set { background: var(--purple-bg); color: var(--purple); border-color: var(--purple); }
+  .quick-assign .status { font-size: 12px; color: #854d0e; margin-left: auto; font-weight: 700; }
+  .quick-assign button.clear { font-size: 11px; padding: 4px 10px; background: white; border: 1px solid #facc15; color: #854d0e; border-radius: 4px; cursor: pointer; font-weight: 700; }
+  .quick-assign button.clear:hover { background: #fef9c3; }
+  .row.assignable { cursor: pointer; }
+  .row.assignable:hover { background: #fef9c3; outline: 2px solid #facc15; outline-offset: -2px; border-radius: 4px; }
+  .row.flash-assigned { animation: flashAssign 700ms ease-out; }
+  @keyframes flashAssign {
+    0%   { background: var(--green-bg); outline: 2px solid var(--green); outline-offset: -2px; }
+    100% { background: transparent; outline: 2px solid transparent; outline-offset: -2px; }
+  }
 </style>
 </head>
 <body>
@@ -231,6 +253,23 @@ function renderPage(categories) {
     <h3>📍 Storage locations <span style="color:var(--fg2);font-weight:400;text-transform:none;letter-spacing:0">— click an item's location pill to assign · click a location pill below to filter</span></h3>
     <div id="loc-pills" class="pills"></div>
   </div>
+  <div class="quick-assign" id="quick-assign">
+    <div class="label"><span class="pin">🎯</span> Quick Assign</div>
+    <div class="tgt">
+      <span>Category</span>
+      <select id="qa-cat" class="cat" onchange="setQATarget('cat', this.value)"></select>
+    </div>
+    <div class="tgt">
+      <span>Subcategory</span>
+      <select id="qa-subcat" class="subcat" onchange="setQATarget('subcat', this.value)"></select>
+    </div>
+    <div class="tgt">
+      <span>Location</span>
+      <select id="qa-loc" class="loc" onchange="setQATarget('loc', this.value)"></select>
+    </div>
+    <button class="clear" onclick="clearQATarget()">Clear</button>
+    <div class="status" id="qa-status">Set a target to enable click-to-assign</div>
+  </div>
   <div class="filter-bar">
     <input id="q" type="search" placeholder="🔍 Filter items by name, vendor, category, subcat..." />
     <button class="add-cat-btn" onclick="addCategory()">➕ New category</button>
@@ -248,6 +287,10 @@ function deepClone(x) { return JSON.parse(JSON.stringify(x)); }
 let state = loadState();
 let activeLocFilter = null; // null = all
 let dirty = false;
+// Quick-assign target. null = "don't change this field" — partial
+// targets are fine (set just location and bulk-assign locations
+// without changing category/subcat).
+let qaTarget = { cat: null, subcat: null, loc: null };
 
 function loadState() {
   try {
@@ -352,18 +395,25 @@ function renderRow(catIdx, itemIdx) {
     it.nameEs && '<span style="color:#9c9c9c">es: ' + escapeHtml(it.nameEs) + '</span>',
   ].filter(Boolean).join('  ·  ');
   const hay = (it.name + ' ' + (it.nameEs||'') + ' ' + cat.name + ' ' + (it.subcat||'') + ' ' + (it.location||'') + ' ' + (it.preferredVendor||'')).toLowerCase();
-  return \`<div class="row" data-cat="\${catIdx}" data-item="\${itemIdx}" data-loc="\${escapeHtml(it.location||'')}" data-hay="\${escapeHtml(hay)}">
+  const armed = qaIsArmed();
+  // When armed, the whole row is a click-to-assign target. The
+  // dropdowns still work but we add stopPropagation so opening a
+  // <select> doesn't double-fire as a row click.
+  const rowAttrs = armed
+    ? \`class="row assignable" onclick="qaApplyToItem(\${catIdx},\${itemIdx})"\`
+    : 'class="row"';
+  return \`<div \${rowAttrs} data-cat="\${catIdx}" data-item="\${itemIdx}" data-loc="\${escapeHtml(it.location||'')}" data-hay="\${escapeHtml(hay)}">
     <div>
       <div class="name">\${escapeHtml(it.name)}</div>
       <div class="meta">\${meta}</div>
     </div>
-    <select class="cat" onchange="changeCategory(\${catIdx},\${itemIdx},this.value)">
+    <select class="cat" onclick="event.stopPropagation()" onchange="changeCategory(\${catIdx},\${itemIdx},this.value)">
       \${catOpts}
     </select>
-    <select class="subcat" onchange="changeSubcat(\${catIdx},\${itemIdx},this.value,this)">
+    <select class="subcat" onclick="event.stopPropagation()" onchange="changeSubcat(\${catIdx},\${itemIdx},this.value,this)">
       \${subOpts}
     </select>
-    <select class="loc" data-empty="\${it.location ? '0' : '1'}" onchange="changeLocation(\${catIdx},\${itemIdx},this.value,this)">
+    <select class="loc" data-empty="\${it.location ? '0' : '1'}" onclick="event.stopPropagation()" onchange="changeLocation(\${catIdx},\${itemIdx},this.value,this)">
       \${locOpts}
     </select>
   </div>\`;
@@ -407,8 +457,116 @@ function render() {
   const root = document.getElementById('root');
   root.innerHTML = state.categories.map((_, i) => renderCategory(i)).join('');
   renderLocPills();
+  renderQABar();
   updateStats();
   applyFilters();
+}
+
+// ── Quick-assign ────────────────────────────────────────────────
+function qaIsArmed() {
+  return qaTarget.cat !== null || qaTarget.subcat !== null || qaTarget.loc !== null;
+}
+function renderQABar() {
+  // Build cat options
+  const catEl = document.getElementById('qa-cat');
+  const subEl = document.getElementById('qa-subcat');
+  const locEl = document.getElementById('qa-loc');
+
+  catEl.innerHTML = '<option value="">— don\\'t change —</option>' +
+    state.categories.map(c => \`<option value="\${escapeHtml(c.name)}"\${qaTarget.cat === c.name ? ' selected' : ''}>\${escapeHtml(c.name)}</option>\`).join('');
+
+  // Subcat options — if a target category is set, show only its
+  // subcats. Otherwise show ALL subcats from all categories (dedup).
+  let subcats;
+  if (qaTarget.cat) {
+    const cat = state.categories.find(c => c.name === qaTarget.cat);
+    subcats = cat ? [...new Set(cat.items.map(it => it.subcat).filter(Boolean))].sort() : [];
+  } else {
+    const all = new Set();
+    for (const c of state.categories) for (const it of c.items) if (it.subcat) all.add(it.subcat);
+    subcats = [...all].sort();
+  }
+  subEl.innerHTML = '<option value="">— don\\'t change —</option>' +
+    subcats.map(s => \`<option value="\${escapeHtml(s)}"\${qaTarget.subcat === s ? ' selected' : ''}>\${escapeHtml(s)}</option>\`).join('') +
+    '<option value="__new__">+ new subcat…</option>';
+
+  const locs = gatherLocations();
+  locEl.innerHTML = '<option value="">— don\\'t change —</option>' +
+    locs.map(l => \`<option value="\${escapeHtml(l)}"\${qaTarget.loc === l ? ' selected' : ''}>\${escapeHtml(l)}</option>\`).join('') +
+    '<option value="__new__">+ new location…</option>';
+
+  // Visual: highlight selects that have a target set
+  catEl.classList.toggle('set', qaTarget.cat !== null);
+  subEl.classList.toggle('set', qaTarget.subcat !== null);
+  locEl.classList.toggle('set', qaTarget.loc !== null);
+
+  // Status text
+  const parts = [];
+  if (qaTarget.cat) parts.push('→ ' + qaTarget.cat);
+  if (qaTarget.subcat) parts.push('▸ ' + qaTarget.subcat);
+  if (qaTarget.loc) parts.push('📍 ' + qaTarget.loc);
+  document.getElementById('qa-status').textContent = qaIsArmed()
+    ? '✓ ARMED — click any item to apply: ' + parts.join('  ')
+    : 'Set a target to enable click-to-assign';
+}
+function setQATarget(field, value) {
+  if (value === '__new__') {
+    const v = prompt(field === 'subcat' ? 'New subcategory name:' : 'New storage location name:');
+    if (!v || !v.trim()) { renderQABar(); return; }
+    if (field === 'loc' && !state.locations.includes(v.trim())) {
+      state.locations.push(v.trim());
+      saveState();
+    }
+    qaTarget[field] = v.trim();
+  } else if (value === '') {
+    qaTarget[field] = null;
+  } else {
+    qaTarget[field] = value;
+  }
+  // Re-render so row click handlers get attached/detached based on armed state
+  render();
+}
+function clearQATarget() {
+  qaTarget = { cat: null, subcat: null, loc: null };
+  render();
+  toast('Cleared');
+}
+function qaApplyToItem(catIdx, itemIdx) {
+  if (!qaIsArmed()) return;
+  const item = state.categories[catIdx].items[itemIdx];
+  if (!item) return;
+  let moveToCatIdx = catIdx;
+  if (qaTarget.cat && qaTarget.cat !== state.categories[catIdx].name) {
+    // Move item to target category
+    const targetIdx = state.categories.findIndex(c => c.name === qaTarget.cat);
+    if (targetIdx >= 0) moveToCatIdx = targetIdx;
+  }
+  // Apply changes to the item
+  if (qaTarget.subcat !== null) item.subcat = qaTarget.subcat;
+  if (qaTarget.loc !== null) item.location = qaTarget.loc;
+  if (moveToCatIdx !== catIdx) {
+    state.categories[catIdx].items.splice(itemIdx, 1);
+    state.categories[moveToCatIdx].items.push(item);
+  }
+  saveState();
+  // We need the row's data-cat/data-item from BEFORE the re-render to flash it.
+  // But after move, the row is in a different spot; just flash by old position.
+  render();
+  // Find and flash the row in its new spot
+  setTimeout(() => {
+    // Search for the item's new position by reference (id-based)
+    let newCat = moveToCatIdx, newItem = -1;
+    const target = state.categories[moveToCatIdx].items;
+    for (let i = 0; i < target.length; i++) if (target[i] === item) { newItem = i; break; }
+    if (newItem >= 0) {
+      const sel = \`.row[data-cat="\${newCat}"][data-item="\${newItem}"]\`;
+      const el = document.querySelector(sel);
+      if (el) {
+        el.classList.add('flash-assigned');
+        setTimeout(() => el.classList.remove('flash-assigned'), 700);
+      }
+    }
+  }, 0);
 }
 
 function applyFilters() {
