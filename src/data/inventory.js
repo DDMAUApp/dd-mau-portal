@@ -26,6 +26,47 @@ export const INVENTORY_LOCATIONS = [
     'Expo',
 ];
 
+// Canonical vendor list — Andrew 2026-05-22. Every cart vendor
+// pill, every "Order By Vendor" print section, every vendor
+// dropdown should use this exact list. Anything outside it
+// (Olive Market, Wing Hing, Special Order, etc.) is normalized
+// to "Other" via normalizeVendor() below. Order is the order the
+// pills appear left-to-right.
+export const INVENTORY_VENDORS = [
+    'Wholesale',
+    'Costco',
+    'Restaurant Depot',
+    'US Foods',
+    'Sysco',
+    'Jays',
+    'Pan Asia',
+    'Other',
+];
+
+// Map any historical/messy vendor string onto the 8 canonical
+// vendors above. Case-insensitive matching against keywords —
+// "STL Wholesale" + "Wholesale" + anything containing "wholesale"
+// → "Wholesale". Multi-vendor strings like "Restaurant Depot/US
+// Foods" take the FIRST vendor's bucket. Unknown vendors fall to
+// "Other" so they're still pickable and groupable.
+export function normalizeVendor(raw) {
+    if (!raw) return '';
+    // If already canonical, return as-is.
+    if (INVENTORY_VENDORS.includes(raw)) return raw;
+    const s = String(raw).toLowerCase().trim();
+    if (!s) return '';
+    // Multi-vendor strings — take the first segment.
+    const first = s.split(/[\/,]/)[0].trim();
+    if (first.includes('wholesale')) return 'Wholesale';
+    if (first.includes('costco')) return 'Costco';
+    if (first.includes('restaurant depot') || first === 'rd') return 'Restaurant Depot';
+    if (first.includes('us foods') || first === 'usfoods') return 'US Foods';
+    if (first.includes('sysco')) return 'Sysco';
+    if (first === 'jays' || first === 'jay') return 'Jays';
+    if (first.includes('pan asia') || first.includes('pan-asia')) return 'Pan Asia';
+    return 'Other';
+}
+
 export const INVENTORY_CATEGORIES = [
     {
         id: 0,

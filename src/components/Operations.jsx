@@ -4,7 +4,7 @@ import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, col
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
-import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS } from '../data/inventory';
+import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
 const OrderMode = lazy(() => import('./OrderMode'));
@@ -3435,7 +3435,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const lookup = itemLookup.get(id);
                     if (!lookup) return;
                     const { item, categoryName } = lookup;
-                    const vendor = cartVendorOverride[id] || item.preferredVendor || item.vendor || '';
+                    // Effective vendor — override wins, else normalize the
+                    // item's preferredVendor onto the canonical 8-vendor list.
+                    const vendor = cartVendorOverride[id]
+                        || normalizeVendor(item.preferredVendor || item.vendor || '');
                     rows.push({
                         id,
                         name: language === "es" && item.nameEs ? item.nameEs : item.name,
@@ -3471,12 +3474,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (!groups.has(v)) groups.set(v, []);
                     groups.get(v).push(r);
                 }
-                // Sort vendors alphabetically with "Unassigned" last.
+                // Sort vendors by canonical-list position; anything not
+                // on the list ("Unassigned" string from above) goes last.
+                const canonicalOrder = INVENTORY_VENDORS.reduce((m, v, i) => { m[v] = i; return m; }, {});
                 const vendorOrder = [...groups.keys()].sort((a, b) => {
-                    const unsignA = a === 'Unassigned' || a === 'Sin asignar';
-                    const unsignB = b === 'Unassigned' || b === 'Sin asignar';
-                    if (unsignA && !unsignB) return 1;
-                    if (!unsignA && unsignB) return -1;
+                    const ai = canonicalOrder[a] ?? 999;
+                    const bi = canonicalOrder[b] ?? 999;
+                    if (ai !== bi) return ai - bi;
                     return a.localeCompare(b);
                 });
                 const dateLabel = new Date().toLocaleString();
@@ -5587,25 +5591,21 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 const vendorList = Array.from(vendorSet).sort();
                                 const vendorColor = (v) => v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
 
-                                // Broader list of vendors for the quick-assign bar —
-                                // includes every distinct vendor mentioned across the
-                                // cart items' preferredVendor (Costco, STL Wholesale,
-                                // Restaurant Depot, Jays, etc.), not just the ones
-                                // with live Sysco/US Foods price data. Sorted with
-                                // the priced vendors first so they're easy to find.
-                                // Andrew 2026-05-22.
-                                const allVendorsInCart = new Set(vendorList);
-                                rows.forEach(r => { if (r.preferredVendor) allVendorsInCart.add(r.preferredVendor); });
-                                const assignVendors = [
-                                    ...vendorList,
-                                    ...[...allVendorsInCart].filter(v => !vendorList.includes(v)).sort(),
-                                ];
+                                // Quick-assign pill bar uses the canonical 8-vendor
+                                // list from inventory.js. Order is fixed (Andrew's
+                                // spec 2026-05-22): Wholesale, Costco, Restaurant
+                                // Depot, US Foods, Sysco, Jays, Pan Asia, Other.
+                                // Items with messy historical vendor strings (Wing
+                                // Hing, Special Order, etc.) get normalized to
+                                // "Other" for grouping but their full name still
+                                // shows in the item meta line.
+                                const assignVendors = INVENTORY_VENDORS;
 
                                 // Effective vendor per row: override (manager picked
-                                // explicitly) wins over preferredVendor (the item's
-                                // default).
+                                // explicitly) wins; otherwise normalize the item's
+                                // preferredVendor onto the canonical list.
                                 const effectiveVendor = (r) =>
-                                    cartVendorOverride[r.id] || r.preferredVendor || '';
+                                    cartVendorOverride[r.id] || normalizeVendor(r.preferredVendor) || '';
 
                                 const assignRow = (id) => {
                                     if (!cartArmedVendor) return;
