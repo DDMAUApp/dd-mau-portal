@@ -5094,6 +5094,7 @@ ${dayBlocks}
 //     so the existing overflow-x-auto inside WeeklyGrid keeps
 //     working normally for desktop + horizontal-scroll mobile users.
 function GridFitWrapper({ enabled, children }) {
+    const outerRef = useRef(null);
     const innerRef = useRef(null);
     const [scale, setScale] = useState(1);
     const [scaledHeight, setScaledHeight] = useState(null);
@@ -5104,42 +5105,55 @@ function GridFitWrapper({ enabled, children }) {
             setScaledHeight(null);
             return;
         }
+        // Measure: outerRef.offsetWidth = available viewport space
+        // (stable, not affected by our scale transform).
+        // innerRef.scrollWidth = natural content width (also stable
+        // because we use width: max-content on the inner, so it
+        // doesn't grow with our CSS changes).
+        //
+        // Earlier version (2026-05-22 first attempt) observed the
+        // INNER ref via ResizeObserver + set the inner width as a
+        // percentage that included scale in the math. That created a
+        // feedback loop — each measurement caused the next observed
+        // size to be slightly different, and the calendar shrank
+        // progressively on every tick. Fixed by (a) using max-content
+        // so inner width is intrinsic and stable, (b) dropping the
+        // ResizeObserver entirely (window resize handles rotation;
+        // the inner content barely changes during a session).
         const compute = () => {
-            const el = innerRef.current;
-            if (!el) return;
-            const containerWidth = el.parentElement?.offsetWidth || window.innerWidth;
-            const naturalWidth = el.scrollWidth || 1;
-            const naturalHeight = el.scrollHeight || 0;
+            const outer = outerRef.current;
+            const inner = innerRef.current;
+            if (!outer || !inner) return;
+            const containerWidth = outer.offsetWidth || window.innerWidth;
+            const naturalWidth = inner.scrollWidth || 1;
+            const naturalHeight = inner.scrollHeight || 0;
             const s = Math.min(1, containerWidth / naturalWidth);
             setScale(s);
             setScaledHeight(naturalHeight * s);
         };
-        // Defer to next frame so children have laid out.
+        // First measurement after children lay out.
         const raf = requestAnimationFrame(compute);
+        // Second measurement a beat later in case fonts/images shift
+        // the natural width after first paint. ONE remeasure, not a
+        // loop.
+        const t = setTimeout(compute, 100);
         window.addEventListener('resize', compute);
-        // ResizeObserver catches shifts / staff list updates while
-        // overview is open (new staff added, new week loaded).
-        let ro;
-        if (typeof ResizeObserver !== 'undefined' && innerRef.current) {
-            ro = new ResizeObserver(compute);
-            ro.observe(innerRef.current);
-        }
         return () => {
             cancelAnimationFrame(raf);
+            clearTimeout(t);
             window.removeEventListener('resize', compute);
-            if (ro) ro.disconnect();
         };
     }, [enabled]);
 
     if (!enabled) return <>{children}</>;
     return (
-        <div style={{ overflow: 'hidden', height: scaledHeight ?? 'auto' }}>
+        <div ref={outerRef} style={{ overflow: 'hidden', width: '100%', height: scaledHeight ?? 'auto' }}>
             <div
                 ref={innerRef}
                 style={{
                     transform: `scale(${scale})`,
                     transformOrigin: 'top left',
-                    width: scale > 0 ? `${100 / scale}%` : '100%',
+                    width: 'max-content',
                     pointerEvents: 'none',
                 }}
             >
