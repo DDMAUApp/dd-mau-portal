@@ -68,6 +68,10 @@ const MenuScreensPage = lazy(() => import('./components/MenuScreensPage').then(m
 // TVs, backups, recent audit). Surfaces "is this broken or is it
 // me?" data in one place so admins stop hunting across 4 tabs.
 const AdminHealthPage = lazy(() => import('./components/AdminHealthPage').then(m => ({ default: memo(m.default) })));
+// Label Printing Center — admin-only label-printer dashboard. Test
+// prints, per-printer status, and a live feed of recent print jobs
+// (success / fail / error message) sourced from /print_jobs.
+const LabelPrintingCenter = lazy(() => import('./components/LabelPrintingCenter').then(m => ({ default: memo(m.default) })));
 // Per-page error boundary. Wraps the high-risk routes (Schedule,
 // Operations, ChatCenter, AdminPanel) so a sync render crash in
 // one tab leaves the rest of the app usable + offers Try Again /
@@ -794,7 +798,7 @@ export default function App() {
     // don't have permission for.
     useEffect(() => {
         if (!staffName) return;
-        if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health") && !staffIsAdmin) {
+        if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health" || activeTab === "labels") && !staffIsAdmin) {
             setActiveTab("home");
         }
         // tardies + handoff are manager-or-admin only — same defensive bounce.
@@ -1147,6 +1151,7 @@ export default function App() {
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'menuscreens' && staffIsAdmin) return <PageErrorBoundary tabName="Menu Screens" language={language}><MenuScreensPage language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'health' && staffIsAdmin) return <PageErrorBoundary tabName="System Health" language={language}><AdminHealthPage language={language} staffName={staffName} /></PageErrorBoundary>;
+            if (activeTab === 'labels' && staffIsAdmin) return <PageErrorBoundary tabName="Label Printing" language={language}><LabelPrintingCenter language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'admin' && staffIsAdmin) return <PageErrorBoundary tabName="Admin" language={language}><AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} /></PageErrorBoundary>;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).

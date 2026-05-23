@@ -231,6 +231,7 @@ export default function MobileHome({
         ...(isAdmin   ? [{ tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas' }] : []),
         // System Health — admin status dashboard.
         ...(isAdmin   ? [{ tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado' }] : []),
+        ...(isAdmin   ? [{ tab: 'labels',      icon: '🏷', en: 'Label Printing',es: 'Etiquetas' }] : []),
         { tab: 'ai',         icon: '🤖', en: 'AI Assist',    es: 'Asistente AI' },
         { tab: 'maintenance',icon: '🔧', en: 'Maintenance',  es: 'Mantenimiento' },
         { tab: 'insurance',  icon: '📑', en: 'Insurance',    es: 'Seguro' },

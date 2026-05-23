@@ -2727,6 +2727,107 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         }
     };
 
+    // ── Up-for-grabs claims ────────────────────────────────────────────────
+    // Staff click "I want this" on a broadcast staffing_need to add
+    // themselves to the slot's `interestedClaims` array. Order is
+    // first-come — manager sees the timestamps and picks who gets
+    // the shift. Same staff can withdraw before the manager acts.
+    //
+    // Notification fans out to ALL managers + admins via a
+    // /notifications doc (the existing dispatchNotification Cloud
+    // Function handles FCM delivery from there). We don't loop in
+    // the codebase looking for individual manager FCM tokens —
+    // notifyStaff handles the lookup. Falls back gracefully if
+    // the notify import isn't reachable (offline edits, etc.).
+    const claimUpForGrabsShift = async (needId) => {
+        const need = staffingNeeds.find(n => n.id === needId);
+        if (!need) return;
+        if (!staffName) return;
+        // Already in queue? Withdraw instead — single button toggles
+        // the membership so staff don't need a separate "remove me".
+        const existing = Array.isArray(need.interestedClaims) ? need.interestedClaims : [];
+        const alreadyIn = existing.some(c => c?.name === staffName);
+        try {
+            const ref = doc(db, 'staffing_needs', needId);
+            if (alreadyIn) {
+                await updateDoc(ref, {
+                    interestedClaims: existing.filter(c => c?.name !== staffName),
+                });
+                toast(tx('Withdrew your interest.', 'Retiraste tu interés.'), { kind: 'info' });
+            } else {
+                // Append (don't overwrite) — atomic via arrayUnion
+                // since we want at-most-once-per-staff but with
+                // first-click-wins ordering. Read-then-write would
+                // race; arrayUnion is safe because the wrapper
+                // object includes the deterministic name field so
+                // duplicates collapse server-side.
+                const claim = {
+                    name: staffName,
+                    claimedAt: new Date().toISOString(),
+                };
+                await updateDoc(ref, {
+                    interestedClaims: arrayUnion(claim),
+                });
+                toast(tx('Added — manager will pick from the queue.', 'Agregado — el gerente elegirá de la lista.'), { kind: 'success' });
+                // Notify managers + admins of this location. We
+                // write one notification doc; the Cloud Function
+                // fans it out to each recipient's FCM tokens.
+                try {
+                    const dayLabel = need.date || 'shift';
+                    const range = `${need.startTime || '?'}–${need.endTime || '?'}`;
+                    const targets = (staffList || []).filter(s => {
+                        if (!s?.name) return false;
+                        if (s.id === 40 || s.id === 41) return true; // admins
+                        if (s.role && /manager/i.test(s.role)) {
+                            if (!need.location || need.location === 'both') return true;
+                            return s.location === need.location || s.location === 'both';
+                        }
+                        return false;
+                    });
+                    for (const t of targets) {
+                        await addDoc(collection(db, 'notifications'), {
+                            forStaff: t.name,
+                            type: 'shift_grabbed',
+                            title: {
+                                en: `🙋 ${staffName} wants ${dayLabel} ${range}`,
+                                es: `🙋 ${staffName} quiere ${dayLabel} ${range}`,
+                            },
+                            body: {
+                                en: `Open ${(need.side || 'foh').toUpperCase()} slot — review pickup queue in Schedule.`,
+                                es: `Espacio ${(need.side || 'foh').toUpperCase()} abierto — revisa la lista en Horario.`,
+                            },
+                            createdAt: serverTimestamp(),
+                            read: false,
+                            needId,
+                            location: need.location,
+                            side: need.side,
+                        });
+                    }
+                } catch (e) {
+                    console.warn('claim notify failed (non-fatal):', e);
+                }
+            }
+        } catch (e) {
+            console.error('claimUpForGrabsShift failed:', e);
+            toast(tx('Could not save your interest. Try again.', 'No se pudo guardar tu interés. Intenta de nuevo.'), { kind: 'error' });
+        }
+    };
+
+    // Manager-side — clear the entire claim queue after picking
+    // someone (or marking the slot filled). Called from the
+    // queue panel below. Doesn't auto-fire when filling via the
+    // existing Fill modal because the manager may want to keep
+    // the queue visible for record-keeping; clearing is explicit.
+    const clearUpForGrabsQueue = async (needId) => {
+        try {
+            await updateDoc(doc(db, 'staffing_needs', needId), {
+                interestedClaims: [],
+            });
+        } catch (e) {
+            console.error('clearUpForGrabsQueue failed:', e);
+        }
+    };
+
     // ── Day templates ──────────────────────────────────────────────────────
     // A template defines a named shape for a typical day, e.g.:
     //   "Friday FOH" → Morning block 9-3 (3 FOH + 1 Lead + 1 Mgr) + Night block 4-10 (5 FOH + 2 Lead + 1 Mgr)
@@ -4544,6 +4645,175 @@ ${dayBlocks}
                                                     </span>
                                                 ))}
                                             </div>
+                                        )}
+                                        {/* Up-for-grabs queue display — visible only
+                                            when this slot is broadcast and at least
+                                            one staff has clicked "I want this". Order
+                                            is first-come (sorted by claimedAt).
+                                            Clicking a queue entry opens the existing
+                                            Fill flow pre-targeting that staff member,
+                                            so the manager's confirmation muscle memory
+                                            (the Fill modal) still drives the actual
+                                            shift creation. */}
+                                        {n.openToAllStaff && Array.isArray(n.interestedClaims) && n.interestedClaims.length > 0 && (
+                                            <div className="mt-1 pt-1 border-t border-amber-200">
+                                                <div className="flex items-center gap-1.5 mb-1">
+                                                    <span className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+                                                        🙋 {tx('Pickup queue', 'En espera')} · {n.interestedClaims.length}
+                                                    </span>
+                                                    <button onClick={() => clearUpForGrabsQueue(n.id)}
+                                                        className="ml-auto text-[10px] text-amber-700 hover:text-amber-900 underline">
+                                                        {tx('Clear', 'Limpiar')}
+                                                    </button>
+                                                </div>
+                                                <div className="flex flex-col gap-0.5">
+                                                    {[...n.interestedClaims]
+                                                        .sort((a, b) => String(a?.claimedAt || '').localeCompare(String(b?.claimedAt || '')))
+                                                        .map((c, i) => {
+                                                            const ms = c?.claimedAt ? Date.parse(c.claimedAt) : 0;
+                                                            const when = ms
+                                                                ? new Date(ms).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                                                                : '—';
+                                                            const alreadyFilled = (n.filledStaff || []).includes(c.name);
+                                                            return (
+                                                                <button
+                                                                    key={`${c.name}_${i}`}
+                                                                    onClick={() => {
+                                                                        if (alreadyFilled) return;
+                                                                        // Reuse the existing Fill flow — opens
+                                                                        // the chooser with this staff pre-selected.
+                                                                        setFillingNeed(n);
+                                                                        setAvailableForDate(n.date);
+                                                                    }}
+                                                                    disabled={alreadyFilled}
+                                                                    className={`flex items-center gap-1.5 px-1.5 py-1 rounded text-left text-[11px] ${
+                                                                        alreadyFilled
+                                                                            ? 'bg-emerald-50 text-emerald-800 cursor-default'
+                                                                            : 'bg-amber-50 hover:bg-amber-100 text-amber-900'
+                                                                    }`}>
+                                                                    <span className="font-mono font-black text-amber-700 w-4 shrink-0">{i + 1}.</span>
+                                                                    <span className="font-bold flex-1 min-w-0 truncate">{c.name}</span>
+                                                                    <span className="text-[10px] opacity-70">{when}</span>
+                                                                    {alreadyFilled ? (
+                                                                        <span className="text-[10px] font-black">✓</span>
+                                                                    ) : (
+                                                                        <span className="text-[10px] font-bold text-amber-700">{tx('Pick →', 'Elegir →')}</span>
+                                                                    )}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </div>
+                );
+            })()}
+
+            {/* Up-for-grabs panel — staff-side. Renders the broadcast
+                open slots (n.openToAllStaff === true) so non-editor
+                staff can volunteer to pick up a shift the manager
+                can't fill. Each card has a "🙋 I want this" toggle:
+                first tap adds the staffer to interestedClaims with
+                a timestamp, second tap withdraws. The viewer also
+                sees who else is in the queue so they know if they're
+                first or just one of many — sets honest expectations
+                about pickup chances. Hidden entirely for managers
+                (they get the richer queue in the panel above). */}
+            {!canEdit && (() => {
+                const weekStartStr = toDateStr(weekStart);
+                const weekEndStr = toDateStr(addDays(weekStart, 7));
+                // Show only future-or-today, broadcast, not-yet-fully-filled
+                // slots matching the viewer's location.
+                const todayStr = toDateStr(new Date());
+                const grabbable = staffingNeeds.filter(n => {
+                    if (!n.openToAllStaff) return false;
+                    if (!n.date || n.date < todayStr) return false;
+                    if (n.date >= weekEndStr) return false; // current week only
+                    if (n.date < weekStartStr) return false;
+                    const loc = (staffByName.get(staffName) || {}).location;
+                    if (loc && loc !== 'both' && n.location && n.location !== 'both' && n.location !== loc) return false;
+                    const filled = (n.filledStaff || []).length;
+                    if (filled >= (n.count || 0)) return false;
+                    return true;
+                }).sort((a, b) => (a.date + (a.startTime || '')).localeCompare(b.date + (b.startTime || '')));
+                if (grabbable.length === 0) return null;
+                const shortTime = (t) => {
+                    if (!t) return '';
+                    const [h, m] = t.split(':').map(Number);
+                    if (!Number.isFinite(h)) return t;
+                    const period = h < 12 ? 'a' : 'p';
+                    const h12 = ((h + 11) % 12) + 1;
+                    return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
+                };
+                return (
+                    <div className="mb-3 rounded-xl p-2.5 bg-amber-50 border border-amber-200 shadow-card">
+                        <div className="flex items-center gap-2 mb-1.5">
+                            <span className="w-1 h-4 bg-amber-500 rounded-full" />
+                            <h3 className="text-xs font-black text-amber-900">🙋 {tx('Shifts up for grabs', 'Turnos disponibles')}</h3>
+                            <span className="text-[10px] font-bold text-amber-700">{grabbable.length}</span>
+                        </div>
+                        <p className="text-[11px] text-amber-800/85 mb-2 leading-snug">
+                            {tx(
+                                "Manager's looking for help on these. Tap to add yourself — a manager picks from the list.",
+                                'El gerente busca ayuda en estos. Toca para apuntarte — el gerente elige de la lista.',
+                            )}
+                        </p>
+                        <div className="space-y-1.5">
+                            {grabbable.map(n => {
+                                const date = parseLocalDate(n.date);
+                                const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
+                                const dayShort = date ? `${date.getMonth() + 1}/${date.getDate()}` : '';
+                                const filled = (n.filledStaff || []).length;
+                                const open = Math.max(0, (n.count || 0) - filled);
+                                const claims = Array.isArray(n.interestedClaims) ? n.interestedClaims : [];
+                                const youAreIn = claims.some(c => c?.name === staffName);
+                                const yourSlot = (() => {
+                                    if (!youAreIn) return null;
+                                    const sorted = [...claims].sort((a, b) =>
+                                        String(a?.claimedAt || '').localeCompare(String(b?.claimedAt || '')));
+                                    return sorted.findIndex(c => c?.name === staffName) + 1;
+                                })();
+                                return (
+                                    <div key={n.id} className="bg-white border border-amber-200 rounded-lg p-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="font-black text-amber-900 text-[13px] flex-1 min-w-0 truncate">
+                                                {dayLabel} {dayShort} · {shortTime(n.startTime)}–{shortTime(n.endTime)}
+                                                <span className="ml-1.5 text-[10px] font-bold text-amber-700">
+                                                    {(n.side || 'foh').toUpperCase()} · {open} {tx('open', 'abierto')}
+                                                </span>
+                                            </span>
+                                            <button onClick={() => claimUpForGrabsShift(n.id)}
+                                                className={`px-3 py-1.5 rounded-lg text-[12px] font-bold active:scale-95 transition ${
+                                                    youAreIn
+                                                        ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                                        : 'bg-amber-600 text-white hover:bg-amber-700'
+                                                }`}>
+                                                {youAreIn
+                                                    ? `✓ ${tx(`You're #${yourSlot}`, `Estás #${yourSlot}`)}`
+                                                    : `🙋 ${tx('I want this', 'Lo quiero')}`}
+                                            </button>
+                                        </div>
+                                        {n.notes && (
+                                            <p className="text-[11px] italic text-amber-800/85 mt-0.5">"{n.notes}"</p>
+                                        )}
+                                        {claims.length > 0 && (
+                                            <p className="text-[10px] text-amber-700 mt-1">
+                                                {tx(`${claims.length} in queue`, `${claims.length} en cola`)}
+                                                {claims.length > 1 && (
+                                                    <>: {[...claims]
+                                                        .sort((a, b) => String(a?.claimedAt || '').localeCompare(String(b?.claimedAt || '')))
+                                                        .slice(0, 3)
+                                                        .map(c => c?.name?.split(' ')[0])
+                                                        .filter(Boolean)
+                                                        .join(', ')}
+                                                        {claims.length > 3 && ` +${claims.length - 3}`}
+                                                    </>
+                                                )}
+                                            </p>
                                         )}
                                     </div>
                                 );
@@ -9111,6 +9381,16 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
         count: initial?.count || 5,
         roleGroup: initial?.roleGroup || 'any',
         notes: initial?.notes || '',
+        // openToAllStaff — when true, this slot is broadcast to
+        // every staff member as an "up for grabs" shift. Default
+        // OFF for backward compat: existing slot creation flows
+        // stay manager-fills-it-manually. Toggle on when the
+        // manager wants the team to self-elect (Andrew 2026-05-23:
+        // "if i cant find the 5th person on thursday i can add
+        // one shift up for grabs"). Existing fill flow still works
+        // — claims are advisory, manager still confirms who gets
+        // the shift.
+        openToAllStaff: initial?.openToAllStaff || false,
     }));
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
     // FIX (2026-05-14): surface specific reason save is blocked so user
@@ -9272,6 +9552,31 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         <input type="text" value={form.notes} onChange={e => update('notes', e.target.value)}
                             placeholder={tx('Optional label', 'Etiqueta opcional')}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                    </div>
+                    {/* Up-for-grabs toggle. When ON, this slot shows up on
+                        the staff side of the schedule with a "🙋 I want
+                        this" button. Every interest click writes a
+                        timestamped entry to the slot's interestedClaims
+                        array, ordered by arrival, and notifies managers +
+                        admins. Manager still picks who gets it from the
+                        queue — claims are advisory, not auto-fill. */}
+                    <div>
+                        <label className="flex items-start gap-3 px-3 py-2.5 rounded-lg bg-amber-50 border border-amber-200 cursor-pointer hover:bg-amber-100 transition">
+                            <input type="checkbox"
+                                checked={!!form.openToAllStaff}
+                                onChange={e => update('openToAllStaff', e.target.checked)}
+                                className="mt-0.5 w-4 h-4 accent-amber-600" />
+                            <span className="text-[12px] text-amber-900 leading-snug">
+                                <span className="font-black">🙋 {tx('Up for grabs', 'Disponible')}</span>
+                                <br />
+                                <span className="text-amber-800/85">
+                                    {tx(
+                                        'Broadcast to every staff member. Anyone — even people off that day or working another shift — can tap "I want this" to join the pickup queue. Managers see the timestamped order and pick.',
+                                        'Anunciar a todo el personal. Cualquiera — incluso quienes están libres o ya trabajan otro turno — puede tocar "Lo quiero". Los gerentes ven el orden por timestamp y eligen.',
+                                    )}
+                                </span>
+                            </span>
+                        </label>
                     </div>
                 </div>
                 <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 space-y-2">

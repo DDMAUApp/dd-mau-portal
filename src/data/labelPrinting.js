@@ -45,7 +45,10 @@
 // touching the existing config. Mirrors how ops/inventory_{loc} works.
 
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import {
+    doc, collection, getDoc, setDoc, addDoc, onSnapshot, serverTimestamp,
+    query, orderBy, limit as fsLimit,
+} from 'firebase/firestore';
 import { recordAudit } from './audit';
 import { getLabelFormat } from './labelFormat';
 // Pi 5 print bridge — Andrew 2026-05-22. When configured, all Brother
@@ -1515,11 +1518,33 @@ export async function printFreeText({
 //   • CORS-permissive for our origin (configure via printer web UI)
 // Either failure mode = network/fetch error, surfaced to the
 // caller for a toast.
-export async function sendToPrinter(printer, eposXml) {
+export async function sendToPrinter(printer, eposXml, meta = {}) {
+    // Capture the start time so the print job log records latency.
+    // Useful when diagnosing "is the printer slow today?" — Pi bridges
+    // on busy Wi-Fi can stretch from ~150ms to several seconds.
+    const startedAt = Date.now();
+    // Wrapper to capture every attempt's outcome to /print_jobs.
+    // We log success AND failure so the Label Printing Center can
+    // surface "why didn't my label print?" without admin having to
+    // open DevTools. Logging is fire-and-forget; a failure to log
+    // never blocks the actual print.
+    const finalize = (outcome) => {
+        try {
+            logPrintAttempt({
+                printer,
+                meta,
+                outcome,
+                durationMs: Date.now() - startedAt,
+            });
+        } catch { /* logging is best-effort */ }
+    };
+
     if (!printer || !printer.ip) {
+        finalize({ ok: false, error: 'not_configured' });
         throw new Error('printer not configured');
     }
     if (printer.enabled === false) {
+        finalize({ ok: false, error: 'disabled' });
         throw new Error('printer disabled');
     }
     const port = printer.port || DEFAULT_PRINTER_PORT;
@@ -1544,12 +1569,17 @@ export async function sendToPrinter(printer, eposXml) {
         });
         body = await resp.text();
     } catch (e) {
-        if (e.name === 'AbortError') throw new Error('printer timeout');
+        if (e.name === 'AbortError') {
+            finalize({ ok: false, error: 'timeout' });
+            throw new Error('printer timeout');
+        }
+        finalize({ ok: false, error: e?.message || 'network_error' });
         throw e;
     } finally {
         clearTimeout(killer);
     }
     if (!resp.ok) {
+        finalize({ ok: false, error: `http_${resp.status}` });
         throw new Error(`printer responded ${resp.status}`);
     }
     // Epson returns SOAP with a <response success="true"/> tag on
@@ -1557,7 +1587,74 @@ export async function sendToPrinter(printer, eposXml) {
     // XML parser for one boolean.
     const successMatch = /success\s*=\s*"(true|false)"/i.exec(body);
     const ok = successMatch ? successMatch[1].toLowerCase() === 'true' : false;
+    finalize({
+        ok,
+        status: resp.status,
+        // If the printer reported success=false, surface the body
+        // snippet so admin can see "media empty", "cover open",
+        // "wrong tape", etc. in the Label Center.
+        printerMessage: !ok ? body.slice(0, 200) : null,
+    });
     return { ok, status: resp.status, responseXml: body.slice(0, 500) };
+}
+
+// ── Print job log ──────────────────────────────────────────────
+// Every sendToPrinter call writes one /print_jobs row with the
+// outcome. The Label Printing Center reads this collection to
+// surface a "recent jobs" feed with success/fail status, latency,
+// and the printer error message when the device rejected the job.
+// Bounded by the dashboard's `limit(50)` — we never expect to
+// scan the full collection from the client.
+async function logPrintAttempt({ printer, meta, outcome, durationMs }) {
+    try {
+        await addDoc(collection(db, 'print_jobs'), {
+            // Printer context — keeps the log readable when admin
+            // looks at "all printers' jobs" rather than per-device.
+            location: printer?.location || meta?.location || null,
+            slot:     printer?.slot     || meta?.slot     || null,
+            printerName: printer?.name || null,
+            printerIp:   printer?.ip   || null,
+            printerType: printer?.type || null,
+            // Label content for the recent-jobs UI. Caller-provided
+            // metadata so we don't have to parse XML to surface a
+            // human label.
+            kind:      meta?.kind     || 'label',   // 'label'|'date'|'free_text'|'test'
+            title:     meta?.title    || null,      // e.g. "Pho Broth · 5 days"
+            byName:    meta?.byName   || null,
+            source:    meta?.source   || null,
+            copies:    Number(meta?.copies || 1),
+            // Outcome.
+            ok:        outcome.ok === true,
+            error:     outcome.error || null,
+            printerMessage: outcome.printerMessage || null,
+            durationMs: Number(durationMs || 0),
+            // Server timestamp so the dashboard can sort + show
+            // "Xm ago" relative times.
+            createdAt: serverTimestamp(),
+        });
+    } catch (e) {
+        console.warn('logPrintAttempt failed:', e);
+    }
+}
+
+// Live subscription for the Label Printing Center. Newest first,
+// bounded at 50. The page also derives per-printer stats from
+// this snapshot (recent failure rate, last successful print).
+export function subscribePrintJobs(cb, max = 50) {
+    const q = query(
+        collection(db, 'print_jobs'),
+        orderBy('createdAt', 'desc'),
+        fsLimit(max),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+        const out = [];
+        snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+        cb(out);
+    }, (err) => {
+        console.warn('print_jobs subscription failed:', err);
+        cb([]);
+    });
+    return unsub;
 }
 
 // Convenience wrapper — build + send + audit in one call. Caller

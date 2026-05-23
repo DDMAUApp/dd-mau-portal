@@ -85,6 +85,9 @@ const NAV_GROUPS = [
             // Lives in BUSINESS because it's "is the platform up?"
             // observability, not a Settings tweak.
             { tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado',      requires: 'admin' },
+            // Label Printing — per-printer status + recent jobs feed
+            // + test print. Admin-only same as Health.
+            { tab: 'labels',      icon: '🏷', en: 'Label Printing',es: 'Etiquetas',  requires: 'admin' },
             { tab: 'catering',  icon: '🥘', en: 'Orders',        es: 'Pedidos' },
             { tab: 'ai',        icon: '🤖', en: 'AI Assistant',  es: 'Asistente AI' },
         ],
