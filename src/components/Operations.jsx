@@ -343,6 +343,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [invEditNameEs, setInvEditNameEs] = useState("");
             const [invEditSupplier, setInvEditSupplier] = useState("");
             const [invEditOrderDay, setInvEditOrderDay] = useState("Fri");
+            // Per-item low-stock threshold — when set, the inventory grid
+            // flags this item in red when the live count drops to or below
+            // it. Audit follow-up 2026-05-23: managers were running out of
+            // staples mid-shift because the order list only flagged items
+            // already at zero. Setting a min of 2 on a key item surfaces
+            // "we're getting low" BEFORE the kitchen actually runs out.
+            // Stored as a number; null/empty means "no threshold set".
+            const [invEditMin, setInvEditMin] = useState("");
             // 2026-05-17 — let edit form recategorize an item. invEditTargetCatIdx
             // is the destination category index (move cross-category) and
             // invEditSubcat is the subcategory within that destination. Both
@@ -3164,6 +3172,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     orderDay: invEditOrderDay,
                     subcat: (invEditSubcat || '').trim(),
                 };
+                // Persist the low-stock threshold. Empty / 0 / NaN clears
+                // the field so the indicator turns off. Stored as number
+                // so the count comparison in render is straightforward.
+                const minParsed = parseInt(String(invEditMin || '').trim(), 10);
+                patch.min = Number.isFinite(minParsed) && minParsed > 0 ? minParsed : null;
                 // Cross-category move: when invEditTargetCatIdx differs from
                 // the source catIdx, we PULL the item out of the source array
                 // and APPEND it to the destination's items array. ID stays
@@ -3209,7 +3222,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                 }
                 setInvEditingIdx(null);
-                setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri");
+                setInvEditName(""); setInvEditNameEs(""); setInvEditSupplier(""); setInvEditOrderDay("Fri"); setInvEditMin("");
                 setInvEditTargetCatIdx(null); setInvEditSubcat("");
             };
 
@@ -5408,6 +5421,60 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                     {activeTab === "inventory" && (
                         <div className="space-y-3">
+                            {/* ── Low-stock summary ──
+                                Surfaces items where count > 0 AND
+                                count <= item.min, ranked by "how
+                                close to zero" so the most urgent
+                                items lead the list. Hidden when
+                                nothing is low so a fully-stocked
+                                day shows no chrome. Click "Show
+                                only low stock" to filter the rest
+                                of the page down to just these items
+                                (the existing invShowOnlyCounted
+                                pattern already supports filter
+                                state — we layer this on top). */}
+                            {(() => {
+                                const lowItems = [];
+                                for (const cat of customInventory || []) {
+                                    for (const it of cat.items || []) {
+                                        const min = Number(it?.min);
+                                        if (!Number.isFinite(min) || min <= 0) continue;
+                                        const c = Number(inventory[it.id] || 0);
+                                        if (c > 0 && c <= min) {
+                                            lowItems.push({ id: it.id, name: it.name || it.nameEn || it.id, count: c, min, vendor: it.vendor || it.supplier });
+                                        }
+                                    }
+                                }
+                                if (lowItems.length === 0) return null;
+                                // Sort by ratio of current-to-min ascending
+                                // → "out tomorrow" items lead "out next week" items.
+                                lowItems.sort((a, b) => (a.count / a.min) - (b.count / b.min));
+                                return (
+                                    <div className="bg-amber-50 border border-amber-300 rounded-xl px-3 py-2.5 shadow-sm">
+                                        <div className="flex items-center gap-2 mb-1.5">
+                                            <span className="text-xl">📉</span>
+                                            <span className="font-black text-amber-900 text-sm">
+                                                {lowItems.length} {language === 'es' ? (lowItems.length === 1 ? 'artículo bajo en inventario' : 'artículos bajos en inventario') : (lowItems.length === 1 ? 'item low on stock' : 'items low on stock')}
+                                            </span>
+                                        </div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {lowItems.slice(0, 12).map(li => (
+                                                <span key={li.id} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-white border border-amber-200 text-amber-900 text-[11px] font-bold">
+                                                    <span className="tabular-nums">{li.count}/{li.min}</span>
+                                                    <span className="opacity-80">·</span>
+                                                    <span>{li.name}</span>
+                                                </span>
+                                            ))}
+                                            {lowItems.length > 12 && (
+                                                <span className="text-[11px] text-amber-800 font-bold px-1.5">
+                                                    +{lowItems.length - 12} {language === 'es' ? 'más' : 'more'}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })()}
+
                             {/* ── TOP TOOLBAR ──
                                 Layout: 2-row on mobile, 1-row on desktop.
                                 Andrew (2026-05-17): "the line of buttons
@@ -6204,6 +6271,16 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                 placeholder={language === "es" ? "Proveedor" : "Vendor"} className="flex-1 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
                                                                             <input type="text" value={invEditOrderDay} onChange={(e) => setInvEditOrderDay(e.target.value)}
                                                                                 placeholder={language === "es" ? "Día" : "Order day"} className="w-24 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-mint-700 focus:outline-none" />
+                                                                            {/* Low-stock threshold input. Keep it tight
+                                                                                so the row doesn't grow taller for the
+                                                                                common case (no min set). inputMode
+                                                                                numeric brings up the iOS keypad. */}
+                                                                            <input type="text" inputMode="numeric" pattern="[0-9]*"
+                                                                                value={invEditMin}
+                                                                                onChange={(e) => setInvEditMin(e.target.value.replace(/[^0-9]/g, ''))}
+                                                                                placeholder={language === "es" ? "Mín" : "Min"}
+                                                                                title={language === "es" ? "Alerta cuando el conteo está bajo o igual a este número" : "Alert when count drops to/below this number"}
+                                                                                className="w-16 px-2 py-1.5 border-2 border-gray-300 rounded-lg text-sm focus:border-amber-500 focus:outline-none text-center tabular-nums" />
                                                                         </div>
                                                                         {/* "Move to" picker — flat list of every
                                                                             existing TopCategory > SubCategory leaf in
@@ -6366,6 +6443,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                     setInvEditNameEs(item.nameEs || "");
                                                                                     setInvEditSupplier(item.vendor || item.supplier || "");
                                                                                     setInvEditOrderDay(item.orderDay || "");
+                                                                                    setInvEditMin(item.min != null ? String(item.min) : "");
                                                                                     setInvEditTargetCatIdx(catIdx);
                                                                                     setInvEditSubcat(item.subcat || "");
                                                                                 }} className="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 font-medium hover:bg-blue-100 transition">{"\u{270F}\u{FE0F}"} Edit</button>
@@ -6424,6 +6502,20 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             </div>
                                                                             {invCountMeta[item.id] && count > 0 && (
                                                                                 <p className="text-xs text-mint-600 mt-0.5">{"\u{2713}"} {invCountMeta[item.id].by} {"\u{2014}"} {invCountMeta[item.id].at}</p>
+                                                                            )}
+                                                                            {/* Low-stock indicator. Renders when:
+                                                                                  • item has a `min` threshold set
+                                                                                  • current count > 0 (so we don't double-
+                                                                                    flag with the existing "out" badge)
+                                                                                  • current count <= min
+                                                                                Amber border + a "📉 Low" label so the
+                                                                                manager sees AT A GLANCE which lines to
+                                                                                refill before they hit zero. */}
+                                                                            {item.min != null && item.min > 0 && count > 0 && count <= item.min && (
+                                                                                <p className="text-[11px] text-amber-700 mt-0.5 inline-flex items-center gap-1 font-bold">
+                                                                                    <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                                                                    📉 {language === "es" ? `Bajo (mín ${item.min})` : `Low (min ${item.min})`}
+                                                                                </p>
                                                                             )}
                                                                             {/* Per-item sync indicator — surfaces Firestore
                                                                                 round-trip state so staff aren't guessing
