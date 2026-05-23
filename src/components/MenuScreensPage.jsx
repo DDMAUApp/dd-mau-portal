@@ -33,7 +33,7 @@
 // /tv_configs data model is reused as-is.
 
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { subscribeTvConfigs, MODES } from '../data/tvConfigs';
+import { subscribeTvConfigs, subscribeTvHeartbeats, MODES } from '../data/tvConfigs';
 
 // Heavy editor form lives in its existing file; we render it inline
 // below the dashboard for v1 so create + edit still work today.
@@ -42,12 +42,15 @@ const TvConfigsEditor = lazy(() =>
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
-// Status thresholds (minutes). Heartbeat-based once /devices ships;
-// for v1 we derive from tvConfig.updatedAt as a proxy for "is anyone
-// touching this screen?". Threshold values match the Raydiant /
-// Yodeck convention.
-const STALE_AFTER_MIN   = 60 * 24;     // 1 day
-const OFFLINE_AFTER_MIN = 60 * 24 * 7; // 1 week
+// Status thresholds (minutes). Driven by /tv_heartbeats — MenuDisplay
+// writes there every 60s while the Pi is online. The 2-min "live"
+// window covers a missed beat (jittery Wi-Fi, a single retry); past
+// 10 min we assume the device is down and the customer is seeing
+// nothing. Matches the Raydiant / Yodeck "online / stale / offline"
+// convention and the threshold used by checkTvHeartbeats below in
+// functions/index.js — keep them in sync.
+const STALE_AFTER_MIN   = 2;
+const OFFLINE_AFTER_MIN = 10;
 
 function minutesSince(ts) {
     if (!ts) return null;
@@ -58,9 +61,14 @@ function minutesSince(ts) {
     return Math.round((Date.now() - ms) / 60000);
 }
 
-function statusFor(cfg) {
-    // No updatedAt at all → never configured (legacy default URL).
-    const m = minutesSince(cfg?.updatedAt);
+// Status for a TV given its heartbeat row. No heartbeat at all =
+// "never" (the Pi has never pointed at this URL, OR it's been
+// offline so long the doc got cleaned up). 'never' shows a neutral
+// pill rather than a red one so a brand-new restaurant doesn't see
+// alarming red dots before any TV is even plugged in.
+function statusForHeartbeat(hb) {
+    if (!hb) return 'never';
+    const m = minutesSince(hb.lastSeenAt);
     if (m === null) return 'never';
     if (m < STALE_AFTER_MIN) return 'live';
     if (m < OFFLINE_AFTER_MIN) return 'stale';
@@ -85,6 +93,19 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     const [configs, setConfigs] = useState([]);
     useEffect(() => subscribeTvConfigs(setConfigs), []);
 
+    // Live subscription to /tv_heartbeats. MenuDisplay pings this
+    // every 60s while a Pi has the TV URL open; the dashboard reads
+    // it to color the per-card status pills + the health strip.
+    // Local clock state ticks every 30s so the "Xm ago" labels in
+    // the cards roll forward smoothly without needing to reload.
+    const [heartbeats, setHeartbeats] = useState({});
+    useEffect(() => subscribeTvHeartbeats(setHeartbeats), []);
+    const [nowTick, setNowTick] = useState(() => Date.now());
+    useEffect(() => {
+        const id = setInterval(() => setNowTick(Date.now()), 30_000);
+        return () => clearInterval(id);
+    }, []);
+
     // Location filter chips. 'all' shows every TV; a specific value
     // narrows to that store. Defaults to the admin's current store
     // so opening the page lands on the most-relevant set.
@@ -99,23 +120,33 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     }, []);
 
     // Build a merged list: configured TVs + synthetic default rows
-    // for any location that doesn't yet have a config override. The
-    // synthetic rows render as "Default — tap to customize" cards so
-    // the dashboard never looks empty for a fresh restaurant.
+    // for any location that doesn't yet have a config override + ANY
+    // heartbeat that doesn't yet have a matching config (an
+    // unrecognized Pi pointed at a custom URL we haven't configured —
+    // we surface it as a ghost card so admin can see and adopt it).
     const screens = useMemo(() => {
-        const out = configs.map(c => ({
-            tvId: c.tvId,
-            label: c.label || c.tvId,
-            location: c.location || 'webster',
-            mode: c.mode || MODES.MENU,
-            layout: c.layout || 'dense',
-            updatedAt: c.updatedAt,
-            updatedBy: c.updatedBy,
-            isDefault: false,
-            cfg: c,
-        }));
+        const seenTvIds = new Set();
+        const out = configs.map(c => {
+            seenTvIds.add(c.tvId);
+            return {
+                tvId: c.tvId,
+                label: c.label || c.tvId,
+                location: c.location || 'webster',
+                mode: c.mode || MODES.MENU,
+                layout: c.layout || 'dense',
+                updatedAt: c.updatedAt,
+                updatedBy: c.updatedBy,
+                heartbeat: heartbeats[c.tvId] || null,
+                isDefault: false,
+                isGhost: false,
+                cfg: c,
+            };
+        });
+        // Synthetic default rows for the two reserved tvIds (?tv=webster
+        // and ?tv=maryland always render, even without a config doc).
         for (const loc of ['webster', 'maryland']) {
-            if (!out.find(s => s.tvId === loc)) {
+            if (!seenTvIds.has(loc)) {
+                seenTvIds.add(loc);
                 out.push({
                     tvId: loc,
                     label: `${LOC_LABEL[loc]} default`,
@@ -123,35 +154,62 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     mode: MODES.MENU,
                     layout: 'dense',
                     updatedAt: null,
+                    heartbeat: heartbeats[loc] || null,
                     isDefault: true,
+                    isGhost: false,
                 });
             }
         }
+        // Ghost rows for tvIds that have a heartbeat but no config —
+        // i.e. a Pi pointed at a URL we haven't registered yet. Sort
+        // them at the bottom and tag them so the card UI offers
+        // "Adopt this screen" as the primary action.
+        for (const tvId of Object.keys(heartbeats)) {
+            if (seenTvIds.has(tvId)) continue;
+            const hb = heartbeats[tvId];
+            out.push({
+                tvId,
+                label: `Unregistered · ${tvId}`,
+                location: 'webster',
+                mode: MODES.MENU,
+                layout: 'dense',
+                updatedAt: null,
+                heartbeat: hb,
+                isDefault: false,
+                isGhost: true,
+            });
+        }
         return out;
-    }, [configs]);
+    // nowTick is a dep so the memo re-evaluates every 30s — keeps the
+    // health-strip counters and the "Xm ago" labels fresh without
+    // needing a separate clock prop drilled through every card.
+    }, [configs, heartbeats, nowTick]);
 
     const filteredScreens = useMemo(() => {
         if (locFilter === 'all') return screens;
         return screens.filter(s => s.location === locFilter);
     }, [screens, locFilter]);
 
-    // Health strip stats — only count "real" (configured) screens
-    // for status tallies; synthetic defaults are bucketed separately
-    // as "Unconfigured" so admins see at a glance how many they have
-    // left to set up.
+    // Health strip stats — driven by heartbeats. We tally EVERY
+    // screen the dashboard knows about (configured + defaults +
+    // ghost), because to the admin "how many TVs are live right
+    // now?" is the answer they care about — whether each TV has a
+    // config doc is a separate concern. Unconfigured stays as its
+    // own bucket so the admin still sees the "you have screens to
+    // set up" nudge.
     const health = useMemo(() => {
-        const real = filteredScreens.filter(s => !s.isDefault);
-        const live    = real.filter(s => statusFor(s.cfg) === 'live').length;
-        const stale   = real.filter(s => statusFor(s.cfg) === 'stale').length;
-        const offline = real.filter(s => statusFor(s.cfg) === 'offline').length;
+        const live    = filteredScreens.filter(s => statusForHeartbeat(s.heartbeat) === 'live').length;
+        const stale   = filteredScreens.filter(s => statusForHeartbeat(s.heartbeat) === 'stale').length;
+        const offline = filteredScreens.filter(s => statusForHeartbeat(s.heartbeat) === 'offline').length;
         const unconfigured = filteredScreens.filter(s => s.isDefault).length;
-        // Most-recent publish across the filtered set — used in the
-        // header as "last published 4m ago".
-        const newest = real.reduce((acc, s) => {
-            const m = minutesSince(s.updatedAt);
+        // Most-recent heartbeat across the filtered set — used in the
+        // header as "last heartbeat Xm ago" so admin can tell at a
+        // glance whether the dashboard is showing fresh data.
+        const newest = filteredScreens.reduce((acc, s) => {
+            const m = minutesSince(s.heartbeat?.lastSeenAt);
             return m !== null && (acc === null || m < acc) ? m : acc;
         }, null);
-        return { total: real.length, live, stale, offline, unconfigured, newestMin: newest };
+        return { total: filteredScreens.length, live, stale, offline, unconfigured, newestMin: newest };
     }, [filteredScreens]);
 
     // Card click → scroll the page to the inline editor and pre-open
@@ -224,9 +282,13 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     <HealthStat label={tx('Unconfigured', 'Sin configurar')} value={health.unconfigured} tone="neutral" />
                 )}
                 <span className="flex-1" />
-                {health.newestMin !== null && (
+                {health.newestMin !== null ? (
                     <span className="text-[11px] text-dd-text-2 shrink-0">
-                        {tx('Last published', 'Última publicación')}: <span className="font-bold text-dd-text">{health.newestMin < 1 ? tx('just now', 'ahora') : `${health.newestMin} min`}</span>
+                        {tx('Last heartbeat', 'Último latido')}: <span className="font-bold text-dd-text">{health.newestMin < 1 ? tx('just now', 'ahora') : `${health.newestMin} min`}</span>
+                    </span>
+                ) : (
+                    <span className="text-[11px] text-dd-text-2 shrink-0 italic">
+                        {tx('No devices yet', 'Sin dispositivos aún')}
                     </span>
                 )}
             </div>
@@ -318,13 +380,22 @@ function HealthStat({ label, value, tone = 'neutral' }) {
 function ScreenCard({ screen, baseUrl, isEs, onEdit }) {
     const tx = (en, es) => (isEs ? es : en);
     const url = `${baseUrl}/?tv=${screen.tvId}`;
-    const status = screen.isDefault ? 'never' : statusFor(screen.cfg);
-    const statusPill = {
-        live:    { bg: 'bg-emerald-50',  border: 'border-emerald-300', text: 'text-emerald-700', dot: 'bg-emerald-500', label: tx('Live',         'En vivo') },
-        stale:   { bg: 'bg-amber-50',    border: 'border-amber-300',   text: 'text-amber-700',   dot: 'bg-amber-500',   label: tx('Stale',        'Antiguo') },
-        offline: { bg: 'bg-red-50',      border: 'border-red-300',     text: 'text-red-700',     dot: 'bg-red-500',     label: tx('Inactive',     'Inactiva') },
-        never:   { bg: 'bg-dd-bg',       border: 'border-dd-line',     text: 'text-dd-text-2',   dot: 'bg-gray-400',    label: tx('Unconfigured', 'Sin config.') },
-    }[status];
+    // Status comes from the heartbeat, not the config — admins want
+    // to know "is the screen actually showing my menu right now?",
+    // not "did I edit this last week?". The two distinct meanings of
+    // "never" diverge here: ghost screens get a special "New device"
+    // pill (Pi heartbeat present but no config) so admin notices
+    // the unbound TV and clicks Adopt.
+    const status = statusForHeartbeat(screen.heartbeat);
+    const isNewDevice = screen.isGhost && status === 'live';
+    const statusPill = isNewDevice
+        ? { bg: 'bg-sky-50',     border: 'border-sky-300',     text: 'text-sky-700',     dot: 'bg-sky-500',     label: tx('New device',   'Nuevo') }
+        : {
+            live:    { bg: 'bg-emerald-50',  border: 'border-emerald-300', text: 'text-emerald-700', dot: 'bg-emerald-500', label: tx('Live',         'En vivo') },
+            stale:   { bg: 'bg-amber-50',    border: 'border-amber-300',   text: 'text-amber-700',   dot: 'bg-amber-500',   label: tx('Stale',        'Antiguo') },
+            offline: { bg: 'bg-red-50',      border: 'border-red-300',     text: 'text-red-700',     dot: 'bg-red-500',     label: tx('Offline',      'Sin conexión') },
+            never:   { bg: 'bg-dd-bg',       border: 'border-dd-line',     text: 'text-dd-text-2',   dot: 'bg-gray-400',    label: tx('Not paired',   'Sin vincular') },
+          }[status];
     const modeBadge = screen.mode === 'image' ? '🖼 IMAGE'
                     : screen.mode === 'split' ? '⫴ SPLIT'
                     :                            '🍜 MENU';
@@ -399,14 +470,24 @@ function ScreenCard({ screen, baseUrl, isEs, onEdit }) {
             </div>
 
             {/* Card body — label, location chip, mode badge, last
-                updated. Action row below has primary (Edit) and
-                secondary (Open, Copy URL) buttons. */}
+                seen + last edited. The relative-time stamp prefers
+                heartbeat ("seen 30s ago" — what's happening RIGHT
+                NOW) and falls back to config updatedAt ("edited 2d
+                ago" — what we know about it) so a card always shows
+                the freshest signal available. Action row below has
+                primary (Edit) and secondary (Open, Copy URL). */}
             <div className="p-3 flex-1 flex flex-col gap-2">
                 <div className="flex items-start justify-between gap-2">
                     <h3 className="text-sm font-black text-dd-text leading-tight truncate">{screen.label}</h3>
-                    <span className="text-[10px] font-bold text-dd-text-2 shrink-0">
-                        {relativeLabel(screen.updatedAt, isEs)}
-                    </span>
+                    {screen.heartbeat?.lastSeenAt ? (
+                        <span className="text-[10px] font-bold text-dd-text-2 shrink-0" title={tx('Last heartbeat', 'Último latido')}>
+                            👁 {relativeLabel(screen.heartbeat.lastSeenAt, isEs)}
+                        </span>
+                    ) : (
+                        <span className="text-[10px] font-bold text-dd-text-2 shrink-0" title={tx('Last edited', 'Última edición')}>
+                            ✏ {relativeLabel(screen.updatedAt, isEs)}
+                        </span>
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-1.5 text-[10px] font-bold">
                     <span className="px-1.5 py-0.5 rounded bg-dd-bg text-dd-text-2 border border-dd-line">
@@ -423,8 +504,12 @@ function ScreenCard({ screen, baseUrl, isEs, onEdit }) {
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
                     <button onClick={onEdit}
-                        className="px-2.5 py-1 rounded-lg bg-dd-green text-white text-[11px] font-bold hover:bg-dd-green-700 active:scale-95 transition">
-                        ✏ {tx('Edit', 'Editar')}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold active:scale-95 transition ${
+                            screen.isGhost
+                                ? 'bg-sky-600 text-white hover:bg-sky-700'
+                                : 'bg-dd-green text-white hover:bg-dd-green-700'
+                        }`}>
+                        {screen.isGhost ? `🔗 ${tx('Adopt', 'Adoptar')}` : `✏ ${tx('Edit', 'Editar')}`}
                     </button>
                     <a href={url} target="_blank" rel="noreferrer"
                         className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">

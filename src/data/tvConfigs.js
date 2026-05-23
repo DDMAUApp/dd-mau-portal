@@ -203,6 +203,26 @@ export function makeTvId(label, location) {
     return base;
 }
 
+// Live subscription to the heartbeat collection that MenuDisplay
+// writes to every 60s. Returns { [tvId]: { lastSeenAt, userAgent } }
+// keyed by tvId so the dashboard can look up "is this screen alive
+// right now?" in O(1). One doc per tvId — if multiple Pis point at
+// the same id, last-writer-wins, which is fine for "anything alive?".
+// The checkTvHeartbeats Cloud Function reads the same collection
+// to fire offline alerts, so we're not duplicating any infra.
+const HEARTBEATS_COLLECTION = 'tv_heartbeats';
+export function subscribeTvHeartbeats(cb) {
+    const unsub = onSnapshot(collection(db, HEARTBEATS_COLLECTION), (snap) => {
+        const byTvId = {};
+        snap.forEach(d => { byTvId[d.id] = { tvId: d.id, ...d.data() }; });
+        cb(byTvId);
+    }, (err) => {
+        console.warn('tv_heartbeats subscription failed:', err);
+        cb({});
+    });
+    return unsub;
+}
+
 // Live subscription. Returns an array of TV configs ordered by
 // location → label (stable for admin display).
 export function subscribeTvConfigs(cb) {
