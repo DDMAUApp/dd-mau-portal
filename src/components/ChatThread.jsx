@@ -2032,32 +2032,42 @@ function msgFieldsEqual(a, b) {
     if (amMs !== bmMs) return false;
     return true;
 }
+// Comparator is wrapped in a try/catch so any unexpected
+// JSON.stringify failure (circular refs, weird Firestore values)
+// falls through to "re-render anyway" instead of throwing into the
+// ErrorBoundary and crashing the whole chat tab. The audit catches
+// the rare case; the comparator never throws into React.
 const MessageBubble = memo(MessageBubbleInner, (prev, next) => {
-    if (prev.isMine !== next.isMine) return false;
-    if (prev.showSender !== next.showSender) return false;
-    if (prev.showAvatar !== next.showAvatar) return false;
-    if (prev.isEs !== next.isEs) return false;
-    if (prev.staffName !== next.staffName) return false;
-    if (prev.isAdmin !== next.isAdmin) return false;
-    if (prev.isManager !== next.isManager) return false;
-    if (prev.highlighted !== next.highlighted) return false;
-    if (prev.targetLang !== next.targetLang) return false;
-    if (prev.autoTranslate !== next.autoTranslate) return false;
-    if (prev.editing !== next.editing) return false;
-    // iAcked — the only myAcks state the bubble actually reads is
-    // whether THIS message is in the set. Compare by membership,
-    // not Set identity.
-    const prevAcked = !!prev.myAcks?.has?.(prev.message?.id);
-    const nextAcked = !!next.myAcks?.has?.(next.message?.id);
-    if (prevAcked !== nextAcked) return false;
-    // chat.lastReadByName drives the seen-by render. Hash it. (Tiny
-    // map of staffName → ms-since-epoch ints.)
-    if (JSON.stringify(prev.chat?.lastReadByName || null) !== JSON.stringify(next.chat?.lastReadByName || null)) return false;
-    // chat.members affects mentions + seen-by gating. Stable usually.
-    if (JSON.stringify(prev.chat?.members || null) !== JSON.stringify(next.chat?.members || null)) return false;
-    if (!msgFieldsEqual(prev.message, next.message)) return false;
-    // Function refs intentionally not compared — see comment block.
-    return true;
+    try {
+        if (prev.isMine !== next.isMine) return false;
+        if (prev.showSender !== next.showSender) return false;
+        if (prev.showAvatar !== next.showAvatar) return false;
+        if (prev.isEs !== next.isEs) return false;
+        if (prev.staffName !== next.staffName) return false;
+        if (prev.isAdmin !== next.isAdmin) return false;
+        if (prev.isManager !== next.isManager) return false;
+        if (prev.highlighted !== next.highlighted) return false;
+        if (prev.targetLang !== next.targetLang) return false;
+        if (prev.autoTranslate !== next.autoTranslate) return false;
+        if (prev.editing !== next.editing) return false;
+        // iAcked — the only myAcks state the bubble actually reads is
+        // whether THIS message is in the set. Compare by membership,
+        // not Set identity.
+        const prevAcked = !!prev.myAcks?.has?.(prev.message?.id);
+        const nextAcked = !!next.myAcks?.has?.(next.message?.id);
+        if (prevAcked !== nextAcked) return false;
+        // chat.lastReadByName drives the seen-by render. Hash it. (Tiny
+        // map of staffName → ms-since-epoch ints.)
+        if (JSON.stringify(prev.chat?.lastReadByName || null) !== JSON.stringify(next.chat?.lastReadByName || null)) return false;
+        // chat.members affects mentions + seen-by gating. Stable usually.
+        if (JSON.stringify(prev.chat?.members || null) !== JSON.stringify(next.chat?.members || null)) return false;
+        if (!msgFieldsEqual(prev.message, next.message)) return false;
+        // Function refs intentionally not compared — see comment block.
+        return true;
+    } catch (e) {
+        console.warn('MessageBubble comparator threw — falling back to re-render', e);
+        return false;
+    }
 });
 
 // Inline editor for a message bubble — swaps the rendered text for
