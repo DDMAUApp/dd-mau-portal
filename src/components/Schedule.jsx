@@ -1376,13 +1376,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 const totalHours = Array.from(byDate.values())
                     .reduce((sum, dayShifts) => sum + dayPaidHours(dayShifts), 0);
                 const sideShiftCount = visibleShifts.filter(sh => sh.staffName === s.name).length;
-                return { ...s, totalHours, shiftCount: sideShiftCount };
+                // Position classifier — used by the calendar sort
+                // (regular → lead → manager) and the meal-count box
+                // dots (manager-orange + lead-green per shift). Done
+                // here in the parent so WeeklyGrid doesn't need to
+                // re-call isAdmin (which requires staffList in scope).
+                const isMgr = isAdmin(s.name, staffList) || /manager/i.test(s.role || '');
+                const position = isMgr ? 'manager' : (s.shiftLead === true ? 'lead' : 'regular');
+                return { ...s, totalHours, shiftCount: sideShiftCount, position };
             })
+            // Sort by position rank, then alphabetical within position
+            // (Andrew 2026-05-22 "organize the staff on the calendar by
+            // position. all the foh first then shift leads, and then
+            // manager"). Manager outranks shift-lead even if a staffer
+            // is flagged both.
             .sort((a, b) => {
-                if ((b.shiftCount > 0) !== (a.shiftCount > 0)) return b.shiftCount - a.shiftCount;
+                const rank = (p) => p === 'manager' ? 2 : (p === 'lead' ? 1 : 0);
+                const ra = rank(a.position), rb = rank(b.position);
+                if (ra !== rb) return ra - rb;
                 return a.name.localeCompare(b.name);
             });
-    }, [sideStaff, viewerShifts, visibleShifts, storeLocation]);
+    }, [sideStaff, viewerShifts, visibleShifts, storeLocation, staffList]);
 
     // ── Hours scoreboard ─────────────────────────────────────────────
     // Live, both-sides-at-once roll-up of scheduled vs target hours so a
@@ -5829,22 +5843,42 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
             const [h, m] = t.split(':').map(Number);
             return h * 60 + (m || 0);
         };
+        // Andrew 2026-05-22 — replace the emoji on the meal-count box
+        // with a dot per manager + a dot per shift lead working that
+        // meal. Position is pre-computed in the parent's staffSummary
+        // (so it correctly includes isAdmin alongside role-Manager).
+        const positionByName = new Map();
+        for (const s of staffSummary) positionByName.set(s.name, s.position || 'regular');
         for (const d of days) {
             const dStr = toDateStr(d);
             const dayShifts = shifts.filter(sh => sh.date === dStr);
             const lunch = new Set();
             const dinner = new Set();
+            let lunchLeads = 0, lunchManagers = 0;
+            let dinnerLeads = 0, dinnerManagers = 0;
             for (const sh of dayShifts) {
                 const sm = toMin(sh.startTime);
                 const em = toMin(sh.endTime);
                 if (sm == null || em == null) continue;
-                if (sm < LUNCH_WIN_END  && em > LUNCH_WIN_START)  lunch.add(sh.staffName);
-                if (sm < DINNER_WIN_END && em > DINNER_WIN_START) dinner.add(sh.staffName);
+                const pos = positionByName.get(sh.staffName) || 'regular';
+                if (sm < LUNCH_WIN_END  && em > LUNCH_WIN_START) {
+                    lunch.add(sh.staffName);
+                    if (pos === 'manager') lunchManagers += 1;
+                    else if (pos === 'lead') lunchLeads += 1;
+                }
+                if (sm < DINNER_WIN_END && em > DINNER_WIN_START) {
+                    dinner.add(sh.staffName);
+                    if (pos === 'manager') dinnerManagers += 1;
+                    else if (pos === 'lead') dinnerLeads += 1;
+                }
             }
-            out.set(dStr, { lunch: lunch.size, dinner: dinner.size });
+            out.set(dStr, {
+                lunch: lunch.size, dinner: dinner.size,
+                lunchLeads, lunchManagers, dinnerLeads, dinnerManagers,
+            });
         }
         return out;
-    }, [shifts, weekStart]);
+    }, [shifts, weekStart, staffSummary]);
 
     if (staffSummary.length === 0) {
         return <p className="text-center text-gray-400 mt-6 text-sm">{isEn ? 'No staff for this location.' : 'Sin personal para esta ubicación.'}</p>;
@@ -6025,24 +6059,49 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                         renders dim so a missing-staff day
                                         still reads as a gap. */}
                                     {!closed && (() => {
-                                        const meals = mealCountsByDate.get(dStr) || { lunch: 0, dinner: 0 };
-                                        const pillBase = 'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-black border tabular-nums';
+                                        const meals = mealCountsByDate.get(dStr) || {
+                                            lunch: 0, dinner: 0,
+                                            lunchLeads: 0, lunchManagers: 0,
+                                            dinnerLeads: 0, dinnerManagers: 0,
+                                        };
+                                        const pillBase = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-black border tabular-nums';
                                         const lunchTone = meals.lunch === 0
                                             ? 'bg-red-50 text-red-700 border-red-200'
                                             : 'bg-amber-50 text-amber-800 border-amber-200';
                                         const dinnerTone = meals.dinner === 0
                                             ? 'bg-red-50 text-red-700 border-red-200'
                                             : 'bg-indigo-50 text-indigo-800 border-indigo-200';
+                                        // Andrew 2026-05-22 — emojis (🥗 / 🍜) out, dots
+                                        // in. One emerald dot per shift lead working
+                                        // that meal, one orange dot per manager. Matches
+                                        // the legend at the top of the grid (blue =
+                                        // staff, green = lead, orange = manager).
+                                        const renderDots = (leads, managers) => {
+                                            if (leads === 0 && managers === 0) return null;
+                                            const dots = [];
+                                            for (let i = 0; i < leads; i++) {
+                                                dots.push(<span key={`l${i}`} className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />);
+                                            }
+                                            for (let i = 0; i < managers; i++) {
+                                                dots.push(<span key={`m${i}`} className="inline-block w-1.5 h-1.5 rounded-full bg-orange-500" />);
+                                            }
+                                            return <span className="inline-flex gap-0.5 items-center">{dots}</span>;
+                                        };
+                                        const lunchTitle = isEn
+                                            ? `Lunch (12-1pm): ${meals.lunch}${meals.lunchLeads ? `, ${meals.lunchLeads} shift lead${meals.lunchLeads === 1 ? '' : 's'}` : ''}${meals.lunchManagers ? `, ${meals.lunchManagers} manager${meals.lunchManagers === 1 ? '' : 's'}` : ''}`
+                                            : `Almuerzo (12-1pm): ${meals.lunch}${meals.lunchLeads ? `, ${meals.lunchLeads} líder${meals.lunchLeads === 1 ? '' : 'es'}` : ''}${meals.lunchManagers ? `, ${meals.lunchManagers} gerente${meals.lunchManagers === 1 ? '' : 's'}` : ''}`;
+                                        const dinnerTitle = isEn
+                                            ? `Dinner (5-7pm): ${meals.dinner}${meals.dinnerLeads ? `, ${meals.dinnerLeads} shift lead${meals.dinnerLeads === 1 ? '' : 's'}` : ''}${meals.dinnerManagers ? `, ${meals.dinnerManagers} manager${meals.dinnerManagers === 1 ? '' : 's'}` : ''}`
+                                            : `Cena (5-7pm): ${meals.dinner}${meals.dinnerLeads ? `, ${meals.dinnerLeads} líder${meals.dinnerLeads === 1 ? '' : 'es'}` : ''}${meals.dinnerManagers ? `, ${meals.dinnerManagers} gerente${meals.dinnerManagers === 1 ? '' : 's'}` : ''}`;
                                         return (
-                                            <div className="mt-1 flex gap-1 justify-center print:hidden"
-                                                title={isEn
-                                                    ? `Lunch (12-1pm): ${meals.lunch} · Dinner (5-7pm): ${meals.dinner}`
-                                                    : `Almuerzo (12-1pm): ${meals.lunch} · Cena (5-7pm): ${meals.dinner}`}>
-                                                <span className={`${pillBase} ${lunchTone}`}>
-                                                    🥗 <span>{isEn ? 'L' : 'A'}</span>:<span>{meals.lunch}</span>
+                                            <div className="mt-1 flex gap-1 justify-center print:hidden">
+                                                <span className={`${pillBase} ${lunchTone}`} title={lunchTitle}>
+                                                    <span>{isEn ? 'L' : 'A'}</span>:<span>{meals.lunch}</span>
+                                                    {renderDots(meals.lunchLeads, meals.lunchManagers)}
                                                 </span>
-                                                <span className={`${pillBase} ${dinnerTone}`}>
-                                                    🍜 <span>{isEn ? 'D' : 'C'}</span>:<span>{meals.dinner}</span>
+                                                <span className={`${pillBase} ${dinnerTone}`} title={dinnerTitle}>
+                                                    <span>{isEn ? 'D' : 'C'}</span>:<span>{meals.dinner}</span>
+                                                    {renderDots(meals.dinnerLeads, meals.dinnerManagers)}
                                                 </span>
                                             </div>
                                         );
