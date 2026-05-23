@@ -395,9 +395,20 @@ export default function ChatThread({
     }
 
     // ── Send a text message ───────────────────────────────────────
+    //
+    // Re-entry guard via a ref (production audit 2026-05-22). The
+    // existing `sending` state was checked but it's a React state
+    // setter — React batches setState across handlers in the same
+    // tick, so on a fast Enter-then-click (or two finger-taps from
+    // a fast mobile keyboard) BOTH calls could pass `if (sending)`
+    // before either setSending(true) committed, landing two
+    // messages in Firestore. sendingRef updates synchronously.
+    const sendingRef = useRef(false);
     async function handleSendText() {
         const body = draft.trim();
-        if (!body || sending) return;
+        if (!body) return;
+        if (sendingRef.current) return;
+        sendingRef.current = true;
         setSending(true);
         try {
             await sendMessage({
@@ -414,6 +425,7 @@ export default function ChatThread({
             console.warn('send text failed:', e);
             toast(tx('Send failed', 'Error al enviar'), { kind: 'error' });
         } finally {
+            sendingRef.current = false;
             setSending(false);
         }
     }
@@ -529,6 +541,32 @@ export default function ChatThread({
         recorderRef.current = null;
         setRecording(false);
     }
+
+    // Unmount cleanup — production-audit 2026-05-22. If the user
+    // navigates away mid-recording (switches chats, closes the tab,
+    // hits the back button on mobile), the previous code left the
+    // MediaRecorder + getUserMedia stream alive: the mic light on
+    // iOS stayed on until the entire tab closed, and the auto-stop
+    // timeout fired later against a stale ref. Cancel any in-flight
+    // recording on unmount.
+    useEffect(() => {
+        return () => {
+            if (recordTimerRef.current) {
+                clearTimeout(recordTimerRef.current);
+                recordTimerRef.current = null;
+            }
+            const rec = recorderRef.current;
+            if (rec) {
+                try {
+                    rec.ondataavailable = null;
+                    rec.onstop = null;
+                    try { rec.stream?.getTracks?.().forEach(t => t.stop()); } catch {}
+                    rec.stop();
+                } catch {}
+                recorderRef.current = null;
+            }
+        };
+    }, []);
     async function uploadVoice(blob, duration) {
         setSending(true);
         setUploadProgress({ kind: 'audio', pct: 0 });
@@ -1520,7 +1558,21 @@ export default function ChatThread({
 }
 
 // ── MessageBubble ───────────────────────────────────────────────
-function MessageBubble({
+//
+// Inner component — exported as memoized MessageBubble below.
+// Memoization is critical here: Firestore re-deserializes the
+// `messages` array on every snapshot tick (reactions, read receipts,
+// new messages), giving every bubble a NEW message-object ref even
+// when nothing about that bubble changed. With 50–200 messages on
+// screen and per-bubble subtrees (AnnouncementCard, PollCard,
+// EightySixCard, audio player, translation), an un-memoized
+// re-render of the whole list is the dominant frame cost on iOS
+// Safari. The custom comparator below ignores function-ref identity
+// (the inline `(emoji) => handleReact(msg, emoji)` closures at the
+// call site capture `msg` which we already compare field-by-field,
+// so the OLD closure works on the OLD msg correctly) and compares
+// the message + chat.lastReadByName + iAcked + the primitive props.
+function MessageBubbleInner({
     message, chat, isMine, showSender, showAvatar, isEs, staffName,
     viewer, isAdmin, isManager, myAcks, highlighted,
     targetLang, autoTranslate,
@@ -1939,6 +1991,75 @@ function MessageBubble({
     );
 }
 
+// Memo wrapper for MessageBubble. The comparator returns true (skip
+// re-render) when no visible field has changed. Firestore Timestamps
+// are compared via .toMillis() since the SDK rebuilds Timestamp
+// objects on every snapshot. chat.lastReadByName is compared with a
+// JSON hash because it's the input to canSeeReceiptsForMessage /
+// getSeenByForMessage — when readers scroll a new msg into view,
+// only the bubbles whose seen-by-count changed need to re-render
+// (not all of them). Function-ref identity (onReact, onReply, etc.)
+// is INTENTIONALLY ignored: the parent's inline arrow closures
+// `(emoji) => handleReact(msg, emoji)` capture `msg` from the
+// render scope; when we skip a re-render, the OLD closure stays
+// bound to the OLD msg, but msg.id is what every handler ultimately
+// uses to identify the target, and msg.id is stable for a given
+// bubble. Safe in this codebase.
+function msgFieldsEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (a.id !== b.id) return false;
+    if (a.text !== b.text) return false;
+    if (a.edited !== b.edited) return false;
+    if (a.deleted !== b.deleted) return false;
+    if (a.pinned !== b.pinned) return false;
+    if ((a.coverageStatus || '') !== (b.coverageStatus || '')) return false;
+    if ((a.coverageClaimedBy || '') !== (b.coverageClaimedBy || '')) return false;
+    if ((a.resolvedAt || null) !== (b.resolvedAt || null)) return false;
+    // Reactions, mentions, poll, eightySixData are objects/arrays —
+    // a JSON compare catches value changes without false positives
+    // from Firestore ref churn. The strings are short.
+    if (JSON.stringify(a.reactions || null) !== JSON.stringify(b.reactions || null)) return false;
+    if (JSON.stringify(a.mentions || null) !== JSON.stringify(b.mentions || null)) return false;
+    if (JSON.stringify(a.poll || null) !== JSON.stringify(b.poll || null)) return false;
+    if (JSON.stringify(a.eightySixData || null) !== JSON.stringify(b.eightySixData || null)) return false;
+    if (JSON.stringify(a.attachments || null) !== JSON.stringify(b.attachments || null)) return false;
+    if (JSON.stringify(a.replyTo || null) !== JSON.stringify(b.replyTo || null)) return false;
+    // createdAt only changes when the bubble first lands (server
+    // resolves the timestamp), then never again.
+    const amMs = a.createdAt?.toMillis?.() ?? a.createdAt?.seconds ?? 0;
+    const bmMs = b.createdAt?.toMillis?.() ?? b.createdAt?.seconds ?? 0;
+    if (amMs !== bmMs) return false;
+    return true;
+}
+const MessageBubble = memo(MessageBubbleInner, (prev, next) => {
+    if (prev.isMine !== next.isMine) return false;
+    if (prev.showSender !== next.showSender) return false;
+    if (prev.showAvatar !== next.showAvatar) return false;
+    if (prev.isEs !== next.isEs) return false;
+    if (prev.staffName !== next.staffName) return false;
+    if (prev.isAdmin !== next.isAdmin) return false;
+    if (prev.isManager !== next.isManager) return false;
+    if (prev.highlighted !== next.highlighted) return false;
+    if (prev.targetLang !== next.targetLang) return false;
+    if (prev.autoTranslate !== next.autoTranslate) return false;
+    if (prev.editing !== next.editing) return false;
+    // iAcked — the only myAcks state the bubble actually reads is
+    // whether THIS message is in the set. Compare by membership,
+    // not Set identity.
+    const prevAcked = !!prev.myAcks?.has?.(prev.message?.id);
+    const nextAcked = !!next.myAcks?.has?.(next.message?.id);
+    if (prevAcked !== nextAcked) return false;
+    // chat.lastReadByName drives the seen-by render. Hash it. (Tiny
+    // map of staffName → ms-since-epoch ints.)
+    if (JSON.stringify(prev.chat?.lastReadByName || null) !== JSON.stringify(next.chat?.lastReadByName || null)) return false;
+    // chat.members affects mentions + seen-by gating. Stable usually.
+    if (JSON.stringify(prev.chat?.members || null) !== JSON.stringify(next.chat?.members || null)) return false;
+    if (!msgFieldsEqual(prev.message, next.message)) return false;
+    // Function refs intentionally not compared — see comment block.
+    return true;
+});
+
 // Inline editor for a message bubble — swaps the rendered text for
 // an editable textarea + Save/Cancel buttons. Lives inside the same
 // bubble shell so the surrounding context (reactions, seen-by, etc.)
@@ -2063,7 +2184,12 @@ function AudioPlayer({ src, duration, isMine }) {
     };
     return (
         <div className="flex items-center gap-2 min-w-[180px]">
-            <audio ref={audioRef} src={src} preload="metadata" />
+            {/* preload="none" so 200 visible voice messages don't each
+                fire a HEAD request on chat open (200-GET storm noted
+                in the 2026-05-22 production audit). The duration label
+                shows the stored msg.duration field; metadata is fetched
+                lazily when the user actually taps Play. */}
+            <audio ref={audioRef} src={src} preload="none" />
             <button
                 onClick={toggle}
                 className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-sm ${isMine ? 'bg-white/20 text-white' : 'bg-dd-green text-white'}`}

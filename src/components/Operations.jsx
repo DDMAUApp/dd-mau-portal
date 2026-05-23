@@ -1530,6 +1530,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 });
 
                 const inventoryDocRef = doc(db, "ops", "inventory_" + storeLocation);
+                // Track last customInventory hash so we can short-circuit
+                // the heavy id-migration merge below when only counts
+                // changed (the common case on every +/- tap).
+                let lastCustomInvHash = '';
                 const unsubInventorySnapshot = onSnapshot(inventoryDocRef, { includeMetadataChanges: true }, (docSnap) => {
                     // Skip our own optimistic local writes — wait for the server-confirmed snapshot.
                     // This avoids the prior race where a remote write arriving in the same tick
@@ -1550,6 +1554,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             return;
                         }
                         if (data.customInventory) {
+                            // Perf-fix 2026-05-22 (production audit): short-circuit
+                            // the id-migration merge when customInventory bytes
+                            // haven't changed. This fires for every count-only
+                            // snapshot (the most common path), and the merge below
+                            // builds Sets/Maps and walks 200+ items pointlessly.
+                            // JSON.stringify is cheap (<2ms on this data shape) and
+                            // avoids the deep-merge + downstream setCustomInventory
+                            // → re-derivation of every useMemo in the tab.
+                            const nextHash = JSON.stringify(data.customInventory);
+                            if (nextHash === lastCustomInvHash) {
+                                setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
+                                return;
+                            }
+                            lastCustomInvHash = nextHash;
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
                             // so new items from inventory.js always appear.
                             // Tombstones (deletedMasterIds) record master items the user
@@ -2800,13 +2818,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const reloadLastEnteredByItem = useCallback(async () => {
                 if (!storeLocation) return;
                 try {
+                    // Perf-fix 2026-05-22: query-side limit + orderBy so we
+                    // only download the 30 most-recent snapshots, not the
+                    // entire history collection. Doc ids look like
+                    // 'YYYY-MM-DD_HHMMSS' which sorts chronologically by
+                    // documentId(), so the server can return them sorted.
                     const colRef = collection(db, "inventoryHistory_" + storeLocation);
-                    const snap = await getDocs(colRef);
-                    const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-                    // doc.id format is 'YYYY-MM-DD_HHMMSS' which sorts
-                    // chronologically by string comparison.
-                    docs.sort((a, b) => (b.id || '').localeCompare(a.id || ''));
-                    const slice = docs.slice(0, 30);
+                    const snap = await getDocs(query(colRef, orderBy('__name__', 'desc'), limit(30)));
+                    const slice = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     const summary = {};
                     const vendorImports = {};
                     for (const d of slice) {
@@ -5723,6 +5742,37 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                                     {!isCollapsed && (
                                         <div className="divide-y divide-gray-100">
+                                            {/* Category-level drop zone (post-subcat-removal
+                                                2026-05-22 audit fix). Subcat headers no
+                                                longer render — the per-subcat drop strips
+                                                inside the subcats.map below now stay hidden
+                                                because subGroup.name is always empty. Without
+                                                this strip, tapping Move on an item left the
+                                                user with no visible drop target anywhere on
+                                                screen. Shows only while a move is in flight,
+                                                shows "(source)" on the source category so
+                                                tapping there cancels. */}
+                                            {movingItem && (() => {
+                                                const isSource = movingItem.fromCatIdx === catIdx;
+                                                return (
+                                                    <button
+                                                        onClick={() => dropMovingItem(catIdx, "")}
+                                                        className={`w-full px-3 py-2 border-b text-left transition active:scale-[0.98] ${
+                                                            isSource
+                                                                ? 'bg-gray-100 border-gray-300 text-gray-500 cursor-default'
+                                                                : 'bg-amber-100 hover:bg-amber-200 border-amber-300 text-amber-900'
+                                                        }`}
+                                                        disabled={isSource}
+                                                        aria-label={language === "es" ? `Mover aquí: ${category.name}` : `Drop here: ${category.name}`}
+                                                    >
+                                                        <span className="text-xs font-bold uppercase tracking-wide">
+                                                            {isSource
+                                                                ? `${category.name} ${language === "es" ? "(actual)" : "(source)"}`
+                                                                : `${"\u{1F4E5}"} ${language === "es" ? "Mover aquí" : "Drop here"}: ${category.name}`}
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })()}
                                             {subcats.map((subGroup, subIdx) => (
                                                 <div key={subIdx}>
                                                     {/* Subcategory header — also acts as a

@@ -28,7 +28,7 @@ import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
-    setDoc, serverTimestamp, writeBatch, runTransaction,
+    setDoc, serverTimestamp, writeBatch, runTransaction, arrayUnion,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
@@ -180,6 +180,37 @@ const addDays = (date, n) => {
     const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
     d.setDate(d.getDate() + n);
     return d;
+};
+
+// localStorage round-trip helpers for shifts. JSON.stringify turns a
+// Firestore Timestamp into `{seconds, nanoseconds}` which doesn't
+// have .toMillis() — downstream code that calls .toMillis() crashes.
+// stripShiftTimestamps replaces Timestamp instances with plain
+// `{__ts: millis}` markers; rehydrateShiftTimestamps reverses it on
+// load with a minimal shim exposing .toMillis() + .seconds.
+// Production audit 2026-05-22.
+const stripShiftTimestamps = (sh) => {
+    if (!sh || typeof sh !== 'object') return sh;
+    const out = { ...sh };
+    for (const k of ['createdAt', 'updatedAt', 'publishedAt', 'pendingOfferAt', 'coverRequestedAt']) {
+        const v = sh[k];
+        if (v && typeof v === 'object' && typeof v.toMillis === 'function') {
+            out[k] = { __ts: v.toMillis() };
+        }
+    }
+    return out;
+};
+const rehydrateShiftTimestamps = (sh) => {
+    if (!sh || typeof sh !== 'object') return sh;
+    const out = { ...sh };
+    for (const k of ['createdAt', 'updatedAt', 'publishedAt', 'pendingOfferAt', 'coverRequestedAt']) {
+        const v = sh[k];
+        if (v && typeof v === 'object' && typeof v.__ts === 'number') {
+            const ms = v.__ts;
+            out[k] = { toMillis: () => ms, seconds: Math.floor(ms / 1000) };
+        }
+    }
+    return out;
 };
 
 const formatDateShort = (date, isEn) => {
@@ -608,7 +639,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (raw) {
                 const cached = JSON.parse(raw);
                 if (cached?.savedAt && (Date.now() - cached.savedAt) < CACHE_TTL_MS && Array.isArray(cached.items)) {
-                    setShifts(cached.items);
+                    // Rehydrate Firestore Timestamps. JSON.stringify
+                    // turned them into plain `{seconds, nanoseconds}`
+                    // objects which DON'T have .toMillis(). Downstream
+                    // consumers (shifts.find, notification scheduler at
+                    // line ~948) call .toMillis() and would crash on
+                    // cache-restored data. Production audit 2026-05-22.
+                    setShifts(cached.items.map(rehydrateShiftTimestamps));
                     setLoading(false);
                     hadCache = true;
                 }
@@ -629,7 +666,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             setShifts(items);
             setLoading(false);
             try {
-                localStorage.setItem(CACHE_KEY, JSON.stringify({ items, savedAt: Date.now() }));
+                // Strip Firestore Timestamps before caching — the
+                // serializer turns them into plain objects without
+                // .toMillis(). On the rehydrate path we re-wrap them
+                // (see above). Symmetric round-trip.
+                const cleaned = items.map(stripShiftTimestamps);
+                localStorage.setItem(CACHE_KEY, JSON.stringify({ items: cleaned, savedAt: Date.now() }));
             } catch { /* storage full or disabled — non-fatal */ }
         }, (err) => {
             console.error('Schedule snapshot error:', err);
@@ -2119,16 +2161,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         undoToast(
             tx(`🗑 Deleted ${snapshot.length} shifts`, `🗑 Eliminados ${snapshot.length} turnos`),
             async () => {
-                for (const sh of snapshot) {
-                    try {
-                        await deleteDoc(doc(db, 'shifts', sh.id));
-                        // Same need-prune as single-delete. No-op for shifts
-                        // without fromNeedId. Per-shift to keep the operation
-                        // resilient to partial failures.
-                        await pruneNeedAfterShiftDelete(sh);
+                // Batched delete — production audit 2026-05-22. Previous
+                // sequential await loop made a 50-shift bulk delete take
+                // 10+ seconds. writeBatch collapses to one round-trip per
+                // 400-shift chunk. Pruning of staffing_needs.filledStaff
+                // entries still happens per-shift after the deletes are
+                // committed — that's a read-modify-write so we can't
+                // safely batch it (different needs may reference the
+                // same shift).
+                const BATCH_LIMIT = 400;
+                try {
+                    for (let i = 0; i < snapshot.length; i += BATCH_LIMIT) {
+                        const batch = writeBatch(db);
+                        for (const sh of snapshot.slice(i, i + BATCH_LIMIT)) {
+                            batch.delete(doc(db, 'shifts', sh.id));
+                        }
+                        await batch.commit();
                     }
-                    catch (e) { console.warn('bulk-delete failed for', sh.id, e); }
-                }
+                    // Best-effort need-prune post-commit.
+                    await Promise.all(snapshot.map(sh =>
+                        pruneNeedAfterShiftDelete(sh).catch(e => console.warn('prune failed for', sh.id, e))
+                    ));
+                } catch (e) { console.warn('bulk-delete batch failed:', e); }
                 // Per-staff push: one rolled-up notification per affected
                 // staffer listing how many of THEIR shifts got cut. Only
                 // counts published shifts (drafts hadn't been released).
@@ -2474,11 +2528,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 updatedAt: serverTimestamp(),
                 fromNeedId: need.id,
             });
-            const newFilledStaff = [...(need.filledStaff || []), staffMember.name];
-            const newFilledShiftIds = [...(need.filledShiftIds || []), shiftRef.id];
+            // arrayUnion (audit 2026-05-22) — was a read-modify-write
+            // (spread the local need.filledStaff). Two managers
+            // filling the same slot at the same instant both read
+            // ['A'], both wrote ['A','B'] / ['A','C'] — last-writer
+            // wins, one fill silently lost. arrayUnion is atomic
+            // server-side and merges both updates correctly.
             await updateDoc(doc(db, 'staffing_needs', need.id), {
-                filledStaff: newFilledStaff,
-                filledShiftIds: newFilledShiftIds,
+                filledStaff: arrayUnion(staffMember.name),
+                filledShiftIds: arrayUnion(shiftRef.id),
             });
             // Auto-close when the slot reaches its target count — manager
             // is done. Otherwise keep modal open and bump fillingNeed
@@ -2615,15 +2673,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const successes = [];
         const failures = [];
         try {
-            // Outer loop is per-date so a failure on one day doesn't block
-            // the other days — we collect failures and toast a partial-
-            // success summary at the end.
+            // Batched per-day (audit 2026-05-22). Previously a triple-
+            // nested sequential addDoc loop (dates × blocks × slots)
+            // made applying a 7-day template with 4 blocks of 3 slots
+            // each take ~10s of dead time. Now per day = one batch.
+            // Outer loop is per-date so a failure on one day doesn't
+            // block other days — we collect failures and toast a
+            // partial-success summary at the end.
             for (const dateStr of dateStrs) {
                 try {
+                    const toCreate = [];
                     for (const block of (tpl.blocks || [])) {
                         for (const slot of (block.slots || [])) {
                             if (!slot.count || slot.count <= 0) continue;
-                            await addDoc(collection(db, 'staffing_needs'), {
+                            toCreate.push({
                                 date: dateStr,
                                 side: tpl.side || 'foh',
                                 location,
@@ -2639,6 +2702,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                                 createdAt: serverTimestamp(),
                             });
                         }
+                    }
+                    if (toCreate.length > 0) {
+                        const batch = writeBatch(db);
+                        for (const n of toCreate) {
+                            batch.set(doc(collection(db, 'staffing_needs')), n);
+                        }
+                        await batch.commit();
                     }
                     successes.push(dateStr);
                 } catch (perDateErr) {
@@ -2713,6 +2783,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const dayKeys = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
         const created = [];
         const skipped = [];
+        // Audit 2026-05-22: accumulate new shifts here and writeBatch
+        // them at the end of the rule loop. Previously each shift was
+        // a sequential `await addDoc`, making a 10-rule × 7-day pass
+        // take ~10s of dead time.
+        const recurringBatchShifts = [];
         for (const rule of recurringShifts) {
             if (!rule.staffName || !rule.startTime || !rule.endTime) continue;
             // Skip rules for sides the runner can't edit — a FOH-only
@@ -2765,28 +2840,37 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     sh.staffName === rule.staffName && sh.date === dStr &&
                     !(sh.endTime <= rule.startTime || sh.startTime >= rule.endTime));
                 if (conflict) { skipped.push(`${rule.staffName} ${dStr}: existing shift`); continue; }
-                try {
-                    await addDoc(collection(db, 'shifts'), {
-                        staffName: rule.staffName,
-                        date: dStr,
-                        startTime: rule.startTime,
-                        endTime: rule.endTime,
-                        location: rule.location || (storeLocation !== 'both' ? storeLocation : 'webster'),
-                        isShiftLead: !!rule.isShiftLead,
-                        isDouble: !!rule.isDouble,
-                        notes: tx('Recurring', 'Recurrente'),
-                        published: false,
-                        fromRecurringId: rule.id,
-                        createdBy: staffName,
-                        createdAt: serverTimestamp(),
-                        updatedAt: serverTimestamp(),
-                    });
-                    created.push(`${rule.staffName} ${dStr} ${rule.startTime}–${rule.endTime}`);
-                } catch (e) {
-                    console.error('Recurring shift create failed:', e);
-                }
+                // Collect into the outer batch instead of awaiting per
+                // shift (audit 2026-05-22) — same pattern as auto-fill.
+                recurringBatchShifts.push({
+                    staffName: rule.staffName,
+                    date: dStr,
+                    startTime: rule.startTime,
+                    endTime: rule.endTime,
+                    location: rule.location || (storeLocation !== 'both' ? storeLocation : 'webster'),
+                    isShiftLead: !!rule.isShiftLead,
+                    isDouble: !!rule.isDouble,
+                    notes: tx('Recurring', 'Recurrente'),
+                    published: false,
+                    fromRecurringId: rule.id,
+                    createdBy: staffName,
+                    createdAt: serverTimestamp(),
+                    updatedAt: serverTimestamp(),
+                });
+                created.push(`${rule.staffName} ${dStr} ${rule.startTime}–${rule.endTime}`);
             }
         }
+        // Commit all the recurring shifts in batches of 400.
+        try {
+            const BATCH_LIMIT = 400;
+            for (let i = 0; i < recurringBatchShifts.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const sh of recurringBatchShifts.slice(i, i + BATCH_LIMIT)) {
+                    batch.set(doc(collection(db, 'shifts')), sh);
+                }
+                await batch.commit();
+            }
+        } catch (e) { console.error('Recurring shift batch failed:', e); }
         if (created.length === 0) {
             toast(tx(`No shifts generated.${skipped.length ? '\n\nSkipped:\n' + skipped.slice(0, 8).join('\n') : ''}`,
                 `No se generaron turnos.${skipped.length ? '\n\nOmitidos:\n' + skipped.slice(0, 8).join('\n') : ''}`));
@@ -3702,7 +3786,10 @@ ${dayBlocks}
                 `Copy ${filtered.length} shift(s) from last week into this week (${toDateStr(weekStart)})? They'll be created as DRAFTS.`,
                 `¿Copiar ${filtered.length} turno(s) de la semana anterior a esta semana (${toDateStr(weekStart)})? Se crearán como BORRADORES.`,
             ))) return;
-            // Create new docs with date shifted +7
+            // Create new docs with date shifted +7. Batched (audit
+            // 2026-05-22) — same reasoning as auto-fill: 50 sequential
+            // addDocs was 10+ seconds dead time on copy-week.
+            const toCreate = [];
             for (const sh of filtered) {
                 const oldDate = parseLocalDate(sh.date);
                 if (!oldDate) continue;
@@ -3711,7 +3798,7 @@ ${dayBlocks}
                 const newDateStr = toDateStr(newDate);
                 if (dateClosed(newDateStr)) continue;
                 if (isStaffOffOn(sh.staffName, newDateStr)) continue;
-                await addDoc(collection(db, 'shifts'), {
+                toCreate.push({
                     staffName: sh.staffName,
                     date: newDateStr,
                     startTime: sh.startTime,
@@ -3731,7 +3818,15 @@ ${dayBlocks}
                     updatedAt: serverTimestamp(),
                 });
             }
-            toast(tx(`✅ Copied ${filtered.length} shifts as drafts.`, `✅ Se copiaron ${filtered.length} turnos como borradores.`));
+            const BATCH_LIMIT = 400;
+            for (let i = 0; i < toCreate.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                for (const sh of toCreate.slice(i, i + BATCH_LIMIT)) {
+                    batch.set(doc(collection(db, 'shifts')), sh);
+                }
+                await batch.commit();
+            }
+            toast(tx(`✅ Copied ${toCreate.length} shifts as drafts.`, `✅ Se copiaron ${toCreate.length} turnos como borradores.`));
         } catch (e) {
             console.error('Copy week failed:', e);
             toast(tx('Copy error: ', 'Error al copiar: ') + e.message);
@@ -3849,9 +3944,21 @@ ${dayBlocks}
         }
 
         try {
-            // Sequential writes — small batch, no need for batched writes.
-            for (const sh of created) {
-                await addDoc(collection(db, 'shifts'), sh);
+            // Batched writes — production audit 2026-05-22. Previously
+            // this was a sequential `for ... await addDoc()` loop. For
+            // a 30-staff × 5-day week that's 150 round-trips ≈ 30s of
+            // dead time with no progress UI. writeBatch commits up to
+            // 500 ops in a single round-trip; we chunk in 400s to leave
+            // safety headroom. Auto-fill now completes in ≤1s for
+            // typical weeks.
+            const BATCH_LIMIT = 400;
+            for (let i = 0; i < created.length; i += BATCH_LIMIT) {
+                const batch = writeBatch(db);
+                const slice = created.slice(i, i + BATCH_LIMIT);
+                for (const sh of slice) {
+                    batch.set(doc(collection(db, 'shifts')), sh);
+                }
+                await batch.commit();
             }
             toast(tx(`✅ Auto-filled ${created.length} draft shifts.${skipped.length ? `\n\nSkipped:\n${skipped.slice(0,5).join('\n')}` : ''}`,
                 `✅ Se auto-rellenaron ${created.length} turnos borrador.${skipped.length ? `\n\nOmitidos:\n${skipped.slice(0,5).join('\n')}` : ''}`));
