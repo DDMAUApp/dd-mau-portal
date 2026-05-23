@@ -107,21 +107,36 @@ if (!CLIENT_ID || !CLIENT_SECRET || RESTAURANTS.length === 0) {
 }
 
 // ── Firebase Admin init ────────────────────────────────────────────────
-// Two code paths so this script runs both locally AND in a Railway/cron
+// Three code paths so this script runs both locally AND in a Railway/cron
 // host that can't ship a JSON file at the repo root:
-//   1. FIREBASE_SERVICE_ACCOUNT_JSON env var — paste the full service-account
-//      JSON as one Railway secret. Preferred for hosted cron because there's
-//      no file to upload.
-//   2. File on disk — used locally (firebase-service-account.json at repo
+//   1. FIREBASE_SERVICE_ACCOUNT_BASE64 env var — preferred for hosted cron.
+//      `cat firebase-service-account.json | base64` gives a single-line
+//      blob that survives every textarea/env-var quirk. Decode + JSON.parse.
+//   2. FIREBASE_SERVICE_ACCOUNT_JSON env var — paste the raw JSON. Works
+//      if the host preserves the file exactly (escaped \n inside private_key).
+//      Some hosts mangle multi-line strings, which is why base64 is preferred.
+//   3. File on disk — used locally (firebase-service-account.json at repo
 //      root, gitignored) or via GOOGLE_APPLICATION_CREDENTIALS pointing at
 //      a mounted secret file.
 let serviceAccount = null;
-if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    try {
+        const decoded = Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8');
+        serviceAccount = JSON.parse(decoded);
+    } catch (e) {
+        console.error('❌ FIREBASE_SERVICE_ACCOUNT_BASE64 is set but failed to decode + parse.');
+        console.error('   Generate with: cat firebase-service-account.json | base64');
+        console.error('   (one line, no extra quotes or whitespace)');
+        process.exit(1);
+    }
+}
+if (!serviceAccount && process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
     try {
         serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
     } catch (e) {
         console.error('❌ FIREBASE_SERVICE_ACCOUNT_JSON is set but not valid JSON.');
         console.error('   Hint: in Railway, paste the entire JSON contents (no extra quotes).');
+        console.error('   Or use the BASE64 variant — set FIREBASE_SERVICE_ACCOUNT_BASE64 instead.');
         process.exit(1);
     }
 }
