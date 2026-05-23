@@ -384,6 +384,15 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // control any time; we just don't make that the entry point. The
     // grid handles its own horizontal scroll on narrow screens.
     const [viewMode, setViewMode] = useState('grid');
+    // Mobile "fit-to-screen" zoom — Andrew 2026-05-22 "i want to be
+    // able to zoom out and see the full picture of the weeks calendar
+    // with everyone schedule. sling has this function". When true, the
+    // WeeklyGrid renders at its natural size but a CSS scale transform
+    // shrinks it to fit the viewport width so the whole week × all
+    // staff fits in one screen. Useful for the at-a-glance "is anyone
+    // double-booked / are there gaps" check; the user toggles back to
+    // normal for editing since cells are too small to tap when fit.
+    const [gridFitToScreen, setGridFitToScreen] = useState(false);
     const [side, setSide] = useState('foh'); // 'foh' | 'boh'
     // Side-aware edit gates. MUST be declared AFTER `side` — used to be one
     // line before the `useState`, which threw a TDZ ReferenceError on first
@@ -4073,6 +4082,25 @@ ${dayBlocks}
                 ))}
             </div>
 
+            {/* Mobile "fit to screen" zoom toggle — only relevant for
+                the Week grid view and only on phones (the desktop
+                grid already fits the screen). Tapping shrinks the
+                full week × all staff to fit the viewport for an
+                at-a-glance overview, then tap again to return to the
+                normal scrollable size. Andrew 2026-05-22. */}
+            {viewMode === 'grid' && (
+                <button onClick={() => setGridFitToScreen(v => !v)}
+                    className={`md:hidden w-full flex items-center justify-center gap-2 py-1.5 mb-3 rounded-lg border text-xs font-bold transition print:hidden ${
+                        gridFitToScreen
+                            ? 'bg-dd-green text-white border-dd-green'
+                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
+                    }`}>
+                    {gridFitToScreen
+                        ? <>🔍 {tx('Exit overview — tap to edit shifts', 'Salir vista general — toca para editar')}</>
+                        : <>🔎 {tx('Overview: fit week to screen', 'Vista general: ajustar semana a pantalla')}</>}
+                </button>
+            )}
+
             {/* "My Schedule" quick-toggle button — Andrew (2026-05-17):
                 "i want a my schedule button. so a staff member can see
                 only their schedule." One-tap shortcut to filter every
@@ -4497,6 +4525,19 @@ ${dayBlocks}
                                     />
                                 </>
                             )}
+                            {/* Fit-to-screen wrapper (Andrew 2026-05-22).
+                                When gridFitToScreen is on, we measure the
+                                natural width of the inner grid and apply a
+                                CSS transform: scale to shrink the whole
+                                week × all staff down to fit the viewport
+                                width. The outer container's height shrinks
+                                in lockstep so the page doesn't have a
+                                giant gap of empty space below. Cells are
+                                too small to interact with at this zoom
+                                level — by design, this is the at-a-glance
+                                view, not an editing view. Tap the toggle
+                                again to return to normal. */}
+                            <GridFitWrapper enabled={gridFitToScreen}>
                             <WeeklyGrid
                                 weekStart={weekStart}
                                 staffSummary={staffSummary}
@@ -4618,6 +4659,7 @@ ${dayBlocks}
                                 dateHasOpenOverride={dateHasOpenOverride}
                                 dateClosedByRecurring={dateClosedByRecurring}
                             />
+                            </GridFitWrapper>
                             {/* Weekly hours summary — managers-only per
                                 Andrew (2026-05-17). Was rendered for
                                 everyone; now hidden for staff + shift
@@ -5032,6 +5074,80 @@ ${dayBlocks}
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────
+
+// Fit-to-screen wrapper for the WeeklyGrid on mobile. Andrew
+// 2026-05-22 — "i want to be able to zoom out and see the full
+// picture of the weeks calendar with everyone schedule. sling has
+// this function". When enabled, we measure the inner grid's natural
+// scroll width and apply a CSS transform: scale so the whole week ×
+// all staff fits in the viewport width. Outer container's height
+// shrinks in lockstep so there's no big empty gap below.
+//
+// Implementation notes:
+//   • Measurement runs in useLayoutEffect so the scaled size is
+//     correct on first paint (no flash of unscaled content).
+//   • Recalculated on window resize (rotation, keyboard show/hide).
+//   • Pointer-events: none on the scaled content because cells are
+//     too small to interact with at this zoom — the toggle button
+//     in the schedule header switches back out for editing.
+//   • When disabled, we render children with no wrapper transforms
+//     so the existing overflow-x-auto inside WeeklyGrid keeps
+//     working normally for desktop + horizontal-scroll mobile users.
+function GridFitWrapper({ enabled, children }) {
+    const innerRef = useRef(null);
+    const [scale, setScale] = useState(1);
+    const [scaledHeight, setScaledHeight] = useState(null);
+
+    useEffect(() => {
+        if (!enabled) {
+            setScale(1);
+            setScaledHeight(null);
+            return;
+        }
+        const compute = () => {
+            const el = innerRef.current;
+            if (!el) return;
+            const containerWidth = el.parentElement?.offsetWidth || window.innerWidth;
+            const naturalWidth = el.scrollWidth || 1;
+            const naturalHeight = el.scrollHeight || 0;
+            const s = Math.min(1, containerWidth / naturalWidth);
+            setScale(s);
+            setScaledHeight(naturalHeight * s);
+        };
+        // Defer to next frame so children have laid out.
+        const raf = requestAnimationFrame(compute);
+        window.addEventListener('resize', compute);
+        // ResizeObserver catches shifts / staff list updates while
+        // overview is open (new staff added, new week loaded).
+        let ro;
+        if (typeof ResizeObserver !== 'undefined' && innerRef.current) {
+            ro = new ResizeObserver(compute);
+            ro.observe(innerRef.current);
+        }
+        return () => {
+            cancelAnimationFrame(raf);
+            window.removeEventListener('resize', compute);
+            if (ro) ro.disconnect();
+        };
+    }, [enabled]);
+
+    if (!enabled) return <>{children}</>;
+    return (
+        <div style={{ overflow: 'hidden', height: scaledHeight ?? 'auto' }}>
+            <div
+                ref={innerRef}
+                style={{
+                    transform: `scale(${scale})`,
+                    transformOrigin: 'top left',
+                    width: scale > 0 ? `${100 / scale}%` : '100%',
+                    pointerEvents: 'none',
+                }}
+            >
+                {children}
+            </div>
+        </div>
+    );
+}
 
 function WeekNav({ weekStart, setWeekStart, isEn }) {
     const weekEnd = addDays(weekStart, 6);
