@@ -29,6 +29,7 @@ import { toast, undoToast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     setDoc, serverTimestamp, writeBatch, runTransaction, arrayUnion,
+    orderBy, limit,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
@@ -912,7 +913,18 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const seenNotifIds = useMemo(() => new Set(), [staffName]);
     useEffect(() => {
         if (!staffName) return;
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
+        // Audit 2026-05-22 fix: cap at 50 notifications. Was unbounded.
+        // A composite (forStaff, createdAt desc) index would let us
+        // request the 50 MOST RECENT specifically, but adding orderBy
+        // without the index causes the listener to fail until Firebase
+        // builds it (~10 min outage). For now: rely on the cap + the
+        // existing client-side sort below. If notification volume per
+        // user gets above ~50/day this should be revisited.
+        const q = query(
+            collection(db, 'notifications'),
+            where('forStaff', '==', staffName),
+            limit(50),
+        );
         const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
@@ -3257,25 +3269,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                   { kind: 'error', duration: 5000 });
             return;
         }
-        const updated = staffList.map(s => s.name === staffName ? { ...s, birthday: clean } : s);
-        // PIN integrity gate — same defense as in AdminPanel +
-        // handleSaveMyAvailability. Refuse the save if any staff row
-        // has a missing/invalid PIN, since /config/staff is the source
-        // of truth for sign-in.
-        const bad = updated.find(s => {
-            const p = String(s.pin ?? '').trim();
-            return !p || !/^\d{4}$/.test(p);
-        });
-        if (bad) {
-            console.error('Refusing birthday save — invalid PIN on:', bad.name, 'pin=', bad.pin);
-            toast(tx(`Save blocked: invalid PIN on ${bad.name}. Reload the app and try again.`,
-                     `Guardado bloqueado: PIN inválido en ${bad.name}. Recarga la app.`),
-                  { kind: 'error', duration: 8000 });
-            return;
-        }
-        setStaffList(updated);
+        // Optimistic local update.
+        const updatedLocal = staffList.map(s => s.name === staffName ? { ...s, birthday: clean } : s);
+        setStaffList(updatedLocal);
         try {
-            await setDoc(doc(db, 'config', 'staff'), { list: updated });
+            // Audit 2026-05-22 fix: txn re-reads /config/staff so a
+            // concurrent admin edit (role change, etc.) isn't lost
+            // when we write back. PIN-integrity gate runs on the
+            // live list, not our stale local copy.
+            await runTransaction(db, async (tx) => {
+                const ref = doc(db, 'config', 'staff');
+                const snap = await tx.get(ref);
+                const liveList = (snap.exists() && Array.isArray(snap.data().list)) ? snap.data().list : updatedLocal;
+                const next = liveList.map(s => s.name === staffName ? { ...s, birthday: clean } : s);
+                const bad = next.find(s => {
+                    const p = String(s.pin ?? '').trim();
+                    return !p || !/^\d{4}$/.test(p);
+                });
+                if (bad) {
+                    throw new Error(`PIN integrity check failed on ${bad.name}`);
+                }
+                tx.set(ref, { list: next });
+            });
             toast(tx('🎂 Birthday saved', '🎂 Cumpleaños guardado'), { kind: 'success', duration: 2500 });
         } catch (e) {
             console.error('Save birthday failed:', e);
@@ -3285,29 +3300,40 @@ export default function Schedule({ staffName, language, storeLocation, staffList
 
     const handleSaveMyAvailability = async (newAvailability) => {
         if (!staffList || !setStaffList) return;
-        const updated = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
-        // PIN INTEGRITY GATE — same defense as in AdminPanel. If any staff
-        // record in `updated` has a missing/invalid PIN, refuse the save
-        // entirely. This blocks the bug pattern that wiped PINs on
-        // 2026-05-09: stale React state writing empty/missing PINs back
-        // to Firestore.
-        const bad = updated.find(s => {
-            const p = String(s.pin ?? '').trim();
-            return !p || !/^\d{4}$/.test(p);
-        });
-        if (bad) {
-            console.error('Refusing availability save — invalid PIN on:', bad.name, 'pin=', bad.pin);
-            toast(tx(`Save blocked: invalid PIN on ${bad.name}. Reload the app and try again.`,
-                     `Guardado bloqueado: PIN inválido en ${bad.name}. Recarga la app.`),
-                  { kind: 'error', duration: 8000 });
-            return;
-        }
-        setStaffList(updated);
+        // Optimistic local update for snappy UI.
+        const updatedLocal = staffList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
+        setStaffList(updatedLocal);
         try {
-            await setDoc(doc(db, 'config', 'staff'), { list: updated });
+            // Audit 2026-05-22 fix: was a read-modify-write of
+            // /config/staff.list from local state. If an admin edited
+            // a different staffer's role in AdminPanel mid-save, the
+            // admin's edit got clobbered (last-writer-wins on the
+            // whole list). Transaction re-reads the live list, applies
+            // ONLY this staffer's availability change, writes back.
+            await runTransaction(db, async (tx) => {
+                const ref = doc(db, 'config', 'staff');
+                const snap = await tx.get(ref);
+                const liveList = (snap.exists() && Array.isArray(snap.data().list)) ? snap.data().list : updatedLocal;
+                const next = liveList.map(s => s.name === staffName ? { ...s, availability: newAvailability } : s);
+                // PIN integrity gate — same defense as before. Refuse
+                // the save if ANY row has a missing/invalid PIN. This
+                // catches the 2026-05-09 wipe pattern: stale React
+                // state writing empty PINs back. Run on the txn-read
+                // result so we check live data, not stale local.
+                const bad = next.find(s => {
+                    const p = String(s.pin ?? '').trim();
+                    return !p || !/^\d{4}$/.test(p);
+                });
+                if (bad) {
+                    throw new Error(`PIN integrity check failed on ${bad.name}`);
+                }
+                tx.set(ref, { list: next });
+            });
         } catch (e) {
             console.error('Save availability failed:', e);
-            toast(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message);
+            toast(tx('Could not save availability: ', 'No se pudo guardar: ') + e.message,
+                  { kind: 'error', duration: 8000 });
+            // Roll back the optimistic local update — caller will see the snapshot fix it.
         }
     };
 

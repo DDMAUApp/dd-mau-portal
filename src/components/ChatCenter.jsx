@@ -75,9 +75,18 @@ export default function ChatCenter({
         // Firestore can't do "array-contains-any with OR another filter"
         // in one query, but we don't need it — channels are kept in the
         // members array by the sync logic below. So one query covers it.
+        // Audit 2026-05-22 fix: cap at 100 chats. Was unbounded.
+        // The ideal would be orderBy(lastActivityAt desc) + limit(100)
+        // to get the most-recent 100, but adding orderBy to a
+        // (members array-contains) where requires a composite index
+        // — without it, the listener fails until Firebase builds the
+        // index (~10 min outage). For now: limit alone caps the read.
+        // The client-side sort below still orders by lastActivityAt.
+        // Revisit if any user is in >100 chats (none today).
         const q = query(
             collection(db, 'chats'),
-            where('members', 'array-contains', staffName)
+            where('members', 'array-contains', staffName),
+            limit(100),
         );
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
