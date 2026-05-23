@@ -243,6 +243,15 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         Number(activeDaypart?.imageRotateSeconds)
         || Number(tvConfig?.imageRotateSeconds)
         || DEFAULT_IMAGE_ROTATE_SECONDS));
+    // Slideshow transition style + speed. Daypart wins over top-level
+    // so a "Dinner" daypart with ken-burns can sit on top of a default
+    // fade for the rest of the day. Falls back to 'fade' + 700ms which
+    // is what every TV showed before this feature shipped.
+    const imageTransition = activeDaypart?.imageTransition || tvConfig?.imageTransition || 'fade';
+    const imageTransitionMs = Math.max(100, Math.min(3000,
+        Number(activeDaypart?.imageTransitionMs)
+        || Number(tvConfig?.imageTransitionMs)
+        || 700));
     const includeCategories = Array.isArray(tvConfig?.includeCategories) && tvConfig.includeCategories.length > 0
         ? new Set(tvConfig.includeCategories) : null;
     const spotlightCategory = tvConfig?.spotlightCategory || null;
@@ -394,6 +403,8 @@ function MenuDisplayInner({ tvId = 'webster' }) {
                 <ImageModeLayout
                     imageUrls={imageUrls}
                     imageRotateSeconds={imageRotateSeconds}
+                    imageTransition={imageTransition}
+                    imageTransitionMs={imageTransitionMs}
                     imageHitZones={imageHitZones}
                     sixed={sixed}
                     now={now}
@@ -485,6 +496,12 @@ function ImageModeLayout({
     sixed, now, label, daypartLabel,
     embedded = false,           // when used inside SplitModeLayout, drop fixed positioning
     suppressIndicator = false,  // hide the corner pill (the embedding parent already shows it)
+    // Audit follow-up 2026-05-23. Six transition styles selectable
+    // from the editor. Default 'fade' preserves the previous behavior
+    // (700ms opacity cross-fade) so existing TVs see no change until
+    // admin picks a new style.
+    imageTransition = 'fade',
+    imageTransitionMs = 700,
 }) {
     const [idx, setIdx] = useState(0);
     // Track natural dims per page so we can size each container to
@@ -589,6 +606,30 @@ function ImageModeLayout({
 
     return (
         <div ref={wrapperRef} className={containerCls}>
+            {/* Keyframes for the during-dwell animations. Defined
+                inline so we don't have to edit a global stylesheet
+                or invent a Tailwind plugin for two animations.
+                animation-duration is set per-element via the inline
+                style above so each transition uses imageRotateSeconds
+                as the duration (animation completes just as the
+                slide changes).
+                  • tv-zoom-in: gentle 1.0 → 1.06 zoom while active.
+                  • tv-ken-burns: combined zoom + diagonal pan, the
+                    classic "documentary photo" effect. Alternating
+                    start corners would feel more cinematic; for v1
+                    we keep it consistent so the look is predictable. */}
+            <style>{`
+                @keyframes tv-zoom-in {
+                    0%   { transform: scale(1); }
+                    100% { transform: scale(1.06); }
+                }
+                @keyframes tv-ken-burns {
+                    0%   { transform: scale(1)    translate3d(0, 0, 0); }
+                    100% { transform: scale(1.12) translate3d(-3%, -2%, 0); }
+                }
+                .tv-zoom-in   { animation-name: tv-zoom-in;   animation-timing-function: ease-out;       animation-fill-mode: forwards; }
+                .tv-ken-burns { animation-name: tv-ken-burns; animation-timing-function: ease-in-out;    animation-fill-mode: forwards; }
+            `}</style>
             {/* Each page renders inside a container sized to the EXACT
                 displayed image dimensions (via JS measurement of the
                 wrapper + the image's natural aspect ratio). This is
@@ -621,19 +662,97 @@ function ImageModeLayout({
                         fitH = parentBox.w / aspect;
                     }
                 }
+                // Per-slide transition style. Computed inline so
+                // each transition mode is a pure data transform —
+                // no extra CSS file, no animation classes to keep
+                // in sync. The active slide (i === idx) is fully
+                // visible at the "rest" transform; the others are
+                // offset / faded / scaled depending on the mode.
+                //
+                // For ken-burns + zoom, we ALSO apply a CSS
+                // keyframe animation to the active image element
+                // itself (inside the inner div below) so the
+                // image keeps moving while it's on screen.
+                const isCurrent = i === idx;
+                const ms = Math.max(100, Math.min(3000, Number(imageTransitionMs) || 700));
+                const slideStyle = (() => {
+                    const base = {
+                        inset: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        pointerEvents: isCurrent ? 'auto' : 'none',
+                    };
+                    switch (imageTransition) {
+                        case 'cut':
+                            return {
+                                ...base,
+                                opacity: isCurrent ? 1 : 0,
+                                transition: 'none',
+                            };
+                        case 'slide-left':
+                            return {
+                                ...base,
+                                opacity: isCurrent ? 1 : 0,
+                                transform: isCurrent ? 'translateX(0)' : 'translateX(100%)',
+                                transition: `opacity ${ms}ms ease, transform ${ms}ms cubic-bezier(0.4,0,0.2,1)`,
+                            };
+                        case 'slide-up':
+                            return {
+                                ...base,
+                                opacity: isCurrent ? 1 : 0,
+                                transform: isCurrent ? 'translateY(0)' : 'translateY(100%)',
+                                transition: `opacity ${ms}ms ease, transform ${ms}ms cubic-bezier(0.4,0,0.2,1)`,
+                            };
+                        case 'zoom':
+                            return {
+                                ...base,
+                                opacity: isCurrent ? 1 : 0,
+                                transform: isCurrent ? 'scale(1)' : 'scale(0.92)',
+                                transition: `opacity ${ms}ms ease, transform ${ms}ms cubic-bezier(0.4,0,0.2,1)`,
+                            };
+                        case 'ken-burns':
+                            // Outer layer fades; inner image runs a
+                            // slow zoom-pan animation while active
+                            // (set on the inner div via className
+                            // below).
+                            return {
+                                ...base,
+                                opacity: isCurrent ? 1 : 0,
+                                transition: `opacity ${ms}ms ease`,
+                            };
+                        case 'fade':
+                        default:
+                            return {
+                                ...base,
+                                opacity: isCurrent ? 1 : 0,
+                                transition: `opacity ${ms}ms ease`,
+                            };
+                    }
+                })();
+                // Per-image animation class for ken-burns / zoom-during-dwell.
+                // Driven by a keyframe animation defined inline below the
+                // map. Only applied when this slide IS the current one.
+                const innerAnimClass = isCurrent && imageTransition === 'ken-burns'
+                    ? 'tv-ken-burns'
+                    : isCurrent && imageTransition === 'zoom'
+                    ? 'tv-zoom-in'
+                    : '';
                 return (
                     <div key={url + i}
-                        className="absolute transition-opacity duration-700"
-                        style={{
-                            opacity: i === idx ? 1 : 0,
-                            inset: 0,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            pointerEvents: i === idx ? 'auto' : 'none',
-                        }}>
-                        <div className="relative"
-                            style={{ width: fitW, height: fitH }}>
+                        className="absolute overflow-hidden"
+                        style={slideStyle}>
+                        <div className={`relative ${innerAnimClass}`}
+                            style={{
+                                width: fitW,
+                                height: fitH,
+                                // animationDuration matches the
+                                // dwell time so the zoom completes
+                                // just as we swap to the next slide.
+                                animationDuration: isCurrent && (imageTransition === 'ken-burns' || imageTransition === 'zoom')
+                                    ? `${imageRotateSeconds}s`
+                                    : undefined,
+                            }}>
                             {urlIsVideo(url) ? (
                                 // Video pages — autoplay muted loops. The
                                 // `muted` attribute is required for autoplay

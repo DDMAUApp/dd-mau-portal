@@ -325,6 +325,20 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // Image-mode state
     const [imageUrls, setImageUrls] = useState(Array.isArray(initial?.imageUrls) ? initial.imageUrls : []);
     const [imageRotateSeconds, setImageRotateSeconds] = useState(Number(initial?.imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS);
+    // Slideshow transition style. Six options exposed to admin:
+    //   fade       — default; 700ms cross-fade between images
+    //   cut        — instant swap, no transition
+    //   slide-left — new image slides in from the right
+    //   slide-up   — new image slides up from below
+    //   zoom       — gentle zoom-in on the active slide; fade between
+    //   ken-burns  — slow zoom + pan during dwell (the "documentary" look)
+    // Stored on tv_config.imageTransition. MenuDisplay.ImageModeLayout
+    // reads this and applies the right CSS.
+    const [imageTransition, setImageTransition] = useState(initial?.imageTransition || 'fade');
+    // Transition duration in ms. Separate from imageRotateSeconds
+    // (the dwell-between-slides). Clamped 100..3000 in render so
+    // bad values can't break the animation.
+    const [imageTransitionMs, setImageTransitionMs] = useState(Number(initial?.imageTransitionMs) || 700);
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
     const [dayparts, setDayparts] = useState(Array.isArray(initial?.dayparts) ? initial.dayparts : []);
     const [split, setSplit] = useState(initial?.split || {
@@ -393,60 +407,76 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const previewUrl = previewTvId ? `${baseUrl}/?tv=${previewTvId}` : '';
 
     const handleFilePick = async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
         e.target.value = '';  // allow re-picking same file
         // 80 MB ceiling — fits restaurant sizzle reels (MP4, ~30-60 MB)
-        // and the largest PDF menus. Image-only uploads will rarely
-        // even approach this.
-        if (file.size > 80 * 1024 * 1024) {
-            toast(tx('File too large (max 80 MB).', 'Archivo muy grande (máx 80 MB).'), { kind: 'error' });
-            return;
+        // and the largest PDF menus. Validate every file up-front so
+        // we don't half-upload then bail on a big one.
+        for (const file of files) {
+            if (file.size > 80 * 1024 * 1024) {
+                toast(tx(`File "${file.name}" too large (max 80 MB).`, `Archivo "${file.name}" muy grande (máx 80 MB).`), { kind: 'error' });
+                return;
+            }
         }
         setUploading(true);
+        // Behavior change (Andrew 2026-05-23 audit follow-up): picking
+        // multiple files at once APPENDS to the existing imageUrls
+        // array. Previously the single-file path REPLACED the whole
+        // set, which made it impossible to build a multi-photo
+        // slideshow without uploading them as a single multi-page
+        // PDF. The "Replace" semantic still exists via Clear All +
+        // re-pick. PDFs (multi-page menus) still replace because
+        // dropping a new PDF on top of an existing one almost
+        // always means "swap to the new menu".
+        const hasPdf = files.some(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
         try {
-            const slugPrefix = (previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-');
-            const urls = await uploadMenuFile({ file, folder: 'tv_images', slugPrefix });
-            // REPLACE the existing image set — this is "upload a new menu",
-            // not "append more pages". Admin can re-upload if they want
-            // to swap. Avoids the surprise of old pages lingering.
-            setImageUrls(urls);
-            // urls.meta is populated by uploadMenuFile for image
-            // uploads (not for PDFs / videos). Surface optimization
-            // + low-res warnings so admin understands what got
-            // adjusted and what might look soft on a TV.
-            const meta = urls.meta;
-            // Build the toast around what actually happened. The
-            // crop case is the most surprising of the three so it
-            // earns the headline; resize-only is secondary; the
-            // base case is just "uploaded".
-            if (meta?.wasCropped) {
-                const oA = meta.originalAspect;
-                const sourceShape = oA > 0
-                    ? (oA < 1 ? 'portrait' : oA < 1.2 ? 'square' : oA < 1.5 ? '4:3' : 'ultrawide')
-                    : 'off-aspect';
-                const sourceShapeEs = oA > 0
-                    ? (oA < 1 ? 'vertical' : oA < 1.2 ? 'cuadrada' : oA < 1.5 ? '4:3' : 'ultraancha')
-                    : 'fuera de proporción';
+            let cropped = 0, resized = 0, lowRes = 0;
+            const newUrls = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const slugPrefix = `${(previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-')}-${Date.now()}-${i}`;
+                const urls = await uploadMenuFile({ file, folder: 'tv_images', slugPrefix });
+                for (const u of urls) newUrls.push(u);
+                const meta = urls.meta;
+                if (meta?.wasCropped) cropped++;
+                if (meta?.wasResized) resized++;
+                if (meta?.isLowResolution) lowRes++;
+            }
+            // PDF uploads still replace; image batches append.
+            if (hasPdf) {
+                setImageUrls(newUrls);
+            } else {
+                setImageUrls(prev => [...prev, ...newUrls]);
+            }
+            // Aggregate toast — one line summarizing the whole batch
+            // rather than a flood of per-file toasts.
+            if (files.length > 1) {
+                const noteBits = [];
+                if (cropped) noteBits.push(tx(`${cropped} cropped to 16:9`, `${cropped} recortado(s)`));
+                if (resized) noteBits.push(tx(`${resized} resized`, `${resized} redimensionado(s)`));
+                const note = noteBits.length > 0 ? ` · ${noteBits.join(', ')}` : '';
                 toast(tx(
-                    `✓ Uploaded · cropped from ${sourceShape} to 16:9 for full-screen TV display`,
-                    `✓ Subido · recortado de ${sourceShapeEs} a 16:9 para pantalla completa`,
-                ), { kind: 'success' });
-            } else if (meta?.wasResized) {
-                const ow = meta.originalDimensions?.width;
-                const tw = meta.uploadedDimensions?.width;
-                toast(tx(
-                    `✓ Uploaded · resized from ${ow}px to ${tw}px for faster TV display`,
-                    `✓ Subido · redimensionado de ${ow}px a ${tw}px para TV más rápido`,
+                    `✓ Added ${newUrls.length} image${newUrls.length === 1 ? '' : 's'} to slideshow${note}`,
+                    `✓ Agregada${newUrls.length === 1 ? '' : 's'} ${newUrls.length} imagen${newUrls.length === 1 ? '' : 'es'}${note}`,
                 ), { kind: 'success' });
             } else {
-                toast(tx(`✓ Uploaded ${urls.length} page(s)`, `✓ Subido ${urls.length} página(s)`), { kind: 'success' });
+                // Single-file flow keeps the richer existing toast
+                // because it's worth surfacing exactly what
+                // happened for a one-off upload.
+                const meta = (newUrls).meta || {};
+                if (cropped) {
+                    toast(tx('✓ Uploaded · cropped to 16:9 for full-screen TV display', '✓ Subido · recortado a 16:9'), { kind: 'success' });
+                } else if (resized) {
+                    toast(tx('✓ Uploaded · resized for faster TV display', '✓ Subido · redimensionado para TV más rápido'), { kind: 'success' });
+                } else {
+                    toast(tx(`✓ Uploaded ${newUrls.length} page(s)`, `✓ Subido ${newUrls.length} página(s)`), { kind: 'success' });
+                }
             }
-            if (meta?.isLowResolution) {
-                const ow = meta.originalDimensions?.width;
+            if (lowRes > 0) {
                 toast(tx(
-                    `⚠ Image is only ${ow}px wide — may look soft on a 1080p TV. Aim for 1920px+ for sharp display.`,
-                    `⚠ Imagen de solo ${ow}px de ancho — puede verse borrosa en TV 1080p. Apunta a 1920px+ para nitidez.`,
+                    `⚠ ${lowRes} image${lowRes === 1 ? '' : 's'} below 1280px wide — may look soft on a 1080p TV.`,
+                    `⚠ ${lowRes} imagen${lowRes === 1 ? '' : 'es'} bajo 1280px — pueden verse borrosas en TV 1080p.`,
                 ), { kind: 'warn' });
             }
         } catch (err) {
@@ -457,46 +487,61 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         }
     };
 
+    // "Clear all" companion to multi-upload — admin removes the
+    // entire image list at once so a fresh slideshow starts clean.
+    // Confirms because it's destructive.
+    const clearAllImages = () => {
+        if (imageUrls.length === 0) return;
+        const ok = window.confirm(tx(
+            `Remove all ${imageUrls.length} images? (Existing config saves stay until you click Save & Publish.)`,
+            `¿Quitar las ${imageUrls.length} imágenes? (La configuración persiste hasta Guardar y publicar.)`,
+        ));
+        if (ok) setImageUrls([]);
+    };
+
     const removeImageAt = (idx) => {
         setImageUrls(prev => prev.filter((_, i) => i !== idx));
     };
 
-    // Split-mode upload handler — one side at a time. Same caps +
-    // file types as the main upload handler.
+    // Split-mode upload handler — supports multi-file pickers
+    // (Andrew 2026-05-23). The right side is specifically a carousel
+    // and benefits the most from batch upload; the left side is
+    // usually a single menu PDF but multi-image stacks are still
+    // useful for "menu + ad" combos. PDF uploads still REPLACE for
+    // the same reason as the main flow.
     const handleSplitUpload = async (side, e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
         e.target.value = '';
-        if (file.size > 80 * 1024 * 1024) {
-            toast(tx('File too large (max 80 MB).', 'Archivo muy grande (máx 80 MB).'), { kind: 'error' });
-            return;
+        for (const file of files) {
+            if (file.size > 80 * 1024 * 1024) {
+                toast(tx(`File "${file.name}" too large (max 80 MB).`, `Archivo "${file.name}" muy grande (máx 80 MB).`), { kind: 'error' });
+                return;
+            }
         }
+        const hasPdf = files.some(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
         setSplitUploading(side);
         try {
-            const slugPrefix = (previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-') + '-' + side;
-            const urls = await uploadMenuFile({ file, folder: 'tv_images', slugPrefix });
+            const newUrls = [];
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                const slugPrefix = `${(previewTvId || 'tv').replace(/[^a-z0-9-]/g, '-')}-${side}-${Date.now()}-${i}`;
+                const urls = await uploadMenuFile({ file, folder: 'tv_images', slugPrefix });
+                for (const u of urls) newUrls.push(u);
+            }
+            const key = side === 'left' ? 'leftImageUrls' : 'rightImageUrls';
             setSplit(s => ({
                 ...s,
-                [side === 'left' ? 'leftImageUrls' : 'rightImageUrls']: urls,
+                [key]: hasPdf ? newUrls : [...(s[key] || []), ...newUrls],
             }));
-            const meta = urls.meta;
-            if (meta?.wasResized) {
-                const ow = meta.originalDimensions?.width;
-                const tw = meta.uploadedDimensions?.width;
-                toast(tx(
-                    `✓ ${side} uploaded · resized ${ow}px→${tw}px`,
-                    `✓ ${side} subido · redimensionado ${ow}px→${tw}px`,
-                ), { kind: 'success' });
-            } else {
-                toast(tx(`✓ ${side} uploaded`, `✓ ${side} subido`), { kind: 'success' });
-            }
-            if (meta?.isLowResolution) {
-                const ow = meta.originalDimensions?.width;
-                toast(tx(
-                    `⚠ ${side} image is only ${ow}px wide — may look soft on TV.`,
-                    `⚠ Imagen ${side} solo ${ow}px de ancho — puede verse borrosa en TV.`,
-                ), { kind: 'warn' });
-            }
+            // One aggregate toast across the batch (works for both
+            // single-file and multi-file picks). The verb is "added"
+            // for image batches and "replaced" for PDFs to match the
+            // actual behavior.
+            const verb = hasPdf ? tx('Replaced', 'Reemplazado')
+                                 : tx('Added',    'Agregada' + (newUrls.length === 1 ? '' : 's'));
+            const sideLabel = side === 'left' ? tx('left', 'izquierda') : tx('right', 'derecha');
+            toast(`✓ ${verb}: ${newUrls.length} ${side === 'left' ? sideLabel : sideLabel} · ${newUrls.length === 1 ? tx('image', 'imagen') : tx('images', 'imágenes')}`, { kind: 'success' });
         } catch (err) {
             console.warn('split upload failed:', err);
             toast(tx('Upload failed: ', 'Error al subir: ') + (err?.message || ''), { kind: 'error' });
@@ -541,6 +586,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.imageRotateSeconds = imageUrls.length > 1
                     ? Math.max(3, Math.min(60, Number(imageRotateSeconds) || DEFAULT_IMAGE_ROTATE_SECONDS))
                     : null;
+                payload.imageTransition = imageTransition || 'fade';
+                payload.imageTransitionMs = Math.max(100, Math.min(3000, Number(imageTransitionMs) || 700));
                 payload.imageHitZones = imageHitZones;
                 payload.dayparts = dayparts;
                 payload.split = null;
@@ -882,10 +929,11 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                     <label className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
                                                         isUploading ? 'bg-sky-200 text-sky-600 opacity-60' : 'bg-sky-100 text-sky-700 hover:bg-sky-200'
                                                     }`}>
-                                                        {isUploading ? '⏳' : (urls.length > 0 ? tx('Replace', 'Reemplazar') : tx('Upload', 'Subir'))}
+                                                        {isUploading ? '⏳' : (urls.length > 0 ? tx('+ Add', '+ Agregar') : tx('Upload', 'Subir'))}
                                                         <input type="file" accept="image/*,video/mp4,video/webm,video/quicktime,application/pdf"
                                                             onChange={(e) => handleSplitUpload(side, e)}
                                                             disabled={isUploading}
+                                                            multiple
                                                             className="hidden" />
                                                     </label>
                                                 </div>
@@ -942,18 +990,29 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                             ? 'bg-sky-300 text-white opacity-60'
                                             : 'bg-sky-600 text-white hover:bg-sky-700'
                                     }`}>
-                                        {uploading ? tx('Uploading…', 'Subiendo…') : (imageUrls.length > 0 ? tx('Replace file', 'Reemplazar') : tx('Choose file', 'Elegir archivo'))}
+                                        {uploading
+                                            ? tx('Uploading…', 'Subiendo…')
+                                            : (imageUrls.length > 0
+                                                ? tx('+ Add more', '+ Agregar más')
+                                                : tx('+ Add images', '+ Agregar imágenes'))}
                                         <input type="file"
                                             accept="image/*,video/mp4,video/webm,video/quicktime,application/pdf"
                                             onChange={handleFilePick}
                                             disabled={uploading}
+                                            multiple
                                             className="hidden" />
                                     </label>
+                                    {imageUrls.length > 0 && (
+                                        <button type="button" onClick={clearAllImages}
+                                            className="px-2 py-1 rounded text-[10px] font-bold text-sky-700 hover:bg-sky-100">
+                                            {tx('Clear all', 'Quitar todo')}
+                                        </button>
+                                    )}
                                 </div>
                                 <p className="text-[10px] text-sky-700/80 leading-snug">
                                     {tx(
-                                        'Accepts PDF or JPEG/PNG. PDFs are converted to one image per page; multi-page menus auto-rotate on the TV.',
-                                        'Acepta PDF o JPEG/PNG. Los PDF se convierten a una imagen por página; los menús de varias páginas rotan automáticamente.',
+                                        'Pick multiple images at once to build a slideshow — they\'ll appear in upload order. PDFs are converted to one image per page and REPLACE the existing set (use Clear All first if mixing PDF + images).',
+                                        'Selecciona varias imágenes a la vez para crear un carrusel — aparecen en orden de subida. Los PDF se convierten a una imagen por página y REEMPLAZAN el conjunto existente.',
                                     )}
                                 </p>
                                 {imageUrls.length > 0 && (
@@ -974,15 +1033,65 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                     </div>
                                 )}
                                 {imageUrls.length > 1 && (
-                                    <label className="block pt-1">
-                                        <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-0.5">
-                                            {tx('Seconds per page', 'Segundos por página')}
-                                        </span>
-                                        <input type="number" value={imageRotateSeconds}
-                                            onChange={(e) => setImageRotateSeconds(Number(e.target.value) || DEFAULT_IMAGE_ROTATE_SECONDS)}
-                                            min={3} max={60} step={1}
-                                            className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
-                                    </label>
+                                    <>
+                                        <label className="block pt-1">
+                                            <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-0.5">
+                                                {tx('Seconds per slide', 'Segundos por imagen')}
+                                            </span>
+                                            <input type="number" value={imageRotateSeconds}
+                                                onChange={(e) => setImageRotateSeconds(Number(e.target.value) || DEFAULT_IMAGE_ROTATE_SECONDS)}
+                                                min={3} max={60} step={1}
+                                                className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
+                                        </label>
+                                        {/* Slideshow transition picker. 6 options
+                                            from "no effect" to "full Ken-Burns
+                                            documentary". Visual icons in the chips
+                                            so admin sees the look without having
+                                            to read the labels. */}
+                                        <div className="pt-1">
+                                            <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-1">
+                                                {tx('Transition', 'Transición')}
+                                            </span>
+                                            <div className="grid grid-cols-3 gap-1.5">
+                                                {[
+                                                    { id: 'fade',       icon: '🌊', en: 'Fade',       es: 'Atenuar' },
+                                                    { id: 'cut',        icon: '✂️', en: 'Cut',        es: 'Corte' },
+                                                    { id: 'slide-left', icon: '⏩', en: 'Slide L→R',  es: 'Desliz I→D' },
+                                                    { id: 'slide-up',   icon: '⬆️', en: 'Slide up',   es: 'Desliz arriba' },
+                                                    { id: 'zoom',       icon: '🔍', en: 'Zoom in',    es: 'Acercar' },
+                                                    { id: 'ken-burns',  icon: '🎬', en: 'Ken Burns',  es: 'Ken Burns' },
+                                                ].map(opt => (
+                                                    <button key={opt.id} type="button"
+                                                        onClick={() => setImageTransition(opt.id)}
+                                                        className={`px-2 py-1.5 rounded text-[10.5px] font-bold border transition flex flex-col items-center gap-0.5 ${
+                                                            imageTransition === opt.id
+                                                                ? 'bg-sky-600 text-white border-sky-700'
+                                                                : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-50'
+                                                        }`}>
+                                                        <span className="text-base leading-none">{opt.icon}</span>
+                                                        <span className="leading-none">{tx(opt.en, opt.es)}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        {/* Transition duration — only matters for
+                                            fade / slide / zoom; ignored for cut.
+                                            Default 700ms; range 100–3000ms. */}
+                                        {imageTransition !== 'cut' && (
+                                            <label className="block pt-1">
+                                                <span className="block text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-0.5">
+                                                    {tx('Transition speed (ms)', 'Velocidad transición (ms)')}
+                                                </span>
+                                                <input type="number" value={imageTransitionMs}
+                                                    onChange={(e) => setImageTransitionMs(Number(e.target.value) || 700)}
+                                                    min={100} max={3000} step={100}
+                                                    className="w-full px-2 py-1.5 rounded border border-sky-300 text-sm bg-white font-mono" />
+                                                <span className="block text-[10px] text-sky-700/70 mt-0.5">
+                                                    {tx('100 = fast · 700 = standard · 2000 = slow + cinematic', '100 = rápido · 700 = estándar · 2000 = lento + cinematográfico')}
+                                                </span>
+                                            </label>
+                                        )}
+                                    </>
                                 )}
 
                                 {/* Hit zone editor entry — only available after at least one image is uploaded */}
