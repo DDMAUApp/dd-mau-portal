@@ -436,21 +436,42 @@ function Section({ title, count, tone, items, attribution = {}, formatTime, isEs
                                      : 'bg-amber-50 text-amber-800 border-amber-200';
     const itemBg = tone === 'danger' ? 'bg-white border-red-200 hover:bg-red-50/50'
                                      : 'bg-white border-amber-200 hover:bg-amber-50/50';
-    // Render the attribution line under an item name when present.
+    // Render the attribution line under an item — "Marked by Sarah at 4:23pm".
+    //
+    // Two data sources, checked in priority order:
+    //   1. The /ops/86_{loc}.attribution map (populated by
+    //      sync-toast-86-attribution.mjs from Toast labor cross-reference).
+    //      Use this when present — it's the "best guess" for Toast-sourced
+    //      86s where multiple staff were on the clock.
+    //   2. The item's own `addedBy` + `addedAt` fields (captured at
+    //      write time when staff hits 🚫 in chat — ChatThread.jsx pushes
+    //      these directly into items[]). This means every MANUAL 86 shows
+    //      attribution immediately without needing the Toast script to run.
+    //
     // outBy may be a single name or a list (when multiple staff were
-    // clocked in at the moment of the 86 transition). Show first names
-    // for compactness when there are multiple; full name when only one.
-    const renderAttribution = (itemName) => {
-        const attr = attribution?.[itemName];
-        if (!attr) return null;
-        const list = Array.isArray(attr.outBy) ? attr.outBy : (attr.outBy ? [attr.outBy] : []);
-        if (list.length === 0 && !attr.outAt) return null;
-        const namesStr = list.length === 1
-            ? list[0]
-            : list.length > 1
-                ? list.map(n => n.split(' ')[0]).join(' or ')
+    // clocked in at the moment of a Toast-sourced 86 transition). Show
+    // first names for compactness when there are multiple; full name
+    // when only one.
+    const renderAttribution = (item) => {
+        const attr = attribution?.[item.name];
+        // Prefer Toast attribution map when present; fall back to per-item
+        // fields. Two field-name conventions seen in items[]:
+        //   • addedBy/addedAt — manual 86 from chat (ChatThread.jsx)
+        //   • outBy/outAt     — legacy Cloud Function + Railway scraper
+        // Accept either so the dashboard never silently drops attribution.
+        const fallbackBy = item?.addedBy || item?.outBy;
+        const outByList = attr?.outBy
+            ? (Array.isArray(attr.outBy) ? attr.outBy : [attr.outBy])
+            : (Array.isArray(fallbackBy) ? fallbackBy
+                : (fallbackBy ? [fallbackBy] : []));
+        const outAtRaw = attr?.outAt || item?.addedAt || item?.outAt;
+        if (outByList.length === 0 && !outAtRaw) return null;
+        const namesStr = outByList.length === 1
+            ? outByList[0]
+            : outByList.length > 1
+                ? outByList.map(n => n.split(' ')[0]).join(' or ')
                 : null;
-        const timeStr = attr.outAt ? formatTime(attr.outAt) : null;
+        const timeStr = outAtRaw ? formatTime(outAtRaw) : null;
         return (
             <div className="text-[10px] text-dd-text-2 mt-0.5 italic">
                 {namesStr && <>🙋 {isEs ? `Marcado por ${namesStr}` : `Marked by ${namesStr}`}</>}
@@ -475,12 +496,22 @@ function Section({ title, count, tone, items, attribution = {}, formatTime, isEs
                             <span className="font-bold text-dd-text truncate block">
                                 {item.name}
                             </span>
-                            {/* Attribution from sync-toast-86-attribution.mjs.
-                                Shows who was clocked in at the moment of the
-                                transition. When multiple staff overlap, lists
-                                first names separated by "or" — manager can
-                                pin down which one verbally. */}
-                            {item.status === 'OUT_OF_STOCK' && renderAttribution(item.name)}
+                            {/* Attribution line — "Marked by X at Y".
+                                Two sources: the per-item addedBy/addedAt
+                                fields (captured when staff hits 🚫 in chat),
+                                OR the attribution map from the Toast cross-
+                                reference script. See renderAttribution above
+                                for priority + fallback logic. */}
+                            {item.status === 'OUT_OF_STOCK' && renderAttribution(item)}
+                            {/* Free-text note from the 86 modal — only
+                                shown when the staffer typed something
+                                (e.g. "running low for service tonight").
+                                Quoted to make it read as their words. */}
+                            {item.status === 'OUT_OF_STOCK' && item.note && (
+                                <div className="text-[11px] text-dd-text-2 mt-0.5 truncate">
+                                    “{item.note}”
+                                </div>
+                            )}
                         </div>
                         <span className={`flex-shrink-0 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md border ${pill}`}>
                             {item.status === 'OUT_OF_STOCK'

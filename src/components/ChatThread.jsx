@@ -1168,13 +1168,24 @@ function ChatThreadInner({
                     const norm = itemName.trim().toLowerCase();
                     const exists = cur.some(it => String(it?.name || '').trim().toLowerCase() === norm);
                     if (exists) return; // already on the list — no-op
+                    // 2026-05-23 — also persist the optional note + the
+                    // staffer's ID. The note already rides on the chat
+                    // message (eightySixData.note); duplicating it onto
+                    // the items[] entry lets the Eighty6Dashboard show
+                    // context like "Marked by Sarah at 4:23pm — running
+                    // low for service" without having to cross-reference
+                    // back to the chat doc. addedById is captured for
+                    // future "tap to message the 86er" UX; it's harmless
+                    // to record even if we never read it.
                     const nextItems = [
                         ...cur,
                         {
                             name: itemName,
                             status: 'OUT_OF_STOCK',
                             addedBy: staffName,
+                            addedById: viewer?.id || null,
                             addedAt: new Date().toISOString(),
+                            note: (note || '').trim() || null,
                             source: 'chat',
                         },
                     ];

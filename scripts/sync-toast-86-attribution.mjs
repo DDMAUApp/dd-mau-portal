@@ -107,18 +107,40 @@ if (!CLIENT_ID || !CLIENT_SECRET || RESTAURANTS.length === 0) {
 }
 
 // ── Firebase Admin init ────────────────────────────────────────────────
-const KEY_CANDIDATES = [
-    path.join(repoRoot, 'firebase-service-account.json'),
-    path.join(repoRoot, 'serviceAccountKey.json'),
-    process.env.GOOGLE_APPLICATION_CREDENTIALS,
-].filter(Boolean);
-let keyPath = null;
-for (const p of KEY_CANDIDATES) { try { await fs.access(p); keyPath = p; break; } catch {} }
-if (!keyPath) {
-    console.error('❌ Could not find firebase-service-account.json at repo root.');
-    process.exit(1);
+// Two code paths so this script runs both locally AND in a Railway/cron
+// host that can't ship a JSON file at the repo root:
+//   1. FIREBASE_SERVICE_ACCOUNT_JSON env var — paste the full service-account
+//      JSON as one Railway secret. Preferred for hosted cron because there's
+//      no file to upload.
+//   2. File on disk — used locally (firebase-service-account.json at repo
+//      root, gitignored) or via GOOGLE_APPLICATION_CREDENTIALS pointing at
+//      a mounted secret file.
+let serviceAccount = null;
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    try {
+        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    } catch (e) {
+        console.error('❌ FIREBASE_SERVICE_ACCOUNT_JSON is set but not valid JSON.');
+        console.error('   Hint: in Railway, paste the entire JSON contents (no extra quotes).');
+        process.exit(1);
+    }
 }
-const serviceAccount = JSON.parse(await fs.readFile(keyPath, 'utf8'));
+if (!serviceAccount) {
+    const KEY_CANDIDATES = [
+        path.join(repoRoot, 'firebase-service-account.json'),
+        path.join(repoRoot, 'serviceAccountKey.json'),
+        process.env.GOOGLE_APPLICATION_CREDENTIALS,
+    ].filter(Boolean);
+    let keyPath = null;
+    for (const p of KEY_CANDIDATES) { try { await fs.access(p); keyPath = p; break; } catch {} }
+    if (!keyPath) {
+        console.error('❌ Could not find firebase-service-account.json at repo root');
+        console.error('   AND FIREBASE_SERVICE_ACCOUNT_JSON env var is not set.');
+        console.error('   Pick one path; see header comment for details.');
+        process.exit(1);
+    }
+    serviceAccount = JSON.parse(await fs.readFile(keyPath, 'utf8'));
+}
 initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore();
 

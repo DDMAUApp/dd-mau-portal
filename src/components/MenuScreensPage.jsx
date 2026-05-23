@@ -309,18 +309,17 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                 tells admins whether the dashboard is up to date. */}
             {/* One-time clarifier — admins kept asking whether the TV
                 needed its own Toast sync. It doesn't: TVs read the
-                SAME /ops/86_{location} doc the 86 board reads, and
-                ToastSyncSection (in AdminPanel) is the single setup
-                point. This tiny banner saves the recurring question.
-                Hidden on small screens so it doesn't compete with the
-                header actions; the message is informational, not
-                blocking. */}
+                SAME /ops/86_{location} doc the 86 board reads, which
+                the Railway scraper pipeline keeps in sync with Toast.
+                No per-TV setup needed. This tiny banner saves the
+                recurring question. Hidden on small screens so it
+                doesn't compete with the header actions. */}
             <div className="hidden md:flex items-center gap-2 text-[11px] text-dd-text-2 italic">
                 <span>ℹ️</span>
                 <span>
                     {tx(
-                        'TVs auto-pull from your existing Toast 86 sync — no per-screen setup. Configure once in Admin → Toast POS.',
-                        'Las TVs usan tu sync de Toast existente — no se configura por pantalla. Configúralo una vez en Admin → Toast POS.',
+                        'TVs auto-pull from your existing Toast 86 sync — no per-screen setup.',
+                        'Las TVs usan tu sync de Toast existente — no se configura por pantalla.',
                     )}
                 </span>
             </div>

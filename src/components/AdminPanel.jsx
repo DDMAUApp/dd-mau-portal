@@ -28,7 +28,12 @@ const MenuEditor = reactLazy(() => import('./MenuEditor'));
 // 2026-05-23. The breadcrumb card below renders an "→ Menu Screens" link
 // in place of the old embed; the editor chunk only loads when the
 // dedicated page mounts it.
-const ToastSyncSection = reactLazy(() => import('./ToastSyncSection'));
+// 2026-05-23. ToastSyncSection deleted: the Cloud Function it configured
+// (syncToastMenuStatus) was a redundant duplicate of the Railway scraper
+// that already writes /ops/86_<location>. We tried to debug 401s for an
+// hour before realizing the Railway pipeline was already doing the job.
+// The admin UI was misleading — staff who tried to "set it up" were
+// configuring a sync that had no effect. See git log for context.
 const LabelFormatEditor = reactLazy(() => import('./LabelFormatEditor'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
@@ -4223,10 +4228,6 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         </div>
                         <span className="text-sky-700 text-lg shrink-0">→</span>
                     </button>
-                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading Toast sync…</div>}>
-                        <ToastSyncSection language={language} byName={staffName} />
-                    </ReactSuspense>
-
                     {/* ── DANGER ZONE — System Refresh broadcast ────────────────────
                         Writes a timestamp to /config/forceRefresh. Every active
                         client subscribes to that doc in App.jsx and force-refreshes
