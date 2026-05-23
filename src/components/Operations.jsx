@@ -426,6 +426,16 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [vendorChangeLog, setVendorChangeLog] = useState([]);
             const [showVendorLog, setShowVendorLog] = useState(false);
             const [showCart, setShowCart] = useState(false);
+            // Cart vendor-assignment state — Andrew 2026-05-22.
+            // Live override of each item's vendor for the current cart
+            // session. Default: each item uses its item.preferredVendor.
+            // When the manager arms a vendor pill at the top of the
+            // cart modal, clicking a row assigns that row to the armed
+            // vendor (overriding the default). Persisted into the
+            // inventory snapshot on Save so the saved order is grouped
+            // by manager's choices, not auto-detected vendor.
+            const [cartArmedVendor, setCartArmedVendor] = useState(null);
+            const [cartVendorOverride, setCartVendorOverride] = useState({}); // { itemId: vendorName }
             // Saved Lists section at the bottom of the inventory tab is
             // collapsed by default (Andrew 2026-05-22). It mounts the
             // heavy InventoryHistory lazy chunk, so leaving it closed
@@ -3387,6 +3397,131 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return cheapest;
             };
 
+            // Vendor-grouped print — Andrew 2026-05-22. Sister of
+            // printInventory below. Instead of one comparison table
+            // with all vendor columns side-by-side, this prints ONE
+            // section per vendor, listing only the items the manager
+            // assigned to that vendor in the cart's vendor-toggle
+            // bar. Items without an explicit cartVendorOverride fall
+            // back to their item.preferredVendor. Items with no vendor
+            // at all go into an "Unassigned" section at the end so
+            // they're not silently dropped.
+            const printOrderByVendor = () => {
+                // Local HTML escape — same as the one in printInventory below.
+                const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+                const findVendorEntry = (vendor, vendorId) => {
+                    const src = vendor === "sysco"
+                        ? (syscoPricingData?.sorted || [])
+                        : (usfoodsPricingData?.sorted || []);
+                    const found = src.find(([k]) => k === vendorId);
+                    return found ? found[1] : null;
+                };
+                // Build rows with effective vendor (override > preferred).
+                const rows = [];
+                const itemLookup = new Map();
+                for (const cat of INVENTORY_CATEGORIES) {
+                    for (const item of (cat.items || [])) {
+                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                    }
+                }
+                for (const cat of customInventory) {
+                    for (const item of (cat.items || [])) {
+                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                    }
+                }
+                Object.entries(inventory).forEach(([id, rawQty]) => {
+                    const qty = Number(rawQty) || 0;
+                    if (qty <= 0) return;
+                    const lookup = itemLookup.get(id);
+                    if (!lookup) return;
+                    const { item, categoryName } = lookup;
+                    const vendor = cartVendorOverride[id] || item.preferredVendor || item.vendor || '';
+                    rows.push({
+                        id,
+                        name: language === "es" && item.nameEs ? item.nameEs : item.name,
+                        category: categoryName,
+                        qty,
+                        pack: item.pack || '',
+                        vendor,
+                    });
+                });
+                Object.entries(vendorCounts).forEach(([key, qty]) => {
+                    if (qty <= 0) return;
+                    const [v, vendorId] = key.split(":");
+                    const data = findVendorEntry(v, vendorId);
+                    if (!data) return;
+                    const vendorName = v === "sysco" ? "Sysco" : "US Foods";
+                    rows.push({
+                        id: key,
+                        name: data.name || `${vendorName} #${vendorId}`,
+                        category: data.category || 'Other',
+                        qty,
+                        pack: data.pack || '',
+                        vendor: cartVendorOverride[key] || vendorName,
+                    });
+                });
+                if (rows.length === 0) {
+                    toast(language === "es" ? "El carrito está vacío." : "Cart is empty.");
+                    return;
+                }
+                // Group by vendor.
+                const groups = new Map();
+                for (const r of rows) {
+                    const v = r.vendor || (language === 'es' ? 'Sin asignar' : 'Unassigned');
+                    if (!groups.has(v)) groups.set(v, []);
+                    groups.get(v).push(r);
+                }
+                // Sort vendors alphabetically with "Unassigned" last.
+                const vendorOrder = [...groups.keys()].sort((a, b) => {
+                    const unsignA = a === 'Unassigned' || a === 'Sin asignar';
+                    const unsignB = b === 'Unassigned' || b === 'Sin asignar';
+                    if (unsignA && !unsignB) return 1;
+                    if (!unsignA && unsignB) return -1;
+                    return a.localeCompare(b);
+                });
+                const dateLabel = new Date().toLocaleString();
+                const titleName = language === 'es' ? 'Pedido Por Proveedor' : 'Order By Vendor';
+                let html = `<!DOCTYPE html><html><head><title>DD Mau — ${esc(titleName)}</title>
+                <style>
+                    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; padding: 20px; color: #222; max-width: 800px; margin: 0 auto; }
+                    h1 { font-size: 20px; margin-bottom: 4px; color: #2a5d31; }
+                    .subtitle { font-size: 12px; color: #666; margin-bottom: 16px; }
+                    .vendor-header { background: #2a5d31; color: white; padding: 10px 14px; font-weight: bold; font-size: 16px; margin-top: 22px; border-radius: 8px 8px 0 0; display: flex; justify-content: space-between; align-items: center; }
+                    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+                    th { background: #e5ecdf; text-align: left; padding: 7px 11px; font-size: 11px; color: #2a5d31; border: 1px solid #c4cfb9; }
+                    td { padding: 6px 11px; font-size: 13px; border: 1px solid #ddd; }
+                    tr:nth-child(even) { background: #fafaf6; }
+                    .qty { text-align: center; font-weight: bold; font-size: 15px; width: 56px; }
+                    .pack { color: #666; font-size: 11px; }
+                    .cat-label { color: #999; font-size: 10px; }
+                    .check { width: 30px; text-align: center; color: #ccc; font-weight: bold; font-size: 16px; }
+                    .no-print { position: sticky; top: 0; z-index: 1000; background: #2a5d31; padding: 10px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,.3) }
+                    .no-print button { padding: 12px 24px; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin: 0 6px; }
+                    .btn-print { background: white; color: #2a5d31; } .btn-close { background: #ff4444; color: white; }
+                    @media print { body { padding: 10px; } h1 { font-size: 16px; } .no-print { display: none !important; } .vendor-header { page-break-before: auto; } }
+                </style></head><body>`;
+                html += `<div class="no-print"><button class="btn-close" onclick="try{window.close()}catch(e){}">✕ Close</button><button class="btn-print" onclick="window.print()">🖨️ Print</button></div>`;
+                html += `<h1>🍜 DD Mau — ${esc(titleName)}</h1>`;
+                html += `<div class="subtitle">${esc(dateLabel)} · ${rows.length} ${language === 'es' ? 'artículos en' : 'items across'} ${vendorOrder.length} ${language === 'es' ? 'proveedores' : 'vendors'}</div>`;
+                for (const v of vendorOrder) {
+                    const items = groups.get(v).sort((a, b) => a.name.localeCompare(b.name));
+                    const totalQty = items.reduce((s, r) => s + r.qty, 0);
+                    html += `<div class="vendor-header"><span>📞 ${esc(v)}</span><span style="font-size:13px;font-weight:600;opacity:0.85">${items.length} ${language === 'es' ? 'artículos' : 'items'} · ${totalQty} ${language === 'es' ? 'total' : 'total'}</span></div>`;
+                    html += `<table><thead><tr><th>${language === 'es' ? 'Artículo' : 'Item'}</th><th style="width:56px">${language === 'es' ? 'Cant.' : 'Qty'}</th><th>${language === 'es' ? 'Pack' : 'Pack'}</th><th style="width:30px">✓</th></tr></thead><tbody>`;
+                    for (const r of items) {
+                        html += `<tr><td>${esc(r.name)} <span class="cat-label">${esc(r.category || '')}</span></td><td class="qty">${r.qty}</td><td class="pack">${esc(r.pack || '')}</td><td class="check">☐</td></tr>`;
+                    }
+                    html += `</tbody></table>`;
+                }
+                html += `</body></html>`;
+                const win = window.open('', '_blank');
+                if (!win) { toast(language === 'es' ? "Permitir ventanas emergentes." : "Allow pop-ups to print."); return; }
+                win.document.write(html);
+                win.document.close();
+                win.focus();
+                setTimeout(() => win.print(), 300);
+            };
+
             const printInventory = () => {
                 // Build the same row structure the cart modal uses, then print it as a
                 // single comparison table with all vendor prices side-by-side. Matches
@@ -5452,6 +5587,37 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 const vendorList = Array.from(vendorSet).sort();
                                 const vendorColor = (v) => v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
 
+                                // Broader list of vendors for the quick-assign bar —
+                                // includes every distinct vendor mentioned across the
+                                // cart items' preferredVendor (Costco, STL Wholesale,
+                                // Restaurant Depot, Jays, etc.), not just the ones
+                                // with live Sysco/US Foods price data. Sorted with
+                                // the priced vendors first so they're easy to find.
+                                // Andrew 2026-05-22.
+                                const allVendorsInCart = new Set(vendorList);
+                                rows.forEach(r => { if (r.preferredVendor) allVendorsInCart.add(r.preferredVendor); });
+                                const assignVendors = [
+                                    ...vendorList,
+                                    ...[...allVendorsInCart].filter(v => !vendorList.includes(v)).sort(),
+                                ];
+
+                                // Effective vendor per row: override (manager picked
+                                // explicitly) wins over preferredVendor (the item's
+                                // default).
+                                const effectiveVendor = (r) =>
+                                    cartVendorOverride[r.id] || r.preferredVendor || '';
+
+                                const assignRow = (id) => {
+                                    if (!cartArmedVendor) return;
+                                    setCartVendorOverride(prev => ({ ...prev, [id]: cartArmedVendor }));
+                                };
+                                const clearAssignments = () => {
+                                    if (!confirm(language === 'es'
+                                        ? '¿Borrar todas las asignaciones manuales? Los artículos volverán a su proveedor preferido.'
+                                        : 'Clear all manual vendor assignments? Items revert to their preferred vendor.')) return;
+                                    setCartVendorOverride({});
+                                };
+
                                 // 3. Per-vendor totals (if all items came from this vendor)
                                 const vendorTotals = {};
                                 vendorList.forEach(v => vendorTotals[v] = { lineTotal: 0, items: 0, missing: 0 });
@@ -5495,6 +5661,56 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 <h3 className="font-bold text-base sm:text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"} · {totalQty} {language === "es" ? "total" : "total"}</h3>
                                                 <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-bold hover:bg-white/30 transition">{"\u{2715}"}</button>
                                             </div>
+                                            {/* Vendor quick-assign bar (Andrew 2026-05-22).
+                                                Tap a vendor pill to arm it. While armed, table
+                                                rows become click-to-assign — every tap moves
+                                                that row to the armed vendor. Tap the armed pill
+                                                again to disarm. Items keep their assignment
+                                                until cleared; the "Save by vendor" footer
+                                                button persists the assignments into the saved
+                                                snapshot grouped by vendor. */}
+                                            {assignVendors.length > 0 && (
+                                                <div className="border-b border-gray-200 bg-amber-50/70 px-3 py-2 flex flex-wrap gap-1.5 items-center flex-shrink-0">
+                                                    <span className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mr-1">
+                                                        🎯 {language === "es" ? "Asignar a:" : "Assign to:"}
+                                                    </span>
+                                                    {assignVendors.map(v => {
+                                                        const isArmed = cartArmedVendor === v;
+                                                        const count = rows.filter(r => effectiveVendor(r) === v).length;
+                                                        return (
+                                                            <button
+                                                                key={v}
+                                                                onClick={() => setCartArmedVendor(isArmed ? null : v)}
+                                                                className={`text-xs font-bold px-2.5 py-1 rounded-full border transition ${
+                                                                    isArmed
+                                                                        ? 'bg-amber-600 text-white border-amber-700 ring-2 ring-amber-300'
+                                                                        : 'bg-white text-gray-700 border-gray-300 hover:border-amber-400'
+                                                                }`}
+                                                            >
+                                                                {v}
+                                                                {count > 0 && (
+                                                                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${isArmed ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>{count}</span>
+                                                                )}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                    {Object.keys(cartVendorOverride).length > 0 && (
+                                                        <button
+                                                            onClick={clearAssignments}
+                                                            className="text-[10px] font-bold px-2 py-1 rounded-full bg-white border border-red-200 text-red-600 hover:bg-red-50 ml-auto"
+                                                        >
+                                                            ✕ {language === "es" ? "Borrar" : "Clear"}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {cartArmedVendor && (
+                                                <div className="bg-amber-100 border-b border-amber-300 px-3 py-1.5 text-[11px] font-bold text-amber-800 flex-shrink-0">
+                                                    ✓ {language === "es"
+                                                        ? `ARMADO — toca un artículo para asignarlo a ${cartArmedVendor}`
+                                                        : `ARMED — tap any item to assign it to ${cartArmedVendor}`}
+                                                </div>
+                                            )}
                                             {/* Comparison table */}
                                             <div className="flex-1 overflow-auto">
                                                 {rows.length === 0 ? (
@@ -5516,13 +5732,35 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                             {rows.map(r => {
                                                                 const cheapestVendor = r.vendorPrices.find(p => p.price != null)?.vendor;
                                                                 const isVendorOnly = r.kind === "vendor-only";
+                                                                const myEffVendor = effectiveVendor(r);
+                                                                const isOverridden = !!cartVendorOverride[r.id];
+                                                                const isClickable = !!cartArmedVendor;
+                                                                const isAssignedToArmed = cartArmedVendor && myEffVendor === cartArmedVendor;
                                                                 return (
-                                                                    <tr key={r.id} className={`border-t ${isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50"}`}>
+                                                                    <tr
+                                                                        key={r.id}
+                                                                        onClick={() => assignRow(r.id)}
+                                                                        className={`border-t transition ${
+                                                                            isClickable
+                                                                                ? `cursor-pointer ${isAssignedToArmed ? 'bg-amber-50' : 'hover:bg-amber-50/50 hover:outline hover:outline-2 hover:outline-amber-300'}`
+                                                                                : (isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50")
+                                                                        }`}
+                                                                        style={isOverridden ? { boxShadow: 'inset 3px 0 0 0 #b45309' } : undefined}
+                                                                    >
                                                                         <td className="px-3 py-2">
-                                                                            <div className="font-medium text-gray-800 flex items-center gap-1">
+                                                                            <div className="font-medium text-gray-800 flex items-center gap-1 flex-wrap">
                                                                                 {isVendorOnly && <span className={`text-[9px] font-bold px-1 py-0.5 rounded border bg-${vendorColor(r.vendorOnlyOrigin)}-100 text-${vendorColor(r.vendorOnlyOrigin)}-700 border-${vendorColor(r.vendorOnlyOrigin)}-300`}>{r.vendorOnlyOrigin}</span>}
                                                                                 {r.addedFromVendor && <span className={`w-1.5 h-1.5 rounded-full bg-${vendorColor(r.addedFromVendor)}-500`} title={`Added from ${r.addedFromVendor}`} />}
                                                                                 <span>{r.name}</span>
+                                                                                {myEffVendor && (
+                                                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                                                                                        isOverridden
+                                                                                            ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                                                                            : 'bg-gray-100 text-gray-500 border border-gray-200'
+                                                                                    }`}>
+                                                                                        {isOverridden ? '📌 ' : ''}{myEffVendor}
+                                                                                    </span>
+                                                                                )}
                                                                             </div>
                                                                             <div className="text-[10px] text-gray-400">{r.category}{r.pack ? ` · ${r.pack}` : ""}</div>
                                                                         </td>
@@ -5597,9 +5835,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 )}
                                             </div>
                                             {/* Footer buttons */}
-                                            <div className="border-t border-gray-200 p-3 flex gap-2 flex-shrink-0 bg-gray-50">
-                                                <button onClick={printInventory} className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-95 transition">
+                                            <div className="border-t border-gray-200 p-3 flex gap-2 flex-shrink-0 bg-gray-50 flex-wrap">
+                                                <button onClick={printInventory} className="flex-1 min-w-[120px] py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-95 transition">
                                                     {"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir" : "Print"}
+                                                </button>
+                                                {/* Print By Vendor — uses the manager's cart
+                                                    assignments (cartVendorOverride > item.
+                                                    preferredVendor) and emits one section per
+                                                    vendor with a checkbox column. Andrew
+                                                    2026-05-22 "i puts them in that order per
+                                                    vender". */}
+                                                <button onClick={printOrderByVendor} className="flex-1 min-w-[120px] py-3 bg-green-600 text-white rounded-xl font-bold text-sm hover:bg-green-700 active:scale-95 transition">
+                                                    📋 {language === "es" ? "Por Proveedor" : "By Vendor"}
                                                 </button>
                                                 {/* Place order — opens OrderMode. Snapshot the
                                                     rows we just built so the order session has
