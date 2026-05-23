@@ -36,9 +36,18 @@ const repoRoot = path.resolve(path.dirname(__filename), '..');
 const inventoryPath = path.join(repoRoot, 'src', 'data', 'inventory.js');
 const backupPath = inventoryPath + '.bak';
 
+// Andrew's actual storage locations at DD Mau (2026-05-22):
+//   "walk in freezer, walk in refridgerator, pantry, paper goods,
+//    chemicals/ dish area, drinks, boba, expo"
 const DEFAULT_LOCATIONS = [
-    'Walk-in Cooler', 'Walk-in Freezer', 'Dry Storage',
-    'Bar', 'Prep Station', 'Front Counter', 'Hot Line',
+    'Walk-in Freezer',
+    'Walk-in Refrigerator',
+    'Pantry',
+    'Paper Goods',
+    'Chemicals / Dish Area',
+    'Drinks',
+    'Boba',
+    'Expo',
 ];
 
 // ── load ────────────────────────────────────────────────────────

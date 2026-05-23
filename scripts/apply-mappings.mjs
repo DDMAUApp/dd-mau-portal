@@ -38,7 +38,13 @@
 // backup) before rewriting. `mv .bak inventory.js` reverts.
 //
 // Usage:
-//   node scripts/apply-mappings.mjs ~/Downloads/inventory-mappings-XXX.json
+//   node scripts/apply-mappings.mjs <mappings-file.json> [--pending=keep|drop]
+//
+// --pending=keep   Treat any current item still in "pending" state as
+//                  if it were marked keep-separate. Use when the user
+//                  intended every undecided item to stay in the list.
+//                  Default is drop (the strict "matched + keep only"
+//                  interpretation).
 
 import { readFile, writeFile, copyFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -51,9 +57,12 @@ const backupPath = inventoryPath + '.bak';
 const newMasterPath = path.join(repoRoot, 'scripts', 'data', 'new-master.json');
 const remapOutPath = path.join(repoRoot, 'scripts', 'data', 'inventory-remap.json');
 
-const mappingsFile = process.argv[2];
+const args = process.argv.slice(2);
+const mappingsFile = args.find(a => !a.startsWith('--'));
+const pendingFlag = (args.find(a => a.startsWith('--pending=')) || '--pending=drop').split('=')[1];
+const treatPendingAsKeep = pendingFlag === 'keep';
 if (!mappingsFile) {
-    console.error('Usage: node scripts/apply-mappings.mjs <mappings-file.json>');
+    console.error('Usage: node scripts/apply-mappings.mjs <mappings-file.json> [--pending=keep|drop]');
     process.exit(1);
 }
 
@@ -87,11 +96,21 @@ for (const cat of newMaster.categories) {
 
 // ── 1. group matched mappings by newKey ─────────────────────────
 const groups = new Map(); // newKey → { newItem, currentItems: [] }
-let dropped = 0, droppedPending = 0;
+let dropped = 0, droppedPending = 0, pendingPromotedToKeep = 0;
 for (const id in mappings) {
     const m = mappings[id];
     if (m.action === 'drop') { dropped++; continue; }
-    if (m.action === 'pending') { droppedPending++; continue; }
+    if (m.action === 'pending') {
+        if (treatPendingAsKeep) {
+            // Re-tag as keep so the keep-collection pass below picks it up.
+            m.action = 'keep';
+            m.newKey = null;
+            pendingPromotedToKeep++;
+            continue;
+        }
+        droppedPending++;
+        continue;
+    }
     if (m.action !== 'match') continue;
     if (!m.newKey) continue;
     if (!newByKey[m.newKey]) {
@@ -320,6 +339,8 @@ const remapPayload = {
         keptSeparate: keepItems.length,
         droppedExplicit: dropped,
         droppedPending: droppedPending,
+        pendingPromotedToKeep,
+        pendingFlag,
         finalCategoryCount: catEntries.length,
         finalItemCount: catEntries.reduce((s, [, items]) => s + items.length, 0),
     },
@@ -339,6 +360,7 @@ console.log(`    matched current items: ${remapPayload.summary.matchedCurrentIte
 console.log(`    kept separate        : ${remapPayload.summary.keptSeparate}`);
 console.log(`    dropped (explicit)   : ${remapPayload.summary.droppedExplicit}`);
 console.log(`    dropped (pending)    : ${remapPayload.summary.droppedPending}`);
+console.log(`    pending → keep       : ${remapPayload.summary.pendingPromotedToKeep}  (--pending=${pendingFlag})`);
 console.log(`    final categories     : ${remapPayload.summary.finalCategoryCount}`);
 console.log(`    final items          : ${remapPayload.summary.finalItemCount}`);
 console.log('');
