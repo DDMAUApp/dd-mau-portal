@@ -339,96 +339,45 @@ for (const r of RESTAURANTS) {
         }
     }
 
-    // 2.5 — Sync items[] on /ops/86_<location> to match Toast's current
-    //       OOS state. This is what the Eighty6Dashboard reads. Andrew
-    //       2026-05-23: wants the bulk Toast list visible on the board,
-    //       each item showing day + time + staff name.
+    // 2.5 — TRANSITION-ONLY sync. Andrew 2026-05-23:
+    //   - The 86 board should reflect "what just got 86'd today" — NOT
+    //     a mirror of Toast's permanent OOS list (which buried the
+    //     dashboard with 155+51 items in the original bulk-sync version).
+    //   - Manual chat 86s remain authoritative for items Toast doesn't
+    //     track.
+    //   - When Toast DOES transition an item (newly out, or back in stock)
+    //     we push that ONE item to items[] — see step 6 below for the
+    //     transition-handling block.
     //
-    // Each Toast-sourced item carries:
-    //   • source:  'toast'         — distinguishes from manual chat 86s
-    //   • addedAt: ISO timestamp   — Toast's `lastUpdated` for the stock
-    //                                item if present, else "now" as a
-    //                                fallback. Dashboard renders this
-    //                                as "Today/Yesterday/MMM D at h:mma".
-    //   • addedBy: comma-joined    — full names of BOH staff who were
-    //                                clocked in at addedAt, looked up via
-    //                                the Toast labor API. Falls back to
-    //                                "Toast POS" when labor lookup fails
-    //                                or no one was on the clock.
+    // The eightySixRef variable is declared here so both this section
+    // (which preserves manual items) and step 6 (which appends/removes
+    // toast transitions) can use it.
     //
-    // Manual entries (source != 'toast') are NEVER touched — staff chat
-    // 86s are authoritative on items Toast doesn't know about.
-    //
-    // Idempotent: this block re-syncs the SAME items each tick. We
-    // PRESERVE the existing addedAt/addedBy on Toast items already in
-    // items[] (don't churn the data each run). Only NEW additions get
-    // a fresh attribution lookup. Realtime86 trigger diffs by name only,
-    // so name-stable rewrites fire zero notifications.
+    // Initial wipe pass: drop any Toast-sourced items that aren't in
+    // Toast's current OOS list (item came back in stock between runs).
+    // This handles the "back in stock" half of transitions without
+    // needing the cursor — same idempotent name-based dedup, no extra
+    // notification storm (realtime86 trigger diffs by name only).
     const eightySixRef = db.collection('ops').doc(`86_${r.location}`);
     {
         const snap = await eightySixRef.get();
         const data = snap.exists ? (snap.data() || {}) : {};
         const existingItems = Array.isArray(data.items) ? data.items : [];
-        // Drop stale Toast entries (Toast no longer reports them OOS),
-        // preserve manual entries untouched.
         const kept = existingItems.filter(it => {
             if (it?.source === 'toast') {
                 return it?.name && currentOutNames.has(String(it.name));
             }
-            return true;
+            return true;  // manual / legacy entries — always preserved
         });
-        // Backfill: any kept Toast entry that's still on the "Toast POS"
-        // placeholder gets a fresh attribution lookup using Toast's
-        // lastUpdated. This upgrades the 156+51 items we wrote earlier
-        // (when this script lacked the labor cross-ref) to real names.
-        // Skipped for items where we already have a real name.
-        let backfilled = 0;
-        for (const it of kept) {
-            if (it?.source !== 'toast') continue;
-            const isPlaceholder = !it.addedBy
-                || it.addedBy === 'Toast POS'
-                || it.addedBy === 'unknown';
-            if (!isPlaceholder) continue;
-            const meta = currentOutMetaByName.get(it.name);
-            if (!meta?.lastUpdatedDate) continue;
-            const attributed = await attributedNamesAt(meta.lastUpdatedDate);
-            if (attributed.length > 0) {
-                it.addedBy = attributed.join(', ');
-                it.addedAt = meta.lastUpdatedIso || it.addedAt;
-                backfilled += 1;
-            } else if (meta.lastUpdatedIso && it.addedAt !== meta.lastUpdatedIso) {
-                // No staff on clock, but we have a better timestamp than "now".
-                it.addedAt = meta.lastUpdatedIso;
-            }
+        const removed = existingItems.length - kept.length;
+        if (removed > 0) {
+            await eightySixRef.set({
+                items: kept,
+                updatedAt: FieldValue.serverTimestamp(),
+                lastToastSyncAt: FieldValue.serverTimestamp(),
+            }, { merge: true });
+            console.log(`  • Removed ${removed} stale Toast item(s) from items[]`);
         }
-        // Add new Toast entries that aren't already in items[].
-        const presentNames = new Set(kept.map(i => String(i?.name || '').toLowerCase()));
-        for (const name of currentOutNames) {
-            if (presentNames.has(String(name).toLowerCase())) continue;
-            const meta = currentOutMetaByName.get(name) || {};
-            const addedAtIso = meta.lastUpdatedIso || new Date().toISOString();
-            const attributed = meta.lastUpdatedDate
-                ? await attributedNamesAt(meta.lastUpdatedDate)
-                : [];
-            const addedBy = attributed.length > 0
-                ? attributed.join(', ')
-                : 'Toast POS';
-            kept.push({
-                name,
-                status: 'OUT_OF_STOCK',
-                source: 'toast',
-                addedBy,
-                addedAt: addedAtIso,
-            });
-        }
-        await eightySixRef.set({
-            items: kept,
-            updatedAt: FieldValue.serverTimestamp(),
-            lastToastSyncAt: FieldValue.serverTimestamp(),
-        }, { merge: true });
-        const fromToast = kept.filter(i => i?.source === 'toast').length;
-        const withNames = kept.filter(i => i?.source === 'toast' && i?.addedBy && i.addedBy !== 'Toast POS').length;
-        console.log(`  • Synced items[]: ${kept.length} total (${fromToast} from Toast, ${withNames} with real staff names${backfilled ? `, backfilled ${backfilled}` : ''})`);
     }
 
     // 3. Read the previous cursor to detect transitions.
@@ -477,32 +426,58 @@ for (const r of RESTAURANTS) {
         .filter(Boolean);
     console.log(`  • ${clockedInNames.length} staff clocked in at transition: ${clockedInNames.join(', ') || '(none)'}`);
 
-    // 6. Build the attribution patches.
-    //    We don't try to guess BOH-vs-FOH here — that needs job-title
-    //    lookup which adds another API call. Better: write ALL clocked-in
-    //    names and let the manager filter by sight. Future improvement
-    //    could narrow by jobReference → job title → BOH heuristic.
+    // 6. Apply transitions: update items[] AND write the attribution sidecar.
+    //    This is the ONLY place Toast pushes to items[] (no bulk sync —
+    //    Andrew 2026-05-23). For each newlyOut item we push a new entry
+    //    with source='toast', addedBy=clocked-in names (or 'Toast POS'
+    //    fallback), addedAt=now. For each newlyIn item we remove it from
+    //    items[] (its return to stock means it shouldn't be 86'd anymore).
+    //    Manual entries are never touched. The attribution sidecar is
+    //    written in parallel so the dashboard's renderAttribution can
+    //    show full names + timestamps for items that transitioned.
     //    (eightySixRef declared above in the items[] sync block.)
-    const patch = {};
-    for (const itemName of newlyOut) {
-        patch[`attribution.${itemName}.outBy`] = clockedInNames;
-        patch[`attribution.${itemName}.outAt`] = FieldValue.serverTimestamp();
-    }
-    for (const itemName of newlyIn) {
-        patch[`attribution.${itemName}.inBy`] = clockedInNames;
-        patch[`attribution.${itemName}.inAt`] = FieldValue.serverTimestamp();
-    }
-    if (Object.keys(patch).length > 0) {
-        try {
-            await eightySixRef.update(patch);
-        } catch (e) {
-            // Doc may not exist yet (race with scraper) — set with merge.
-            if (e.code === 5 /* NOT_FOUND */) {
-                await eightySixRef.set({ attribution: {} }, { merge: true });
-                await eightySixRef.update(patch);
-            } else { throw e; }
+    {
+        const snap = await eightySixRef.get();
+        const data = snap.exists ? (snap.data() || {}) : {};
+        const existingItems = Array.isArray(data.items) ? data.items : [];
+        // Drop newlyIn items from items[].
+        const newlyInLower = new Set(newlyIn.map(n => String(n).toLowerCase()));
+        const next = existingItems.filter(it => {
+            if (it?.source !== 'toast') return true;  // manual untouched
+            return it?.name && !newlyInLower.has(String(it.name).toLowerCase());
+        });
+        // Append newlyOut items (dedup by name).
+        const presentLower = new Set(next.map(i => String(i?.name || '').toLowerCase()));
+        const nowIso = new Date().toISOString();
+        const addedBy = clockedInNames.length > 0 ? clockedInNames.join(', ') : 'Toast POS';
+        for (const name of newlyOut) {
+            if (presentLower.has(String(name).toLowerCase())) continue;
+            const meta = currentOutMetaByName.get(name) || {};
+            next.push({
+                name,
+                status: 'OUT_OF_STOCK',
+                source: 'toast',
+                addedBy,
+                addedAt: meta.lastUpdatedIso || nowIso,
+            });
         }
-        console.log(`  ✓ Wrote attribution for ${Object.keys(patch).length / 2} item(s)`);
+        // Write items[] + attribution sidecar in one set (avoid double
+        // realtime86 trigger fires from separate writes).
+        const patch = {
+            items: next,
+            updatedAt: FieldValue.serverTimestamp(),
+            lastToastSyncAt: FieldValue.serverTimestamp(),
+        };
+        for (const itemName of newlyOut) {
+            patch[`attribution.${itemName}.outBy`] = clockedInNames;
+            patch[`attribution.${itemName}.outAt`] = FieldValue.serverTimestamp();
+        }
+        for (const itemName of newlyIn) {
+            patch[`attribution.${itemName}.inBy`] = clockedInNames;
+            patch[`attribution.${itemName}.inAt`] = FieldValue.serverTimestamp();
+        }
+        await eightySixRef.set(patch, { merge: true });
+        console.log(`  ✓ Applied ${newlyOut.length} out + ${newlyIn.length} back-in (attribution written)`);
     }
 
     // 7. Update the cursor.
