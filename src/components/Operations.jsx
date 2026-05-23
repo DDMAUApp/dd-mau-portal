@@ -543,6 +543,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Labor percentage state (admin-only, from Toast scraper)
             const [laborData, setLaborData] = useState(null);
+            // Toggle for the expanded labor breakdown panel. The corner
+            // bubble shows the % at a glance; tapping it pops the time +
+            // progress bar + 25% target marker out underneath. Default
+            // collapsed so a fresh page load doesn't dedicate a whole
+            // row to labor info every time.
+            const [showLaborDetails, setShowLaborDetails] = useState(false);
             // FOH_ROLES_LIST hoisted to module scope so the useMemo dep array
             // doesn't churn on every render. fohStaff was unused — removed.
             const bohStaff = useMemo(
@@ -4797,50 +4803,83 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
             return (
                 <div className="p-4 pb-bottom-nav">
-                    <h2 className="text-2xl font-black text-dd-text mb-4 tracking-tight">📋 {t("dailyOps", language)}</h2>
+                    {/* Page header row — title on the left, compact labor
+                        bubble on the right when viewable. Andrew 2026-05-23:
+                        was a full-width labor card (2xl emoji + 3xl number +
+                        progress bar + 25% target marker + last-updated time
+                        stamp) taking up the entire row above the sub-tabs.
+                        Trimmed to a small color-coded pill in the corner —
+                        the threshold colors (green ≤22, amber ≤27, red >27)
+                        carry the at-a-glance signal, the progress bar and
+                        timestamp moved off-screen. A subtle "⏱" appears
+                        next to the % when the data is >10 min stale so
+                        managers don't trust an outdated number; tap the
+                        bubble for the full breakdown (time + delta). */}
+                    <div className="flex items-center justify-between gap-3 mb-4">
+                        <h2 className="text-2xl font-black text-dd-text tracking-tight shrink-0">📋 {t("dailyOps", language)}</h2>
+                        {canViewLabor((staffList || []).find(s => s.name === staffName)) && laborData && laborData.laborPercent !== undefined && (() => {
+                            const pct = laborData.laborPercent;
+                            const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
+                            const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
+                            const isStale = minutesAgo !== null && minutesAgo > 10;
+                            const color = pct <= 22 ? { bg: "bg-emerald-50", border: "border-emerald-300", text: "text-emerald-700", emoji: "\u{2705}" }
+                                        : pct <= 27 ? { bg: "bg-amber-50",   border: "border-amber-300",   text: "text-amber-700",   emoji: "\u{26A0}\u{FE0F}" }
+                                        :             { bg: "bg-red-50",     border: "border-red-300",     text: "text-red-700",     emoji: "\u{1F534}" };
+                            const updatedLabel = updatedAt
+                                ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+                                : "--";
+                            const agoLabel = minutesAgo === null ? ""
+                                : minutesAgo === 0 ? (language === "es" ? "ahora" : "just now")
+                                : `${minutesAgo} min`;
+                            return (
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLaborDetails(s => !s)}
+                                    title={`${t("laborPercent", language)} · ${updatedLabel}${agoLabel ? ` (${agoLabel})` : ""}`}
+                                    className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-black tabular-nums shadow-sm transition active:scale-95 ${color.bg} ${color.border} ${color.text}`}
+                                >
+                                    <span className="text-base leading-none">{color.emoji}</span>
+                                    <span>{pct.toFixed(1)}%</span>
+                                    {isStale && <span className="text-[10px] opacity-70">⏱</span>}
+                                </button>
+                            );
+                        })()}
+                    </div>
 
-                    {/* Labor % Card — gated by canViewLabor (admins/managers by default,
-                        staff opt-in via Admin Panel toggle). Percentage only (no dollar
-                        amounts even when visible). */}
-                    {canViewLabor((staffList || []).find(s => s.name === staffName)) && laborData && laborData.laborPercent !== undefined && (() => {
+                    {/* Expanded labor details — pops out under the header
+                        when the bubble is tapped. Carries the original
+                        information that used to live in the full-width card
+                        (last updated time, minutes-ago, progress bar with
+                        the 25% target marker) for managers who actually
+                        want the breakdown, without forcing it on every
+                        page load. Renders null when collapsed OR when the
+                        viewer can't see labor at all. */}
+                    {showLaborDetails && canViewLabor((staffList || []).find(s => s.name === staffName)) && laborData && laborData.laborPercent !== undefined && (() => {
                         const pct = laborData.laborPercent;
                         const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
                         const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
                         const isStale = minutesAgo !== null && minutesAgo > 10;
-                        const color = pct <= 22 ? { bg: "bg-emerald-50", border: "border-emerald-400", text: "text-emerald-700", emoji: "\u{2705}" }
-                                    : pct <= 27 ? { bg: "bg-amber-50", border: "border-amber-400", text: "text-amber-700", emoji: "\u{26A0}\u{FE0F}" }
-                                    : { bg: "bg-red-50", border: "border-red-400", text: "text-red-700", emoji: "\u{1F534}" };
                         return (
-                            <div className={`${color.bg} border-2 ${color.border} rounded-2xl p-4 mb-4 shadow-sm`}>
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-2xl">{color.emoji}</span>
-                                        <div>
-                                            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{t("laborPercent", language)}</p>
-                                            <p className={`text-3xl font-black tabular-nums ${color.text}`}>{pct.toFixed(1)}%</p>
-                                        </div>
-                                    </div>
-                                    <div className="text-right">
-                                        <p className={`text-xs ${isStale ? "text-red-500 font-bold" : "text-gray-400"}`}>
-                                            {isStale ? "\u{26A0}\u{FE0F} " : ""}
-                                            {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
-                                        </p>
+                            <div className="bg-white border border-dd-line rounded-xl p-3 mb-4 shadow-sm">
+                                <div className="flex items-baseline justify-between text-xs mb-2">
+                                    <span className="font-semibold text-gray-500 uppercase tracking-wider">{t("laborPercent", language)}</span>
+                                    <span className={isStale ? "text-red-500 font-bold" : "text-gray-400"}>
+                                        {isStale ? "⚠️ " : ""}
+                                        {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
                                         {minutesAgo !== null && (
-                                            <p className="text-[10px] text-gray-400">{minutesAgo === 0 ? (language === "es" ? "ahora" : "just now") : `${minutesAgo} min`}</p>
+                                            <> · {minutesAgo === 0 ? (language === "es" ? "ahora" : "just now") : `${minutesAgo} min`}</>
                                         )}
-                                    </div>
+                                    </span>
                                 </div>
-                                {/* Progress bar */}
-                                <div className="mt-3 relative">
-                                    <div className="w-full h-3 bg-gray-200 rounded-full overflow-hidden">
+                                <div className="relative">
+                                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
                                         <div className="h-full rounded-full transition-all duration-500"
                                             style={{
                                                 width: Math.min(pct / 37.5 * 100, 100) + "%",
                                                 backgroundColor: pct <= 22 ? "#10b981" : pct <= 27 ? "#f59e0b" : "#ef4444"
                                             }} />
                                     </div>
-                                    {/* Target marker at 25% */}
-                                    <div className="absolute top-0 h-3 border-r-2 border-gray-600" style={{ left: (25 / 37.5 * 100) + "%" }}>
+                                    <div className="absolute top-0 h-2 border-r-2 border-gray-600" style={{ left: (25 / 37.5 * 100) + "%" }}>
                                         <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-bold text-gray-500">25%</div>
                                     </div>
                                 </div>
