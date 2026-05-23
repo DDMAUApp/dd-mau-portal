@@ -33,7 +33,10 @@
 // /tv_configs data model is reused as-is.
 
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
-import { subscribeTvConfigs, subscribeTvHeartbeats, MODES } from '../data/tvConfigs';
+import {
+    subscribeTvConfigs, subscribeTvHeartbeats, MODES,
+    publishTvConfigDraft, discardTvConfigDraft,
+} from '../data/tvConfigs';
 
 // Heavy editor form lives in its existing file; we render it inline
 // below the dashboard for v1 so create + edit still work today.
@@ -44,6 +47,10 @@ const TvConfigsEditor = lazy(() =>
 // the chunk cost on every Menu Screens load.
 const PairDeviceModal = lazy(() =>
     import('./PairDeviceModal').then(m => ({ default: m.default })));
+// Version history modal — shown when admin taps "History" on a
+// screen card. Lazy for the same chunk-cost reason.
+const TvConfigVersionsModal = lazy(() =>
+    import('./TvConfigVersionsModal').then(m => ({ default: m.default })));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -121,6 +128,11 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     // and pass the live configs + heartbeats so it can show a
     // current "pick a TV" list without re-subscribing.
     const [showPairModal, setShowPairModal] = useState(false);
+    // Version-history modal target — null when closed, or the
+    // ScreenCard's screen object when open. Holding the whole
+    // screen (not just tvId) so the modal can show label/etc.
+    // without re-querying.
+    const [historyTarget, setHistoryTarget] = useState(null);
 
     // Pull the always-present "default URL" rows (webster / maryland
     // each work without a config doc) into the dashboard so the card
@@ -347,7 +359,9 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                             screen={s}
                             baseUrl={baseUrl}
                             isEs={isEs}
-                            onEdit={() => openEditor(s)} />
+                            staffName={staffName}
+                            onEdit={() => openEditor(s)}
+                            onShowHistory={() => setHistoryTarget(s)} />
                     ))}
                 </div>
             )}
@@ -382,6 +396,20 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                         onClose={() => setShowPairModal(false)} />
                 </Suspense>
             )}
+
+            {/* Version history modal — same lazy-mount pattern as
+                Pair. Renders only when a card's History/version
+                badge has been tapped. */}
+            {historyTarget && (
+                <Suspense fallback={null}>
+                    <TvConfigVersionsModal
+                        language={language}
+                        staffName={staffName}
+                        tvId={historyTarget.tvId}
+                        label={historyTarget.label}
+                        onClose={() => setHistoryTarget(null)} />
+                </Suspense>
+            )}
         </section>
     );
 }
@@ -408,9 +436,47 @@ function HealthStat({ label, value, tone = 'neutral' }) {
 // container so the action row inside can have its own buttons
 // without nested-interactive issues; the whole card has a hover
 // shadow lift so it still reads as tappable visually.
-function ScreenCard({ screen, baseUrl, isEs, onEdit }) {
+function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory }) {
     const tx = (en, es) => (isEs ? es : en);
     const url = `${baseUrl}/?tv=${screen.tvId}`;
+    // Draft + version state from the underlying tv_config doc.
+    // Synthesized "default" / "ghost" screens never carry these
+    // fields so the badges + buttons hide naturally for those rows.
+    const hasDraft       = !!screen.cfg?.draftSnapshot;
+    const publishedVer   = Number(screen.cfg?.publishedVersion || 0);
+    const showVersion    = !screen.isDefault && publishedVer > 0;
+    const [busyAction, setBusyAction] = useState(null); // 'publish' | 'discard' | null
+    const [errMsg, setErrMsg]         = useState(null);
+
+    async function handlePublishDraft() {
+        if (busyAction) return;
+        setBusyAction('publish');
+        setErrMsg(null);
+        try {
+            await publishTvConfigDraft({ tvId: screen.tvId, byName: staffName });
+        } catch (e) {
+            setErrMsg(e?.message || 'Publish failed');
+        } finally {
+            setBusyAction(null);
+        }
+    }
+    async function handleDiscardDraft() {
+        if (busyAction) return;
+        const ok = window.confirm(tx(
+            'Discard the pending draft for this screen? The published version stays live.',
+            '¿Descartar el borrador pendiente? La versión publicada continúa en vivo.',
+        ));
+        if (!ok) return;
+        setBusyAction('discard');
+        setErrMsg(null);
+        try {
+            await discardTvConfigDraft({ tvId: screen.tvId, byName: staffName });
+        } catch (e) {
+            setErrMsg(e?.message || 'Discard failed');
+        } finally {
+            setBusyAction(null);
+        }
+    }
     // Status comes from the heartbeat, not the config — admins want
     // to know "is the screen actually showing my menu right now?",
     // not "did I edit this last week?". The two distinct meanings of
@@ -532,7 +598,50 @@ function ScreenCard({ screen, baseUrl, isEs, onEdit }) {
                             {String(screen.layout || 'dense').toUpperCase()}
                         </span>
                     )}
+                    {/* Published version badge — only shown once the
+                        new publish flow has touched this config (first
+                        save under the flow becomes v1). Synth defaults
+                        and ghost screens have no version. */}
+                    {showVersion && (
+                        <span
+                            className="px-1.5 py-0.5 rounded bg-white text-dd-text-2 border border-dd-line cursor-pointer hover:bg-dd-bg"
+                            onClick={onShowHistory}
+                            title={tx('View version history', 'Ver historial')}>
+                            v{publishedVer}
+                        </span>
+                    )}
+                    {hasDraft && (
+                        <span className="px-1.5 py-0.5 rounded bg-sky-50 text-sky-800 border border-sky-300 inline-flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-sky-500" />
+                            {tx('Draft', 'Borrador')}
+                        </span>
+                    )}
                 </div>
+
+                {/* Draft action row — only renders when this screen
+                    has an unpublished draft. Lifted to its own row
+                    above the main actions so the Publish CTA is the
+                    most prominent thing in the card right now. */}
+                {hasDraft && (
+                    <div className="mt-1 p-2 bg-sky-50 border border-sky-200 rounded-lg flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[11px] text-sky-900 font-bold flex-1 min-w-0 truncate">
+                            📝 {tx('Unpublished draft saved', 'Borrador sin publicar')}
+                        </span>
+                        <button onClick={handlePublishDraft}
+                            disabled={!!busyAction}
+                            className="px-2.5 py-1 rounded-md bg-sky-600 text-white text-[11px] font-bold hover:bg-sky-700 active:scale-95 transition disabled:opacity-60">
+                            {busyAction === 'publish' ? tx('Publishing…', 'Publicando…') : `⬆ ${tx('Publish', 'Publicar')}`}
+                        </button>
+                        <button onClick={handleDiscardDraft}
+                            disabled={!!busyAction}
+                            className="px-2.5 py-1 rounded-md bg-white border border-sky-200 text-sky-700 text-[11px] font-bold hover:bg-sky-100 disabled:opacity-60">
+                            {busyAction === 'discard' ? tx('Discarding…', 'Descartando…') : `✕ ${tx('Discard', 'Descartar')}`}
+                        </button>
+                        {errMsg && (
+                            <span className="basis-full text-[10px] text-red-700 font-bold">⚠ {errMsg}</span>
+                        )}
+                    </div>
+                )}
                 <div className="flex flex-wrap items-center gap-1.5 mt-1">
                     <button onClick={onEdit}
                         className={`px-2.5 py-1 rounded-lg text-[11px] font-bold active:scale-95 transition ${
@@ -550,6 +659,18 @@ function ScreenCard({ screen, baseUrl, isEs, onEdit }) {
                         className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">
                         📋 {tx('Copy URL', 'Copiar URL')}
                     </button>
+                    {/* History button — only relevant for configured
+                        screens that have at least one version archived.
+                        Synth defaults + ghosts don't have history yet,
+                        and showing the button for v1 (no prior version
+                        archived) would dump admin into an empty modal. */}
+                    {showVersion && publishedVer > 1 && (
+                        <button onClick={onShowHistory}
+                            title={tx('Version history & rollback', 'Historial y reversión')}
+                            className="px-2.5 py-1 rounded-lg bg-white border border-dd-line text-[11px] font-bold text-dd-text-2 hover:bg-dd-bg">
+                            🕰 {tx('History', 'Historial')}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

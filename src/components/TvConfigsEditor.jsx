@@ -8,7 +8,7 @@
 import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { MENU_DATA } from '../data/menu';
 import {
-    subscribeTvConfigs, saveTvConfig, deleteTvConfig,
+    subscribeTvConfigs, saveTvConfig, saveTvConfigDraft, deleteTvConfig,
     LAYOUTS, MODES, DEFAULT_LAYOUT, DEFAULT_MODE,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
     makeTvId,
@@ -451,7 +451,13 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
         }
     };
 
-    const save = async () => {
+    // asDraft=true routes through saveTvConfigDraft, which writes
+    // to the `draftSnapshot` field instead of the published root.
+    // The TV display keeps rendering the previously-published
+    // state until the admin hits Publish on the dashboard card.
+    // asDraft=false (default) is the legacy save-and-publish flow,
+    // preserved verbatim so existing muscle memory still works.
+    const save = async ({ asDraft = false } = {}) => {
         if (saving) return;
         const finalId = (tvId.trim() || makeTvId(label, location)).toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 48);
         if (!finalId) {
@@ -520,8 +526,13 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 payload.dayparts = null;
                 payload.split = null;
             }
-            await saveTvConfig({ tvId: finalId, payload, byName });
-            toast(tx('✓ Saved', '✓ Guardado'), { kind: 'success' });
+            if (asDraft) {
+                await saveTvConfigDraft({ tvId: finalId, payload, byName });
+                toast(tx('✓ Draft saved — click Publish on the card to push live', '✓ Borrador guardado — toca Publicar para enviar en vivo'), { kind: 'success' });
+            } else {
+                await saveTvConfig({ tvId: finalId, payload, byName });
+                toast(tx('✓ Saved & published', '✓ Guardado y publicado'), { kind: 'success' });
+            }
             onClose();
         } catch (e) {
             console.warn('saveTvConfig failed:', e);
@@ -1098,9 +1109,20 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                         className="flex-1 py-2 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg">
                         {tx('Cancel', 'Cancelar')}
                     </button>
-                    <button onClick={save} disabled={saving}
+                    {/* Save as Draft — writes to draftSnapshot so the
+                        TV keeps showing the previous live version.
+                        Less prominent than the main Save (smaller +
+                        outlined) so existing muscle-memory still
+                        lands on Save & Publish. Reads "Draft" not
+                        "Save as Draft" to fit the narrower button. */}
+                    <button onClick={() => save({ asDraft: true })} disabled={saving}
+                        title={tx('Save without publishing — TV keeps showing the current live version', 'Guardar sin publicar — TV sigue mostrando la versión actual')}
+                        className="px-3 py-2 rounded-lg bg-white border border-sky-300 text-sky-700 text-xs font-bold hover:bg-sky-50 disabled:opacity-40">
+                        📝 {tx('Draft', 'Borrador')}
+                    </button>
+                    <button onClick={() => save()} disabled={saving}
                         className="flex-1 py-2 rounded-lg bg-sky-600 text-white font-bold hover:bg-sky-700 disabled:opacity-40">
-                        {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                        {saving ? tx('Saving…', 'Guardando…') : tx('Save & Publish', 'Guardar y publicar')}
                     </button>
                 </footer>
             </div>

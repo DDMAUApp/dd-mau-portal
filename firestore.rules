@@ -408,6 +408,19 @@ service cloud.firestore {
       allow read: if true;
       allow create, update: if request.resource.data is map;
       allow delete: if true;   // admin removes TVs via the dashboard
+
+      // Version history subcollection (Andrew 2026-05-23) — every
+      // save / publish-from-draft / rollback archives the prior
+      // published state here. Reads stay open so the History modal
+      // can list them; creates are required to be maps. We allow
+      // delete because admins may eventually want to prune old
+      // versions, and at this layer there's no PII to protect
+      // (each row is a TV-config snapshot, no staff data).
+      match /versions/{versionId} {
+        allow read: if true;
+        allow create, update: if request.resource.data is map;
+        allow delete: if true;
+      }
     }
     match /tv_heartbeats/{tvId} {
       allow read: if true;

@@ -128,10 +128,16 @@
 import { db } from '../firebase';
 import {
     doc, collection, getDoc, setDoc, deleteDoc, onSnapshot, serverTimestamp,
+    runTransaction, query, orderBy, limit as fsLimit, deleteField,
 } from 'firebase/firestore';
 import { recordAudit } from './audit';
 
 const COLLECTION = 'tv_configs';
+// Subcollection of immutable snapshots — every time a TV config's
+// published state changes (saveTvConfig OR publishTvConfigDraft
+// OR rollbackTvConfig), the prior published state gets archived
+// here under a numeric version doc id so admins can roll back.
+const VERSIONS_SUBCOLLECTION = 'versions';
 
 // Top-level modes:
 //   • 'menu'  — data-driven board (MENU_DATA + overrides + live 86)
@@ -290,19 +296,110 @@ export function subscribeTvConfig(tvId, cb) {
     return unsub;
 }
 
-export async function saveTvConfig({ tvId, payload, byName }) {
-    if (!tvId) throw new Error('tvId required');
-    const cleanId = String(tvId)
+// ── Publish / Draft / Version internals ────────────────────────────────
+// What we're protecting against, and how:
+//   • "I saved while editing and the TV showed half my work to a customer."
+//     → draftSnapshot field. saveTvConfigDraft writes there; root stays
+//       unchanged so the TV keeps rendering the previously-published
+//       state. publishTvConfigDraft promotes draft → root atomically.
+//   • "I broke the menu with a bad save and don't know how to undo."
+//     → /tv_config_versions/{tvId}/versions/v<N> subcollection. Every
+//       transition of the published state (live save, publish-from-draft,
+//       rollback) writes the PRIOR root to this subcollection first.
+//       rollbackTvConfig copies a chosen version back to root.
+//
+// Keys we maintain on the root doc to make the above work:
+//   publishedVersion: integer counter, +1 on each transition.
+//   publishedAt:      serverTimestamp of the last transition.
+//   publishedBy:      who triggered it.
+//   draftSnapshot:    null | {full payload of pending edits}.
+//   draftSavedAt:     serverTimestamp of the most recent draft save.
+//   draftSavedBy:     who saved the draft.
+//
+// Backward compat: existing docs have no publishedVersion. The
+// transaction defaults to 0 in that case, so the first save under the
+// new flow becomes v1. MenuDisplay reads the root doc — same as before
+// — so live TVs continue working without any client-side change.
+
+// Fields that belong to the DRAFT layer, not the published layer.
+// We strip these before archiving / restoring so draft state doesn't
+// leak across version boundaries.
+const DRAFT_ONLY_FIELDS = ['draftSnapshot', 'draftSavedAt', 'draftSavedBy'];
+function stripDraftLayer(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    const out = { ...obj };
+    for (const k of DRAFT_ONLY_FIELDS) delete out[k];
+    return out;
+}
+
+// Sanitize the tvId the way the rest of this file expects (matches
+// saveTvConfig's previous behavior).
+function normalizeTvId(tvId) {
+    return String(tvId || '')
         .toLowerCase()
         .replace(/[^a-z0-9-]+/g, '-')
         .slice(0, 48) || 'tv';
-    const data = {
-        ...payload,
-        tvId: cleanId,
-        updatedAt: serverTimestamp(),
-        updatedBy: byName || null,
-    };
-    await setDoc(doc(db, COLLECTION, cleanId), data, { merge: true });
+}
+
+export async function saveTvConfig({ tvId, payload, byName }) {
+    if (!tvId) throw new Error('tvId required');
+    const cleanId = normalizeTvId(tvId);
+    const rootRef = doc(db, COLLECTION, cleanId);
+
+    // Atomic save + archive. Done in a single transaction so we
+    // can't end up with a partially-archived state (e.g. version
+    // doc written but root not updated, or vice versa). If the
+    // doc didn't exist before, there's nothing to archive — the
+    // version counter starts at 1 with no v0 row, which is the
+    // correct "this is the first publish" representation.
+    let nextVersion = 1;
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(rootRef);
+        const prev = snap.exists() ? snap.data() : null;
+        const prevVersion = Number(prev?.publishedVersion || 0);
+        nextVersion = prevVersion + 1;
+
+        // Archive the prior published state before we overwrite it.
+        // Strip the draft layer + the published markers (those are
+        // ABOUT the version, not part of it).
+        if (prev) {
+            const versionRef = doc(db, COLLECTION, cleanId, VERSIONS_SUBCOLLECTION, `v${prevVersion || 0}`);
+            const archive = stripDraftLayer(prev);
+            delete archive.publishedAt;
+            delete archive.publishedBy;
+            delete archive.publishedVersion;
+            tx.set(versionRef, {
+                ...archive,
+                version: prevVersion,
+                supersededAt: serverTimestamp(),
+                supersededBy: byName || null,
+                reason: 'live_save',
+            });
+        }
+
+        // Write the new root. We DON'T merge here on purpose —
+        // a live save replaces the published layer wholesale, so
+        // removing a field (e.g. clearing an imageUrls array via
+        // omission) actually clears. Draft fields are preserved
+        // by reading them off prev and re-attaching, otherwise
+        // saving a live edit while there's an unrelated pending
+        // draft would silently wipe the draft.
+        const draftFields = {};
+        if (prev?.draftSnapshot)  draftFields.draftSnapshot  = prev.draftSnapshot;
+        if (prev?.draftSavedAt)   draftFields.draftSavedAt   = prev.draftSavedAt;
+        if (prev?.draftSavedBy)   draftFields.draftSavedBy   = prev.draftSavedBy;
+        tx.set(rootRef, {
+            ...stripDraftLayer(payload || {}),
+            tvId: cleanId,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || null,
+            publishedVersion: nextVersion,
+            publishedAt: serverTimestamp(),
+            publishedBy: byName || null,
+            ...draftFields,
+        });
+    });
+
     recordAudit({
         action: 'tv_config.save',
         actorName: byName || 'admin',
@@ -312,8 +409,198 @@ export async function saveTvConfig({ tvId, payload, byName }) {
             label: payload?.label,
             location: payload?.location,
             layout: payload?.layout,
+            version: nextVersion,
         },
     });
+}
+
+// ── Draft layer ─────────────────────────────────────────────────────────
+// Writes go to the `draftSnapshot` field on the root doc. The published
+// layer stays untouched, so live TVs continue showing the previously-
+// published state. publishTvConfigDraft promotes the draft to live; the
+// existing saveTvConfig flow above continues to "publish immediately"
+// for users who don't opt into the draft workflow.
+
+export async function saveTvConfigDraft({ tvId, payload, byName }) {
+    if (!tvId) throw new Error('tvId required');
+    const cleanId = normalizeTvId(tvId);
+    const rootRef = doc(db, COLLECTION, cleanId);
+    // Use merge=true so the draftSnapshot doesn't accidentally clear
+    // published fields. The snapshot ITSELF is wholesale-replaced
+    // (the payload that came in is the complete next-state).
+    await setDoc(rootRef, {
+        draftSnapshot: stripDraftLayer(payload || {}),
+        draftSavedAt: serverTimestamp(),
+        draftSavedBy: byName || null,
+    }, { merge: true });
+    recordAudit({
+        action: 'tv_config.draft.save',
+        actorName: byName || 'admin',
+        targetType: 'tv_config',
+        targetId: cleanId,
+        details: { label: payload?.label, layout: payload?.layout },
+    });
+}
+
+export async function publishTvConfigDraft({ tvId, byName }) {
+    if (!tvId) throw new Error('tvId required');
+    const cleanId = normalizeTvId(tvId);
+    const rootRef = doc(db, COLLECTION, cleanId);
+    let nextVersion = 1;
+    let snapshotPublished = null;
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(rootRef);
+        if (!snap.exists()) throw new Error('TV config not found');
+        const prev = snap.data();
+        const draft = prev.draftSnapshot;
+        if (!draft || typeof draft !== 'object') throw new Error('No draft to publish');
+        const prevVersion = Number(prev.publishedVersion || 0);
+        nextVersion = prevVersion + 1;
+        // Archive the OLD published state to versions, then promote
+        // the draft to live + clear the draft fields. Same atomic
+        // pattern as saveTvConfig.
+        if (prev) {
+            const versionRef = doc(db, COLLECTION, cleanId, VERSIONS_SUBCOLLECTION, `v${prevVersion}`);
+            const archive = stripDraftLayer(prev);
+            delete archive.publishedAt;
+            delete archive.publishedBy;
+            delete archive.publishedVersion;
+            tx.set(versionRef, {
+                ...archive,
+                version: prevVersion,
+                supersededAt: serverTimestamp(),
+                supersededBy: byName || null,
+                reason: 'publish_draft',
+            });
+        }
+        snapshotPublished = draft;
+        tx.set(rootRef, {
+            ...stripDraftLayer(draft),
+            tvId: cleanId,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || null,
+            publishedVersion: nextVersion,
+            publishedAt: serverTimestamp(),
+            publishedBy: byName || null,
+            // Explicit deletes so the next snapshot reader sees a
+            // clean "no draft" state.
+            draftSnapshot: deleteField(),
+            draftSavedAt:  deleteField(),
+            draftSavedBy:  deleteField(),
+        });
+    });
+    recordAudit({
+        action: 'tv_config.publish_draft',
+        actorName: byName || 'admin',
+        targetType: 'tv_config',
+        targetId: cleanId,
+        details: { version: nextVersion, label: snapshotPublished?.label },
+    });
+}
+
+export async function discardTvConfigDraft({ tvId, byName }) {
+    if (!tvId) throw new Error('tvId required');
+    const cleanId = normalizeTvId(tvId);
+    await setDoc(doc(db, COLLECTION, cleanId), {
+        draftSnapshot: deleteField(),
+        draftSavedAt:  deleteField(),
+        draftSavedBy:  deleteField(),
+    }, { merge: true });
+    recordAudit({
+        action: 'tv_config.discard_draft',
+        actorName: byName || 'admin',
+        targetType: 'tv_config',
+        targetId: cleanId,
+    });
+}
+
+// ── Rollback ───────────────────────────────────────────────────────────
+// Restore a previous version doc to root. Same archive-then-overwrite
+// pattern as saveTvConfig — the CURRENT live state gets archived as a
+// new version row before being replaced, so rollback itself is
+// reversible.
+
+export async function rollbackTvConfig({ tvId, versionId, byName }) {
+    if (!tvId || !versionId) throw new Error('tvId + versionId required');
+    const cleanId = normalizeTvId(tvId);
+    const rootRef = doc(db, COLLECTION, cleanId);
+    const versionRef = doc(db, COLLECTION, cleanId, VERSIONS_SUBCOLLECTION, versionId);
+    let nextVersion = 1;
+    let restoredFrom = null;
+    await runTransaction(db, async (tx) => {
+        const [rootSnap, verSnap] = await Promise.all([tx.get(rootRef), tx.get(versionRef)]);
+        if (!verSnap.exists()) throw new Error('Version not found');
+        const verData = verSnap.data();
+        restoredFrom = verData;
+        if (rootSnap.exists()) {
+            const prev = rootSnap.data();
+            const prevVersion = Number(prev.publishedVersion || 0);
+            nextVersion = prevVersion + 1;
+            const archiveRef = doc(db, COLLECTION, cleanId, VERSIONS_SUBCOLLECTION, `v${prevVersion}`);
+            const archive = stripDraftLayer(prev);
+            delete archive.publishedAt;
+            delete archive.publishedBy;
+            delete archive.publishedVersion;
+            tx.set(archiveRef, {
+                ...archive,
+                version: prevVersion,
+                supersededAt: serverTimestamp(),
+                supersededBy: byName || null,
+                reason: 'rollback',
+                rolledBackTo: versionId,
+            });
+        }
+        // Restore — strip the version's metadata + draft fields.
+        const restore = stripDraftLayer({ ...verData });
+        delete restore.version;
+        delete restore.supersededAt;
+        delete restore.supersededBy;
+        delete restore.reason;
+        delete restore.rolledBackTo;
+        tx.set(rootRef, {
+            ...restore,
+            tvId: cleanId,
+            updatedAt: serverTimestamp(),
+            updatedBy: byName || null,
+            publishedVersion: nextVersion,
+            publishedAt: serverTimestamp(),
+            publishedBy: byName || null,
+            draftSnapshot: deleteField(),
+            draftSavedAt:  deleteField(),
+            draftSavedBy:  deleteField(),
+        });
+    });
+    recordAudit({
+        action: 'tv_config.rollback',
+        actorName: byName || 'admin',
+        targetType: 'tv_config',
+        targetId: cleanId,
+        details: { from: versionId, asVersion: nextVersion, label: restoredFrom?.label },
+    });
+}
+
+// ── Version history subscription ──────────────────────────────────────
+// Powers the dashboard's "History" modal. Returns the N most recent
+// version docs, newest-first. We don't paginate — restaurants change
+// menus on the order of weeks, not seconds, so 30 entries is a deep
+// rollback window. Adjust if a restaurant proves us wrong.
+export function subscribeTvConfigVersions(tvId, cb, max = 30) {
+    if (!tvId) { cb([]); return () => {}; }
+    const cleanId = normalizeTvId(tvId);
+    const q = query(
+        collection(db, COLLECTION, cleanId, VERSIONS_SUBCOLLECTION),
+        orderBy('version', 'desc'),
+        fsLimit(max),
+    );
+    const unsub = onSnapshot(q, (snap) => {
+        const out = [];
+        snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+        cb(out);
+    }, (err) => {
+        console.warn('tv_config versions subscription failed:', err);
+        cb([]);
+    });
+    return unsub;
 }
 
 export async function deleteTvConfig({ tvId, byName }) {
