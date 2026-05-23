@@ -4,7 +4,7 @@ import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, col
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
-import { INVENTORY_CATEGORIES } from '../data/inventory';
+import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
 const OrderMode = lazy(() => import('./OrderMode'));
@@ -412,6 +412,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // UNIONed. OFF falls back to substring only.
             const [invAiOn, setInvAiOn] = useState(true);
             const [writeInValues, setWriteInValues] = useState({});
+            // Per-row write-in destination — { [catIdx]: { catIdx, location } }.
+            // Defaults: targetCatIdx = the section the user is typing in,
+            // location = '' (will prompt). Andrew 2026-05-22: "keep the
+            // write in item, and once that is in we keep it on the list
+            // but let it pick what category and location when writing it
+            // in." Inline expansion below the write-in input lets the
+            // user override both before pressing Add.
+            const [writeInDest, setWriteInDest] = useState({});
             const [invViewMode, setInvViewMode] = useState("category"); // "category" or "vendor"
             const [collapsedCats, setCollapsedCats] = useState({});
             const [invShowOnlyCounted, setInvShowOnlyCounted] = useState(false);
@@ -2995,23 +3003,44 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return catIdx + "-" + n;
             };
 
-            // Quick write-in add (from the blank line at bottom of each category).
-            // Uses mutateInventory so two managers adding to the same category
-            // simultaneously don't clobber each other.
-            const quickAddItem = async (catIdx) => {
-                const input = (writeInValues[catIdx] || "").trim();
+            // Quick write-in add (from the blank line at bottom of each
+            // category). The destination is the writeInDest entry for the
+            // typing row — by default that's the section the user is in
+            // with no location set; the inline expansion below the input
+            // lets them override both before pressing Add.
+            //
+            // Andrew 2026-05-22: location is now a required field at
+            // write-in time. The new item carries `location` so the
+            // location-bubble filter bar (incoming) can show it.
+            //
+            // Uses mutateInventory so two managers adding to the same
+            // category simultaneously don't clobber each other.
+            const quickAddItem = async (sourceCatIdx) => {
+                const input = (writeInValues[sourceCatIdx] || "").trim();
                 if (!input) return;
+                const dest = writeInDest[sourceCatIdx] || {};
+                const targetCatIdx = Number.isFinite(dest.catIdx) ? dest.catIdx : sourceCatIdx;
+                const location = (dest.location || '').trim();
+                if (!location) {
+                    toast(language === 'es'
+                        ? 'Elige una ubicación antes de añadir'
+                        : 'Pick a location before adding',
+                        { kind: 'error' });
+                    return;
+                }
                 const translated = autoTranslateItem(input);
-                setWriteInValues(prev => ({ ...prev, [catIdx]: "" }));
+                setWriteInValues(prev => ({ ...prev, [sourceCatIdx]: "" }));
+                setWriteInDest(prev => ({ ...prev, [sourceCatIdx]: { catIdx: sourceCatIdx, location: '' } }));
                 await mutateInventory((live) => {
-                    const liveCat = live[catIdx];
+                    const liveCat = live[targetCatIdx];
                     if (!liveCat) return live;
                     const newItem = {
-                        id: nextItemId(liveCat, catIdx),
+                        id: nextItemId(liveCat, targetCatIdx),
                         name: translated.name, nameEs: translated.nameEs,
-                        vendor: "", supplier: "", orderDay: "", pack: "", price: null, subcat: "",
+                        vendor: "", supplier: "", orderDay: "", pack: "", price: null,
+                        location,
                     };
-                    return live.map((cat, idx) => idx === catIdx ? { ...cat, items: [...cat.items, newItem] } : cat);
+                    return live.map((cat, idx) => idx === targetCatIdx ? { ...cat, items: [...cat.items, newItem] } : cat);
                 });
             };
 
@@ -6053,25 +6082,73 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     })}
                                                 </div>
                                             ))}
-                                            {/* Write-in */}
-                                            {!invEditMode && (
-                                                <div className="px-3 py-2 bg-gray-50">
-                                                    <div className="flex items-center gap-2">
-                                                        <input type="text"
-                                                            value={writeInValues[catIdx] || ""}
-                                                            onChange={e => setWriteInValues(prev => ({ ...prev, [catIdx]: e.target.value }))}
-                                                            onKeyDown={e => { if (e.key === "Enter") quickAddItem(catIdx); }}
-                                                            placeholder={language === "es" ? "\u{270D}\u{FE0F} Escribir artículo..." : "\u{270D}\u{FE0F} Write in item..."}
-                                                            className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
-                                                        {(writeInValues[catIdx] || "").trim() && (
-                                                            <button onClick={() => quickAddItem(catIdx)}
-                                                                className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition">
-                                                                {language === "es" ? "Agregar" : "Add"}
-                                                            </button>
+                                            {/* Write-in — text in expands inline category +
+                                                location pickers. Both must be set before
+                                                Add is allowed; category defaults to this
+                                                section, location must be picked. The
+                                                location list comes from INVENTORY_LOCATIONS
+                                                in inventory.js (union'd with any locations
+                                                already present on items so previously-set
+                                                custom locations stay reachable). */}
+                                            {!invEditMode && (() => {
+                                                const txt = writeInValues[catIdx] || "";
+                                                const expanded = txt.trim().length > 0;
+                                                const dest = writeInDest[catIdx] || { catIdx, location: '' };
+                                                // Build location list = canonical + any non-canonical values
+                                                // already in use across items.
+                                                const seenLocs = new Set(INVENTORY_LOCATIONS);
+                                                for (const c of customInventory) for (const it of (c.items || [])) {
+                                                    if (it.location && !seenLocs.has(it.location)) seenLocs.add(it.location);
+                                                }
+                                                const locOpts = [...seenLocs];
+                                                return (
+                                                    <div className="px-3 py-2 bg-gray-50 space-y-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <input type="text"
+                                                                value={txt}
+                                                                onChange={e => setWriteInValues(prev => ({ ...prev, [catIdx]: e.target.value }))}
+                                                                onKeyDown={e => { if (e.key === "Enter") quickAddItem(catIdx); }}
+                                                                placeholder={language === "es" ? "\u{270D}\u{FE0F} Escribir artículo..." : "\u{270D}\u{FE0F} Write in item..."}
+                                                                className="flex-1 px-2 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:border-mint-500" />
+                                                            {expanded && (
+                                                                <button onClick={() => quickAddItem(catIdx)}
+                                                                    disabled={!(dest.location || '').trim()}
+                                                                    title={!(dest.location || '').trim() ? (language === "es" ? "Elige una ubicación primero" : "Pick a location first") : ""}
+                                                                    className="px-3 py-1.5 bg-mint-600 text-white rounded-lg text-xs font-bold hover:bg-mint-700 active:scale-95 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                                                                    {language === "es" ? "Agregar" : "Add"}
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                        {expanded && (
+                                                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                                                                <label className="flex items-center gap-1.5">
+                                                                    <span className="text-gray-500 font-bold">📂 {language === "es" ? "Categoría" : "Category"}:</span>
+                                                                    <select
+                                                                        value={Number.isFinite(dest.catIdx) ? dest.catIdx : catIdx}
+                                                                        onChange={e => setWriteInDest(prev => ({ ...prev, [catIdx]: { ...(prev[catIdx] || {}), catIdx: Number(e.target.value) } }))}
+                                                                        className="px-2 py-1 border border-gray-200 rounded-md bg-white text-xs focus:outline-none focus:border-mint-500">
+                                                                        {customInventory.map((c, i) => (
+                                                                            <option key={i} value={i}>{language === "es" ? (c.nameEs || c.name) : c.name}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </label>
+                                                                <label className="flex items-center gap-1.5">
+                                                                    <span className="text-gray-500 font-bold">📍 {language === "es" ? "Ubicación" : "Location"}:</span>
+                                                                    <select
+                                                                        value={dest.location || ''}
+                                                                        onChange={e => setWriteInDest(prev => ({ ...prev, [catIdx]: { ...(prev[catIdx] || {}), location: e.target.value } }))}
+                                                                        className={`px-2 py-1 border rounded-md bg-white text-xs focus:outline-none focus:border-mint-500 ${(dest.location || '').trim() ? 'border-gray-200' : 'border-amber-400 bg-amber-50'}`}>
+                                                                        <option value="">{language === "es" ? "(elige una)" : "(pick one)"}</option>
+                                                                        {locOpts.map(l => (
+                                                                            <option key={l} value={l}>{l}</option>
+                                                                        ))}
+                                                                    </select>
+                                                                </label>
+                                                            </div>
                                                         )}
                                                     </div>
-                                                </div>
-                                            )}
+                                                );
+                                            })()}
                                             {invEditMode && invShowAddForm === catIdx ? (
                                                 <div className="p-3 bg-green-50 border-t-2 border-green-500 space-y-2">
                                                     <input type="text" value={invNewName} onChange={(e) => setInvNewName(e.target.value)}

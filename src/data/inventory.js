@@ -9,6 +9,23 @@
 // dry storage, freezer, bar, etc.) and is used to group items
 // for inventory counting rounds.
 
+// Canonical kitchen storage locations. Used by the inventory tab's
+// write-in flow + (upcoming) location-bubble filter bar. Order
+// matches Andrew's spec from 2026-05-22. Items pick from this list
+// via scripts/category-mapper-server.mjs and store the chosen value
+// on item.location. Adding a new location: append it here AND set
+// it on items via the category-mapper.
+export const INVENTORY_LOCATIONS = [
+    'Walk-in Freezer',
+    'Walk-in Refrigerator',
+    'Pantry',
+    'Paper Goods',
+    'Chemicals / Dish Area',
+    'Drinks',
+    'Boba',
+    'Expo',
+];
+
 export const INVENTORY_CATEGORIES = [
     {
         id: 0,
