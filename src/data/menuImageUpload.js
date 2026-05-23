@@ -56,6 +56,104 @@ export async function renderPdfPagesToBlobs(file, opts = {}) {
     return blobs;
 }
 
+// Max width (in pixels) we'll let through to Firebase Storage for
+// TV signage. 1920px covers 1080p TVs at native resolution; anything
+// larger than this is paying Storage bytes + Pi-side decode time for
+// pixels the TV can't display. Most modern phone cameras produce
+// 4000-6000px images, so this is the common case.
+const TV_MAX_IMAGE_WIDTH = 1920;
+// JPEG quality used when re-encoding downsized images. 0.85 is the
+// usual sweet spot — visually indistinguishable from the original
+// at TV viewing distance, ~50% smaller bytes.
+const TV_JPEG_QUALITY = 0.85;
+// Minimum dimensions we expect for a "looks good on TV" upload.
+// Smaller than this and the image will be visibly soft on a 1080p
+// screen viewed from across the restaurant; we surface a warning
+// to the caller but still allow the upload (the admin might
+// genuinely WANT a small / pixelated retro look).
+const TV_MIN_GOOD_WIDTH = 1280;
+
+// Read an image File/Blob's intrinsic dimensions via the browser's
+// own decoder. Resolves to { width, height }; rejects on decode
+// failure. Used both for size-check warnings and as the first step
+// of the optimization pass below.
+async function getImageDimensions(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            const out = { width: img.naturalWidth, height: img.naturalHeight };
+            URL.revokeObjectURL(url);
+            resolve(out);
+        };
+        img.onerror = (e) => {
+            URL.revokeObjectURL(url);
+            reject(new Error('image decode failed'));
+        };
+        img.src = url;
+    });
+}
+
+// Resize an image File/Blob if its width is greater than maxWidth,
+// re-encoding as JPEG. Returns the original file unchanged if it's
+// already at or below maxWidth (avoids re-encoding a perfectly-sized
+// image into a worse one). Resolves to { blob, width, height,
+// optimized, original }.
+//
+// `optimized: true` means we ran the canvas re-encode path.
+// `original.width / original.height` is always populated so callers
+// can warn on small inputs even when no resize happened.
+export async function optimizeImageForTv(file, opts = {}) {
+    const maxWidth = opts.maxWidth || TV_MAX_IMAGE_WIDTH;
+    const quality  = opts.quality  || TV_JPEG_QUALITY;
+    try {
+        const dim = await getImageDimensions(file);
+        if (dim.width <= maxWidth) {
+            return { blob: file, width: dim.width, height: dim.height, optimized: false, original: dim };
+        }
+        const scale = maxWidth / dim.width;
+        const targetW = Math.round(dim.width * scale);
+        const targetH = Math.round(dim.height * scale);
+        const canvas = document.createElement('canvas');
+        canvas.width  = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        // White background — keeps transparent PNGs from rendering
+        // black after JPEG re-encode (JPEG has no alpha channel).
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, targetW, targetH);
+        // Decode + draw via Image so we don't have to depend on
+        // createImageBitmap (mobile Safari support is patchy).
+        const url = URL.createObjectURL(file);
+        try {
+            await new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0, targetW, targetH);
+                    resolve();
+                };
+                img.onerror = () => reject(new Error('image draw failed'));
+                img.src = url;
+            });
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+        const blob = await new Promise((resolve) =>
+            canvas.toBlob((b) => resolve(b), 'image/jpeg', quality));
+        if (!blob) {
+            // Fallback: if toBlob fails (extremely rare), upload the
+            // original rather than failing the whole upload.
+            return { blob: file, width: dim.width, height: dim.height, optimized: false, original: dim };
+        }
+        return { blob, width: targetW, height: targetH, optimized: true, original: dim };
+    } catch (e) {
+        console.warn('optimizeImageForTv failed, using original:', e);
+        // Fallback to the original — bad optimization shouldn't
+        // block a working upload.
+        return { blob: file, width: 0, height: 0, optimized: false, original: { width: 0, height: 0 } };
+    }
+}
+
 // Upload an array of Blobs (or Files) to Storage under the given
 // folder, returning the download URLs in order.
 export async function uploadImageBlobs({ blobs, folder, slugPrefix }) {
@@ -214,7 +312,28 @@ export async function uploadMenuFile({ file, folder = 'tv_images', slugPrefix })
         return await uploadImageBlobs({ blobs, folder, slugPrefix });
     }
     if (isImage) {
-        return await uploadImageBlobs({ blobs: [file], folder, slugPrefix });
+        // Optimize first — phone cameras commonly produce 4000-6000px
+        // images that are pure storage / decode waste for a 1080p TV.
+        // optimizeImageForTv resizes anything wider than 1920px and
+        // re-encodes as JPEG q=0.85; smaller images pass through
+        // unchanged. The result also carries the ORIGINAL dimensions
+        // so callers can warn on visibly-soft inputs (< 1280px wide).
+        const opt = await optimizeImageForTv(file);
+        const urls = await uploadImageBlobs({ blobs: [opt.blob], folder, slugPrefix });
+        // Surface optimization metadata via a non-throwing side
+        // channel — we keep the legacy return shape (array of URLs)
+        // for backward compat, but expose meta via a property on
+        // the array. Callers that want warnings opt into reading
+        // it; legacy callers ignore it and behave as before.
+        const origW = opt.original?.width || 0;
+        urls.meta = {
+            optimized: opt.optimized,
+            uploadedDimensions: { width: opt.width, height: opt.height },
+            originalDimensions: opt.original,
+            wasResized: opt.optimized,
+            isLowResolution: origW > 0 && origW < TV_MIN_GOOD_WIDTH,
+        };
+        return urls;
     }
     if (isVideo) {
         // Cap video size to keep Storage costs sane. Restaurant

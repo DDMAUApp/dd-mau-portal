@@ -411,7 +411,28 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             // not "append more pages". Admin can re-upload if they want
             // to swap. Avoids the surprise of old pages lingering.
             setImageUrls(urls);
-            toast(tx(`✓ Uploaded ${urls.length} page(s)`, `✓ Subido ${urls.length} página(s)`), { kind: 'success' });
+            // urls.meta is populated by uploadMenuFile for image
+            // uploads (not for PDFs / videos). Surface optimization
+            // + low-res warnings so admin understands what got
+            // adjusted and what might look soft on a TV.
+            const meta = urls.meta;
+            if (meta?.wasResized) {
+                const ow = meta.originalDimensions?.width;
+                const tw = meta.uploadedDimensions?.width;
+                toast(tx(
+                    `✓ Uploaded · resized from ${ow}px to ${tw}px for faster TV display`,
+                    `✓ Subido · redimensionado de ${ow}px a ${tw}px para TV más rápido`,
+                ), { kind: 'success' });
+            } else {
+                toast(tx(`✓ Uploaded ${urls.length} page(s)`, `✓ Subido ${urls.length} página(s)`), { kind: 'success' });
+            }
+            if (meta?.isLowResolution) {
+                const ow = meta.originalDimensions?.width;
+                toast(tx(
+                    `⚠ Image is only ${ow}px wide — may look soft on a 1080p TV. Aim for 1920px+ for sharp display.`,
+                    `⚠ Imagen de solo ${ow}px de ancho — puede verse borrosa en TV 1080p. Apunta a 1920px+ para nitidez.`,
+                ), { kind: 'warn' });
+            }
         } catch (err) {
             console.warn('upload failed:', err);
             toast(tx('Upload failed: ', 'Error al subir: ') + (err?.message || ''), { kind: 'error' });
@@ -442,7 +463,24 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 ...s,
                 [side === 'left' ? 'leftImageUrls' : 'rightImageUrls']: urls,
             }));
-            toast(tx(`✓ ${side} uploaded`, `✓ ${side} subido`), { kind: 'success' });
+            const meta = urls.meta;
+            if (meta?.wasResized) {
+                const ow = meta.originalDimensions?.width;
+                const tw = meta.uploadedDimensions?.width;
+                toast(tx(
+                    `✓ ${side} uploaded · resized ${ow}px→${tw}px`,
+                    `✓ ${side} subido · redimensionado ${ow}px→${tw}px`,
+                ), { kind: 'success' });
+            } else {
+                toast(tx(`✓ ${side} uploaded`, `✓ ${side} subido`), { kind: 'success' });
+            }
+            if (meta?.isLowResolution) {
+                const ow = meta.originalDimensions?.width;
+                toast(tx(
+                    `⚠ ${side} image is only ${ow}px wide — may look soft on TV.`,
+                    `⚠ Imagen ${side} solo ${ow}px de ancho — puede verse borrosa en TV.`,
+                ), { kind: 'warn' });
+            }
         } catch (err) {
             console.warn('split upload failed:', err);
             toast(tx('Upload failed: ', 'Error al subir: ') + (err?.message || ''), { kind: 'error' });
