@@ -416,7 +416,23 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
             // + low-res warnings so admin understands what got
             // adjusted and what might look soft on a TV.
             const meta = urls.meta;
-            if (meta?.wasResized) {
+            // Build the toast around what actually happened. The
+            // crop case is the most surprising of the three so it
+            // earns the headline; resize-only is secondary; the
+            // base case is just "uploaded".
+            if (meta?.wasCropped) {
+                const oA = meta.originalAspect;
+                const sourceShape = oA > 0
+                    ? (oA < 1 ? 'portrait' : oA < 1.2 ? 'square' : oA < 1.5 ? '4:3' : 'ultrawide')
+                    : 'off-aspect';
+                const sourceShapeEs = oA > 0
+                    ? (oA < 1 ? 'vertical' : oA < 1.2 ? 'cuadrada' : oA < 1.5 ? '4:3' : 'ultraancha')
+                    : 'fuera de proporción';
+                toast(tx(
+                    `✓ Uploaded · cropped from ${sourceShape} to 16:9 for full-screen TV display`,
+                    `✓ Subido · recortado de ${sourceShapeEs} a 16:9 para pantalla completa`,
+                ), { kind: 'success' });
+            } else if (meta?.wasResized) {
                 const ow = meta.originalDimensions?.width;
                 const tw = meta.uploadedDimensions?.width;
                 toast(tx(

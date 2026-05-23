@@ -72,6 +72,16 @@ const TV_JPEG_QUALITY = 0.85;
 // to the caller but still allow the upload (the admin might
 // genuinely WANT a small / pixelated retro look).
 const TV_MIN_GOOD_WIDTH = 1280;
+// Auto-crop tolerance band. 16:9 = 1.7778. We crop anything OUTSIDE
+// this band to fill the TV without letterboxing — phone-portrait
+// (0.5625), square (1.0), 4:3 (1.333), and ultrawide (> 1.95) all
+// get center-cropped to 1.7778. Images already close to 16:9 (e.g.
+// 1.7, 1.85) pass through unchanged because the small letterbox
+// strips look fine and we'd rather not re-encode and lose quality
+// for a barely-noticeable correction.
+const TV_TARGET_ASPECT = 16 / 9;
+const TV_ASPECT_TOLERANCE_LOW  = 1.65;
+const TV_ASPECT_TOLERANCE_HIGH = 1.95;
 
 // Read an image File/Blob's intrinsic dimensions via the browser's
 // own decoder. Resolves to { width, height }; rejects on decode
@@ -94,34 +104,85 @@ async function getImageDimensions(file) {
     });
 }
 
-// Resize an image File/Blob if its width is greater than maxWidth,
-// re-encoding as JPEG. Returns the original file unchanged if it's
-// already at or below maxWidth (avoids re-encoding a perfectly-sized
-// image into a worse one). Resolves to { blob, width, height,
-// optimized, original }.
+// Two-step image optimization for TV signage:
+//   1. Center-crop to 16:9 if the source is meaningfully off-aspect.
+//      Phone-portrait, square, 4:3 → 16:9. Sources already close to
+//      16:9 (within TV_ASPECT_TOLERANCE_LOW..HIGH) skip the crop so
+//      we don't re-encode for an imperceptible correction.
+//   2. Resize to TV_MAX_IMAGE_WIDTH if wider than that. Saves
+//      Storage bytes + Pi decode cycles on the common case of
+//      multi-megapixel phone photos.
 //
-// `optimized: true` means we ran the canvas re-encode path.
-// `original.width / original.height` is always populated so callers
-// can warn on small inputs even when no resize happened.
+// Both steps share a single canvas pass when both are needed.
+// Returns `{ blob, width, height, optimized, cropped, original }`
+// so callers can surface what happened in toasts. `cropped: true`
+// indicates the aspect was changed; `optimized: true` indicates
+// the bytes were re-encoded for any reason (resize OR crop OR
+// both — they always go together when we re-encode).
+//
+// Pass `opts.skipCrop: true` to disable the aspect crop and only
+// downscale. Future use case: a "preserve aspect" toggle on the
+// upload UI.
 export async function optimizeImageForTv(file, opts = {}) {
-    const maxWidth = opts.maxWidth || TV_MAX_IMAGE_WIDTH;
-    const quality  = opts.quality  || TV_JPEG_QUALITY;
+    const maxWidth   = opts.maxWidth || TV_MAX_IMAGE_WIDTH;
+    const quality    = opts.quality  || TV_JPEG_QUALITY;
+    const skipCrop   = opts.skipCrop === true;
     try {
         const dim = await getImageDimensions(file);
-        if (dim.width <= maxWidth) {
-            return { blob: file, width: dim.width, height: dim.height, optimized: false, original: dim };
+        const aspect = dim.height > 0 ? dim.width / dim.height : 0;
+        // Decide whether to crop. We only crop when the source is
+        // noticeably off-aspect — within tolerance we'd rather
+        // preserve the original pixels.
+        const needsCrop = !skipCrop && aspect > 0 && (aspect < TV_ASPECT_TOLERANCE_LOW || aspect > TV_ASPECT_TOLERANCE_HIGH);
+
+        // Compute the source rectangle (the slice of the original
+        // we'll draw onto the canvas). When cropping is off, that's
+        // the whole image. When cropping is on, we center-crop to
+        // a 16:9 window of the largest possible size.
+        let srcX = 0, srcY = 0, srcW = dim.width, srcH = dim.height;
+        if (needsCrop) {
+            if (aspect < TV_TARGET_ASPECT) {
+                // Source is too tall — crop top + bottom equally.
+                srcH = Math.round(dim.width / TV_TARGET_ASPECT);
+                srcY = Math.round((dim.height - srcH) / 2);
+            } else {
+                // Source is too wide — crop left + right equally.
+                srcW = Math.round(dim.height * TV_TARGET_ASPECT);
+                srcX = Math.round((dim.width - srcW) / 2);
+            }
         }
-        const scale = maxWidth / dim.width;
-        const targetW = Math.round(dim.width * scale);
-        const targetH = Math.round(dim.height * scale);
+
+        // Compute the destination size. We start from the source
+        // rectangle's width and downscale to maxWidth if needed.
+        let destW = srcW;
+        let destH = srcH;
+        const needsResize = destW > maxWidth;
+        if (needsResize) {
+            const scale = maxWidth / destW;
+            destW = Math.round(destW * scale);
+            destH = Math.round(destH * scale);
+        }
+
+        // Skip the canvas pass entirely if NEITHER crop nor resize
+        // is needed — preserves the original file bytes (no re-encode
+        // quality loss).
+        if (!needsCrop && !needsResize) {
+            return {
+                blob: file,
+                width: dim.width, height: dim.height,
+                optimized: false, cropped: false,
+                original: dim,
+            };
+        }
+
         const canvas = document.createElement('canvas');
-        canvas.width  = targetW;
-        canvas.height = targetH;
+        canvas.width  = destW;
+        canvas.height = destH;
         const ctx = canvas.getContext('2d');
         // White background — keeps transparent PNGs from rendering
         // black after JPEG re-encode (JPEG has no alpha channel).
         ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, targetW, targetH);
+        ctx.fillRect(0, 0, destW, destH);
         // Decode + draw via Image so we don't have to depend on
         // createImageBitmap (mobile Safari support is patchy).
         const url = URL.createObjectURL(file);
@@ -129,7 +190,11 @@ export async function optimizeImageForTv(file, opts = {}) {
             await new Promise((resolve, reject) => {
                 const img = new Image();
                 img.onload = () => {
-                    ctx.drawImage(img, 0, 0, targetW, targetH);
+                    // 9-arg drawImage — pick a source rectangle from
+                    // the original, paint it onto the canvas at the
+                    // destination size. Handles crop + resize in one
+                    // pass.
+                    ctx.drawImage(img, srcX, srcY, srcW, srcH, 0, 0, destW, destH);
                     resolve();
                 };
                 img.onerror = () => reject(new Error('image draw failed'));
@@ -141,16 +206,32 @@ export async function optimizeImageForTv(file, opts = {}) {
         const blob = await new Promise((resolve) =>
             canvas.toBlob((b) => resolve(b), 'image/jpeg', quality));
         if (!blob) {
-            // Fallback: if toBlob fails (extremely rare), upload the
-            // original rather than failing the whole upload.
-            return { blob: file, width: dim.width, height: dim.height, optimized: false, original: dim };
+            // Fallback: if toBlob fails (extremely rare), upload
+            // the original rather than failing the whole upload.
+            return {
+                blob: file,
+                width: dim.width, height: dim.height,
+                optimized: false, cropped: false,
+                original: dim,
+            };
         }
-        return { blob, width: targetW, height: targetH, optimized: true, original: dim };
+        return {
+            blob,
+            width: destW, height: destH,
+            optimized: true,
+            cropped: needsCrop,
+            original: dim,
+        };
     } catch (e) {
         console.warn('optimizeImageForTv failed, using original:', e);
         // Fallback to the original — bad optimization shouldn't
         // block a working upload.
-        return { blob: file, width: 0, height: 0, optimized: false, original: { width: 0, height: 0 } };
+        return {
+            blob: file,
+            width: 0, height: 0,
+            optimized: false, cropped: false,
+            original: { width: 0, height: 0 },
+        };
     }
 }
 
@@ -312,25 +393,27 @@ export async function uploadMenuFile({ file, folder = 'tv_images', slugPrefix })
         return await uploadImageBlobs({ blobs, folder, slugPrefix });
     }
     if (isImage) {
-        // Optimize first — phone cameras commonly produce 4000-6000px
-        // images that are pure storage / decode waste for a 1080p TV.
-        // optimizeImageForTv resizes anything wider than 1920px and
-        // re-encodes as JPEG q=0.85; smaller images pass through
-        // unchanged. The result also carries the ORIGINAL dimensions
-        // so callers can warn on visibly-soft inputs (< 1280px wide).
+        // Optimize first. optimizeImageForTv now does TWO things:
+        //   • Center-crop to 16:9 if the source is off-aspect
+        //     (phone-portrait, square, 4:3 → 16:9 by cropping).
+        //     Images already close to 16:9 pass through.
+        //   • Downscale to 1920px width if wider than that.
+        // Both share a single canvas re-encode pass (JPEG q=0.85).
+        // Meta surfaces what happened so the editor can toast it.
         const opt = await optimizeImageForTv(file);
         const urls = await uploadImageBlobs({ blobs: [opt.blob], folder, slugPrefix });
-        // Surface optimization metadata via a non-throwing side
-        // channel — we keep the legacy return shape (array of URLs)
-        // for backward compat, but expose meta via a property on
-        // the array. Callers that want warnings opt into reading
-        // it; legacy callers ignore it and behave as before.
         const origW = opt.original?.width || 0;
+        const origH = opt.original?.height || 0;
+        const origAspect = origH > 0 ? origW / origH : 0;
         urls.meta = {
             optimized: opt.optimized,
+            wasCropped: opt.cropped,
             uploadedDimensions: { width: opt.width, height: opt.height },
             originalDimensions: opt.original,
-            wasResized: opt.optimized,
+            originalAspect: origAspect,
+            wasResized: opt.optimized && !opt.cropped
+                ? true
+                : (opt.optimized && origW > TV_MAX_IMAGE_WIDTH),
             isLowResolution: origW > 0 && origW < TV_MIN_GOOD_WIDTH,
         };
         return urls;
