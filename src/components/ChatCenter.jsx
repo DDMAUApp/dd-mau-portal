@@ -653,7 +653,18 @@ export default function ChatCenter({
 // (from search-result open) re-renders. onClick / onLongPress
 // handlers come from the parent — if they're new refs each render
 // the memo only partially lands; future pass can useCallback them.
-const ChatListItem = memo(function ChatListItem({ chat, viewerName, active, onClick, onLongPress, isEs }) {
+// Inner component as a function declaration so it's HOISTED to the
+// top of the module. The memo() wrapper below is a const and lives
+// in TDZ until module evaluation reaches it. Pre-fix this was one
+// `const ChatListItem = memo(function ChatListItem(...) {...})`
+// at line 656 — but the JSX at line 407 inside the default-export
+// ChatCenter function references ChatListItem. In some bundle
+// orderings / PWA stale-chunk situations, that triggered
+// "Cannot access 'C' before initialization" the moment the chat
+// tab mounted. Splitting it (hoisted function for the body, const
+// memo wrapper at the bottom) makes the body always available
+// even before the memo wrapper has been built. Andrew 2026-05-22.
+function ChatListItemInner({ chat, viewerName, active, onClick, onLongPress, isEs }) {
     const name = chatDisplayName(chat, viewerName);
     const subtitle = previewOf(chat.lastMessage) || subtitleFor(chat, isEs);
     const unread = isChatUnread(chat, viewerName);
@@ -721,7 +732,8 @@ const ChatListItem = memo(function ChatListItem({ chat, viewerName, active, onCl
             </div>
         </button>
     );
-});
+}
+const ChatListItem = memo(ChatListItemInner);
 
 // Avatar — channel emoji, group emoji, or DM initials. Stays a circle
 // at every size; falls back to a sage-tinted background when no emoji.
