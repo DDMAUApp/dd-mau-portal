@@ -196,11 +196,14 @@ step "Setting up Chromium kiosk for the media TV"
 AUTOSTART_DIR="$HOME/.config/autostart"
 mkdir -p "$AUTOSTART_DIR"
 
-# Default media TV URL — edit to whatever your media display URL is.
-# Could be a YouTube playlist, a Firebase-Storage HTML page, or
-# (most likely for DD Mau) a route in the dd-mau-portal like
-# https://app.ddmaustl.com/?display=media&loc=webster
-MEDIA_URL="${MEDIA_URL:-https://app.ddmaustl.com/?display=media}"
+# DD Mau menu-TV URL. The app's MenuDisplay component (src/components/
+# MenuDisplay.jsx) mounts when ?tv=<tvId> is in the URL — bypasses the
+# PIN lock since it's a public-facing display. tvId is either a
+# reserved default ('webster' / 'maryland') or a custom slug created
+# in Admin → TV Configs. Override at provision time with:
+#   MEDIA_URL=https://app.ddmaustl.com/?tv=webster-foh  ./setup.sh
+# Default points to the Webster location's menu board.
+MEDIA_URL="${MEDIA_URL:-https://app.ddmaustl.com/?tv=webster}"
 
 cat > "$AUTOSTART_DIR/media-kiosk.desktop" <<EOF
 [Desktop Entry]
