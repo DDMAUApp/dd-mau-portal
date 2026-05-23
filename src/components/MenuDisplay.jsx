@@ -530,6 +530,25 @@ function ImageModeLayout({
         return () => clearInterval(t);
     }, [safeUrls.length, imageRotateSeconds]);
 
+    // Preload the NEXT image in the rotation so the swap is
+    // instant when the timer fires. Without this, slow restaurant
+    // Wi-Fi can leave a blank slate for 1-2 seconds between
+    // slides — customers see a flash of black before the next
+    // image paints. We add an off-screen <img> with the next URL;
+    // the browser cache populates while the current slide is up
+    // and the next setIdx hits a hot cache. Videos are skipped
+    // (urlIsVideo) — the browser doesn't prefetch <video> sources
+    // via preload images and the data cost would be huge anyway.
+    const nextUrl = safeUrls.length > 1 ? safeUrls[(idx + 1) % safeUrls.length] : null;
+    useEffect(() => {
+        if (!nextUrl || urlIsVideo(nextUrl)) return;
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = nextUrl;
+        // Browser holds the bytes in its HTTP cache even if we
+        // discard this Image object — no cleanup needed.
+    }, [nextUrl]);
+
     const containerCls = embedded
         ? 'absolute inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center'
         : 'fixed inset-0 bg-stone-900 overflow-hidden font-sans flex items-center justify-center';
