@@ -1613,7 +1613,7 @@ const eightySixSchedule = async (slot, slotLabelEn, slotLabelEs) => {
             db.doc("ops/86_maryland").get(),
         ]);
         const outOf = (snap) => {
-            if (!snap.exists()) return [];
+            if (!snap.exists) return [];
             const items = (snap.data() || {}).items || [];
             return items
                 .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name)
@@ -1723,7 +1723,7 @@ exports.eightySixAlertsHourly = onSchedule(
     async () => {
         try {
             const cfgSnap = await db.doc("config/eighty_six_alerts").get();
-            const cfg = cfgSnap.exists() ? (cfgSnap.data() || {}) : {};
+            const cfg = cfgSnap.exists ? (cfgSnap.data() || {}) : {};
             if (cfg.enabled === false) {
                 logger.info("86 hourly: alerts disabled by config, skipping");
                 return;
@@ -2625,7 +2625,7 @@ async function getToastOutOfStockGuids(accessToken, restaurantGuid) {
 async function applyToastOOSToFirestore(location, toastOOSNames) {
     const docRef = db.doc(`ops/86_${location}`);
     const snap = await docRef.get();
-    const data = snap.exists() ? (snap.data() || {}) : {};
+    const data = snap.exists ? (snap.data() || {}) : {};
     const existingItems = Array.isArray(data.items) ? data.items : [];
 
     const toastSet = new Set(toastOOSNames.map(n => n.toLowerCase()));
@@ -2703,7 +2703,7 @@ exports.syncToastMenuStatus = onSchedule(
         for (const loc of LOCS) {
             const cfgRef = db.doc(`config/toast_${loc.id}`);
             const cfgSnap = await cfgRef.get();
-            const cfg = cfgSnap.exists() ? (cfgSnap.data() || {}) : {};
+            const cfg = cfgSnap.exists ? (cfgSnap.data() || {}) : {};
 
             if (cfg.enabled !== true) {
                 continue;     // not opted in — skip
