@@ -252,6 +252,12 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         Number(activeDaypart?.imageTransitionMs)
         || Number(tvConfig?.imageTransitionMs)
         || 700));
+    // Shuffle + fit knobs from the editor. Same daypart-wins fallback
+    // chain. Shuffle defaults false (deterministic order matters for
+    // menu PDFs); fit defaults 'contain' (letterbox + show full image,
+    // matches the historical behavior before this knob existed).
+    const imageShuffle = (activeDaypart?.imageShuffle ?? tvConfig?.imageShuffle) === true;
+    const imageFit = (activeDaypart?.imageFit || tvConfig?.imageFit) === 'cover' ? 'cover' : 'contain';
     const includeCategories = Array.isArray(tvConfig?.includeCategories) && tvConfig.includeCategories.length > 0
         ? new Set(tvConfig.includeCategories) : null;
     const spotlightCategory = tvConfig?.spotlightCategory || null;
@@ -405,6 +411,8 @@ function MenuDisplayInner({ tvId = 'webster' }) {
                     imageRotateSeconds={imageRotateSeconds}
                     imageTransition={imageTransition}
                     imageTransitionMs={imageTransitionMs}
+                    imageShuffle={imageShuffle}
+                    imageFit={imageFit}
                     imageHitZones={imageHitZones}
                     sixed={sixed}
                     now={now}
@@ -502,6 +510,8 @@ function ImageModeLayout({
     // admin picks a new style.
     imageTransition = 'fade',
     imageTransitionMs = 700,
+    imageShuffle = false,
+    imageFit = 'contain',
 }) {
     const [idx, setIdx] = useState(0);
     // Track natural dims per page so we can size each container to
@@ -539,13 +549,66 @@ function ImageModeLayout({
     }, []);
     const safeUrls = Array.isArray(imageUrls) ? imageUrls : [];
 
+    // Shuffle support — when imageShuffle is on, we walk a randomized
+    // order index rather than the natural array order. New shuffle is
+    // generated on mount + every time we complete a full cycle so the
+    // same random sequence doesn't repeat across the day. When
+    // shuffle is off, order is the identity permutation (0,1,2,...)
+    // which matches the previous behavior exactly.
+    const [order, setOrder] = useState(() => {
+        const base = safeUrls.map((_, i) => i);
+        if (!imageShuffle) return base;
+        // Fisher-Yates shuffle.
+        for (let i = base.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [base[i], base[j]] = [base[j], base[i]];
+        }
+        return base;
+    });
+    useEffect(() => {
+        // Re-derive the order when the URL list changes OR the
+        // shuffle toggle flips. Without this, removing/adding a
+        // photo while shuffle is on would leave a stale `order`
+        // pointing at indices that no longer exist.
+        const base = safeUrls.map((_, i) => i);
+        if (!imageShuffle) { setOrder(base); return; }
+        for (let i = base.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [base[i], base[j]] = [base[j], base[i]];
+        }
+        setOrder(base);
+        setIdx(0);
+    }, [safeUrls.length, imageShuffle]);
+
     useEffect(() => {
         if (safeUrls.length <= 1) return;
         const t = setInterval(() => {
-            setIdx(prev => (prev + 1) % safeUrls.length);
+            setIdx(prev => {
+                const next = (prev + 1) % safeUrls.length;
+                // When we complete a full cycle in shuffle mode,
+                // re-shuffle so the next pass doesn't repeat the
+                // same random sequence. Idempotent — only fires
+                // on the wrap.
+                if (imageShuffle && next === 0) {
+                    setOrder(curr => {
+                        const base = [...curr];
+                        for (let i = base.length - 1; i > 0; i--) {
+                            const j = Math.floor(Math.random() * (i + 1));
+                            [base[i], base[j]] = [base[j], base[i]];
+                        }
+                        return base;
+                    });
+                }
+                return next;
+            });
         }, imageRotateSeconds * 1000);
         return () => clearInterval(t);
-    }, [safeUrls.length, imageRotateSeconds]);
+    }, [safeUrls.length, imageRotateSeconds, imageShuffle]);
+
+    // Map the active position (idx) through the shuffle order to get
+    // the actual URL index to display. When shuffle is off, order is
+    // [0,1,2,...] so this is a no-op passthrough.
+    const realIdx = (i) => (order[i] ?? i);
 
     // Preload the NEXT image in the rotation so the swap is
     // instant when the timer fires. Without this, slow restaurant
@@ -556,7 +619,12 @@ function ImageModeLayout({
     // and the next setIdx hits a hot cache. Videos are skipped
     // (urlIsVideo) — the browser doesn't prefetch <video> sources
     // via preload images and the data cost would be huge anyway.
-    const nextUrl = safeUrls.length > 1 ? safeUrls[(idx + 1) % safeUrls.length] : null;
+    // Active URL index (after shuffle mapping). When shuffle is off,
+    // order is the identity permutation so currentUrlIdx === idx and
+    // everything below behaves exactly like the pre-shuffle render.
+    const currentUrlIdx = realIdx(idx);
+    const nextPos = (idx + 1) % Math.max(1, safeUrls.length);
+    const nextUrl = safeUrls.length > 1 ? safeUrls[realIdx(nextPos)] : null;
     useEffect(() => {
         if (!nextUrl || urlIsVideo(nextUrl)) return;
         const img = new Image();
@@ -587,8 +655,14 @@ function ImageModeLayout({
     // Resolve which hit zones, on the current page, need a SOLD OUT
     // overlay AND which need a price-override overlay. A single zone
     // can have both (sold out today + new price set).
+    // Hit zones are keyed by the IMAGE INDEX (z.page), not the
+    // playback position. Use currentUrlIdx so shuffle keeps zones
+    // aligned with their underlying image. Hit zones + shuffle is a
+    // weird combination (zones are typically for menu PDFs, shuffle
+    // for photo galleries) but this keeps it correct if anyone does
+    // combine them.
     const zonesOnCurrentPage = imageHitZones.filter(z =>
-        (z.page ?? 0) === idx && z.itemName);
+        (z.page ?? 0) === currentUrlIdx && z.itemName);
     const activeZonesOnPage = zonesOnCurrentPage.filter(z => {
         // Fuzzy name match against the 86 set (same normalize() used
         // for data-mode matching above).
@@ -623,12 +697,22 @@ function ImageModeLayout({
                     0%   { transform: scale(1); }
                     100% { transform: scale(1.06); }
                 }
-                @keyframes tv-ken-burns {
-                    0%   { transform: scale(1)    translate3d(0, 0, 0); }
-                    100% { transform: scale(1.12) translate3d(-3%, -2%, 0); }
-                }
-                .tv-zoom-in   { animation-name: tv-zoom-in;   animation-timing-function: ease-out;       animation-fill-mode: forwards; }
-                .tv-ken-burns { animation-name: tv-ken-burns; animation-timing-function: ease-in-out;    animation-fill-mode: forwards; }
+                /* Four Ken-Burns variants — each animates scale +
+                   a slight diagonal pan from a different start
+                   corner. Cycling through them slide-by-slide gives
+                   the "documentary editor" feel where each photo
+                   moves a different direction. Without alternation,
+                   every shot panned the same way, which felt
+                   mechanical. Andrew 2026-05-23. */
+                @keyframes tv-kb-tl { 0% { transform: scale(1)    translate3d(0,    0,    0); } 100% { transform: scale(1.14) translate3d(-3%, -2%, 0); } }
+                @keyframes tv-kb-tr { 0% { transform: scale(1)    translate3d(0,    0,    0); } 100% { transform: scale(1.14) translate3d( 3%, -2%, 0); } }
+                @keyframes tv-kb-bl { 0% { transform: scale(1)    translate3d(0,    0,    0); } 100% { transform: scale(1.14) translate3d(-3%,  2%, 0); } }
+                @keyframes tv-kb-br { 0% { transform: scale(1)    translate3d(0,    0,    0); } 100% { transform: scale(1.14) translate3d( 3%,  2%, 0); } }
+                .tv-zoom-in   { animation-name: tv-zoom-in; animation-timing-function: ease-out;    animation-fill-mode: forwards; }
+                .tv-kb-tl     { animation-name: tv-kb-tl;   animation-timing-function: ease-in-out; animation-fill-mode: forwards; }
+                .tv-kb-tr     { animation-name: tv-kb-tr;   animation-timing-function: ease-in-out; animation-fill-mode: forwards; }
+                .tv-kb-bl     { animation-name: tv-kb-bl;   animation-timing-function: ease-in-out; animation-fill-mode: forwards; }
+                .tv-kb-br     { animation-name: tv-kb-br;   animation-timing-function: ease-in-out; animation-fill-mode: forwards; }
             `}</style>
             {/* Each page renders inside a container sized to the EXACT
                 displayed image dimensions (via JS measurement of the
@@ -665,15 +749,16 @@ function ImageModeLayout({
                 // Per-slide transition style. Computed inline so
                 // each transition mode is a pure data transform —
                 // no extra CSS file, no animation classes to keep
-                // in sync. The active slide (i === idx) is fully
-                // visible at the "rest" transform; the others are
-                // offset / faded / scaled depending on the mode.
+                // in sync. The active slide (i === currentUrlIdx,
+                // i.e. the URL index that order[idx] maps to) is
+                // fully visible at the "rest" transform; the others
+                // are offset / faded / scaled depending on the mode.
                 //
                 // For ken-burns + zoom, we ALSO apply a CSS
                 // keyframe animation to the active image element
                 // itself (inside the inner div below) so the
                 // image keeps moving while it's on screen.
-                const isCurrent = i === idx;
+                const isCurrent = i === currentUrlIdx;
                 const ms = Math.max(100, Math.min(3000, Number(imageTransitionMs) || 700));
                 const slideStyle = (() => {
                     const base = {
@@ -733,8 +818,13 @@ function ImageModeLayout({
                 // Per-image animation class for ken-burns / zoom-during-dwell.
                 // Driven by a keyframe animation defined inline below the
                 // map. Only applied when this slide IS the current one.
+                // Ken Burns rotates through 4 variants (TL/TR/BL/BR) keyed
+                // on idx so consecutive slides pan in different directions
+                // — cinematic feel instead of every photo drifting the
+                // same way.
+                const KB_VARIANTS = ['tv-kb-tl', 'tv-kb-tr', 'tv-kb-bl', 'tv-kb-br'];
                 const innerAnimClass = isCurrent && imageTransition === 'ken-burns'
-                    ? 'tv-ken-burns'
+                    ? KB_VARIANTS[idx % 4]
                     : isCurrent && imageTransition === 'zoom'
                     ? 'tv-zoom-in'
                     : '';
@@ -770,7 +860,7 @@ function ImageModeLayout({
                                             ? prev
                                             : { ...prev, [i]: { w: v.videoWidth || 1920, h: v.videoHeight || 1080 } });
                                     }}
-                                    className="block w-full h-full object-contain"
+                                    className={`block w-full h-full ${imageFit === 'cover' ? 'object-cover' : 'object-contain'}`}
                                     style={{ background: '#000' }} />
                             ) : (
                                 <img src={url} alt=""
@@ -780,7 +870,7 @@ function ImageModeLayout({
                                             ? prev
                                             : { ...prev, [i]: { w: img.naturalWidth, h: img.naturalHeight } });
                                     }}
-                                    className="block w-full h-full object-contain"
+                                    className={`block w-full h-full ${imageFit === 'cover' ? 'object-cover' : 'object-contain'}`}
                                     draggable={false} />
                             )}
 
@@ -792,13 +882,13 @@ function ImageModeLayout({
                                 When an item is 86'd, the SOLD OUT stamp covers
                                 the QR too, which is correct: don't tempt a
                                 customer to scan a QR for an out-of-stock item. */}
-                            {i === idx && qrZonesOnPage.map((zone, zi) => (
+                            {isCurrent && qrZonesOnPage.map((zone, zi) => (
                                 <QrOverlay key={`qr-${zi}`} zone={zone} />
                             ))}
-                            {i === idx && priceZonesOnPage.map((zone, zi) => (
+                            {isCurrent && priceZonesOnPage.map((zone, zi) => (
                                 <PriceOverlay key={`price-${zi}`} zone={zone} />
                             ))}
-                            {i === idx && activeZonesOnPage.map((zone, zi) => (
+                            {isCurrent && activeZonesOnPage.map((zone, zi) => (
                                 <SoldOutSticker key={`sold-${zi}`} zone={zone} />
                             ))}
                         </div>

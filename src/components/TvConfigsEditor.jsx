@@ -339,6 +339,20 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     // (the dwell-between-slides). Clamped 100..3000 in render so
     // bad values can't break the animation.
     const [imageTransitionMs, setImageTransitionMs] = useState(Number(initial?.imageTransitionMs) || 700);
+    // Shuffle the slideshow on each cycle so the same photo doesn't
+    // always appear at the same time of day. Stored on
+    // tvConfig.imageShuffle as a boolean. Off by default — order
+    // matters for menu PDFs (page 1, then 2, then 3); shuffle is
+    // strictly a photo-slideshow polish.
+    const [imageShuffle, setImageShuffle] = useState(initial?.imageShuffle === true);
+    // How the image fills the slide box. 'contain' (default) keeps
+    // the full image visible with letterbox bars when the image
+    // doesn't match the 16:9 box. 'cover' fills the box, cropping
+    // the edges of the image. After our auto-crop step the image
+    // SHOULD already be 16:9 so this is mostly a fine-tune knob
+    // for edge cases (uploaded an already-cropped image, want
+    // edge-to-edge guarantee, etc.).
+    const [imageFit, setImageFit] = useState(initial?.imageFit === 'cover' ? 'cover' : 'contain');
     const [imageHitZones, setImageHitZones] = useState(Array.isArray(initial?.imageHitZones) ? initial.imageHitZones : []);
     const [dayparts, setDayparts] = useState(Array.isArray(initial?.dayparts) ? initial.dayparts : []);
     const [split, setSplit] = useState(initial?.split || {
@@ -502,6 +516,21 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     const removeImageAt = (idx) => {
         setImageUrls(prev => prev.filter((_, i) => i !== idx));
     };
+    // Reorder helpers. We use ↑/↓ buttons rather than HTML5 drag-drop
+    // because drag has rough touch support on iPad and a mixed
+    // mouse-vs-finger experience for restaurants where the admin is
+    // often editing on a phone. Up/down arrows work identically on
+    // every device.
+    const moveImage = (fromIdx, dir) => {
+        setImageUrls(prev => {
+            const toIdx = fromIdx + dir;
+            if (toIdx < 0 || toIdx >= prev.length) return prev;
+            const next = [...prev];
+            const [item] = next.splice(fromIdx, 1);
+            next.splice(toIdx, 0, item);
+            return next;
+        });
+    };
 
     // Split-mode upload handler — supports multi-file pickers
     // (Andrew 2026-05-23). The right side is specifically a carousel
@@ -588,6 +617,8 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                     : null;
                 payload.imageTransition = imageTransition || 'fade';
                 payload.imageTransitionMs = Math.max(100, Math.min(3000, Number(imageTransitionMs) || 700));
+                payload.imageShuffle = imageShuffle === true;
+                payload.imageFit = imageFit === 'cover' ? 'cover' : 'contain';
                 payload.imageHitZones = imageHitZones;
                 payload.dayparts = dayparts;
                 payload.split = null;
@@ -1018,7 +1049,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                 {imageUrls.length > 0 && (
                                     <div className="grid grid-cols-3 gap-2 pt-1">
                                         {imageUrls.map((url, idx) => (
-                                            <div key={url} className="relative border border-sky-300 rounded overflow-hidden bg-white">
+                                            <div key={`${url}_${idx}`} className="relative border border-sky-300 rounded overflow-hidden bg-white">
                                                 <img src={url} alt={`page ${idx + 1}`}
                                                     className="w-full h-24 object-contain" />
                                                 <div className="absolute top-1 left-1 bg-sky-900/80 text-white text-[9px] font-black px-1.5 py-0.5 rounded">
@@ -1028,6 +1059,25 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                     className="absolute top-1 right-1 w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-black hover:bg-red-700">
                                                     ✕
                                                 </button>
+                                                {/* Reorder up/down — only shown when there's
+                                                    actually somewhere to move (no ↑ on first,
+                                                    no ↓ on last). Stacked vertically along the
+                                                    bottom edge so they don't fight the X close
+                                                    button visually. */}
+                                                {imageUrls.length > 1 && (
+                                                    <div className="absolute bottom-1 right-1 flex flex-col gap-0.5">
+                                                        {idx > 0 && (
+                                                            <button type="button" onClick={() => moveImage(idx, -1)}
+                                                                title={tx('Move up', 'Subir')}
+                                                                className="w-5 h-5 rounded bg-white/90 hover:bg-white text-sky-900 text-[10px] font-black border border-sky-300">↑</button>
+                                                        )}
+                                                        {idx < imageUrls.length - 1 && (
+                                                            <button type="button" onClick={() => moveImage(idx, +1)}
+                                                                title={tx('Move down', 'Bajar')}
+                                                                className="w-5 h-5 rounded bg-white/90 hover:bg-white text-sky-900 text-[10px] font-black border border-sky-300">↓</button>
+                                                        )}
+                                                    </div>
+                                                )}
                                             </div>
                                         ))}
                                     </div>
@@ -1091,6 +1141,47 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                                 </span>
                                             </label>
                                         )}
+
+                                        {/* Shuffle toggle + Fit picker — two more slideshow
+                                            polish knobs. Same row to save vertical space. */}
+                                        <div className="grid grid-cols-2 gap-2 pt-1">
+                                            <label className="flex items-start gap-2 px-2 py-1.5 rounded border border-sky-200 bg-white cursor-pointer hover:bg-sky-50">
+                                                <input type="checkbox"
+                                                    checked={imageShuffle}
+                                                    onChange={(e) => setImageShuffle(e.target.checked)}
+                                                    className="mt-0.5 w-3.5 h-3.5 accent-sky-600" />
+                                                <div className="min-w-0">
+                                                    <div className="text-[11px] font-black text-sky-900 leading-none">
+                                                        🔀 {tx('Shuffle', 'Mezclar')}
+                                                    </div>
+                                                    <div className="text-[10px] text-sky-700/70 mt-0.5 leading-snug">
+                                                        {tx('Random order', 'Orden aleatorio')}
+                                                    </div>
+                                                </div>
+                                            </label>
+                                            <div>
+                                                <div className="text-[10px] font-bold uppercase tracking-wide text-sky-800 mb-0.5">
+                                                    {tx('Fit', 'Ajuste')}
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-1">
+                                                    {[
+                                                        { id: 'contain', en: 'Fit',  es: 'Caber',  hint: tx('letterbox', 'caja') },
+                                                        { id: 'cover',   en: 'Fill', es: 'Llenar', hint: tx('crop edges', 'recorta') },
+                                                    ].map(opt => (
+                                                        <button key={opt.id} type="button"
+                                                            onClick={() => setImageFit(opt.id)}
+                                                            title={opt.hint}
+                                                            className={`px-2 py-1 rounded text-[10px] font-bold border transition ${
+                                                                imageFit === opt.id
+                                                                    ? 'bg-sky-600 text-white border-sky-700'
+                                                                    : 'bg-white text-sky-800 border-sky-200 hover:bg-sky-50'
+                                                            }`}>
+                                                            {tx(opt.en, opt.es)}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </>
                                 )}
 
