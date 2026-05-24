@@ -24,6 +24,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+// previewOf turns a chat doc's `lastMessage` OBJECT (senderName/type/
+// text/deleted/etc.) into a display string. Important: lastMessage is
+// NOT a string — initial version of this file assumed it was and
+// crashed with "(t.lastMessage||'').trim is not a function" because
+// the OR-fallback returns the object itself.
+import { previewOf } from '../data/chat';
 
 export default function ChatHistoryAdmin({ language, staffName }) {
     const isEs = language === 'es';
@@ -75,7 +81,7 @@ export default function ChatHistoryAdmin({ language, staffName }) {
             if (!q) return true;
             const hay = [
                 c.name || '',
-                c.lastMessage || '',
+                previewOf(c.lastMessage),
                 (c.members || []).join(' '),
                 c.createdBy || '',
                 c.type || '',
@@ -177,7 +183,8 @@ function ChatRow({ chat, isEs, onOpen }) {
     const typeColor = chatTypeColor(chat.type);
     const memberCount = Array.isArray(chat.members) ? chat.members.length : 0;
     const lastTime = formatRelativeTime(chat.lastActivityAt || chat.createdAt, isEs);
-    const lastPreview = (chat.lastMessage || '').trim();
+    // lastMessage is an OBJECT — use previewOf to convert to display string.
+    const lastPreview = previewOf(chat.lastMessage);
     const displayName = chat.name || (chat.type === 'dm' && memberCount > 0
         ? chat.members.join(' ↔ ')
         : (isEs ? '(sin nombre)' : '(unnamed)'));
