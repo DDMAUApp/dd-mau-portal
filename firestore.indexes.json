@@ -51,6 +51,21 @@
         { "fieldPath": "type",      "order": "ASCENDING"  },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "toast_invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "location",    "order": "ASCENDING"  },
+        { "fieldPath": "createdDate", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "tv_holidays",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "dateEnd",     "order": "ASCENDING"  }
+      ]
     }
   ],
   "fieldOverrides": []

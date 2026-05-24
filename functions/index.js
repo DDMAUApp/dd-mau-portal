@@ -1565,14 +1565,34 @@ exports.pruneAuditLogs = onSchedule(
             { coll: "sms_delivery_logs",         field: "createdAt" },
             { coll: "sms_inbound_events",        field: "receivedAt" },
             { coll: "sms_opt_in_events",         field: "at"        },
+            // 2026-05-24 audit fix: notifications collection grew
+            // unbounded. After a year of daily chat pings × 30 staff
+            // each it's tens of thousands of docs and inflates the
+            // daily Firestore export. Audit rule retention is 2 years
+            // (default below); notifications get a shorter 180-day
+            // window since their "did this push fire?" history loses
+            // forensic value much faster than PIN / recipe / inventory
+            // changes do. Rendered notifications are already cached
+            // in-browser; bell-history beyond 6 months has near-zero
+            // operational value.
+            { coll: "notifications",             field: "createdAt", retentionDays: 180 },
+            // tv_crash_logs are produced by TvErrorBoundary. We want
+            // RECENT crashes visible in admin (last 24h badge) but
+            // don't need to keep them forever. 90 days is plenty.
+            { coll: "tv_crash_logs",             field: "crashedAt", retentionDays: 90 },
         ];
 
-        const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60_000);
         const report = [];
         let totalDeleted = 0;
         let totalErrors = 0;
 
         for (const rule of PRUNE_RULES) {
+            // 2026-05-24: each rule can override the default 2-year
+            // retention. Used for notifications (180d) and
+            // tv_crash_logs (90d) — their forensic value decays much
+            // faster than audit collections.
+            const ruleDays = rule.retentionDays ?? RETENTION_DAYS;
+            const cutoff = new Date(Date.now() - ruleDays * 24 * 60 * 60_000);
             let deleted = 0;
             let errors = 0;
             try {
@@ -2837,6 +2857,27 @@ exports.aiExtractMenu = onCall(
             throw new HttpsError("invalid-argument", "too many pages (max 8)");
         }
 
+        // 2026-05-24 audit fix — SSRF hostname allowlist.
+        //
+        // Before: this function accepted any `https://...` URL and fetched
+        // it server-side. Combined with the public Cloud Function endpoint,
+        // this was effectively a free outbound HTTPS proxy from Google's
+        // network — any attacker could trick it into fetching internal
+        // metadata URLs (169.254.169.254 was already filtered by Google
+        // Cloud, but third-party services often whitelist GCP IPs), or
+        // use it as a free proxy to exfiltrate data via the response
+        // bytes being sent to Anthropic. SSRF is the standard term.
+        //
+        // Allowlist: ONLY this project's Storage bucket. Menu PDFs the
+        // admin uploads land there via the existing aiExtractMenu UI;
+        // no legitimate caller needs to point this function elsewhere.
+        const STORAGE_HOST_ALLOWLIST = new Set([
+            "firebasestorage.googleapis.com",
+            "storage.googleapis.com",
+            "dd-mau-staff-app.firebasestorage.app",
+            "dd-mau-staff-app.appspot.com",
+        ]);
+
         // Fetch each image and base64-encode. We fetch from Storage
         // server-side rather than expecting the client to send raw
         // bytes — keeps the request payload small and lets us run on
@@ -2845,6 +2886,17 @@ exports.aiExtractMenu = onCall(
         for (const url of imageUrls) {
             if (typeof url !== "string" || !/^https:\/\//.test(url)) {
                 throw new HttpsError("invalid-argument", "imageUrls must be https URLs");
+            }
+            // SSRF check — host must be on the allowlist.
+            try {
+                const host = new URL(url).hostname.toLowerCase();
+                if (!STORAGE_HOST_ALLOWLIST.has(host)) {
+                    throw new HttpsError("permission-denied",
+                        `imageUrls host not allowed: ${host}. Only the project's Firebase Storage is permitted.`);
+                }
+            } catch (e) {
+                if (e instanceof HttpsError) throw e;
+                throw new HttpsError("invalid-argument", "imageUrls must be valid URLs");
             }
             try {
                 const resp = await fetch(url);

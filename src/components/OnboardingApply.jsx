@@ -178,17 +178,37 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
+    // 2026-05-24 audit fix — DRAFT TTL.
+    // Previously the localStorage draft persisted indefinitely. PII fields
+    // (full name, SSN-less but still email/phone/address) stayed on a
+    // public-facing form's localStorage forever even on shared / public-
+    // kiosk devices. Now drafts auto-expire after 7 days: on restore, we
+    // check the savedAt timestamp and clear the draft if stale. Resume
+    // recovery still works in normal use (most applicants finish within
+    // hours of starting); a week-old draft is overwhelmingly more likely
+    // to be a residual leak than something the original applicant wants
+    // to resume.
+    const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+    const readFreshDraft = () => {
+        try {
+            const raw = localStorage.getItem(DRAFT_KEY);
+            if (!raw) return null;
+            const parsed = JSON.parse(raw);
+            const savedAt = typeof parsed.savedAt === 'number' ? parsed.savedAt : 0;
+            if (savedAt && (Date.now() - savedAt) > DRAFT_TTL_MS) {
+                localStorage.removeItem(DRAFT_KEY);
+                return null;
+            }
+            return parsed;
+        } catch { return null; }
+    };
+
     // Restore draft on mount (so a phone tap-away doesn't lose progress).
     // Draft schema mismatches (we added/removed fields) are tolerated by
     // spreading over the empty state.
     const [values, setValues] = useState(() => {
-        try {
-            const raw = localStorage.getItem(DRAFT_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                return { ...emptyState(), ...(parsed.values || parsed) };
-            }
-        } catch {}
+        const parsed = readFreshDraft();
+        if (parsed) return { ...emptyState(), ...(parsed.values || parsed) };
         return emptyState();
     });
     // Restore step from draft too so a pull-to-refresh / accidental tab
@@ -196,15 +216,10 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     // already filled out 8 of 10 sections. Schema-tolerant: legacy
     // drafts (no `step` key) default to 1.
     const [step, setStep] = useState(() => {
-        try {
-            const raw = localStorage.getItem(DRAFT_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (typeof parsed.step === 'number' && parsed.step >= 1 && parsed.step <= 10) {
-                    return parsed.step;
-                }
-            }
-        } catch {}
+        const parsed = readFreshDraft();
+        if (parsed && typeof parsed.step === 'number' && parsed.step >= 1 && parsed.step <= 10) {
+            return parsed.step;
+        }
         return 1;
     });
     // Scroll container ref — we scroll it back to the top on every step
@@ -221,13 +236,8 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     // accidental reload doesn't bounce them back to the intro after
     // they've already started filling things out.
     const [showIntro, setShowIntro] = useState(() => {
-        try {
-            const raw = localStorage.getItem(DRAFT_KEY);
-            if (raw) {
-                const parsed = JSON.parse(raw);
-                if (parsed.started === true) return false;
-            }
-        } catch {}
+        const parsed = readFreshDraft();
+        if (parsed && parsed.started === true) return false;
         return true;
     });
     // Resume file — not in `values` (a File can't be JSON-stringified
@@ -242,7 +252,11 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
     // still load via fallback in the restore code.
     useEffect(() => {
         try {
-            localStorage.setItem(DRAFT_KEY, JSON.stringify({ values, step, started: !showIntro }));
+            // savedAt stamps the draft for the 7-day TTL check on restore.
+            localStorage.setItem(DRAFT_KEY, JSON.stringify({
+                values, step, started: !showIntro,
+                savedAt: Date.now(),
+            }));
         } catch {}
     }, [values, step, showIntro]);
 

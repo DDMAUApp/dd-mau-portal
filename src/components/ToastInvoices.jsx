@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 
@@ -159,14 +159,22 @@ export default function ToastInvoices({ language }) {
     useEffect(() => {
         setLoading(true);
         setExpandedInvoice(null);
+        // 2026-05-24 audit fix: was using limit(200) alone — Firestore
+        // returns WHATEVER 200 the query plan picks (often the OLDEST
+        // 200 once the collection grows past 200). Once Maryland has
+        // accumulated 200+ historical invoices, the most recent ones
+        // are silently dropped from the dashboard. Added explicit
+        // orderBy(createdDate desc) so the cap consistently keeps the
+        // newest. Composite index defined in firestore.indexes.json
+        // (location + createdDate desc).
         const q = query(
             collection(db, "toast_invoices"),
             where("location", "==", location),
+            orderBy("createdDate", "desc"),
             limit(200)
         );
         const unsub = onSnapshot(q, (snap) => {
             const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-            docs.sort((a, b) => (b.createdDate || "").localeCompare(a.createdDate || ""));
             setInvoices(docs);
             setLoading(false);
         }, (err) => {

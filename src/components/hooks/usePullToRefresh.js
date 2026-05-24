@@ -185,15 +185,26 @@ export default function usePullToRefresh() {
             }
         };
 
-        const onTouchEnd = async () => {
-            if (!tracking.current) return;
+        // 2026-05-24 audit fix: was sharing one handler for touchend +
+        // touchcancel. touchcancel fires when the OS interrupts a touch
+        // — an incoming call, a system gesture, scroll snap, a long-
+        // press triggering the share sheet — and treating those as
+        // "release" wrongly triggered the full app refresh whenever an
+        // armed pull was interrupted. Two handlers now: cancel resets
+        // state silently, end is the only commit path.
+        const resetPullState = () => {
             tracking.current = false;
-            const wasArmed = armedRef.current;
-            const finalPull = distanceRef.current;
             setDistance(0);
             setArmed(false);
             thresholdAtRef.current = 0;
             clearDwellTimer();
+        };
+
+        const onTouchEnd = async () => {
+            if (!tracking.current) return;
+            const wasArmed = armedRef.current;
+            const finalPull = distanceRef.current;
+            resetPullState();
             // BOTH conditions must hold to fire:
             //   1. Pull was past threshold at release (finalPull check)
             //   2. User HELD past threshold for >= DWELL_MS (armed flag)
@@ -205,15 +216,20 @@ export default function usePullToRefresh() {
             await forceRefresh();
         };
 
+        const onTouchCancel = () => {
+            // OS-interrupted touch — never commit. Just clean up state.
+            resetPullState();
+        };
+
         document.addEventListener('touchstart', onTouchStart, { passive: true });
         document.addEventListener('touchmove',  onTouchMove,  { passive: true });
         document.addEventListener('touchend',   onTouchEnd,   { passive: true });
-        document.addEventListener('touchcancel', onTouchEnd,  { passive: true });
+        document.addEventListener('touchcancel', onTouchCancel, { passive: true });
         return () => {
             document.removeEventListener('touchstart', onTouchStart);
             document.removeEventListener('touchmove',  onTouchMove);
             document.removeEventListener('touchend',   onTouchEnd);
-            document.removeEventListener('touchcancel', onTouchEnd);
+            document.removeEventListener('touchcancel', onTouchCancel);
             clearDwellTimer();
         };
     }, []);

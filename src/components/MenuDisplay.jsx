@@ -29,7 +29,7 @@
 //                 (good for "today's specials" feel)
 
 import { Component, useEffect, useMemo, useRef, useState } from 'react';
-import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, limit, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -328,7 +328,24 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         return Array.isArray(arr) ? arr : [];
     });
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'tv_holidays'), (snap) => {
+        // 2026-05-24 audit fix: was subscribing to the ENTIRE
+        // /tv_holidays collection — every Pi pulled past holidays from
+        // 2026, 2027, etc. forever. Holidays have a dateEnd field
+        // (YYYY-MM-DD); only ones still upcoming or active need to
+        // ride on TVs. Filter to anything ending today-or-later. The
+        // cap of 50 is a sanity guard against future runaway writes
+        // — DD Mau realistically has <20 holiday entries pending at
+        // any moment.
+        const todayCentral = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Chicago',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date());
+        const q = query(
+            collection(db, 'tv_holidays'),
+            where('dateEnd', '>=', todayCentral),
+            limit(50),
+        );
+        const unsub = onSnapshot(q, (snap) => {
             const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
             setHolidaysList(list);
             saveJSON(CACHE_PREFIX + 'holidays', wrapCache(list));
