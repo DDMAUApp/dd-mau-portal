@@ -29,7 +29,7 @@
 //                 (good for "today's specials" feel)
 
 import { Component, useEffect, useMemo, useRef, useState } from 'react';
-import { doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, onSnapshot, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { MENU_DATA } from '../data/menu';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
@@ -38,6 +38,9 @@ import {
     subscribeTvConfig, MODES, resolveActiveOrLastDaypart,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
 } from '../data/tvConfigs';
+import {
+    resolveActiveHoliday, applyHolidayOverlay, daysUntilHoliday,
+} from '../data/tvHolidays';
 
 // ─── Offline failsafe ──────────────────────────────────────────────
 // Restaurants have flaky Wi-Fi. A blank TV during dinner rush is
@@ -316,11 +319,40 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         return unsub;
     }, [tvId]);
 
+    // 2026-05-23 Holiday Scheduler: subscribe to /tv_holidays and pick
+    // the active one (if any) for THIS tvId + location. Cached to
+    // localStorage so a Pi reboot during Tết keeps showing festive
+    // content even before Firestore reconnects.
+    const [holidaysList, setHolidaysList] = useState(() => {
+        const arr = unwrapCache(loadJSON(CACHE_PREFIX + 'holidays'));
+        return Array.isArray(arr) ? arr : [];
+    });
+    useEffect(() => {
+        const unsub = onSnapshot(collection(db, 'tv_holidays'), (snap) => {
+            const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+            setHolidaysList(list);
+            saveJSON(CACHE_PREFIX + 'holidays', wrapCache(list));
+            setLastSnapshotAt(Date.now());
+        }, (err) => console.warn('tv_holidays subscribe failed:', err));
+        return unsub;
+    }, []);
+
     const location = tvConfig?.location || (tvId === 'maryland' ? 'maryland' : 'webster');
-    const mode = tvConfig?.mode || MODES.MENU;
-    const layout = tvConfig?.layout || 'dense';
-    const showPhotos = tvConfig?.showPhotos === true;
-    const rotateSeconds = Math.max(3, Math.min(60, Number(tvConfig?.rotateSeconds) || DEFAULT_ROTATE_SECONDS));
+
+    // Active holiday + merged config with overlay applied. `tvConfig`
+    // is what we read directly; `effectiveConfig` is what the rest of
+    // the render path uses. When no holiday matches, they're identical.
+    const { effectiveConfig, activeHoliday } = useMemo(() => {
+        const h = resolveActiveHoliday(holidaysList, { tvId, location, now });
+        if (!h) return { effectiveConfig: tvConfig, activeHoliday: null };
+        const merged = applyHolidayOverlay(tvConfig, h);
+        return { effectiveConfig: merged.config, activeHoliday: merged.holiday };
+    }, [holidaysList, tvConfig, tvId, location, now]);
+
+    const mode = effectiveConfig?.mode || MODES.MENU;
+    const layout = effectiveConfig?.layout || 'dense';
+    const showPhotos = effectiveConfig?.showPhotos === true;
+    const rotateSeconds = Math.max(3, Math.min(60, Number(effectiveConfig?.rotateSeconds) || DEFAULT_ROTATE_SECONDS));
 
     // Daypart resolution — if the TV config has a `dayparts` schedule,
     // pick the one that covers the current hour and use ITS imageUrls /
@@ -335,36 +367,36 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     // was set). The new helper falls back to the most-recent past
     // daypart's content. Marked with _isFallback for future UI hints.
     const activeDaypart = useMemo(
-        () => resolveActiveOrLastDaypart(tvConfig?.dayparts, now),
-        [tvConfig?.dayparts, now]);
+        () => resolveActiveOrLastDaypart(effectiveConfig?.dayparts, now),
+        [effectiveConfig?.dayparts, now]);
     const imageUrls = Array.isArray(activeDaypart?.imageUrls)
         ? activeDaypart.imageUrls
-        : (Array.isArray(tvConfig?.imageUrls) ? tvConfig.imageUrls : []);
+        : (Array.isArray(effectiveConfig?.imageUrls) ? effectiveConfig.imageUrls : []);
     const imageHitZones = Array.isArray(activeDaypart?.imageHitZones)
         ? activeDaypart.imageHitZones
-        : (Array.isArray(tvConfig?.imageHitZones) ? tvConfig.imageHitZones : []);
+        : (Array.isArray(effectiveConfig?.imageHitZones) ? effectiveConfig.imageHitZones : []);
     const imageRotateSeconds = Math.max(3, Math.min(60,
         Number(activeDaypart?.imageRotateSeconds)
-        || Number(tvConfig?.imageRotateSeconds)
+        || Number(effectiveConfig?.imageRotateSeconds)
         || DEFAULT_IMAGE_ROTATE_SECONDS));
     // Slideshow transition style + speed. Daypart wins over top-level
     // so a "Dinner" daypart with ken-burns can sit on top of a default
     // fade for the rest of the day. Falls back to 'fade' + 700ms which
     // is what every TV showed before this feature shipped.
-    const imageTransition = activeDaypart?.imageTransition || tvConfig?.imageTransition || 'fade';
+    const imageTransition = activeDaypart?.imageTransition || effectiveConfig?.imageTransition || 'fade';
     const imageTransitionMs = Math.max(100, Math.min(3000,
         Number(activeDaypart?.imageTransitionMs)
-        || Number(tvConfig?.imageTransitionMs)
+        || Number(effectiveConfig?.imageTransitionMs)
         || 700));
     // Shuffle + fit knobs from the editor. Same daypart-wins fallback
     // chain. Shuffle defaults false (deterministic order matters for
     // menu PDFs); fit defaults 'contain' (letterbox + show full image,
     // matches the historical behavior before this knob existed).
-    const imageShuffle = (activeDaypart?.imageShuffle ?? tvConfig?.imageShuffle) === true;
-    const imageFit = (activeDaypart?.imageFit || tvConfig?.imageFit) === 'cover' ? 'cover' : 'contain';
-    const includeCategories = Array.isArray(tvConfig?.includeCategories) && tvConfig.includeCategories.length > 0
-        ? new Set(tvConfig.includeCategories) : null;
-    const spotlightCategory = tvConfig?.spotlightCategory || null;
+    const imageShuffle = (activeDaypart?.imageShuffle ?? effectiveConfig?.imageShuffle) === true;
+    const imageFit = (activeDaypart?.imageFit || effectiveConfig?.imageFit) === 'cover' ? 'cover' : 'contain';
+    const includeCategories = Array.isArray(effectiveConfig?.includeCategories) && effectiveConfig.includeCategories.length > 0
+        ? new Set(effectiveConfig.includeCategories) : null;
+    const spotlightCategory = effectiveConfig?.spotlightCategory || null;
 
     // Subscribe to admin menu overrides (price/desc/photo edits +
     // custom items). Pure overlay, no Firestore reads in render.
@@ -465,22 +497,58 @@ function MenuDisplayInner({ tvId = 'webster' }) {
         };
     }, [sixed]);
 
+    // Holiday banner — slim strip ABOVE the main header. Only rendered
+    // when an active holiday has banner text set. Bilingual + Vietnamese
+    // fields rotate on a 6s interval so the same strip serves customers
+    // in EN/ES/VI without taking extra screen real estate.
+    // 2026-05-23 Holiday Scheduler.
+    const [bannerLangIdx, setBannerLangIdx] = useState(0);
+    useEffect(() => {
+        if (!activeHoliday?._bannerText) return;
+        const langs = ['en', 'es', 'vi'].filter(k => !!activeHoliday._bannerText[k]);
+        if (langs.length <= 1) return;
+        const id = setInterval(() => {
+            setBannerLangIdx(i => (i + 1) % langs.length);
+        }, 6000);
+        return () => clearInterval(id);
+    }, [activeHoliday?._bannerText]);
+    const accentBg = activeHoliday?._accentColor || null;
+    const bannerNode = activeHoliday?._bannerText ? (() => {
+        const langs = ['en', 'es', 'vi'].filter(k => !!activeHoliday._bannerText[k]);
+        const text = activeHoliday._bannerText[langs[bannerLangIdx % langs.length] || 'en'] || '';
+        const countdown = activeHoliday._showCountdown
+            ? daysUntilHoliday(activeHoliday, now) : null;
+        const countdownLabel = countdown !== null && countdown > 0
+            ? ` · ${countdown} day${countdown === 1 ? '' : 's'} away` : '';
+        return (
+            <div className="flex items-center justify-center px-6 py-1.5 text-white font-bold text-base tracking-wide flex-shrink-0 shadow-inner"
+                style={{ backgroundColor: accentBg || '#15803d' }}>
+                <span>{text}{countdownLabel}</span>
+            </div>
+        );
+    })() : null;
+
     const headerNode = (
-        <header className="bg-dd-green text-white px-8 py-4 flex items-baseline justify-between flex-shrink-0 shadow-md">
-            <div className="flex items-baseline gap-5">
-                <div className="text-5xl font-black tracking-tight leading-none">
-                    DD MAU
+        <>
+            {bannerNode}
+            <header
+                className={`text-white px-8 py-4 flex items-baseline justify-between flex-shrink-0 shadow-md ${accentBg ? '' : 'bg-dd-green'}`}
+                style={accentBg ? { backgroundColor: accentBg } : undefined}>
+                <div className="flex items-baseline gap-5">
+                    <div className="text-5xl font-black tracking-tight leading-none">
+                        DD MAU
+                    </div>
+                    <div className="text-xl font-bold opacity-90 tracking-wide">
+                        {effectiveConfig?.label || LOC_LABEL[location] || location}
+                    </div>
                 </div>
-                <div className="text-xl font-bold opacity-90 tracking-wide">
-                    {tvConfig?.label || LOC_LABEL[location] || location}
+                <div className="text-lg font-bold opacity-90 tabular-nums">
+                    {now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
+                    <span className="mx-2 opacity-50">•</span>
+                    {now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                 </div>
-            </div>
-            <div className="text-lg font-bold opacity-90 tabular-nums">
-                {now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
-                <span className="mx-2 opacity-50">•</span>
-                {now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-            </div>
-        </header>
+            </header>
+        </>
     );
 
     const footerNode = (

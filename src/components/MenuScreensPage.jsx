@@ -59,6 +59,11 @@ const TvConfigVersionsModal = lazy(() =>
 // are dead weight for the common dashboard-view path.
 const TvTemplatesModal = lazy(() =>
     import('./TvTemplatesModal').then(m => ({ default: m.default })));
+// Holiday Scheduler — date-bound TV overlays (Tết, Mother's Day,
+// Christmas, etc.). Lazy because most page visits are "check the
+// dashboard", not "configure holidays."
+const TvHolidaysEditor = lazy(() =>
+    import('./TvHolidaysEditor').then(m => ({ default: m.default })));
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -182,6 +187,11 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     // Templates gallery visibility. Same per-modal toggle pattern
     // as the Pair + History modals.
     const [showTemplatesModal, setShowTemplatesModal] = useState(false);
+    // Page tab — 'screens' (dashboard grid + editor) or 'holidays'
+    // (date-bound TV overlays). Defaults to screens since that's the
+    // bread-and-butter view. Holidays tab is the second-most-common
+    // admin task; keeping both within one URL avoids router changes.
+    const [pageTab, setPageTab] = useState('screens');
 
     // Pull the always-present "default URL" rows (webster / maryland
     // each work without a config doc) into the dashboard so the card
@@ -320,30 +330,69 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     </p>
                 </div>
                 <div className="flex flex-wrap gap-2 shrink-0">
-                    <button
-                        onClick={() => openEditor({ isDefault: true, location: locFilter === 'all' ? 'webster' : locFilter })}
-                        className="px-3.5 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
-                        + {tx('New screen', 'Nueva pantalla')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setShowPairModal(true)}
-                        title={tx(
-                            'Generate a 6-digit code, type it on the Pi at /?pair=1, and the screen pairs itself.',
-                            'Genera un código de 6 dígitos, escríbelo en el Pi en /?pair=1, y la pantalla se vincula sola.',
-                        )}
-                        className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text hover:bg-dd-bg active:scale-95 transition">
-                        🔗 {tx('Pair device', 'Vincular')}
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => setShowTemplatesModal(true)}
-                        title={tx('Start a new screen from a template — Food / Drinks / Specials / Photos / Promo / QR / Split.', 'Crea una pantalla desde una plantilla.')}
-                        className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text hover:bg-dd-bg active:scale-95 transition">
-                        🎨 {tx('Templates', 'Plantillas')}
-                    </button>
+                    {pageTab === 'screens' && (
+                        <>
+                            <button
+                                onClick={() => openEditor({ isDefault: true, location: locFilter === 'all' ? 'webster' : locFilter })}
+                                className="px-3.5 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
+                                + {tx('New screen', 'Nueva pantalla')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowPairModal(true)}
+                                title={tx(
+                                    'Generate a 6-digit code, type it on the Pi at /?pair=1, and the screen pairs itself.',
+                                    'Genera un código de 6 dígitos, escríbelo en el Pi en /?pair=1, y la pantalla se vincula sola.',
+                                )}
+                                className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text hover:bg-dd-bg active:scale-95 transition">
+                                🔗 {tx('Pair device', 'Vincular')}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setShowTemplatesModal(true)}
+                                title={tx('Start a new screen from a template — Food / Drinks / Specials / Photos / Promo / QR / Split.', 'Crea una pantalla desde una plantilla.')}
+                                className="px-3.5 py-2 rounded-lg bg-white border border-dd-line text-sm font-bold text-dd-text hover:bg-dd-bg active:scale-95 transition">
+                                🎨 {tx('Templates', 'Plantillas')}
+                            </button>
+                        </>
+                    )}
                 </div>
             </header>
+
+            {/* Tab strip — 'screens' grid vs 'holidays' editor. Adding
+                tabs keeps everything for TV management on one URL while
+                separating the daily-use dashboard from the
+                occasional-use holiday scheduler. */}
+            <div className="flex gap-1 border-b border-dd-line">
+                {[
+                    { id: 'screens',  label: tx('📺 Screens',  '📺 Pantallas') },
+                    { id: 'holidays', label: tx('🎄 Holidays', '🎄 Fiestas') },
+                ].map(t => (
+                    <button key={t.id} onClick={() => setPageTab(t.id)}
+                        className={`px-4 py-2 text-sm font-bold border-b-2 -mb-px transition ${
+                            pageTab === t.id
+                                ? 'border-dd-green text-dd-text'
+                                : 'border-transparent text-dd-text-2 hover:text-dd-text hover:bg-dd-bg'
+                        }`}>
+                        {t.label}
+                    </button>
+                ))}
+            </div>
+
+            {pageTab === 'holidays' && (
+                <Suspense fallback={
+                    <div className="text-xs text-gray-400 italic py-6 text-center">
+                        {tx('Loading holidays…', 'Cargando fiestas…')}
+                    </div>
+                }>
+                    <TvHolidaysEditor
+                        language={language}
+                        staffName={staffName}
+                        tvConfigs={configs} />
+                </Suspense>
+            )}
+
+            {pageTab === 'screens' && (<>
 
             {/* Health strip — 4 stats inline, color-coded. Reads from
                 left to right: how many total, how many recently
@@ -448,6 +497,8 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     <TvConfigsEditor language={language} byName={staffName} />
                 </Suspense>
             </div>
+
+            </>)}{/* end pageTab === 'screens' */}
 
             {/* Pair Device modal — lazy-loaded. Renders only when
                 showPairModal is true so the chunk doesn't enter the
