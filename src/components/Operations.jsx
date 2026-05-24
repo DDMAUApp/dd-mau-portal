@@ -1989,22 +1989,59 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return obj;
             };
 
-            const saveChecklistState = async (newChecks, newTasks, newAssignments, newLists) => {
+            // ── writeChecklistPatch — partial-write helper ────────────────
+            // 2026-05-24 audit fix: legacy saveChecklistState (below) wrote
+            // ALL 4 top-level fields (checks / customTasks / assignments /
+            // lists) on every call. That meant an admin editing assignments
+            // while a cook was checking items would clobber the cook's
+            // check-marks back to whatever the admin had snapshotted when
+            // they opened the form. writeChecklistPatch writes ONLY the
+            // fields you explicitly name — pass undefined or omit to skip.
+            // Use updateDoc so unwritten top-level fields are never touched
+            // by this call, even if the doc grows new fields later.
+            //
+            // For high-frequency check-mark writes, keep using writeCheckPatch
+            // (dotted paths into checks.*) — this helper still replaces the
+            // entire `checks` map when called with a `checks:` arg, which is
+            // what bulk-reset / list-deletion paths need. For removing only
+            // a few check keys (e.g. a single task got deleted), prefer
+            // writeCheckPatch({key: undefined}) — that uses deleteField().
+            const writeChecklistPatch = async ({ checks, customTasks, assignments, lists } = {}) => {
                 const todayKey = getTodayKey();
                 const now = new Date().toISOString();
-                const safeChecks = cleanForFirestore(newChecks);
-                const safeTasks = cleanForFirestore(newTasks);
-                const safeAssignments = cleanForFirestore(newAssignments || checklistAssignments);
-                const safeLists = cleanForFirestore(newLists || checklistListsRef.current);
-                try {
-                    await setDoc(doc(db, "ops", "checklists2_" + storeLocation), {
-                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, lists: safeLists, date: todayKey, updatedAt: now, version: CHECKLIST_VERSION
-                    });
-                    // Also save to daily history
-                    await setDoc(doc(db, "checklistHistory_" + storeLocation, todayKey), {
-                        checks: safeChecks, customTasks: safeTasks, assignments: safeAssignments, lists: safeLists, date: now, version: CHECKLIST_VERSION
-                    });
-                } catch (err) { console.error("Error saving checklist:", err); }
+                const patch = { updatedAt: now, date: todayKey, version: CHECKLIST_VERSION };
+                if (checks !== undefined)      patch.checks      = cleanForFirestore(checks);
+                if (customTasks !== undefined) patch.customTasks = cleanForFirestore(customTasks);
+                if (assignments !== undefined) patch.assignments = cleanForFirestore(assignments);
+                if (lists !== undefined)       patch.lists       = cleanForFirestore(lists);
+                // Nothing to write — no-op rather than wasting a round-trip.
+                if (Object.keys(patch).length <= 3) return;
+
+                const liveRef = doc(db, "ops", "checklists2_" + storeLocation);
+                const histRef = doc(db, "checklistHistory_" + storeLocation, todayKey);
+                try { await updateDoc(liveRef, patch); }
+                catch (e) {
+                    // Doc may not exist yet — seed it with merge.
+                    try { await setDoc(liveRef, patch, { merge: true }); }
+                    catch (e2) { console.error("Error saving checklist (live):", e2); }
+                }
+                try { await updateDoc(histRef, patch); }
+                catch (e) {
+                    try { await setDoc(histRef, patch, { merge: true }); }
+                    catch (e2) { console.error("Error saving checklist (history):", e2); }
+                }
+            };
+
+            // Legacy shim — only used by very old call sites that still
+            // pass full state. NEW callers should use writeChecklistPatch
+            // with only the fields they actually changed.
+            const saveChecklistState = async (newChecks, newTasks, newAssignments, newLists) => {
+                await writeChecklistPatch({
+                    checks:      newChecks,
+                    customTasks: newTasks,
+                    assignments: newAssignments,
+                    lists:       newLists,
+                });
             };
 
             // ── Granular check-key writers ────────────────────────────────
@@ -2077,7 +2114,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 }
                 setChecklistAssignments(updated);
                 setChecklistLists(updatedLists);
-                await saveChecklistState(checksRef.current, customTasksRef.current, updated, updatedLists);
+                // Only assignments + lists changed — don't re-write checks/customTasks.
+                await writeChecklistPatch({ assignments: updated, lists: updatedLists });
             };
 
             // Per-task assignment: toggle a staff member on/off a task's assignTo array
@@ -2092,7 +2130,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (idx >= 0) { current.splice(idx, 1); } else { current.push(staffMemberName); }
                 if (current.length > 0) { item.assignTo = current; } else { delete item.assignTo; }
                 setCustomTasks(updated);
-                await saveChecklistState(checksRef.current, updated);
+                // Only customTasks changed.
+                await writeChecklistPatch({ customTasks: updated });
             };
 
             const addChecklistList = async (side) => {
@@ -2101,18 +2140,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 updatedLists[side].push({ id: side + "_" + newIdx, assignee: "" });
                 setChecklistLists(updatedLists);
                 setActiveListIdx(newIdx);
-                await saveChecklistState(checksRef.current, customTasksRef.current, checklistAssignments, updatedLists);
+                // Only lists changed.
+                await writeChecklistPatch({ lists: updatedLists });
             };
 
             const removeChecklistList = async (side, listIdx) => {
                 if (listIdx === 0) return; // Can't remove the first list
                 const updatedLists = JSON.parse(JSON.stringify(checklistListsRef.current));
                 updatedLists[side].splice(listIdx, 1);
-                // Clean up checks for that list
+                // Clean up checks for that list — collect deletions so we
+                // can use writeCheckPatch (atomic dotted-path deleteField)
+                // instead of overwriting the entire `checks` map.
                 const prefix = getCheckPrefix(side, listIdx);
                 const newChecks = { ...checksRef.current };
+                const checkDeletions = {};
                 if (prefix) {
-                    Object.keys(newChecks).forEach(k => { if (k.startsWith(prefix)) delete newChecks[k]; });
+                    Object.keys(newChecks).forEach(k => {
+                        if (k.startsWith(prefix)) {
+                            delete newChecks[k];
+                            checkDeletions[k] = undefined; // writeCheckPatch → deleteField()
+                        }
+                    });
                 }
                 // Clean up assignment
                 const newAssignments = { ...checklistAssignments };
@@ -2122,7 +2170,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setChecks(newChecks);
                 setChecklistAssignments(newAssignments);
                 setActiveListIdx(Math.min(activeListIdx, updatedLists[side].length - 1));
-                await saveChecklistState(newChecks, customTasksRef.current, newAssignments, updatedLists);
+                // 1) Atomically delete only the affected check keys
+                if (Object.keys(checkDeletions).length > 0) {
+                    await writeCheckPatch(checkDeletions);
+                }
+                // 2) Update assignments + lists (no checks/customTasks rewrite)
+                await writeChecklistPatch({ assignments: newAssignments, lists: updatedLists });
             };
 
             // ── Per-task comments ──
@@ -2352,7 +2405,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                         m.deliverWhen === 'on_complete' && !m.delivered ? { ...m, delivered: true, deliveredAt: new Date().toISOString() } : m
                                     );
                                     setCustomTasks(updated);
-                                    await saveChecklistState(newChecks, updated, checklistAssignmentsRef.current, checklistListsRef.current);
+                                    // checks were already written by writeCheckPatch in the parent
+                                    // toggleCheckItem path — only customTasks needs persisting here
+                                    // (the delivered: true flag on the messages array).
+                                    await writeChecklistPatch({ customTasks: updated });
                                 }
                             }
                         }
@@ -2457,7 +2513,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!updated[checklistSide][PERIOD_KEY]) updated[checklistSide][PERIOD_KEY] = [];
                 updated[checklistSide][PERIOD_KEY].push(item);
                 setCustomTasks(updated);
-                await saveChecklistState(checksRef.current, updated);
+                await writeChecklistPatch({ customTasks: updated });
                 setQuickAddText("");
             };
 
@@ -2483,7 +2539,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (!updated[checklistSide][PERIOD_KEY]) updated[checklistSide][PERIOD_KEY] = [];
                 updated[checklistSide][PERIOD_KEY].push(item);
                 setCustomTasks(updated);
-                await saveChecklistState(checksRef.current, updated);
+                await writeChecklistPatch({ customTasks: updated });
                 setNewTask(""); setNewCategory("other"); setNewRecurrence("daily"); setNewRequirePhoto(false); setNewSubtasks([]); setNewCompleteBy(""); setNewAssignTo([]); setNewFollowUp(null); setShowAddForm(false);
             };
 
@@ -2507,7 +2563,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const cleanSubs = editSubtasks.filter(s => s.task.trim());
                 if (cleanSubs.length > 0) { item.subtasks = reconcileSubtasks(cleanSubs); } else { delete item.subtasks; }
                 setCustomTasks(updated);
-                await saveChecklistState(checksRef.current, updated);
+                await writeChecklistPatch({ customTasks: updated });
                 setEditingIdx(null); setEditTask(""); setEditCategory("other"); setEditRecurrence("daily"); setEditRequirePhoto(false); setEditSubtasks([]); setEditCompleteBy(""); setEditAssignTo([]); setEditFollowUp(null);
             };
 
@@ -2570,7 +2626,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (fromIdx < 0 || toIdx < 0 || fromIdx >= arr.length || toIdx >= arr.length) return;
                 [arr[fromIdx], arr[toIdx]] = [arr[toIdx], arr[fromIdx]];
                 setCustomTasks(updated);
-                await saveChecklistState(checksRef.current, updated);
+                await writeChecklistPatch({ customTasks: updated });
             };
 
             // Andrew 2026-05-21: "the arrow button when pressed the
@@ -2638,12 +2694,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     const cur = checksRef.current;
                     const newChecks = { ...cur };
                     const photoKeysToDelete = [];
+                    // 2026-05-24 audit fix: track deletions for atomic
+                    // dot-path removal instead of overwriting the whole
+                    // checks map (which would clobber any concurrent
+                    // check-mark a cook is making elsewhere).
+                    const checkDeletions = {};
                     for (const key of Object.keys(cur)) {
                         // Match `${currentPrefix}${taskId}` and any `_by`/`_at`/`_photo`/etc. variants.
                         for (const tid of orphanIds) {
                             if (key === currentPrefix + tid || key.startsWith(currentPrefix + tid + "_")) {
                                 if (key.endsWith("_photo")) photoKeysToDelete.push(cur[key]);
                                 delete newChecks[key];
+                                checkDeletions[key] = undefined;   // writeCheckPatch → deleteField()
                                 break;
                             }
                         }
@@ -2659,9 +2721,12 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             console.warn("Photo cleanup failed for", url, e);
                         }
                     }
-                    await saveChecklistState(newChecks, updated);
+                    if (Object.keys(checkDeletions).length > 0) {
+                        await writeCheckPatch(checkDeletions);
+                    }
+                    await writeChecklistPatch({ customTasks: updated });
                 } else {
-                    await saveChecklistState(checksRef.current, updated);
+                    await writeChecklistPatch({ customTasks: updated });
                 }
             };
 
@@ -2675,7 +2740,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                 } catch (err) { console.error("Error saving history:", err); }
                 setChecks({});
-                await saveChecklistState({}, customTasksRef.current);
+                // 2026-05-24 audit fix: was using saveChecklistState({}, customTasksRef.current)
+                // which clobbered ALL 4 top-level fields. Reset only needs to
+                // wipe `checks` — leave customTasks / assignments / lists intact.
+                await writeChecklistPatch({ checks: {} });
             };
 
             const saveInventorySnapshot = async (counts, items) => {
@@ -4641,7 +4709,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                                         if (tIdx >= 0) {
                                                                                             list[tIdx].messages = (list[tIdx].messages || []).filter(x => !(x.deliverWhen === m.deliverWhen && x.text === m.text && !x.delivered));
                                                                                             setCustomTasks(updated);
-                                                                                            await saveChecklistState(checksRef.current, updated, checklistAssignmentsRef.current, checklistListsRef.current);
+                                                                                            await writeChecklistPatch({ customTasks: updated });
                                                                                         }
                                                                                     }} className="text-red-500 text-xs">×</button>
                                                                                 </div>
@@ -4676,7 +4744,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                             if (tIdx >= 0) {
                                                                                 list[tIdx].messages = [...(list[tIdx].messages || []), { text, deliverWhen: 'on_complete', queuedBy: staffName, queuedAt: new Date().toISOString(), delivered: false }];
                                                                                 setCustomTasks(updated);
-                                                                                await saveChecklistState(checksRef.current, updated, checklistAssignmentsRef.current, checklistListsRef.current);
+                                                                                await writeChecklistPatch({ customTasks: updated });
                                                                                 toast(language === 'es' ? '✓ Mensaje en cola para entrega al completar' : '✓ Queued for completion delivery');
                                                                             }
                                                                         }

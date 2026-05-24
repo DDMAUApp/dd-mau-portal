@@ -1341,16 +1341,44 @@ exports.expireAndPurgeApplications = onSchedule(
         schedule: "30 9 * * *", // 9:30 UTC = 3:30 Central daylight
         timeZone: "America/Chicago",
         region: "us-central1",
+        // 2026-05-24 audit: was reading the entire onboarding_applications
+        // collection and using Promise.all on arbitrarily-many writes —
+        // would silently time out (default 60s) if a spam-flood of public
+        // Apply submissions ever piled up. Bumped to the v2 max so a
+        // backlog can drain over multiple days without dying mid-run.
+        timeoutSeconds: 540,
+        memory: "512MiB",
     },
     async () => {
         const now = Date.now();
         const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
         const ONE_EIGHTY_DAYS = 180 * 24 * 60 * 60 * 1000;
+        // Cap the scan per run. With status NOT in 'hired' and ordered by
+        // createdAt asc, we drain the oldest 500 first each day. If a
+        // public-form attack creates >500 spam apps in one day, this
+        // still slow-drains them rather than choking the function. The
+        // ASC order matters — without it Firestore returns docs in
+        // arbitrary order and the same junk gets scanned every day.
+        const SCAN_LIMIT = 500;
         let expiredCount = 0;
         let deletedCount = 0;
         try {
-            const snap = await db.collection("onboarding_applications").get();
-            const writes = [];
+            const snap = await db.collection("onboarding_applications")
+                .orderBy("createdAt", "asc")
+                .limit(SCAN_LIMIT)
+                .get();
+            // BulkWriter chunks + rate-limits internally. Way safer than
+            // Promise.all for unbounded write counts — Firestore caps at
+            // ~500 writes/sec and Promise.all will exceed and throw.
+            const bulkWriter = db.bulkWriter();
+            bulkWriter.onWriteError((err) => {
+                // Retry transient errors up to 3 times. Non-transient
+                // (e.g. permission denied) — give up so a poisoned doc
+                // doesn't stall the whole run.
+                if (err.failedAttempts < 3) return true;
+                logger.warn("bulkWriter giving up on doc:", err.documentRef.path, err.message);
+                return false;
+            });
             snap.forEach((d) => {
                 const data = d.data() || {};
                 const status = data.status || "applied";
@@ -1363,7 +1391,7 @@ exports.expireAndPurgeApplications = onSchedule(
                 if (status === "hired") return;
                 // STAGE 2: nuke at 180 days regardless of status.
                 if (age >= ONE_EIGHTY_DAYS) {
-                    writes.push(d.ref.delete());
+                    bulkWriter.delete(d.ref);
                     deletedCount++;
                     return;
                 }
@@ -1372,20 +1400,22 @@ exports.expireAndPurgeApplications = onSchedule(
                 const sinceTouch = now - lastTouch;
                 const stuck = ["applied", "screening", "phone_screen"].includes(status);
                 if (stuck && sinceTouch >= NINETY_DAYS) {
-                    writes.push(d.ref.update({
+                    bulkWriter.update(d.ref, {
                         status: "expired",
                         expiredAt: new Date().toISOString(),
                         expiredReason: "untouched_90_days",
-                    }));
+                    });
                     expiredCount++;
                 }
             });
-            await Promise.all(writes);
-            logger.info(`application lifecycle: expired ${expiredCount}, deleted ${deletedCount}`);
+            await bulkWriter.close();
+            const scanned = snap.size;
+            logger.info(`application lifecycle: scanned=${scanned} expired=${expiredCount} deleted=${deletedCount} (limit=${SCAN_LIMIT})`);
             try {
                 await db.collection("application_audits").add({
                     action: "lifecycle_run",
                     byAdmin: "cloud_function",
+                    scanned,
                     expiredCount,
                     deletedCount,
                     at: FieldValue.serverTimestamp(),
@@ -1395,6 +1425,109 @@ exports.expireAndPurgeApplications = onSchedule(
             logger.error("expireAndPurgeApplications failed", err);
             throw err;
         }
+    }
+);
+
+// ── pruneAuditLogs — 2026-05-24 ──────────────────────────────────────────
+// Audit log collections are append-only-by-design (Firestore rules forbid
+// client delete) so they grow forever. After 2 years a single inventory
+// audit collection can have ~50k docs, making the AdminPanel audit view
+// slow and pushing up the daily-export backup size. This function deletes
+// docs older than the per-collection retention (default 2 years) once a
+// week. It uses BulkWriter for safety and caps per-collection deletes at
+// 1000 per run so a long-deferred prune drains over several weeks rather
+// than spiking firestore writes in one shot.
+//
+// IMPORTANT — TIMESTAMP FIELD NAMES VARY across audit collections:
+//   - inventory_audits_*, recipe_audits, onboarding_audits, application_audits
+//     and pin_audits collision rows use `at`
+//   - pin_audits PIN-change rows use `changedAt`
+//   - sms_delivery_logs uses `createdAt`
+//   - backup_history uses a date string `date` (no proper timestamp) — skipped
+// PRUNE_RULES below has one row per (collection, fieldName) pair. Add a row
+// here when adding a new audit collection — otherwise it grows unchecked.
+exports.pruneAuditLogs = onSchedule(
+    {
+        schedule: "0 4 * * 0", // Sundays 4am Central
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        timeoutSeconds: 540,
+        memory: "512MiB",
+    },
+    async () => {
+        const RETENTION_DAYS = 730; // 2 years
+        const SCAN_LIMIT = 1000;    // per-collection per-run cap
+
+        const PRUNE_RULES = [
+            { coll: "pin_audits",                field: "changedAt" },
+            { coll: "pin_audits",                field: "at"        },
+            { coll: "inventory_audits_webster",  field: "at"        },
+            { coll: "inventory_audits_maryland", field: "at"        },
+            { coll: "recipe_audits",             field: "at"        },
+            { coll: "onboarding_audits",         field: "at"        },
+            { coll: "application_audits",        field: "at"        },
+            { coll: "sms_delivery_logs",         field: "createdAt" },
+            { coll: "sms_inbound_events",        field: "receivedAt" },
+            { coll: "sms_opt_in_events",         field: "at"        },
+        ];
+
+        const cutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60_000);
+        const report = [];
+        let totalDeleted = 0;
+        let totalErrors = 0;
+
+        for (const rule of PRUNE_RULES) {
+            let deleted = 0;
+            let errors = 0;
+            try {
+                const snap = await db.collection(rule.coll)
+                    .where(rule.field, "<", cutoff)
+                    .orderBy(rule.field, "asc")
+                    .limit(SCAN_LIMIT)
+                    .get();
+                if (snap.empty) {
+                    report.push(`${rule.coll}[${rule.field}]: 0`);
+                    continue;
+                }
+                const bw = db.bulkWriter();
+                bw.onWriteError((err) => {
+                    if (err.failedAttempts < 3) return true;
+                    errors++;
+                    logger.warn(`pruneAuditLogs ${rule.coll}: giving up on ${err.documentRef.path}`, err.message);
+                    return false;
+                });
+                snap.forEach((d) => {
+                    bw.delete(d.ref);
+                    deleted++;
+                });
+                await bw.close();
+                report.push(`${rule.coll}[${rule.field}]: ${deleted}${errors ? ` (${errors} err)` : ""}`);
+                totalDeleted += deleted;
+                totalErrors += errors;
+            } catch (err) {
+                // Most likely "field doesn't exist on this collection" — the
+                // collection schema doesn't match this rule. Log and move on.
+                logger.warn(`pruneAuditLogs ${rule.coll}[${rule.field}] failed:`, err.message);
+                report.push(`${rule.coll}[${rule.field}]: ERR`);
+                totalErrors++;
+            }
+        }
+
+        logger.info(`pruneAuditLogs: deleted=${totalDeleted} errors=${totalErrors} | ${report.join(", ")}`);
+
+        // Write a single audit row recording this run.
+        try {
+            await db.collection("audit").add({
+                action: "prune_audit_logs",
+                byAdmin: "cloud_function",
+                retentionDays: RETENTION_DAYS,
+                cutoff: cutoff.toISOString(),
+                totalDeleted,
+                totalErrors,
+                breakdown: report,
+                at: FieldValue.serverTimestamp(),
+            });
+        } catch {}
     }
 );
 
