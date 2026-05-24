@@ -3003,11 +3003,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 try {
                     // Perf-fix 2026-05-22: query-side limit + orderBy so we
                     // only download the 30 most-recent snapshots, not the
-                    // entire history collection. Doc ids look like
-                    // 'YYYY-MM-DD_HHMMSS' which sorts chronologically by
-                    // documentId(), so the server can return them sorted.
+                    // entire history collection. Originally used
+                    // orderBy('__name__', 'desc') but Firestore auto-indexes
+                    // __name__ ASCENDING only — desc requires a manual
+                    // composite index. Andrew hit the missing-index error on
+                    // 2026-05-23 in RecentOrdersBar (same pattern). Swapping
+                    // to orderBy('date', 'desc'): single-field indexes
+                    // auto-create both directions, no manual setup. The
+                    // `date` field is set as an ISO string on every save
+                    // (see saveInventorySnapshot) and sorts lexicographically
+                    // the same as chronologically.
                     const colRef = collection(db, "inventoryHistory_" + storeLocation);
-                    const snap = await getDocs(query(colRef, orderBy('__name__', 'desc'), limit(30)));
+                    const snap = await getDocs(query(colRef, orderBy('date', 'desc'), limit(30)));
                     const slice = snap.docs.map(d => ({ id: d.id, ...d.data() }));
                     const summary = {};
                     const vendorImports = {};
@@ -8497,9 +8504,12 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
         setLoading(true);
         setLoadError(null);
         const colRef = collection(db, "inventoryHistory_" + storeLocation);
-        // Doc ids look like YYYY-MM-DD_HHMMSS so __name__ desc sorts
-        // newest-first. The bar shows the 5 most recent inline; the
-        // "View all" button below opens a modal that loads up to 100.
+        // Order by `date` (ISO string set on every snapshot) desc — was
+        // orderBy('__name__', 'desc') but Firestore requires a manual
+        // composite index for desc on __name__ (only ASC is auto-created).
+        // `date` is a regular field so its desc index auto-creates.
+        // The bar shows the 5 most recent inline; the "View all" button
+        // below opens a modal that loads up to 100.
         const timeoutId = setTimeout(() => {
             if (cancelled) return;
             setLoadError(isEs
@@ -8507,7 +8517,7 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
                 : 'Timed out. Check your connection.');
             setLoading(false);
         }, 10000);
-        getDocs(query(colRef, orderBy('__name__', 'desc'), limit(5)))
+        getDocs(query(colRef, orderBy('date', 'desc'), limit(5)))
             .then(snap => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
@@ -8705,7 +8715,7 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
                 : 'Timed out. Check your connection.');
             setLoading(false);
         }, 10000);
-        getDocs(query(colRef, orderBy('__name__', 'desc'), limit(100)))
+        getDocs(query(colRef, orderBy('date', 'desc'), limit(100)))
             .then(snap => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
