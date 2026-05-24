@@ -11,7 +11,7 @@
 // VAPID KEY: get the public key from Firebase Console → Project Settings →
 // Cloud Messaging → Web Push certificates → Generate key pair, then paste the
 // PUBLIC key string here. Without it, getToken() will fail.
-import { getMessaging, getToken, onMessage, isSupported } from "firebase/messaging";
+import { getMessaging, getToken, deleteToken, onMessage, isSupported } from "firebase/messaging";
 import { doc, setDoc, runTransaction, getDoc } from "firebase/firestore";
 import app, { db } from "./firebase";
 
@@ -302,4 +302,73 @@ export async function onForegroundMessage(handler) {
     const messaging = await getMessagingSafely();
     if (!messaging) return () => {};
     return onMessage(messaging, handler);
+}
+
+/**
+ * 2026-05-24 audit fix — disableFcmPush.
+ *
+ * Reverses what enableFcmPush did for this device. Used by:
+ *   - Manual logout (App.jsx onLogout)
+ *   - Idle re-lock (App.jsx idle timer)
+ *   - Cold-launch wipe (App.jsx module-load handler)
+ *
+ * Why this exists: WITHOUT it, the device's FCM token stays bound to the
+ * previously-signed-in staff member in /config/staff. Pushes addressed to
+ * that staff (chat messages, shift offers, urgent alerts) keep ringing on
+ * THIS device's lockscreen even though the device is now PIN-locked and
+ * available to a different physical user. That's an information leak on
+ * shared iPads (Webster front-of-house tablet, Maryland prep iPad), and
+ * potentially a privacy issue on personal phones that get handed off.
+ *
+ * What it does:
+ *   1. deleteToken() — tells FCM to invalidate this device's token so the
+ *      server stops trying to push to it (also rotates the SW push
+ *      subscription so a new sign-in gets a fresh binding).
+ *   2. Removes the matching entry (by deviceId OR by token string) from
+ *      the prior staff's fcmTokens array. Transactional so it doesn't
+ *      clobber concurrent edits to the same /config/staff doc.
+ *
+ * Safe to call multiple times and safe to call when not signed in
+ * (no-ops cleanly).
+ */
+export async function disableFcmPush(prevStaffName) {
+    const deviceId = (() => {
+        try { return localStorage.getItem(DEVICE_ID_KEY); }
+        catch { return null; }
+    })();
+    // Tell FCM to drop this token on the SW side. Best-effort — we still
+    // try to clean the Firestore entry even if this fails.
+    try {
+        const messaging = await getMessagingSafely();
+        if (messaging) await deleteToken(messaging);
+    } catch (e) {
+        console.warn("[FCM] deleteToken failed (non-fatal):", e?.message);
+    }
+    if (!prevStaffName) return;
+    if (!deviceId) return; // nothing to clean up — we never registered
+    try {
+        await runTransaction(db, async (tx) => {
+            const ref = doc(db, "config", "staff");
+            const snap = await tx.get(ref);
+            if (!snap.exists()) return;
+            const list = (snap.data() || {}).list || [];
+            const idx = list.findIndex((s) => s.name === prevStaffName);
+            if (idx === -1) return;
+            const meRec = list[idx];
+            const existing = Array.isArray(meRec.fcmTokens) ? meRec.fcmTokens : [];
+            const filtered = existing.filter((t) => {
+                if (!t || !t.token) return false;
+                if (t.deviceId && t.deviceId === deviceId) return false;
+                return true;
+            });
+            if (filtered.length === existing.length) return; // no-op
+            const nextList = list.map((s, i) =>
+                i === idx ? { ...s, fcmTokens: filtered } : s
+            );
+            tx.set(ref, { list: nextList });
+        });
+        console.log(`[FCM] disabled push for ${prevStaffName} on device ${(deviceId || '').slice(0, 8)}…`);
+    } catch (e) {
+        console.warn("[FCM] disableFcmPush write failed (non-fatal):", e?.message);
+    }
 }

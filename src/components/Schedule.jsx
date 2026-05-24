@@ -940,7 +940,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // from a previous user persist and we either silently swallow new notifs
     // or worse, re-fire alien IDs that weren't ours. useMemo([staffName]) is
     // the right scope: stable across re-renders for one user, fresh on switch.
-    const seenNotifIds = useMemo(() => new Set(), [staffName]);
+    // 2026-05-24 audit fix: useMemo was wrong tool — React reserves the
+    // right to recompute useMemo under memory pressure even when deps
+    // haven't changed, which would drop the Set and re-fire OS
+    // notifications for every previously-seen unread item. useRef is
+    // memory-stable by design; we reset .current explicitly on
+    // staffName change instead of via deps.
+    const seenNotifIdsRef = useRef(new Set());
+    useEffect(() => {
+        seenNotifIdsRef.current = new Set();
+    }, [staffName]);
+    const seenNotifIds = seenNotifIdsRef.current;
     useEffect(() => {
         if (!staffName) return;
         // Audit 2026-05-22 fix: cap at 50 notifications. Was unbounded.
@@ -1912,10 +1922,20 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const oldStaff = shift.staffName;
         const oldDate = shift.date;
         const detail = `${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+        // 2026-05-24 audit fix: if the drop crosses sides (BOH shift
+        // dropped onto a FOH-only staffer), keep shift.side in sync
+        // with the new owner's home side. Without this, the shift
+        // would carry stale side='boh' and disappear from the FOH
+        // grid filter — invisible-but-existing assignment. Resolve
+        // the new owner's side via the same helper used for cell
+        // rendering, fall back to the current side.
+        const newOwner = (staffList || []).find(x => x.name === newStaffName);
+        const newOwnerSide = newOwner ? resolveStaffSide(newOwner) : shift.side;
         try {
             await updateDoc(doc(db, 'shifts', shiftId), {
                 staffName: newStaffName,
                 date: newDate,
+                ...(newOwnerSide && newOwnerSide !== shift.side ? { side: newOwnerSide } : {}),
                 updatedAt: serverTimestamp(),
             });
             // Availability acknowledgment modal — same pattern as add and
@@ -2376,20 +2396,28 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             `¿Ofrecer ${candidates.length} turno${candidates.length === 1 ? '' : 's'}? Sigues siendo responsable hasta que alguien los tome.`
         ));
         if (!ok) return;
+        // 2026-05-24 audit fix: was sequential await per shift — 30
+        // shifts = ~9 seconds dead time on cellular. Mid-loop network
+        // blip half-offered the batch; the toast showed partial
+        // success but there was no retry path. writeBatch is a single
+        // atomic round-trip — either all succeed or all fail.
+        // Batch cap is 500; 30 shifts is comfortably under.
         let okCount = 0, failCount = 0;
-        for (const sh of candidates) {
-            try {
-                await updateDoc(doc(db, 'shifts', sh.id), {
+        try {
+            const batch = writeBatch(db);
+            for (const sh of candidates) {
+                batch.update(doc(db, 'shifts', sh.id), {
                     offerStatus: 'open',
                     offeredBy: staffName,
                     offeredAt: serverTimestamp(),
                     updatedAt: serverTimestamp(),
                 });
-                okCount += 1;
-            } catch (e) {
-                console.warn('bulk-offer failed for', sh.id, e);
-                failCount += 1;
             }
+            await batch.commit();
+            okCount = candidates.length;
+        } catch (e) {
+            console.warn('bulk-offer batch failed:', e);
+            failCount = candidates.length;
         }
         clearSelection();
         toast(tx(`📣 Offered ${okCount} shifts${failCount > 0 ? ` (${failCount} failed)` : ''}`,
@@ -3518,10 +3546,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             if (!ok) return;
         }
         try {
-            await updateDoc(doc(db, 'time_off', entry.id), {
-                status: 'approved',
-                reviewedBy: staffName,
-                reviewedAt: serverTimestamp(),
+            // 2026-05-24 audit fix: was a bare updateDoc with no
+            // current-status check. Two managers tapping Approve on the
+            // same pending request within ms of each other both wrote
+            // approved + both fired the notification + both fired the
+            // mgmt rollup → staff got 2 pings, mgmt got 2 mirror
+            // notifs. runTransaction reads-and-acts atomically: if the
+            // entry is already past 'pending' we no-op with a toast.
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'time_off', entry.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) throw new Error('PTO request no longer exists');
+                const live = snap.data() || {};
+                if (live.status !== 'pending') {
+                    const reviewer = live.reviewedBy || 'someone';
+                    throw new Error(`Already ${live.status} by ${reviewer}`);
+                }
+                txn.update(ref, {
+                    status: 'approved',
+                    reviewedBy: staffName,
+                    reviewedAt: serverTimestamp(),
+                });
             });
             const range = start + (end !== start ? ` → ${end}` : '');
             await notify(entry.staffName, 'pto_approved',
@@ -3544,15 +3589,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }).catch(() => {});
         } catch (e) {
             console.error('Approve PTO failed:', e);
+            toast(tx('Could not approve: ', 'No se pudo aprobar: ') + (e.message || 'unknown'));
         }
     };
     const handleDenyPto = async (entry) => {
         if (!canEdit) return;
         try {
-            await updateDoc(doc(db, 'time_off', entry.id), {
-                status: 'denied',
-                reviewedBy: staffName,
-                reviewedAt: serverTimestamp(),
+            // 2026-05-24 audit fix: same idempotency wrap as approve.
+            await runTransaction(db, async (txn) => {
+                const ref = doc(db, 'time_off', entry.id);
+                const snap = await txn.get(ref);
+                if (!snap.exists()) throw new Error('PTO request no longer exists');
+                const live = snap.data() || {};
+                if (live.status !== 'pending') {
+                    const reviewer = live.reviewedBy || 'someone';
+                    throw new Error(`Already ${live.status} by ${reviewer}`);
+                }
+                txn.update(ref, {
+                    status: 'denied',
+                    reviewedBy: staffName,
+                    reviewedAt: serverTimestamp(),
+                });
             });
             const range = entry.startDate + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
             await notify(entry.staffName, 'pto_denied',
@@ -3572,6 +3629,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             }).catch(() => {});
         } catch (e) {
             console.error('Deny PTO failed:', e);
+            toast(tx('Could not deny: ', 'No se pudo negar: ') + (e.message || 'unknown'));
         }
     };
 
@@ -4031,9 +4089,33 @@ ${dayBlocks}
     const confirmPublishDrafts = async () => {
         if (!publishPreview) return;
         const { drafts } = publishPreview;
+        // 2026-05-24 audit fix: re-check approved time-off RIGHT BEFORE
+        // we publish. Without this, a draft built Monday + PTO approved
+        // for that staffer Tuesday + publish Wednesday would still go
+        // out as a published shift on top of approved time-off. The
+        // PTO subscription in this component is live so this is just a
+        // belt-and-suspenders check at the commit boundary.
+        const ptoConflicts = drafts.filter(s => isStaffOffOn(s.staffName, s.date));
+        if (ptoConflicts.length > 0) {
+            const sample = ptoConflicts.slice(0, 8).map(s =>
+                `  · ${s.staffName} · ${s.date} ${formatTime12h(s.startTime)}–${formatTime12h(s.endTime)}`
+            ).join('\n');
+            const more = ptoConflicts.length > 8 ? `\n  · ...+${ptoConflicts.length - 8}` : '';
+            const proceed = confirm(tx(
+                `⚠️ ${ptoConflicts.length} shift(s) in this batch conflict with approved time-off:\n\n${sample}${more}\n\nPublish the rest and SKIP these? (Click Cancel to abort.)`,
+                `⚠️ ${ptoConflicts.length} turno(s) en este lote chocan con tiempo libre aprobado:\n\n${sample}${more}\n\n¿Publicar el resto y OMITIR estos? (Cancelar para abortar.)`,
+            ));
+            if (!proceed) return;
+        }
+        const safeDrafts = drafts.filter(s => !isStaffOffOn(s.staffName, s.date));
+        if (safeDrafts.length === 0) {
+            toast(tx('Nothing to publish (all conflicts).', 'Nada que publicar (todos en conflicto).'));
+            setPublishPreview(null);
+            return;
+        }
         try {
             const batch = writeBatch(db);
-            for (const s of drafts) {
+            for (const s of safeDrafts) {
                 batch.update(doc(db, 'shifts', s.id), {
                     published: true,
                     publishedBy: staffName,
@@ -4043,10 +4125,15 @@ ${dayBlocks}
             }
             await batch.commit();
             setPublishPreview(null);
-            toast(tx(`✅ Published ${drafts.length} shifts.`, `✅ Se publicaron ${drafts.length} turnos.`));
+            const skippedNote = ptoConflicts.length > 0
+                ? tx(` (skipped ${ptoConflicts.length} PTO conflicts)`, ` (omitidos ${ptoConflicts.length} conflictos de PTO)`)
+                : '';
+            toast(tx(`✅ Published ${safeDrafts.length} shifts${skippedNote}.`, `✅ Se publicaron ${safeDrafts.length} turnos${skippedNote}.`));
             // Notify each staffer whose shifts were published — one notification per person.
+            // Use safeDrafts (PTO conflicts excluded above) so we don't ping
+            // someone about a shift that didn't actually get published.
             const byStaff = new Map();
-            for (const s of drafts) {
+            for (const s of safeDrafts) {
                 const list = byStaff.get(s.staffName) || [];
                 list.push(s);
                 byStaff.set(s.staffName, list);
@@ -4090,8 +4177,8 @@ ${dayBlocks}
                 type: 'week_published_admin',
                 title: { en: `📢 Schedule published (week of ${weekStartStr})`,
                          es: `📢 Horario publicado (semana del ${weekStartStr})` },
-                body: { en: `${drafts.length} shift${drafts.length === 1 ? '' : 's'} • ${byStaff.size} staff • by ${staffName}`,
-                        es: `${drafts.length} turno${drafts.length === 1 ? '' : 's'} • ${byStaff.size} persona(s) • por ${staffName}` },
+                body: { en: `${safeDrafts.length} shift${safeDrafts.length === 1 ? '' : 's'} • ${byStaff.size} staff • by ${staffName}`,
+                        es: `${safeDrafts.length} turno${safeDrafts.length === 1 ? '' : 's'} • ${byStaff.size} persona(s) • por ${staffName}` },
                 link: '/schedule',
                 deepLink: 'schedule',
                 tag: `week_published_admin:${weekStartStr}`,

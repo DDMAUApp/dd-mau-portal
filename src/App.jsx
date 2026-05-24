@@ -4,7 +4,7 @@ import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } fr
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding } from './data/staff';
-import { enableFcmPush, onForegroundMessage } from './messaging';
+import { enableFcmPush, disableFcmPush, onForegroundMessage } from './messaging';
 import { playKitchenBell } from './data/bell';
 // Components — eagerly loaded (needed immediately)
 import HomePage from './components/HomePage';
@@ -348,7 +348,21 @@ try {
         if (!alive) {
             // Cold launch — wipe the persisted auth state so the PIN screen
             // is the first thing the user sees.
+            const priorStaff = localStorage.getItem('ddmau:staffName');
             localStorage.removeItem('ddmau:staffName');
+            // 2026-05-24 audit fix: also tell FCM to invalidate this
+            // device's token + clear the prior staff's fcmTokens entry.
+            // Otherwise: shared-iPad-at-restaurant goes cold overnight,
+            // the morning's first PIN-locked device is still receiving
+            // push notifications for last night's staffer (which show
+            // on the OS lockscreen). Fire-and-forget — never block UI on
+            // FCM cleanup. Dynamic import so this doesn't get baked into
+            // the cold-launch critical path.
+            if (priorStaff) {
+                import('./messaging').then(m => {
+                    try { m.disableFcmPush(priorStaff); } catch {}
+                }).catch(() => {});
+            }
             // We deliberately don't clear activeTab/language/etc — those
             // are preferences, not credentials, and the user will want
             // them restored after they unlock.
@@ -599,6 +613,10 @@ export default function App() {
             try { lastActive = parseInt(localStorage.getItem('ddmau:lastActive') || '0', 10) || 0; } catch {}
             if (lastActive && Date.now() - lastActive > IDLE_LOCK_MS) {
                 console.log('[lock] idle for >5min, locking');
+                // 2026-05-24 audit fix: same FCM cleanup as manual logout
+                // — drop this device's token so push for the prior staff
+                // doesn't keep firing on the locked screen.
+                try { disableFcmPush(staffName); } catch {}
                 setStaffName(null);
                 setActiveTab('home');
             } else {
@@ -1088,7 +1106,16 @@ export default function App() {
                     setStaffList={setStaffList}
                     language={language}
                     onAllDone={() => setRequiredTaskTick(t => t + 1)}
-                    onSignOut={() => { setStaffName(null); setActiveTab('home'); }}
+                    onSignOut={() => {
+                        // 2026-05-24 audit fix: drop this device's FCM
+                        // token + push subscription so push notifications
+                        // for the prior signed-in staff don't keep firing
+                        // on this lock-screened device. Fire-and-forget;
+                        // never block sign-out on FCM cleanup.
+                        try { disableFcmPush(staffName); } catch {}
+                        setStaffName(null);
+                        setActiveTab('home');
+                    }}
                 />
             </Suspense>
         );
@@ -1210,7 +1237,12 @@ export default function App() {
                     // Logout returns the app to the lock screen by clearing
                     // the active staffName. The render branches at the top
                     // of App() route to <HomePage /> when staffName is null.
-                    onLogout={() => { setStaffName(null); setActiveTab('home'); }}
+                    onLogout={() => {
+                        // 2026-05-24 audit fix: same FCM cleanup as onSignOut.
+                        try { disableFcmPush(staffName); } catch {}
+                        setStaffName(null);
+                        setActiveTab('home');
+                    }}
                     // Same forceRefresh used by pull-to-refresh + the legacy
                     // sidebar's refresh button. Clears all caches and reloads.
                     onForceRefresh={() => forceRefresh()}

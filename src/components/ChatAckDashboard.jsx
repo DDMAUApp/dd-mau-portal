@@ -14,7 +14,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot, doc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, query, where, limit } from 'firebase/firestore';
 import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
@@ -34,14 +34,21 @@ export default function ChatAckDashboard({
 
     useEffect(() => {
         if (!chat?.id || !message?.id) return;
-        const unsub = onSnapshot(
+        // 2026-05-24 audit fix: was pulling EVERY ack ever in this chat
+        // then filtering client-side by messageId. A 6-month-old
+        // announcements channel with 50 announcements × 25 acks = 1,250
+        // docs streamed every time anyone acks anything. Scope server-
+        // side now. limit(500) is a safety cap — no audience exceeds
+        // total chat members.
+        const q = query(
             collection(db, 'chats', chat.id, 'acks'),
+            where('messageId', '==', message.id),
+            limit(500),
+        );
+        const unsub = onSnapshot(q,
             (snap) => {
                 const list = [];
-                snap.forEach(d => {
-                    const data = d.data();
-                    if (data.messageId === message.id) list.push({ id: d.id, ...data });
-                });
+                snap.forEach(d => list.push({ id: d.id, ...d.data() }));
                 setAcks(list);
             },
             (err) => console.warn('ack snapshot failed:', err)

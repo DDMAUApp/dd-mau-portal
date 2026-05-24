@@ -32,7 +32,16 @@ export default function ChatPinsDrawer({
         );
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
-            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+            // 2026-05-24 audit fix: a soft-deleted message that was
+            // previously pinned stayed in this drawer as a dangling ref
+            // (empty bubble). The thread's banner already filters
+            // !m.deleted, so banner + drawer disagreed. Filter both the
+            // same way here.
+            snap.forEach(d => {
+                const data = d.data();
+                if (data.deleted === true) return;
+                list.push({ id: d.id, ...data });
+            });
             setPins(list);
         }, (err) => console.warn('pins snapshot failed:', err));
         return () => unsub();

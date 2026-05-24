@@ -92,15 +92,16 @@ export default function ChatCenter({
         // members array by the sync logic below. So one query covers it.
         // Audit 2026-05-22 fix: cap at 100 chats. Was unbounded.
         // The ideal would be orderBy(lastActivityAt desc) + limit(100)
-        // to get the most-recent 100, but adding orderBy to a
-        // (members array-contains) where requires a composite index
-        // — without it, the listener fails until Firebase builds the
-        // index (~10 min outage). For now: limit alone caps the read.
-        // The client-side sort below still orders by lastActivityAt.
-        // Revisit if any user is in >100 chats (none today).
+        // 2026-05-24 audit fix: previously `limit(100)` alone — meant
+        // Firestore returned WHATEVER 100 chats the query plan picked,
+        // NOT the most-recent 100. A user in 105+ chats would silently
+        // miss 5 with no UI indication. Now adds `orderBy(lastActivityAt, desc)`
+        // so the cap consistently keeps the freshest chats. Composite
+        // index defined in firestore.indexes.json (members + lastActivityAt).
         const q = query(
             collection(db, 'chats'),
             where('members', 'array-contains', staffName),
+            orderBy('lastActivityAt', 'desc'),
             limit(100),
         );
         const unsub = onSnapshot(q, (snap) => {

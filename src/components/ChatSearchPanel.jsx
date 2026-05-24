@@ -15,7 +15,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, collectionGroup, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { chatDisplayName, ChatAvatar } from './ChatShared';
 import { expandQueryTerms, buildHaystack, haystackMatches } from '../data/chatSearch';
 
@@ -37,21 +37,35 @@ export default function ChatSearchPanel({
     const [hasMedia, setHasMedia] = useState(false);
     const [typeFilter, setTypeFilter] = useState('any'); // any|announcement|coverage_request|photo_issue
 
-    // Load recent messages from every chat the viewer can see. One
-    // listener per chat — for a kitchen team that's ~10-20 chats, fine.
+    // Load recent messages from every chat the viewer can see.
+    //
+    // 2026-05-24 audit fix: was mounting 25 SIMULTANEOUS onSnapshot
+    // listeners (one per chat) × limit(200) each = up to 5,000 live
+    // message docs streamed while the search panel is open. Every
+    // new message in ANY of those 25 chats kicked a snapshot tick +
+    // a setState — across 30 staff using search, that's hundreds of
+    // listeners against Firestore. Search is not real-time anyway —
+    // user opens it, types, taps a result, closes it. One-shot
+    // getDocs per chat is the right tool. Parallelized via
+    // Promise.all so the panel still feels instant on open.
     const [messagesByChat, setMessagesByChat] = useState({});  // chatId -> [msg]
+    const [loading, setLoading] = useState(false);
     useEffect(() => {
         if (!Array.isArray(chats) || chats.length === 0) return;
+        let cancelled = false;
         const cutoff = dateRange === '7d' ? Date.now() - 7 * 86400_000
                      : dateRange === '30d' ? Date.now() - 30 * 86400_000
                      : 0;
-        const unsubs = chats.slice(0, 25).map(chat => {
-            const ref = query(
-                collection(db, 'chats', chat.id, 'messages'),
-                orderBy('createdAt', 'desc'),
-                limit(200),
-            );
-            return onSnapshot(ref, (snap) => {
+        setLoading(true);
+        const targets = chats.slice(0, 25);
+        Promise.all(targets.map(async chat => {
+            try {
+                const ref = query(
+                    collection(db, 'chats', chat.id, 'messages'),
+                    orderBy('createdAt', 'desc'),
+                    limit(200),
+                );
+                const snap = await getDocs(ref);
                 const list = [];
                 snap.forEach(d => {
                     const data = { id: d.id, chatId: chat.id, ...d.data() };
@@ -59,10 +73,19 @@ export default function ChatSearchPanel({
                         : (data.createdAt?.seconds ? data.createdAt.seconds * 1000 : 0);
                     if (!cutoff || ms >= cutoff) list.push(data);
                 });
-                setMessagesByChat(prev => ({ ...prev, [chat.id]: list }));
-            }, () => {});
+                return [chat.id, list];
+            } catch (e) {
+                console.warn('search read failed for chat', chat.id, e);
+                return [chat.id, []];
+            }
+        })).then(pairs => {
+            if (cancelled) return;
+            const map = {};
+            for (const [id, list] of pairs) map[id] = list;
+            setMessagesByChat(map);
+            setLoading(false);
         });
-        return () => unsubs.forEach(u => u && u());
+        return () => { cancelled = true; };
     }, [chats, dateRange]);
 
     // Pre-expand the query into [{term, expansions:Set}] once per

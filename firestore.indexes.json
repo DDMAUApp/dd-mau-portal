@@ -34,6 +34,23 @@
         { "fieldPath": "submittedBy", "order": "ASCENDING" },
         { "fieldPath": "createdAt",   "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "chats",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "members",        "arrayConfig": "CONTAINS"  },
+        { "fieldPath": "lastActivityAt", "order": "DESCENDING"      }
+      ]
+    },
+    {
+      "collectionGroup": "sms_delivery_logs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "forStaff",  "order": "ASCENDING"  },
+        { "fieldPath": "type",      "order": "ASCENDING"  },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

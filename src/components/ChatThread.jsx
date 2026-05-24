@@ -224,6 +224,31 @@ function ChatThreadInner({
         const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
         setAtBottom(gap < 100);
     }
+    // 2026-05-24 audit fix: iOS soft keyboard opens → viewport shrinks
+    // by ~270px → the still-running scroll handler reads "gap > 100"
+    // and flips atBottom to false → subsequent incoming messages no
+    // longer auto-scroll to the new bottom. Caused users to think
+    // their messages went off-screen. visualViewport.resize fires
+    // when the keyboard slides in/out on iOS; on resize, re-evaluate
+    // and if we WERE at bottom, snap the list back to bottom.
+    useEffect(() => {
+        const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+        if (!vv) return;
+        const onViewport = () => {
+            const el = scrollRef.current;
+            if (!el) return;
+            // If we were at bottom pre-resize, re-anchor after the
+            // layout settles. requestAnimationFrame so the new
+            // viewport dimensions are committed before we measure.
+            if (atBottom) {
+                requestAnimationFrame(() => {
+                    if (el) el.scrollTop = el.scrollHeight;
+                });
+            }
+        };
+        vv.addEventListener('resize', onViewport);
+        return () => vv.removeEventListener('resize', onViewport);
+    }, [atBottom]);
 
     // ── Composer state ────────────────────────────────────────────
     const [draft, setDraft] = useState('');
@@ -853,11 +878,21 @@ function ChatThreadInner({
             return;
         }
         try {
+            // 2026-05-24 audit fix: edit was leaving the stale `mentions[]`
+            // array on the doc — if a user edited "hey team" → "hey @Andrea",
+            // the bubble's "mentioned you" highlight never appeared, and any
+            // filter on "your mentions" missed the edit. Conversely, removing
+            // an @-name left the stale highlight on. Re-parse mentions and
+            // patch alongside text. Intentional: we do NOT re-fire push
+            // notifications for new mentions in an edit (CLAUDE.md policy —
+            // avoid users gaming edits to re-ping people).
+            const { mentions: nextMentions } = parseMentions(trimmed, staffList);
             await updateDoc(doc(db, 'chats', chat.id, 'messages', message.id), {
                 text: trimmed,
                 edited: true,
                 editedAt: serverTimestamp(),
                 editedBy: staffName,
+                mentions: nextMentions,
                 // Drop stale translations + auto-detected sourceLang
                 // so the next viewer (or the auto-translate pref) re-
                 // translates from the current text rather than serving
@@ -1165,8 +1200,15 @@ function ChatThreadInner({
                 await runTransaction(db, async (txn) => {
                     const snap = await txn.get(ref);
                     const cur = snap.exists() ? (snap.data().items || []) : [];
-                    const norm = itemName.trim().toLowerCase();
-                    const exists = cur.some(it => String(it?.name || '').trim().toLowerCase() === norm);
+                    // 2026-05-24 audit fix: dedup was case-folded + trimmed
+                    // only — "Chicken Wings " (trailing space) and
+                    // "chicken-wings" went through as distinct. Strip all
+                    // non-alphanumerics for the comparison key so spelling
+                    // variants collapse to the same row. Display name is
+                    // unchanged.
+                    const slugify = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const norm = slugify(itemName);
+                    const exists = cur.some(it => slugify(it?.name) === norm);
                     if (exists) return; // already on the list — no-op
                     // 2026-05-23 — also persist the optional note + the
                     // staffer's ID. The note already rides on the chat

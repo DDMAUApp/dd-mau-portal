@@ -299,26 +299,51 @@ exports.dispatchNotification = onDocumentCreated(
         logger.info(`Sent push for ${forStaff}: ${result.successCount} ok, ${result.failureCount} failed (${tokens.length} token${tokens.length === 1 ? "" : "s"})`);
 
         // Clean up dead tokens (registration-token-not-registered, invalid-argument).
-        // Keep only tokens whose result was a success OR a transient failure.
+        // Identify which tokens to PRUNE this round; we'll then atomically
+        // remove them inside a transaction so a concurrent admin PIN edit
+        // (or another notification trigger pruning a different staff's
+        // tokens) doesn't get clobbered.
+        //
+        // 2026-05-24 audit fix: was reading `list` from the trigger-time
+        // snapshot then writing the whole doc with `set({list: newList})`.
+        // This is the exact whole-doc clobber pattern that caused the
+        // 2026-05-09 PIN-wipe incident. Wrapping in runTransaction reads
+        // the LIVE doc inside the txn and only mutates this staff's
+        // fcmTokens — any concurrent admin write to a different staff
+        // (PIN edit, opsAccess toggle, etc.) survives.
         const deadCodes = new Set([
             "messaging/registration-token-not-registered",
             "messaging/invalid-registration-token",
             "messaging/invalid-argument",
         ]);
-        const liveTokens = [];
+        const deadTokens = [];
         for (let i = 0; i < tokens.length; i++) {
             const r = result.responses[i];
-            if (r.success || !deadCodes.has(r.error?.code)) {
-                liveTokens.push(me.fcmTokens.find((t) => t.token === tokens[i]));
-            } else {
+            if (!r.success && deadCodes.has(r.error?.code)) {
+                deadTokens.push(tokens[i]);
                 logger.info(`pruning dead token for ${forStaff}: ${r.error?.code}`);
             }
         }
-        if (liveTokens.length !== me.fcmTokens.length) {
-            const newList = list.map((s) =>
-                s.name === forStaff ? { ...s, fcmTokens: liveTokens } : s
-            );
-            await db.doc("config/staff").set({ list: newList });
+        if (deadTokens.length > 0) {
+            try {
+                await db.runTransaction(async (txn) => {
+                    const liveSnap = await txn.get(db.doc("config/staff"));
+                    if (!liveSnap.exists) return;
+                    const liveList = (liveSnap.data() || {}).list || [];
+                    const meIdx = liveList.findIndex((s) => s.name === forStaff);
+                    if (meIdx === -1) return;
+                    const meLive = liveList[meIdx];
+                    const existingTokens = Array.isArray(meLive.fcmTokens) ? meLive.fcmTokens : [];
+                    const pruned = existingTokens.filter((t) => !deadTokens.includes(t?.token));
+                    if (pruned.length === existingTokens.length) return; // no-op
+                    const nextList = liveList.map((s, i) =>
+                        i === meIdx ? { ...s, fcmTokens: pruned } : s
+                    );
+                    txn.update(liveSnap.ref, { list: nextList });
+                });
+            } catch (e) {
+                logger.warn(`dispatchNotification: token-prune txn failed for ${forStaff}:`, e?.message);
+            }
         }
     }
 );
@@ -374,6 +399,43 @@ exports.dispatchSms = onDocumentCreated(
         if (alreadySent) {
             logger.info(`dispatchSms: ${notificationId} already has a log row, skipping (dedup)`);
             return;
+        }
+
+        // 2026-05-24 audit fix — per-recipient cooldown.
+        //
+        // The notificationId dedup above only catches the SAME doc retried
+        // by Firestore. It does NOT catch a buggy/hostile client writing
+        // N separate notifications/{} docs with the same type+forStaff in
+        // rapid succession — each one a brand new SMS. Combined with the
+        // public-API-key-write rule on /notifications (now locked down
+        // for server-only types but still open for coverage_request,
+        // urgent_announcement, etc.), this was a real cost-bomb vector.
+        //
+        // Cooldown: 60s per (recipient, type). Blocks rapid-fire spam but
+        // allows a legitimate retry 1+ minute later. sms_delivery_logs is
+        // the source of truth — checking it requires a single indexed
+        // query. forceDeliver: true bypasses the cooldown (for genuine
+        // urgent_announcements that need to override the throttle).
+        if (notif.forceDeliver !== true) {
+            try {
+                const cooldownMs = 60_000;
+                const since = new Date(Date.now() - cooldownMs);
+                const recentSnap = await db.collection("sms_delivery_logs")
+                    .where("forStaff", "==", forStaff)
+                    .where("type", "==", notif.type)
+                    .where("createdAt", ">", since)
+                    .limit(1)
+                    .get();
+                if (!recentSnap.empty) {
+                    logger.info(`dispatchSms: cooldown hit for ${forStaff}/${notif.type} — skipping (last sent <60s ago)`);
+                    return;
+                }
+            } catch (e) {
+                // Missing index — log and proceed. Better to send a few
+                // extras than to silently drop everything if the cooldown
+                // index hasn't built yet.
+                logger.warn(`dispatchSms cooldown query failed (proceeding):`, e?.message);
+            }
         }
 
         // Load staff + global settings.
@@ -833,6 +895,40 @@ exports.sendScheduledChatMessages = onSchedule(
             if (!chatId || !createdBy || !payload || !payload.type) {
                 // Malformed doc — mark error so it doesn't retry forever.
                 await sDoc.ref.update({ status: "error", error: "missing fields", deliveredAt: FieldValue.serverTimestamp() }).catch(() => {});
+                continue;
+            }
+
+            // 2026-05-24 audit fix — at-least-once duplicate-delivery guard.
+            //
+            // Without this: the function flipped status to 'sent' only AFTER
+            // appending the message, denormalizing the chat preview, AND
+            // fanning out N notifications. If the function instance crashed
+            // / timed out / got cut at a deploy boundary anywhere in the
+            // middle, the doc kept status='pending' and the next tick re-
+            // ran it from the start — duplicate bubble in the thread,
+            // duplicate FCM push to every recipient.
+            //
+            // CAS-style claim: transactionally flip status 'pending' →
+            // 'delivering' BEFORE doing any side-effects. If another
+            // instance got here first, the CAS fails (status is no
+            // longer 'pending') and we skip the doc.
+            try {
+                const claimed = await db.runTransaction(async (txn) => {
+                    const fresh = await txn.get(sDoc.ref);
+                    if (!fresh.exists) return false;
+                    if ((fresh.data() || {}).status !== "pending") return false;
+                    txn.update(sDoc.ref, {
+                        status: "delivering",
+                        claimedAt: FieldValue.serverTimestamp(),
+                    });
+                    return true;
+                });
+                if (!claimed) {
+                    logger.info(`scheduled ${sDoc.id} already claimed/sent — skipping`);
+                    continue;
+                }
+            } catch (e) {
+                logger.warn(`scheduled ${sDoc.id} claim failed:`, e?.message);
                 continue;
             }
 
