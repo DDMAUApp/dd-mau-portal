@@ -5706,16 +5706,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 </div>
                             </div>
 
-                            {/* Multi-vendor freshness banner — replaces the
-                                old "Sysco login failed / scraper stale / live
-                                prices" indicator (2026-05-16). Same banner
-                                component used on the Pricing tab so the
-                                Inventory view and Pricing view stay
-                                consistent. One row per vendor; most-recent
-                                of (scraper, CSV/PDF import) per vendor wins. */}
-                            <PricesFreshnessBanner
-                                livePrices={livePrices}
-                                lastVendorImport={lastVendorImport}
+                            {/* Recent orders — replaced the Prices-freshness
+                                banner here on 2026-05-23. Andrew: surfaces
+                                the last 5 saved orders right above the cart
+                                with a "Send to cart" button so admins can
+                                re-use a past order as the starting point
+                                for today's order (then edit/add as needed).
+                                Replaces, not merges — see RecentOrdersBar
+                                comment block for the why. */}
+                            <RecentOrdersBar
+                                storeLocation={storeLocation}
+                                setInventory={setInventory}
+                                currentInventory={inventory}
                                 language={language}
                             />
 
@@ -8405,98 +8407,165 @@ function SkipOtherInput({ onSubmit, isEs }) {
         // (imported by App.jsx). Duplicate definitions removed to save ~490 lines.
 
 // ─────────────────────────────────────────────────────────────────
-// PricesFreshnessBanner — replaces the old Sysco-only "scrape failed"
-// banner with a multi-vendor freshness summary. One row per vendor:
-//   Sysco     · Updated May 14 · 2d ago    🟢
-//   US Foods  · Updated May 8  · 8d ago    🟡
-//   Costco    · Updated May 16 · today     🟢
+// RecentOrdersBar — sits where the old PricesFreshnessBanner did,
+// at the top of the inventory cart view. Andrew 2026-05-23: the
+// freshness banner wasn't getting much use; the real workflow ask
+// was "show me my last few orders and let me re-add one to the
+// cart so I can edit + resend."
 //
-// Latest-of-two timestamp per vendor:
-//   • livePrices[vendor].lastScraped   — server-side scraper
-//   • lastVendorImport[vendor].dateIso  — manual CSV/PDF import
-// Whichever is newer determines the displayed date.
+// Each row shows ONE past order (from inventoryHistory_<location>):
+//   May 22 · 14 items · qty 47    [↩ Send to cart]
 //
-// Color thresholds:
-//   ≤ 7d  → green (fresh enough for menu decisions)
-//   ≤ 30d → amber (might need a refresh before quoting catering)
-//   > 30d → red   (stale; price decisions should pull a new export)
-//   never → gray  (no data yet)
+// Clicking "Send to cart" copies that order's counts into the
+// current cart (state + Firestore). If the cart already has items,
+// asks for confirmation before overwriting. Manual additions on
+// top of the restored order are encouraged — admin can adjust qtys
+// or add brand-new items before sending the order back out.
+//
+// Why we REPLACE rather than additively merge: the typical use case
+// is "make a copy of last week's order and tweak it," not "stack
+// last week on top of what I already have." Merging summed-qty
+// items would be confusing (e.g., 10 + 10 → 20 isn't always what
+// you want); REPLACING gives a clean baseline to edit from.
 // ─────────────────────────────────────────────────────────────────
-const FRESHNESS_VENDORS = [
-    { key: 'sysco',    label: 'Sysco',    accent: 'border-l-blue-500' },
-    { key: 'usfoods',  label: 'US Foods', accent: 'border-l-orange-500' },
-    { key: 'costco',   label: 'Costco',   accent: 'border-l-red-500' },
-];
-function PricesFreshnessBanner({ livePrices, lastVendorImport, language }) {
+function RecentOrdersBar({ storeLocation, setInventory, currentInventory, language }) {
     const isEs = language === 'es';
-    const now = Date.now();
+    const [history, setHistory] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [restoringId, setRestoringId] = useState(null);
 
-    function vendorRow(v) {
-        const scraped = livePrices?.[v.key]?.lastScraped
-            ? new Date(livePrices[v.key].lastScraped).getTime()
-            : 0;
-        const imported = lastVendorImport?.[v.key]?.dateIso
-            ? new Date(lastVendorImport[v.key].dateIso).getTime()
-            : 0;
-        const best = Math.max(scraped, imported);
-        const source = best === 0
-            ? null
-            : best === scraped && scraped > imported
-                ? (isEs ? 'scraper' : 'scraper')
-                : (isEs ? 'CSV/PDF' : 'CSV/PDF');
-        if (best === 0) {
-            return { v, label: isEs ? 'Sin datos' : 'Never imported', tone: 'gray', source: null, ageDays: null };
+    useEffect(() => {
+        if (!storeLocation) return;
+        let cancelled = false;
+        setLoading(true);
+        const colRef = collection(db, "inventoryHistory_" + storeLocation);
+        // Doc ids look like YYYY-MM-DD_HHMMSS so __name__ desc sorts
+        // newest-first. We only need the most recent 5 — admins re-order
+        // from the last week or two, not from months ago. Older history
+        // stays accessible from the standalone InventoryHistory view.
+        getDocs(query(colRef, orderBy('__name__', 'desc'), limit(5)))
+            .then(snap => {
+                if (cancelled) return;
+                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setLoading(false);
+            })
+            .catch(err => {
+                if (cancelled) return;
+                console.warn('RecentOrdersBar load failed:', err);
+                setLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [storeLocation]);
+
+    async function handleRestore(entry) {
+        const restored = {};
+        for (const [id, qty] of Object.entries(entry.counts || {})) {
+            const n = Number(qty);
+            if (n > 0) restored[id] = n;
         }
-        const ageMs = now - best;
-        const ageDays = Math.floor(ageMs / 86400_000);
-        const tone = ageDays <= 7 ? 'green' : ageDays <= 30 ? 'amber' : 'red';
-        const d = new Date(best);
-        const label = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: '2-digit' });
-        const ageLabel = ageDays === 0
-            ? (isEs ? 'hoy' : 'today')
-            : ageDays === 1
-            ? (isEs ? 'hace 1d' : '1d ago')
-            : (isEs ? `hace ${ageDays}d` : `${ageDays}d ago`);
-        return { v, label, ageLabel, tone, source, ageDays };
+        const restoredCount = Object.keys(restored).length;
+        if (restoredCount === 0) {
+            window.alert(isEs ? 'Este pedido no tiene items.' : 'This order is empty.');
+            return;
+        }
+        const currentCount = Object.values(currentInventory || {})
+            .filter(q => Number(q) > 0).length;
+        if (currentCount > 0) {
+            const confirmed = window.confirm(isEs
+                ? `Reemplazar carrito actual (${currentCount} items) con ${restoredCount} items de este pedido?`
+                : `Replace current cart (${currentCount} items) with ${restoredCount} items from this order?`);
+            if (!confirmed) return;
+        }
+        setRestoringId(entry.id);
+        try {
+            setInventory(restored);
+            // Persist so a page refresh keeps the restored cart.
+            await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
+                counts: restored,
+                date: new Date().toISOString(),
+            });
+        } catch (e) {
+            console.warn('RecentOrdersBar restore persist failed:', e);
+            // Non-fatal — local state already updated; the next save
+            // (when the admin adds/edits items) will sync to Firestore.
+        } finally {
+            setRestoringId(null);
+        }
     }
-    const rows = FRESHNESS_VENDORS.map(vendorRow);
 
-    const toneClasses = {
-        green: 'bg-green-50 text-green-800 border-green-200',
-        amber: 'bg-amber-50 text-amber-800 border-amber-200',
-        red:   'bg-red-50 text-red-800 border-red-200',
-        gray:  'bg-gray-50 text-gray-500 border-gray-200',
-    };
-    const dot = {
-        green: 'bg-green-500',
-        amber: 'bg-amber-500',
-        red:   'bg-red-500',
-        gray:  'bg-gray-300',
-    };
+    if (loading) {
+        return (
+            <div className="rounded-xl border border-gray-200 bg-white p-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5 px-1">
+                    {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
+                </div>
+                <div className="text-[11px] text-gray-400 italic px-2 py-3">
+                    {isEs ? 'Cargando…' : 'Loading…'}
+                </div>
+            </div>
+        );
+    }
+    // Filter to entries that actually have items
+    const rows = history
+        .map(h => {
+            const filledItems = Object.entries(h.counts || {})
+                .filter(([_, q]) => Number(q) > 0);
+            return { h, itemCount: filledItems.length };
+        })
+        .filter(r => r.itemCount > 0);
+
+    if (rows.length === 0) {
+        return (
+            <div className="rounded-xl border border-gray-200 bg-white p-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5 px-1">
+                    {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
+                </div>
+                <div className="text-[11px] text-gray-400 italic px-2 py-3">
+                    {isEs
+                        ? 'Sin pedidos anteriores aún. Guarda un pedido y aparecerá aquí.'
+                        : 'No past orders yet. Save one and it\'ll appear here.'}
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="rounded-xl border border-gray-200 bg-white p-2">
             <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5 px-1">
-                {isEs ? '💲 Frescura de precios' : '💲 Prices freshness'}
+                {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-                {rows.map(r => (
-                    <div key={r.v.key}
-                        className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border-l-4 ${r.v.accent} ${toneClasses[r.tone]}`}>
-                        <span className={`w-2 h-2 rounded-full ${dot[r.tone]} shrink-0`} />
-                        <div className="min-w-0 flex-1">
-                            <div className="text-[12px] font-black truncate">{r.v.label}</div>
-                            {r.tone === 'gray' ? (
-                                <div className="text-[10px] italic">{r.label}</div>
-                            ) : (
-                                <div className="text-[10px] truncate">
-                                    {isEs ? 'Actualizado' : 'Updated'} {r.label} · {r.ageLabel}
-                                    {r.source && <span className="ml-1 opacity-60">({r.source})</span>}
+            <div className="space-y-1.5">
+                {rows.map(({ h, itemCount }) => {
+                    const totalQty = Object.values(h.counts || {})
+                        .reduce((s, q) => s + (Number(q) || 0), 0);
+                    const iso = h.date || (h.id ? h.id.slice(0, 10) : null);
+                    const d = iso ? new Date(iso) : null;
+                    const dateLabel = (d && !isNaN(d.getTime()))
+                        ? d.toLocaleDateString(isEs ? 'es' : 'en',
+                            { month: 'short', day: 'numeric', year: '2-digit' })
+                        : (h.id || '—');
+                    const isRestoring = restoringId === h.id;
+                    return (
+                        <div key={h.id}
+                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-200">
+                            <div className="min-w-0 flex-1">
+                                <div className="text-[12px] font-black text-gray-900 truncate">
+                                    {dateLabel}
                                 </div>
-                            )}
+                                <div className="text-[10px] text-gray-600 truncate">
+                                    {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
+                                </div>
+                            </div>
+                            <button onClick={() => handleRestore(h)}
+                                disabled={isRestoring}
+                                className="px-2.5 py-1 rounded-md bg-orange-600 text-white text-[11px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
+                                {isRestoring
+                                    ? (isEs ? '…' : '…')
+                                    : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
+                            </button>
                         </div>
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
     );
