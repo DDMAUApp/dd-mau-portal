@@ -35,7 +35,7 @@ import { MENU_DATA } from '../data/menu';
 import { subscribeMenuOverrides, applyMenuOverrides } from '../data/menuOverrides';
 import { urlIsVideo } from '../data/menuImageUpload';
 import {
-    subscribeTvConfig, MODES, resolveActiveDaypart,
+    subscribeTvConfig, MODES, resolveActiveOrLastDaypart,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
 } from '../data/tvConfigs';
 
@@ -74,6 +74,10 @@ import {
 //     reads/writes silently fail; behavior degrades to pre-fix.
 
 const CACHE_PREFIX = 'ddmau:tv_cache:';
+// 7 days — old enough to cover a long weekend reboot, young enough
+// that a forgotten Pi pulled out of storage doesn't paint a customer-
+// facing screen with last spring's menu.
+const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 function loadJSON(key) {
     try {
@@ -87,53 +91,146 @@ function saveJSON(key, value) {
     catch { /* quota or disabled — ignore */ }
 }
 
+// 2026-05-23 hardening: cached payloads now wrap as
+//   { cachedAt: ms, payload: <original> }
+// so we can reject anything older than CACHE_MAX_AGE_MS at read time.
+// Back-compat: if a load returns an unwrapped value (older Pi that
+// already had cache from before this change), we return it as-is and
+// the next save rewraps it. After one good Firestore round-trip every
+// cache is in the new shape.
+function unwrapCache(raw) {
+    if (!raw) return null;
+    // Already-wrapped: has cachedAt + payload keys.
+    if (typeof raw === 'object' && raw !== null
+        && 'cachedAt' in raw && 'payload' in raw) {
+        const age = Date.now() - Number(raw.cachedAt || 0);
+        if (age > CACHE_MAX_AGE_MS) {
+            // Better to render the splash + a fresh Firestore round-trip
+            // than show stale prices in front of a customer.
+            return null;
+        }
+        return raw.payload;
+    }
+    // Pre-wrap legacy shape — accept once, gets rewrapped on next save.
+    return raw;
+}
+
+function wrapCache(payload) {
+    return { cachedAt: Date.now(), payload };
+}
+
 function loadCachedTvConfig(tvId) {
-    return loadJSON(CACHE_PREFIX + 'config:' + tvId);
+    return unwrapCache(loadJSON(CACHE_PREFIX + 'config:' + tvId));
 }
 function saveCachedTvConfig(tvId, cfg) {
     if (!cfg) return;
     // Firestore Timestamps survive JSON as {seconds, nanoseconds};
     // we never call toMillis() on them in this file's render path,
     // so a round-trip through JSON is safe.
-    saveJSON(CACHE_PREFIX + 'config:' + tvId, cfg);
+    saveJSON(CACHE_PREFIX + 'config:' + tvId, wrapCache(cfg));
 }
 
 function loadCachedOverrides(tvId) {
-    const arr = loadJSON(CACHE_PREFIX + 'overrides:' + tvId);
+    const arr = unwrapCache(loadJSON(CACHE_PREFIX + 'overrides:' + tvId));
     return new Map(Array.isArray(arr) ? arr : []);
 }
 function saveCachedOverrides(tvId, map) {
     if (!(map instanceof Map)) return;
-    saveJSON(CACHE_PREFIX + 'overrides:' + tvId, Array.from(map.entries()));
+    saveJSON(CACHE_PREFIX + 'overrides:' + tvId, wrapCache(Array.from(map.entries())));
 }
 
 function loadCachedSixed(tvId) {
-    const arr = loadJSON(CACHE_PREFIX + '86:' + tvId);
+    const arr = unwrapCache(loadJSON(CACHE_PREFIX + '86:' + tvId));
     return new Set(Array.isArray(arr) ? arr : []);
 }
 function saveCachedSixed(tvId, set) {
     if (!(set instanceof Set)) return;
-    saveJSON(CACHE_PREFIX + '86:' + tvId, Array.from(set));
+    saveJSON(CACHE_PREFIX + '86:' + tvId, wrapCache(Array.from(set)));
 }
 
 // ─── Error boundary ──────────────────────────────────────────────
 // Catches any render error in the menu tree and falls back to the
 // "we'll be right back" splash instead of letting Chromium show the
-// raw error overlay (or worse, a blank white viewport). Logs the
-// error to console for the next time admin VNCs into the Pi to
-// debug. componentDidCatch only fires for synchronous render errors;
-// async errors (failed image loads, etc.) don't trigger it, which
-// is fine — those don't blank the screen anyway.
+// raw error overlay (or worse, a blank white viewport).
+//
+// 2026-05-23 hardening: the original version logged to console only
+// and stayed on the splash FOREVER until a manager rebooted the Pi.
+// Andrew got bitten when a screen sat on "Display reloading" through
+// a lunch rush and no one noticed. Three additions:
+//
+//   1. Write the crash to /tv_crash_logs/{tvId}_{ts} so the admin
+//      dashboard can surface a red badge on that TV's card.
+//   2. After 30s on the splash, force a full page reload — usually
+//      a transient bad snapshot (e.g., a half-written tv_config) and
+//      the second render succeeds. Bounded by maxAutoReloads so we
+//      don't crash-reload-crash-reload forever during a real bug.
+//   3. componentWillUnmount clears the recover timer so we don't
+//      leak it during normal unmount paths (parent route change etc).
+//
+// componentDidCatch only fires for synchronous render errors; async
+// errors (failed image loads, etc.) don't trigger it, which is fine
+// — those don't blank the screen anyway.
 class TvErrorBoundary extends Component {
     constructor(props) {
         super(props);
         this.state = { hasError: false, error: null };
+        this.recoverTimer = null;
+        // Stored on window so it survives reloads — otherwise a real
+        // bug would crash-loop forever (each reload resets state).
+        // After 3 reloads in 10 min we stop reloading and just sit on
+        // the splash; manager intervention required at that point.
+        this.maxAutoReloads = 3;
     }
     static getDerivedStateFromError(error) {
         return { hasError: true, error };
     }
     componentDidCatch(error, info) {
         console.error('MenuDisplay render crashed:', error, info);
+        // Best-effort Firestore log — wrapped in try so a Firestore
+        // failure doesn't itself crash the boundary.
+        try {
+            const tvId = this.props.tvId || 'unknown';
+            const docId = `${tvId}_${Date.now()}`;
+            setDoc(doc(db, 'tv_crash_logs', docId), {
+                tvId,
+                message: String(error?.message || error).slice(0, 500),
+                stack: String(error?.stack || '').slice(0, 2000),
+                componentStack: String(info?.componentStack || '').slice(0, 2000),
+                userAgent: typeof navigator !== 'undefined'
+                    ? navigator.userAgent.slice(0, 200) : null,
+                url: typeof location !== 'undefined' ? location.href.slice(0, 300) : null,
+                crashedAt: serverTimestamp(),
+            }).catch(err => console.warn('crash log write failed:', err));
+        } catch (e) {
+            console.warn('crash log try-block failed:', e);
+        }
+        // Auto-recover: schedule a reload in 30s. Track reload count in
+        // sessionStorage with a 10-min rolling window so a real bug
+        // doesn't pin us in a reload loop.
+        try {
+            const RELOAD_KEY = 'ddmau:tv_crash_reloads';
+            const now = Date.now();
+            const raw = sessionStorage.getItem(RELOAD_KEY);
+            const arr = raw ? JSON.parse(raw) : [];
+            const recent = arr.filter(t => now - t < 10 * 60 * 1000);
+            if (recent.length < this.maxAutoReloads) {
+                recent.push(now);
+                sessionStorage.setItem(RELOAD_KEY, JSON.stringify(recent));
+                this.recoverTimer = setTimeout(() => {
+                    if (typeof location !== 'undefined') location.reload();
+                }, 30_000);
+            } else {
+                console.warn(`TvErrorBoundary: max auto-reloads (${this.maxAutoReloads}) hit in 10 min, sitting on splash`);
+            }
+        } catch (e) {
+            console.warn('auto-recover scheduling failed:', e);
+        }
+    }
+    componentWillUnmount() {
+        if (this.recoverTimer) {
+            clearTimeout(this.recoverTimer);
+            this.recoverTimer = null;
+        }
     }
     render() {
         if (this.state.hasError) return <ReconnectingSplash subtitle="Display reloading" />;
@@ -230,8 +327,15 @@ function MenuDisplayInner({ tvId = 'webster' }) {
     // hitZones / imageRotateSeconds instead of the top-level fields.
     // The `now` clock state already ticks every 30s so we'll switch
     // dayparts within at most 30s of the boundary.
+    //
+    // 2026-05-23: switched from resolveActiveDaypart to the "OrLast"
+    // variant. The strict version returned null in any gap between
+    // dayparts (e.g. Breakfast 7-11 + Lunch 12-15 → 11:00-12:00
+    // returned null → blank screen if no top-level imageUrls fallback
+    // was set). The new helper falls back to the most-recent past
+    // daypart's content. Marked with _isFallback for future UI hints.
     const activeDaypart = useMemo(
-        () => resolveActiveDaypart(tvConfig?.dayparts, now),
+        () => resolveActiveOrLastDaypart(tvConfig?.dayparts, now),
         [tvConfig?.dayparts, now]);
     const imageUrls = Array.isArray(activeDaypart?.imageUrls)
         ? activeDaypart.imageUrls
@@ -471,7 +575,10 @@ function MenuDisplayInner({ tvId = 'webster' }) {
 // raw error in a restaurant.
 export default function MenuDisplay(props) {
     return (
-        <TvErrorBoundary>
+        // tvId passed so the boundary can tag the Firestore crash log
+        // with which TV blew up — admin dashboard needs this to badge
+        // the right device card.
+        <TvErrorBoundary tvId={props.tvId}>
             <MenuDisplayInner {...props} />
         </TvErrorBoundary>
     );

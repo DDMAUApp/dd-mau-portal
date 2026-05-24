@@ -11,7 +11,7 @@ import {
     subscribeTvConfigs, saveTvConfig, saveTvConfigDraft, deleteTvConfig,
     LAYOUTS, MODES, DEFAULT_LAYOUT, DEFAULT_MODE,
     DEFAULT_ROTATE_SECONDS, DEFAULT_IMAGE_ROTATE_SECONDS,
-    makeTvId,
+    makeTvId, findDaypartGaps,
 } from '../data/tvConfigs';
 import { uploadMenuFile } from '../data/menuImageUpload';
 import { generatePromo } from '../data/aiGeneratePromo';
@@ -1227,6 +1227,51 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                                         slugPrefix={tvId || makeTvId(label, location)}
                                         language={tx('en', 'es') === 'es' ? 'es' : 'en'} />
                                 </Suspense>
+                                {/* Gap warning — 2026-05-23. If dayparts
+                                    don't cover all 24 hours, MenuDisplay's
+                                    new resolveActiveOrLastDaypart falls
+                                    back to the most-recent past daypart so
+                                    the TV doesn't blank — but admin still
+                                    wants to know they have a coverage gap
+                                    so they can decide if that's intentional
+                                    (overnight = closed) or a mistake. */}
+                                {(() => {
+                                    if (!dayparts || dayparts.length === 0) return null;
+                                    const gaps = findDaypartGaps(dayparts);
+                                    // Don't show a warning for fully
+                                    // uncovered (admin probably hasn't
+                                    // added any dayparts yet) — only when
+                                    // SOME hours are covered but gaps exist.
+                                    if (gaps.length === 0 || gaps.length >= 48) return null;
+                                    const fmt = (h) => {
+                                        const hh = Math.floor(h);
+                                        const mm = Math.round((h - hh) * 60);
+                                        return `${hh.toString().padStart(2,'0')}:${mm.toString().padStart(2,'0')}`;
+                                    };
+                                    return (
+                                        <div className="mt-2 p-2 rounded-lg border border-amber-300 bg-amber-50 text-[11px] text-amber-900">
+                                            <div className="font-bold mb-1">
+                                                ⚠️ {tx(
+                                                    `Schedule gap${gaps.length > 1 ? 's' : ''} detected:`,
+                                                    `Hueco${gaps.length > 1 ? 's' : ''} en horario:`,
+                                                )}
+                                            </div>
+                                            <ul className="list-disc pl-4 space-y-0.5">
+                                                {gaps.slice(0, 5).map((g, i) => (
+                                                    <li key={i}>
+                                                        {fmt(g.startHour)}–{fmt(g.endHour)}
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                            <p className="mt-1 text-amber-800">
+                                                {tx(
+                                                    'During gaps, the TV will keep showing the previous daypart\'s content (won\'t blank). Add a daypart to control what shows then.',
+                                                    'Durante huecos, la TV seguirá mostrando el contenido anterior (no se pondrá en blanco).',
+                                                )}
+                                            </p>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </>
                     ) : (

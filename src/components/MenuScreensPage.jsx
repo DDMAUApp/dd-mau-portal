@@ -33,6 +33,8 @@
 // /tv_configs data model is reused as-is.
 
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
+import { db } from '../firebase';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import {
     subscribeTvConfigs, subscribeTvHeartbeats, MODES,
     publishTvConfigDraft, discardTvConfigDraft,
@@ -118,6 +120,44 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     // the cards roll forward smoothly without needing to reload.
     const [heartbeats, setHeartbeats] = useState({});
     useEffect(() => subscribeTvHeartbeats(setHeartbeats), []);
+
+    // Recent crashes by tvId. 2026-05-23: TvErrorBoundary now logs
+    // render crashes to /tv_crash_logs/{tvId_ts}. We tally crashes
+    // from the last 24h per tvId so the card UI can show a red
+    // "⚠️ N crashes" badge — early warning that a TV is in a bad
+    // state even if heartbeat is green (since the boundary auto-
+    // reloads, heartbeat alone doesn't catch it).
+    const [crashesByTv, setCrashesByTv] = useState({});
+    useEffect(() => {
+        const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+        // Firestore doesn't let us filter on serverTimestamp() === null
+        // efficiently; we read all crash logs and filter client-side.
+        // Volume is tiny (most days = 0 crashes; bad day = handful).
+        const q = query(collection(db, 'tv_crash_logs'));
+        const unsub = onSnapshot(q, (snap) => {
+            const counts = {};
+            const latestByTv = {};
+            for (const d of snap.docs) {
+                const data = d.data();
+                const ms = data.crashedAt?.toMillis ? data.crashedAt.toMillis()
+                    : data.crashedAt?.seconds ? data.crashedAt.seconds * 1000
+                    : 0;
+                if (!ms || ms < cutoffMs) continue;
+                const tvId = data.tvId || 'unknown';
+                counts[tvId] = (counts[tvId] || 0) + 1;
+                if (!latestByTv[tvId] || latestByTv[tvId] < ms) {
+                    latestByTv[tvId] = ms;
+                }
+            }
+            const out = {};
+            for (const tvId of Object.keys(counts)) {
+                out[tvId] = { count: counts[tvId], latestMs: latestByTv[tvId] };
+            }
+            setCrashesByTv(out);
+        }, (err) => console.warn('tv_crash_logs subscription failed:', err));
+        return unsub;
+    }, []);
+
     const [nowTick, setNowTick] = useState(() => Date.now());
     useEffect(() => {
         const id = setInterval(() => setNowTick(Date.now()), 30_000);
@@ -169,6 +209,7 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                 updatedAt: c.updatedAt,
                 updatedBy: c.updatedBy,
                 heartbeat: heartbeats[c.tvId] || null,
+                recentCrashes: crashesByTv[c.tvId] || null,
                 isDefault: false,
                 isGhost: false,
                 cfg: c,
@@ -187,6 +228,7 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                     layout: 'dense',
                     updatedAt: null,
                     heartbeat: heartbeats[loc] || null,
+                    recentCrashes: crashesByTv[loc] || null,
                     isDefault: true,
                     isGhost: false,
                 });
@@ -207,6 +249,7 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
                 layout: 'dense',
                 updatedAt: null,
                 heartbeat: hb,
+                recentCrashes: crashesByTv[tvId] || null,
                 isDefault: false,
                 isGhost: true,
             });
@@ -215,7 +258,7 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     // nowTick is a dep so the memo re-evaluates every 30s — keeps the
     // health-strip counters and the "Xm ago" labels fresh without
     // needing a separate clock prop drilled through every card.
-    }, [configs, heartbeats, nowTick]);
+    }, [configs, heartbeats, crashesByTv, nowTick]);
 
     const filteredScreens = useMemo(() => {
         if (locFilter === 'all') return screens;
@@ -603,6 +646,21 @@ function ScreenCard({ screen, baseUrl, isEs, staffName, onEdit, onShowHistory })
                     <span className={`w-1.5 h-1.5 rounded-full ${statusPill.dot}`} />
                     {statusPill.label}
                 </span>
+                {/* Crash badge — top-LEFT corner. Shows when this TV's
+                    TvErrorBoundary has caught a render crash in the
+                    last 24h. The Pi auto-reloads after 30s so heartbeat
+                    can stay green; this is the only surface that tells
+                    admin a screen is unstable. Pulse animation draws
+                    the eye even at a glance across a 10-card grid. */}
+                {screen.recentCrashes?.count > 0 && (
+                    <span className="absolute top-2 left-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-red-300 bg-red-50 text-red-800 text-[10px] font-black uppercase tracking-wider shadow-sm animate-pulse"
+                        title={tx(
+                            `${screen.recentCrashes.count} render crash(es) in last 24h — most recent ${relativeLabel({ toMillis: () => screen.recentCrashes.latestMs }, isEs)}. Admin → Menu Screens → click "Health" later to see stack traces.`,
+                            `${screen.recentCrashes.count} caída(s) en últimas 24h`,
+                        )}>
+                        ⚠️ {screen.recentCrashes.count}× {tx('crash', 'caída')}
+                    </span>
+                )}
             </div>
 
             {/* Card body — label, location chip, mode badge, last

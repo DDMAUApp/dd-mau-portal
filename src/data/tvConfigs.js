@@ -198,6 +198,89 @@ export function resolveActiveDaypart(dayparts, now = new Date()) {
     return null;
 }
 
+// 2026-05-23: gap-tolerant variant of resolveActiveDaypart. Used by
+// MenuDisplay so a daypart gap (e.g. Breakfast 7-11, Lunch 12-15
+// — what happens between 11 and 12?) falls back to the most-recent
+// daypart's content instead of blanking the screen.
+//
+// Resolution order:
+//   1. If a daypart covers `now`, return it (normal case).
+//   2. Otherwise, of all dayparts that END before `now`, return the
+//      one whose end-hour is closest to `now` (the one we just left).
+//   3. If none have ended yet today, pick the one that ends LAST today
+//      (yesterday's last daypart — better than nothing).
+//   4. Returns null only if the dayparts list is empty / invalid.
+//
+// The fallback's `_isFallback: true` flag lets the caller decide whether
+// to apply a subtle indicator ("schedule gap — showing last hour's
+// content"); MVP just renders it transparently.
+export function resolveActiveOrLastDaypart(dayparts, now = new Date()) {
+    const active = resolveActiveDaypart(dayparts, now);
+    if (active) return active;
+    if (!Array.isArray(dayparts) || dayparts.length === 0) return null;
+    const h = now.getHours() + now.getMinutes() / 60;
+    let best = null;
+    let bestGap = Infinity;
+    for (const dp of dayparts) {
+        const e = Number(dp?.endHour);
+        if (!Number.isFinite(e)) continue;
+        // Distance backwards from `now` to this daypart's end. If the
+        // daypart hasn't ended yet today (e > h), we pretend it ended
+        // yesterday at the same hour (gap = 24 - e + h) so today's
+        // morning shows last night's last-active daypart content.
+        const gap = h >= e ? h - e : (24 - e + h);
+        if (gap < bestGap) {
+            bestGap = gap;
+            best = dp;
+        }
+    }
+    return best ? { ...best, _isFallback: true, _gapHours: bestGap } : null;
+}
+
+// Validation helper for the editor — returns a list of {startHour,
+// endHour} gap-spans the user should be warned about. Each gap is a
+// stretch of clock time NOT covered by any daypart. Wraps across
+// midnight if needed. Used by TvConfigsEditor to surface
+// "11:00–12:00 has no daypart" warnings inline.
+export function findDaypartGaps(dayparts) {
+    if (!Array.isArray(dayparts) || dayparts.length === 0) return [];
+    // Build a 0-24 number-line of which hours are covered. 0.5-hour
+    // resolution is fine for warning purposes (we won't surface a
+    // 6-minute gap; admins set times in whole/half hours).
+    const STEP = 0.5;
+    const covered = new Array(Math.round(24 / STEP)).fill(false);
+    const idxFor = (h) => {
+        const i = Math.floor(((h % 24 + 24) % 24) / STEP);
+        return Math.min(Math.max(i, 0), covered.length - 1);
+    };
+    for (const dp of dayparts) {
+        const s = Number(dp?.startHour);
+        const e = Number(dp?.endHour);
+        if (!Number.isFinite(s) || !Number.isFinite(e)) continue;
+        if (s === e) continue;
+        if (s < e) {
+            for (let h = s; h < e; h += STEP) covered[idxFor(h)] = true;
+        } else {
+            // Wraps midnight
+            for (let h = s; h < 24; h += STEP) covered[idxFor(h)] = true;
+            for (let h = 0; h < e; h += STEP) covered[idxFor(h)] = true;
+        }
+    }
+    // Walk the line and emit gap spans. Skip the trivial all-covered
+    // and all-uncovered cases.
+    const gaps = [];
+    let gapStart = null;
+    for (let i = 0; i < covered.length; i++) {
+        if (!covered[i] && gapStart === null) gapStart = i * STEP;
+        else if (covered[i] && gapStart !== null) {
+            gaps.push({ startHour: gapStart, endHour: i * STEP });
+            gapStart = null;
+        }
+    }
+    if (gapStart !== null) gaps.push({ startHour: gapStart, endHour: 24 });
+    return gaps;
+}
+
 // URL-safe slug for a TV id. Same kebab-case convention as the
 // menu item slugs.
 export function makeTvId(label, location) {
