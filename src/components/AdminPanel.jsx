@@ -1692,21 +1692,24 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 // concurrent admin edit is in flight (same fix as bulk-tag).
                 let latest = null;
                 setStaffList(prev => {
-                    // Resolve scheduleHome from the edit state. If location
-                    // isn't 'both' we mirror the location so getScheduleHome
-                    // returns the right value even if a stale scheduleHome
-                    // value was hanging around on the record.
-                    const finalLocation = editLocation || s.location || "webster";
-                    const finalScheduleHome = finalLocation === 'both'
-                        ? (editScheduleHome || 'both')
-                        : finalLocation;
-                    // Birthday: only persist MM-DD format. Otherwise leave the
-                    // existing value alone (don't clobber with empty if the
-                    // edit form didn't touch it).
-                    const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
-                        ? editBirthday
-                        : (editBirthday === '' ? '' : (s.birthday || ''));
-                    latest = prev.map(s => s.id === id ? { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages } : s);
+                    // 2026-05-24 audit fix: the finalLocation/finalBirthday
+                    // computation used to live OUT here referencing a bare
+                    // `s` that didn't exist in this scope — a guaranteed
+                    // ReferenceError if editLocation was ever empty (or
+                    // editBirthday was non-empty but malformed). Moving the
+                    // computation INSIDE the map() callback so `s` is the
+                    // matched record and the fallback works as intended.
+                    latest = prev.map(s => {
+                        if (s.id !== id) return s;
+                        const finalLocation = editLocation || s.location || "webster";
+                        const finalScheduleHome = finalLocation === 'both'
+                            ? (editScheduleHome || 'both')
+                            : finalLocation;
+                        const finalBirthday = /^\d{2}-\d{2}$/.test(editBirthday)
+                            ? editBirthday
+                            : (editBirthday === '' ? '' : (s.birthday || ''));
+                        return { ...s, pin: editPin, role: editRole, location: finalLocation, scheduleHome: finalScheduleHome, opsAccess: editOpsAccess, recipesAccess: editRecipesAccess, viewLabor: editViewLabor, shiftLead: editShiftLead, isMinor: editIsMinor, hideFromSchedule: editHideFromSchedule, scheduleSide: editScheduleSide, targetHours: Number(editTargetHours) || 0, birthday: finalBirthday, canEditScheduleFOH: editCanEditScheduleFOH, canEditScheduleBOH: editCanEditScheduleBOH, preferredLanguage: editPreferredLanguage, homeView: editHomeView, hiddenPages: editHiddenPages };
+                    });
                     return latest;
                 });
                 if (latest) await saveStaffToFirestore(latest);

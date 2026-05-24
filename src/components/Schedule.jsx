@@ -2585,30 +2585,33 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             // ~50 staff per side, so a plain loop is fine. Each
             // write is independent; one failure doesn't block the
             // rest because we await per-write and catch per-iteration.
+            //
+            // 2026-05-24 audit fix: was writing {en, es} OBJECTS to
+            // notif.title/body directly. The dispatchNotification Cloud
+            // Function reads `notif.title || "DD Mau"` and stuffs the
+            // object into FCM's `data.title` — FCM rejects with
+            // `messaging/invalid-argument` per token and the CF token-
+            // pruner deletes every recipient's tokens. Likely cause of
+            // "push isn't working for some staff" reports. Route through
+            // notify() instead — it calls resolveText() per recipient.
             for (const t of targets) {
-                try {
-                    await addDoc(collection(db, 'notifications'), {
-                        forStaff: t.name,
-                        type: 'shift_open',
-                        title: {
-                            en: `🙋 ${sideName} shift up for grabs · ${dayLabel} ${range}`,
-                            es: `🙋 Turno ${sideName} disponible · ${dayLabel} ${range}`,
-                        },
-                        body: {
-                            en: `Open in Schedule and tap "I want this" to add yourself to the pickup queue.`,
-                            es: `Abre Horario y toca "Lo quiero" para apuntarte.`,
-                        },
-                        createdAt: serverTimestamp(),
-                        read: false,
-                        location: need.location,
-                        side: need.side,
-                    });
-                } catch (e) {
-                    // Per-recipient failure is non-fatal; log + keep
-                    // going so a single bad-shape doc doesn't kill
-                    // the broadcast.
-                    console.warn('broadcastUpForGrabs notify failed for', t.name, e);
-                }
+                await notify(t.name, 'shift_open',
+                    {
+                        en: `🙋 ${sideName} shift up for grabs · ${dayLabel} ${range}`,
+                        es: `🙋 Turno ${sideName} disponible · ${dayLabel} ${range}`,
+                    },
+                    {
+                        en: `Open in Schedule and tap "I want this" to add yourself to the pickup queue.`,
+                        es: `Abre Horario y toca "Lo quiero" para apuntarte.`,
+                    },
+                    null,
+                    // allowSelf: targets[] is already filtered to exclude
+                    // the actor; setting allowSelf=true skips the redundant
+                    // self-skip inside notify(). tagSuffix=need.id collapses
+                    // OS notifications for the same up-for-grabs broadcast
+                    // (retries land as one bell, not many).
+                    { allowSelf: true, tagSuffix: need.id },
+                );
             }
         } catch (e) {
             console.warn('broadcastUpForGrabs failed:', e);
@@ -2763,6 +2766,13 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 filledStaff: arrayUnion(staffMember.name),
                 filledShiftIds: arrayUnion(shiftRef.id),
             });
+            // 2026-05-24 audit fix: these were referenced below as
+            // undefined symbols — the function would always throw
+            // ReferenceError after a successful fill, causing managers
+            // to retry → duplicate shift creation. Compute them now
+            // from the latest local snapshot of `need`.
+            const newFilledStaff   = [...(need.filledStaff   || []), staffMember.name];
+            const newFilledShiftIds = [...(need.filledShiftIds || []), shiftRef.id];
             // Auto-close when the slot reaches its target count — manager
             // is done. Otherwise keep modal open and bump fillingNeed
             // state so the progress chip reflects the new ratio.
@@ -2885,24 +2895,24 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         }
                         return false;
                     });
+                    // 2026-05-24 audit fix: was writing {en, es} OBJECTS as
+                    // title/body — same bug as broadcastUpForGrabs (FCM
+                    // rejects + Cloud Function prunes the recipient's
+                    // tokens). Route through notify() so each manager
+                    // gets text resolved to their preferredLanguage.
                     for (const t of targets) {
-                        await addDoc(collection(db, 'notifications'), {
-                            forStaff: t.name,
-                            type: 'shift_grabbed',
-                            title: {
+                        await notify(t.name, 'shift_grabbed',
+                            {
                                 en: `🙋 ${staffName} wants ${dayLabel} ${range}`,
                                 es: `🙋 ${staffName} quiere ${dayLabel} ${range}`,
                             },
-                            body: {
+                            {
                                 en: `Open ${(need.side || 'foh').toUpperCase()} slot — review pickup queue in Schedule.`,
                                 es: `Espacio ${(need.side || 'foh').toUpperCase()} abierto — revisa la lista en Horario.`,
                             },
-                            createdAt: serverTimestamp(),
-                            read: false,
-                            needId,
-                            location: need.location,
-                            side: need.side,
-                        });
+                            null,
+                            { allowSelf: true, tagSuffix: needId },
+                        );
                     }
                 } catch (e) {
                     console.warn('claim notify failed (non-fatal):', e);
