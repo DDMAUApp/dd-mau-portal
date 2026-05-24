@@ -609,12 +609,20 @@ export default function CateringOrder({ language, staffName }) {
                     takenBy: staffName,
                     createdAt: editingOrderId ? undefined : new Date().toISOString(),
                     updatedAt: new Date().toISOString(),
-                    status: "new"
+                    // 2026-05-24 audit fix: previously set status: "new"
+                    // unconditionally — meaning ANY edit (staff fixing
+                    // a typo) downgraded a manager-confirmed order back
+                    // to "new", silently losing the workflow position.
+                    // On create we still want status: "new"; on edit we
+                    // strip the field below so the existing live status
+                    // is preserved by the merge.
+                    status: "new",
                 };
                 try {
                     let savedId = editingOrderId;
                     if (editingOrderId) {
                         delete order.createdAt;
+                        delete order.status;   // see comment above — preserve manager-set status on edits
                         await setDoc(doc(db, "cateringOrders", editingOrderId), order, { merge: true });
                     } else {
                         const ref = await addDoc(collection(db, "cateringOrders"), order);

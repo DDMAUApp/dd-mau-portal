@@ -68,8 +68,15 @@ export async function getManagementRecipients() {
             const isOwner = s.id === 40 || s.id === 41;
             const roleManager = s.role && /manager|owner/i.test(s.role);
             if (!isOwner && !roleManager) continue;
-            if (seen.has(s.name)) continue;
-            seen.add(s.name);
+            // 2026-05-24 audit fix: was deduping by s.name — meaning two
+            // managers with the same first/last name silently lost one
+            // recipient. We tolerate duplicate names elsewhere (the PIN
+            // collision modal on HomePage exists for that exact case),
+            // so dedup by the unique staff id, falling back to name only
+            // when id is missing (legacy records pre-id-anchoring).
+            const dedupKey = s.id != null ? `id:${s.id}` : `name:${s.name}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
             recs.push(s);
         }
         return recs;
@@ -96,8 +103,10 @@ export async function getAdminRecipients() {
         for (const s of list) {
             if (!s || !s.name) continue;
             if (!(s.canViewOnboarding === true || s.id === 40 || s.id === 41)) continue;
-            if (seen.has(s.name)) continue;
-            seen.add(s.name);
+            // 2026-05-24 audit fix: dedup by id, see getManagementRecipients.
+            const dedupKey = s.id != null ? `id:${s.id}` : `name:${s.name}`;
+            if (seen.has(dedupKey)) continue;
+            seen.add(dedupKey);
             recs.push(s);
         }
         return recs;

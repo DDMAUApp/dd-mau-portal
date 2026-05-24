@@ -254,10 +254,21 @@ function useVersionCheck() {
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const savedVersion = useRef(null);
     useEffect(() => {
+        // 2026-05-24 audit fix:
+        //   1. Was polling unconditionally including while the tab is
+        //      hidden — wasted bandwidth + battery on phones in pockets.
+        //      Now gated on visibilityState === 'visible'.
+        //   2. No AbortController — a slow fetch on cellular could stack
+        //      with the next interval. Now cancels in-flight requests on
+        //      cleanup AND when the next check kicks in.
         let timer;
+        let currentController = null;
         async function check() {
+            if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+            try { currentController?.abort(); } catch {}
+            currentController = new AbortController();
             try {
-                const res = await fetch("/version.json?t=" + Date.now());
+                const res = await fetch("/version.json?t=" + Date.now(), { signal: currentController.signal });
                 if (!res.ok) return;
                 const data = await res.json();
                 if (savedVersion.current === null) {
@@ -265,11 +276,14 @@ function useVersionCheck() {
                 } else if (data.v !== savedVersion.current) {
                     setUpdateAvailable(true);
                 }
-            } catch (e) { /* ignore */ }
+            } catch (e) { /* ignore (aborts + transient network) */ }
         }
         check();
         timer = setInterval(check, 2 * 60 * 1000);
-        return () => clearInterval(timer);
+        return () => {
+            clearInterval(timer);
+            try { currentController?.abort(); } catch {}
+        };
     }, []);
     return updateAvailable;
 }
@@ -693,7 +707,13 @@ export default function App() {
                             try {
                                 new Notification(title, {
                                     body,
-                                    icon: "/icon-192.png",
+                                    // 2026-05-24 audit fix: /icon-192.png
+                                    // doesnt exist in public/. Was rendering
+                                    // a broken icon on the OS notification.
+                                    // Use the inline SVG that the FCM SW
+                                    // already serves to keep them visually
+                                    // consistent.
+                                    icon: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23255a37'/><text y='70' x='50' text-anchor='middle' font-size='60'>🍜</text></svg>",
                                     tag,
                                     renotify: false,
                                     silent: true,

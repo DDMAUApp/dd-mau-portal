@@ -3607,9 +3607,20 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         filters. Use case: "why did the egg count drop by 6 yesterday?" */}
                     {(() => {
                         // ── filters ──
+                        // 2026-05-24 audit fix: was using toISOString().slice(0,10)
+                        // which returns UTC. dateKey on each audit row is written
+                        // in Central time by Operations.jsx. After 6pm Central
+                        // (00:00 UTC) UTC-today is one day ahead of Central-today,
+                        // so the "today" filter returned ZERO rows — admins
+                        // thought no inventory edits happened that evening.
+                        // Build the keys in Central time to match storage.
                         const now = new Date();
-                        const todayKey = now.toISOString().slice(0, 10);
-                        const yestKey = new Date(now.getTime() - 86400_000).toISOString().slice(0, 10);
+                        const centralFmt = new Intl.DateTimeFormat('en-CA', {
+                            timeZone: 'America/Chicago',
+                            year: 'numeric', month: '2-digit', day: '2-digit',
+                        });
+                        const todayKey = centralFmt.format(now);
+                        const yestKey = centralFmt.format(new Date(now.getTime() - 86400_000));
                         const weekAgoMs = now.getTime() - 7 * 86400_000;
                         const searchNorm = invAuditSearch.trim().toLowerCase();
 

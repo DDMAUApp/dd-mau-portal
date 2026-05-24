@@ -121,9 +121,19 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
     // Field is `startDate` — string in 'YYYY-MM-DD' format, so lexical
     // comparison works as date comparison.
     useEffect(() => {
+        // 2026-05-24 audit fix: was using toISOString().slice(0,10)
+        // which renders UTC, but PTO startDate is stored in Central
+        // time (YYYY-MM-DD local). After 6pm Central (00:00 UTC) the
+        // cutoff drifts ±1 day depending on DST, causing PTO right at
+        // the 180-day boundary to flicker in and out of the
+        // subscription. Build the cutoff string from local date
+        // getters to match the stored field's timezone.
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - 180);
-        const cutoffStr = cutoff.toISOString().slice(0, 10);
+        const yyyy = cutoff.getFullYear();
+        const mm = String(cutoff.getMonth() + 1).padStart(2, '0');
+        const dd = String(cutoff.getDate()).padStart(2, '0');
+        const cutoffStr = `${yyyy}-${mm}-${dd}`;
         const q = query(
             collection(db, 'time_off'),
             where('startDate', '>=', cutoffStr),

@@ -344,6 +344,15 @@ export async function disableFcmPush(prevStaffName) {
     } catch (e) {
         console.warn("[FCM] deleteToken failed (non-fatal):", e?.message);
     }
+    // 2026-05-24 audit fix: clear the cached messaging singleton + SW
+    // cleanup flag so a subsequent enableFcmPush (e.g. the NEXT staff
+    // signing in on this shared iPad) gets a fresh Messaging instance
+    // and re-runs the legacy SW unregister walk. Without this, the
+    // module-level cache retained a reference to the now-deleted
+    // token's instance, and getToken would briefly serve a cached
+    // stale token under the new staff's record before re-minting.
+    messagingInstance = null;
+    _swCleanedUp = false;
     if (!prevStaffName) return;
     if (!deviceId) return; // nothing to clean up — we never registered
     try {

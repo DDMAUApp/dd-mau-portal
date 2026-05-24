@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useDeferredValue, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { escapeHtml as esc } from '../data/htmlEscape';
@@ -96,16 +96,31 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         return () => unsub();
     }, [storeLocation]);
 
+    // 2026-05-24 audit fix: was whole-doc setDoc (no merge) — every call
+    // rewrote the entire prepList_{location} doc from local state. Two
+    // cooks updating different stations at the same moment race-clobbered
+    // each other: second writer wiped first writer's count change. Same
+    // pattern fixed in Operations.jsx checklist writes (audit fix B).
+    // Now uses updateDoc + only writes fields explicitly passed; falls
+    // back to setDoc + merge when the doc doesn't exist yet.
     const savePrepRaw = async (newOnHand, newDone, newMeta, newStations, newBusy) => {
+        const ref = doc(db, "ops", "prepList_" + storeLocation);
+        const patch = { date: new Date().toISOString() };
+        if (newOnHand   != null) patch.onHand         = newOnHand;
+        if (newDone     != null) patch.doneItems      = newDone;
+        if (newMeta     != null) patch.prepMeta       = newMeta;
+        if (newStations != null) patch.customStations = newStations;
+        if (newBusy   !== undefined) patch.busyMode   = newBusy;
+        // Nothing meaningful to write — skip the round-trip.
+        if (Object.keys(patch).length === 1) return;
         try {
-            await setDoc(doc(db, "ops", "prepList_" + storeLocation), {
-                onHand: newOnHand || onHand,
-                doneItems: newDone || doneItems,
-                prepMeta: newMeta || prepMeta,
-                customStations: newStations || stations,
-                busyMode: newBusy !== undefined ? newBusy : busyMode,
-                date: new Date().toISOString()
-            });
+            try { await updateDoc(ref, patch); }
+            catch (e) {
+                // First write on a fresh location — seed with merge so
+                // unset fields stay unset (not overwritten with stale
+                // local state).
+                await setDoc(ref, patch, { merge: true });
+            }
         } catch (err) { console.error("Error saving prep:", err); }
     };
     // Debounced version for rapid count changes (500ms delay)

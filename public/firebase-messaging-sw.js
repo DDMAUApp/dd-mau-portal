@@ -53,15 +53,34 @@ messaging.onBackgroundMessage((payload) => {
 });
 
 // When a notification is clicked, focus the app or open it.
+//
+// 2026-05-24 audit fix: was ignoring data.deepLink — every tap opened
+// `/` even when the dispatcher tagged the notif with deepLink: 'chat'
+// or 'schedule'. The Cloud Function + notify() helpers both set this
+// field; we now honor it. If a window is already open, post a
+// `ddmau:navigate` message so App.jsx can switch tabs in-place; if no
+// window is open, open a URL with `?deepLink=<tab>` which App.jsx
+// reads at boot to route to the right tab.
 self.addEventListener("notificationclick", (event) => {
     event.notification.close();
+    const data = event.notification.data || {};
+    const deepLink = data.deepLink || null;
+    const link = data.link || "/";
     event.waitUntil(
         clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
             for (const c of cs) {
-                if ("focus" in c) return c.focus();
+                if ("focus" in c) {
+                    try {
+                        if (deepLink) {
+                            c.postMessage({ type: "ddmau:navigate", tab: deepLink });
+                        }
+                    } catch {}
+                    return c.focus();
+                }
             }
             if (clients.openWindow) {
-                return clients.openWindow("/");
+                const url = deepLink ? `/?deepLink=${encodeURIComponent(deepLink)}` : link;
+                return clients.openWindow(url);
             }
         })
     );
