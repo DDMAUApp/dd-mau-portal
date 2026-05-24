@@ -8467,30 +8467,62 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(null);
     const [restoringId, setRestoringId] = useState(null);
     const [showHistoryModal, setShowHistoryModal] = useState(false);
+    // Bumped to force a reload from the Retry button (changes the effect dep).
+    const [retryNonce, setRetryNonce] = useState(0);
 
+    // 2026-05-23: Andrew reported "stuck on Loading…" on phone PWA.
+    // Hardening:
+    //   1. If storeLocation === "both" (admin's header toggle), skip the
+    //      query (no inventoryHistory_both collection exists) and show a
+    //      helpful "switch location" message instead of spinning forever.
+    //   2. 10s timeout that flips out of the loading state so the bar
+    //      shows an error + Retry button instead of an indefinite spinner
+    //      (Firestore on a flaky network can hang the read indefinitely
+    //      with no error fired).
+    //   3. Surface caught errors visibly (was console-only).
     useEffect(() => {
         if (!storeLocation) return;
+        // "both" hits a non-existent collection — skip the fetch entirely
+        // and let the render branch below show the switch-location prompt.
+        if (storeLocation === 'both') {
+            setLoading(false);
+            setLoadError(null);
+            setHistory([]);
+            return;
+        }
         let cancelled = false;
         setLoading(true);
+        setLoadError(null);
         const colRef = collection(db, "inventoryHistory_" + storeLocation);
         // Doc ids look like YYYY-MM-DD_HHMMSS so __name__ desc sorts
         // newest-first. The bar shows the 5 most recent inline; the
         // "View all" button below opens a modal that loads up to 100.
+        const timeoutId = setTimeout(() => {
+            if (cancelled) return;
+            setLoadError(isEs
+                ? 'Tiempo de espera agotado. Revisa tu conexión.'
+                : 'Timed out. Check your connection.');
+            setLoading(false);
+        }, 10000);
         getDocs(query(colRef, orderBy('__name__', 'desc'), limit(5)))
             .then(snap => {
                 if (cancelled) return;
+                clearTimeout(timeoutId);
                 setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
             })
             .catch(err => {
                 if (cancelled) return;
+                clearTimeout(timeoutId);
                 console.warn('RecentOrdersBar load failed:', err);
+                setLoadError(err?.message || (isEs ? 'Error al cargar' : 'Failed to load'));
                 setLoading(false);
             });
-        return () => { cancelled = true; };
-    }, [storeLocation]);
+        return () => { cancelled = true; clearTimeout(timeoutId); };
+    }, [storeLocation, retryNonce, isEs]);
 
     async function handleRestore(entry) {
         setRestoringId(entry.id);
@@ -8511,6 +8543,42 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
                 </div>
                 <div className="text-[11px] text-gray-400 italic px-2 py-3">
                     {isEs ? 'Cargando…' : 'Loading…'}
+                </div>
+            </div>
+        );
+    }
+    // Load error → show message + Retry button (was previously console-only)
+    if (loadError) {
+        return (
+            <div className="rounded-xl border border-red-200 bg-red-50 p-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-red-700 mb-1.5 px-1">
+                    {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
+                </div>
+                <div className="flex items-start gap-2 px-2 py-2">
+                    <div className="text-[11px] text-red-700 flex-1 min-w-0">
+                        ⚠️ {loadError}
+                    </div>
+                    <button onClick={() => setRetryNonce(n => n + 1)}
+                        className="shrink-0 px-2.5 py-1 rounded-md bg-red-600 text-white text-[11px] font-bold hover:bg-red-700">
+                        {isEs ? '↻ Reintentar' : '↻ Retry'}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+    // Admin toggled to "both" — orders are per-location, so nudge them
+    // to pick one. (Skipping the prompt would show "No past orders" which
+    // is misleading — they DO have orders, just not in this combined view.)
+    if (storeLocation === 'both') {
+        return (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-2">
+                <div className="text-[10px] font-black uppercase tracking-widest text-amber-800 mb-1.5 px-1">
+                    {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
+                </div>
+                <div className="text-[11px] text-amber-900 px-2 py-2">
+                    {isEs
+                        ? 'Cambia a Webster o Maryland (tap la ubicación en la barra superior) para ver pedidos anteriores.'
+                        : 'Switch to Webster or Maryland (tap the location in the top bar) to see past orders.'}
                 </div>
             </div>
         );
@@ -8610,27 +8678,49 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(null);
     const [restoringId, setRestoringId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
+    const [retryNonce, setRetryNonce] = useState(0);
 
+    // Same hardening as RecentOrdersBar (10s timeout, visible errors,
+    // "both" location prompt). Andrew's "stuck on Loading…" report
+    // 2026-05-23 applied to the bar; making the modal symmetric.
     useEffect(() => {
         if (!storeLocation) return;
+        if (storeLocation === 'both') {
+            setLoading(false);
+            setLoadError(null);
+            setHistory([]);
+            return;
+        }
         let cancelled = false;
         setLoading(true);
+        setLoadError(null);
         const colRef = collection(db, "inventoryHistory_" + storeLocation);
+        const timeoutId = setTimeout(() => {
+            if (cancelled) return;
+            setLoadError(isEs
+                ? 'Tiempo de espera agotado. Revisa tu conexión.'
+                : 'Timed out. Check your connection.');
+            setLoading(false);
+        }, 10000);
         getDocs(query(colRef, orderBy('__name__', 'desc'), limit(100)))
             .then(snap => {
                 if (cancelled) return;
+                clearTimeout(timeoutId);
                 setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
                 setLoading(false);
             })
             .catch(err => {
                 if (cancelled) return;
+                clearTimeout(timeoutId);
                 console.warn('RecentOrdersHistoryModal load failed:', err);
+                setLoadError(err?.message || (isEs ? 'Error al cargar' : 'Failed to load'));
                 setLoading(false);
             });
-        return () => { cancelled = true; };
-    }, [storeLocation]);
+        return () => { cancelled = true; clearTimeout(timeoutId); };
+    }, [storeLocation, retryNonce, isEs]);
 
     async function handleRestoreInModal(entry) {
         setRestoringId(entry.id);
@@ -8708,7 +8798,25 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
                             {isEs ? 'Cargando…' : 'Loading…'}
                         </div>
                     )}
-                    {!loading && filteredRows.length === 0 && (
+                    {!loading && loadError && (
+                        <div className="flex items-start gap-2 px-3 py-3 rounded-lg bg-red-50 border border-red-200">
+                            <div className="text-[12px] text-red-700 flex-1 min-w-0">
+                                ⚠️ {loadError}
+                            </div>
+                            <button onClick={() => setRetryNonce(n => n + 1)}
+                                className="shrink-0 px-3 py-1.5 rounded-md bg-red-600 text-white text-[12px] font-bold hover:bg-red-700">
+                                {isEs ? '↻ Reintentar' : '↻ Retry'}
+                            </button>
+                        </div>
+                    )}
+                    {!loading && !loadError && storeLocation === 'both' && (
+                        <div className="px-3 py-3 rounded-lg bg-amber-50 border border-amber-200 text-[12px] text-amber-900">
+                            {isEs
+                                ? 'Cambia a Webster o Maryland (tap la ubicación en la barra superior) para ver pedidos anteriores.'
+                                : 'Switch to Webster or Maryland (tap the location in the top bar) to see past orders.'}
+                        </div>
+                    )}
+                    {!loading && !loadError && storeLocation !== 'both' && filteredRows.length === 0 && (
                         <div className="text-[11px] text-gray-400 italic px-2 py-3">
                             {searchTerm
                                 ? (isEs ? 'No hay coincidencias.' : 'No matches.')
