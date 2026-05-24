@@ -59,13 +59,6 @@
         { "fieldPath": "location",    "order": "ASCENDING"  },
         { "fieldPath": "createdDate", "order": "DESCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "tv_holidays",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "dateEnd",     "order": "ASCENDING"  }
-      ]
     }
   ],
   "fieldOverrides": []
