@@ -8428,11 +8428,47 @@ function SkipOtherInput({ onSubmit, isEs }) {
 // items would be confusing (e.g., 10 + 10 → 20 isn't always what
 // you want); REPLACING gives a clean baseline to edit from.
 // ─────────────────────────────────────────────────────────────────
+// Shared restore helper used by both RecentOrdersBar (recent 5) and
+// RecentOrdersHistoryModal (full history view). Persists the restored
+// cart to Firestore so a refresh keeps it. Returns true on success.
+async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, currentInventory, isEs }) {
+    const restored = {};
+    for (const [id, qty] of Object.entries(entry?.counts || {})) {
+        const n = Number(qty);
+        if (n > 0) restored[id] = n;
+    }
+    const restoredCount = Object.keys(restored).length;
+    if (restoredCount === 0) {
+        window.alert(isEs ? 'Este pedido no tiene items.' : 'This order is empty.');
+        return false;
+    }
+    const currentCount = Object.values(currentInventory || {})
+        .filter(q => Number(q) > 0).length;
+    if (currentCount > 0) {
+        const confirmed = window.confirm(isEs
+            ? `Reemplazar carrito actual (${currentCount} items) con ${restoredCount} items de este pedido?`
+            : `Replace current cart (${currentCount} items) with ${restoredCount} items from this order?`);
+        if (!confirmed) return false;
+    }
+    setInventory(restored);
+    try {
+        await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
+            counts: restored,
+            date: new Date().toISOString(),
+        });
+    } catch (e) {
+        console.warn('restoreOrderEntryToCart persist failed:', e);
+        // Non-fatal — local state already updated.
+    }
+    return true;
+}
+
 function RecentOrdersBar({ storeLocation, setInventory, currentInventory, language }) {
     const isEs = language === 'es';
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(true);
     const [restoringId, setRestoringId] = useState(null);
+    const [showHistoryModal, setShowHistoryModal] = useState(false);
 
     useEffect(() => {
         if (!storeLocation) return;
@@ -8440,9 +8476,8 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
         setLoading(true);
         const colRef = collection(db, "inventoryHistory_" + storeLocation);
         // Doc ids look like YYYY-MM-DD_HHMMSS so __name__ desc sorts
-        // newest-first. We only need the most recent 5 — admins re-order
-        // from the last week or two, not from months ago. Older history
-        // stays accessible from the standalone InventoryHistory view.
+        // newest-first. The bar shows the 5 most recent inline; the
+        // "View all" button below opens a modal that loads up to 100.
         getDocs(query(colRef, orderBy('__name__', 'desc'), limit(5)))
             .then(snap => {
                 if (cancelled) return;
@@ -8458,36 +8493,11 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
     }, [storeLocation]);
 
     async function handleRestore(entry) {
-        const restored = {};
-        for (const [id, qty] of Object.entries(entry.counts || {})) {
-            const n = Number(qty);
-            if (n > 0) restored[id] = n;
-        }
-        const restoredCount = Object.keys(restored).length;
-        if (restoredCount === 0) {
-            window.alert(isEs ? 'Este pedido no tiene items.' : 'This order is empty.');
-            return;
-        }
-        const currentCount = Object.values(currentInventory || {})
-            .filter(q => Number(q) > 0).length;
-        if (currentCount > 0) {
-            const confirmed = window.confirm(isEs
-                ? `Reemplazar carrito actual (${currentCount} items) con ${restoredCount} items de este pedido?`
-                : `Replace current cart (${currentCount} items) with ${restoredCount} items from this order?`);
-            if (!confirmed) return;
-        }
         setRestoringId(entry.id);
         try {
-            setInventory(restored);
-            // Persist so a page refresh keeps the restored cart.
-            await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
-                counts: restored,
-                date: new Date().toISOString(),
+            await restoreOrderEntryToCart({
+                entry, storeLocation, setInventory, currentInventory, isEs,
             });
-        } catch (e) {
-            console.warn('RecentOrdersBar restore persist failed:', e);
-            // Non-fatal — local state already updated; the next save
-            // (when the admin adds/edits items) will sync to Firestore.
         } finally {
             setRestoringId(null);
         }
@@ -8530,42 +8540,218 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
     }
 
     return (
-        <div className="rounded-xl border border-gray-200 bg-white p-2">
-            <div className="text-[10px] font-black uppercase tracking-widest text-gray-500 mb-1.5 px-1">
-                {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
-            </div>
-            <div className="space-y-1.5">
-                {rows.map(({ h, itemCount }) => {
-                    const totalQty = Object.values(h.counts || {})
-                        .reduce((s, q) => s + (Number(q) || 0), 0);
-                    const iso = h.date || (h.id ? h.id.slice(0, 10) : null);
-                    const d = iso ? new Date(iso) : null;
-                    const dateLabel = (d && !isNaN(d.getTime()))
-                        ? d.toLocaleDateString(isEs ? 'es' : 'en',
-                            { month: 'short', day: 'numeric', year: '2-digit' })
-                        : (h.id || '—');
-                    const isRestoring = restoringId === h.id;
-                    return (
-                        <div key={h.id}
-                            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-200">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-[12px] font-black text-gray-900 truncate">
-                                    {dateLabel}
+        <>
+            <div className="rounded-xl border border-gray-200 bg-white p-2">
+                <div className="flex items-center justify-between mb-1.5 px-1">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
+                        {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
+                    </div>
+                    <button onClick={() => setShowHistoryModal(true)}
+                        className="text-[10px] font-bold text-orange-700 hover:text-orange-900 underline">
+                        {isEs ? 'Ver todos →' : 'View all →'}
+                    </button>
+                </div>
+                <div className="space-y-1.5">
+                    {rows.map(({ h, itemCount }) => {
+                        const totalQty = Object.values(h.counts || {})
+                            .reduce((s, q) => s + (Number(q) || 0), 0);
+                        const iso = h.date || (h.id ? h.id.slice(0, 10) : null);
+                        const d = iso ? new Date(iso) : null;
+                        const dateLabel = (d && !isNaN(d.getTime()))
+                            ? d.toLocaleDateString(isEs ? 'es' : 'en',
+                                { month: 'short', day: 'numeric', year: '2-digit' })
+                            : (h.id || '—');
+                        const isRestoring = restoringId === h.id;
+                        return (
+                            <div key={h.id}
+                                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-200">
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-[12px] font-black text-gray-900 truncate">
+                                        {dateLabel}
+                                    </div>
+                                    <div className="text-[10px] text-gray-600 truncate">
+                                        {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
+                                    </div>
                                 </div>
-                                <div className="text-[10px] text-gray-600 truncate">
-                                    {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
-                                </div>
+                                <button onClick={() => handleRestore(h)}
+                                    disabled={isRestoring}
+                                    className="px-2.5 py-1 rounded-md bg-orange-600 text-white text-[11px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
+                                    {isRestoring
+                                        ? (isEs ? '…' : '…')
+                                        : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
+                                </button>
                             </div>
-                            <button onClick={() => handleRestore(h)}
-                                disabled={isRestoring}
-                                className="px-2.5 py-1 rounded-md bg-orange-600 text-white text-[11px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
-                                {isRestoring
-                                    ? (isEs ? '…' : '…')
-                                    : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
-                            </button>
+                        );
+                    })}
+                </div>
+            </div>
+            {showHistoryModal && (
+                <RecentOrdersHistoryModal
+                    storeLocation={storeLocation}
+                    setInventory={setInventory}
+                    currentInventory={currentInventory}
+                    language={language}
+                    onClose={() => setShowHistoryModal(false)}
+                />
+            )}
+        </>
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RecentOrdersHistoryModal — full history view for re-using past
+// orders. Opened from RecentOrdersBar's "View all" link. Loads up
+// to 100 most-recent inventoryHistory snapshots (more than that
+// the average user won't scroll through; we can paginate later if
+// needed). Each row has a "Send to cart" button that runs the same
+// shared restore helper as the bar. Click outside or X to close.
+// ─────────────────────────────────────────────────────────────────
+function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventory, language, onClose }) {
+    const isEs = language === 'es';
+    const [history, setHistory] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [restoringId, setRestoringId] = useState(null);
+    const [searchTerm, setSearchTerm] = useState('');
+
+    useEffect(() => {
+        if (!storeLocation) return;
+        let cancelled = false;
+        setLoading(true);
+        const colRef = collection(db, "inventoryHistory_" + storeLocation);
+        getDocs(query(colRef, orderBy('__name__', 'desc'), limit(100)))
+            .then(snap => {
+                if (cancelled) return;
+                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setLoading(false);
+            })
+            .catch(err => {
+                if (cancelled) return;
+                console.warn('RecentOrdersHistoryModal load failed:', err);
+                setLoading(false);
+            });
+        return () => { cancelled = true; };
+    }, [storeLocation]);
+
+    async function handleRestoreInModal(entry) {
+        setRestoringId(entry.id);
+        try {
+            const ok = await restoreOrderEntryToCart({
+                entry, storeLocation, setInventory, currentInventory, isEs,
+            });
+            // Close modal on successful restore so admin lands back at
+            // the cart view ready to edit. Cancel/empty stays open so
+            // they can pick a different order without re-clicking.
+            if (ok) onClose();
+        } finally {
+            setRestoringId(null);
+        }
+    }
+
+    // Filter by date string OR id. Search is case-insensitive substring
+    // match — admins typing "may 1" or "05-01" both find that day.
+    const filteredRows = history
+        .map(h => {
+            const filledItems = Object.entries(h.counts || {})
+                .filter(([_, q]) => Number(q) > 0);
+            return { h, itemCount: filledItems.length };
+        })
+        .filter(r => r.itemCount > 0)
+        .filter(r => {
+            if (!searchTerm.trim()) return true;
+            const needle = searchTerm.trim().toLowerCase();
+            const iso = r.h.date || (r.h.id ? r.h.id.slice(0, 10) : null);
+            const d = iso ? new Date(iso) : null;
+            const dateLabel = (d && !isNaN(d.getTime()))
+                ? d.toLocaleDateString(isEs ? 'es' : 'en',
+                    { month: 'short', day: 'numeric', year: '2-digit', weekday: 'short' })
+                : '';
+            return iso?.toLowerCase().includes(needle)
+                || r.h.id?.toLowerCase().includes(needle)
+                || dateLabel.toLowerCase().includes(needle);
+        });
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center"
+            onClick={onClose}>
+            <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
+                onClick={(e) => e.stopPropagation()}
+                style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>
+                <div className="md:hidden flex justify-center pt-2 pb-1">
+                    <div className="w-10 h-1 bg-gray-300 rounded-full" />
+                </div>
+                <div className="px-4 py-3 border-b border-gray-200 flex items-center justify-between bg-orange-50">
+                    <div>
+                        <h2 className="text-lg font-black text-orange-900">
+                            📋 {isEs ? 'Historial de pedidos' : 'Order history'}
+                        </h2>
+                        <p className="text-[11px] text-orange-800">
+                            {isEs
+                                ? 'Toca un pedido para enviarlo al carrito.'
+                                : 'Tap any order to send it back to the cart.'}
+                        </p>
+                    </div>
+                    <button onClick={onClose}
+                        className="w-8 h-8 rounded-full hover:bg-white/60 flex items-center justify-center text-gray-700">
+                        ✕
+                    </button>
+                </div>
+                <div className="px-4 pt-3 pb-2 border-b border-gray-200">
+                    <input type="text" value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        placeholder={isEs ? 'Buscar por fecha…' : 'Search by date…'}
+                        className="w-full px-3 py-1.5 rounded-lg border border-gray-300 text-sm bg-white" />
+                </div>
+                <div className="flex-1 overflow-y-auto p-3 space-y-1.5"
+                    style={{ overscrollBehavior: 'contain' }}>
+                    {loading && (
+                        <div className="text-[11px] text-gray-400 italic px-2 py-3">
+                            {isEs ? 'Cargando…' : 'Loading…'}
                         </div>
-                    );
-                })}
+                    )}
+                    {!loading && filteredRows.length === 0 && (
+                        <div className="text-[11px] text-gray-400 italic px-2 py-3">
+                            {searchTerm
+                                ? (isEs ? 'No hay coincidencias.' : 'No matches.')
+                                : (isEs ? 'No hay pedidos guardados.' : 'No saved orders yet.')}
+                        </div>
+                    )}
+                    {filteredRows.map(({ h, itemCount }) => {
+                        const totalQty = Object.values(h.counts || {})
+                            .reduce((s, q) => s + (Number(q) || 0), 0);
+                        const iso = h.date || (h.id ? h.id.slice(0, 10) : null);
+                        const d = iso ? new Date(iso) : null;
+                        const dateLabel = (d && !isNaN(d.getTime()))
+                            ? d.toLocaleDateString(isEs ? 'es' : 'en',
+                                { weekday: 'short', month: 'short', day: 'numeric', year: '2-digit' })
+                            : (h.id || '—');
+                        const isRestoring = restoringId === h.id;
+                        return (
+                            <div key={h.id}
+                                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 border border-gray-200">
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-[13px] font-black text-gray-900 truncate">
+                                        {dateLabel}
+                                    </div>
+                                    <div className="text-[11px] text-gray-600 truncate">
+                                        {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
+                                    </div>
+                                </div>
+                                <button onClick={() => handleRestoreInModal(h)}
+                                    disabled={isRestoring}
+                                    className="px-3 py-1.5 rounded-md bg-orange-600 text-white text-[12px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
+                                    {isRestoring
+                                        ? (isEs ? '…' : '…')
+                                        : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
+                                </button>
+                            </div>
+                        );
+                    })}
+                </div>
+                <div className="px-4 py-2 border-t border-gray-200 text-[10px] text-gray-500 text-center">
+                    {isEs
+                        ? `Mostrando hasta 100 pedidos más recientes.`
+                        : `Showing up to 100 most-recent orders.`}
+                </div>
             </div>
         </div>
     );
