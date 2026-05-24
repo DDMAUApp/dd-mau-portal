@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, getDocs, getDoc, doc } from 'firebase/firestore';
+import { collection, getDocs, getDoc, doc, query, orderBy, limit } from 'firebase/firestore';
 
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
 
@@ -15,10 +15,19 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
     const [expandedPhoto, setExpandedPhoto] = useState(null);
 
     useEffect(() => {
+        // 2026-05-24 audit fix: was getDocs(entire collection).slice(30).
+        // After 2 years that's 730+ reads per tab open per store.
+        // The collection has both 'YYYY-MM-DD' and 'YYYY-MM-DD_saved'
+        // doc IDs; the _saved variant sorts AFTER the bare date in
+        // __name__-desc order, so we fetch 60 and keep the 30 bare dates
+        // — guarantees we cover all 30 days even if every one has both
+        // a bare and a _saved doc.
         const fetchHistory = async () => {
             try {
-                const snapshot = await getDocs(collection(db, "checklistHistory_" + storeLocation));
-                const dates = snapshot.docs.map(docData => docData.id).filter(d => !d.includes("_")).sort().reverse().slice(0, 30);
+                const colRef = collection(db, "checklistHistory_" + storeLocation);
+                const q = query(colRef, orderBy("__name__", "desc"), limit(60));
+                const snapshot = await getDocs(q);
+                const dates = snapshot.docs.map(docData => docData.id).filter(d => !d.includes("_")).slice(0, 30);
                 setHistoryDates(dates);
                 if (dates.length > 0) setSelectedDate(dates[0]);
             } catch (err) { console.error("Error loading history:", err); }

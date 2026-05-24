@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 
@@ -41,10 +41,17 @@ export default function InventoryHistory({ language, customInventory: customInve
             }, [customInventoryProp, storeLocation]);
 
             useEffect(() => {
+                // 2026-05-24 audit fix: was loading EVERY inventoryHistory
+                // doc on mount (one per day per location, slice(30) after).
+                // After 2 years that's 730 reads per tab-open per store.
+                // Doc IDs are date strings ('YYYY-MM-DD') so __name__-desc
+                // order = date-desc, and we can stop at 30.
                 const fetchHistory = async () => {
                     try {
-                        const colRef = collection(db, "inventoryHistory_" + storeLocation); const snapshot = await getDocs(colRef);
-                        const dates = snapshot.docs.map(doc => doc.id).sort().reverse().slice(0, 30);
+                        const colRef = collection(db, "inventoryHistory_" + storeLocation);
+                        const q = query(colRef, orderBy("__name__", "desc"), limit(30));
+                        const snapshot = await getDocs(q);
+                        const dates = snapshot.docs.map(doc => doc.id);
                         setHistoryDates(dates);
                         if (dates.length > 0) setSelectedDate(dates[0]);
                     } catch (err) { console.error("Error loading inventory history:", err); }

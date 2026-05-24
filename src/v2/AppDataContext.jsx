@@ -110,12 +110,25 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
         return () => unsub();
     }, [dayKey]);
 
-    // time_off — full collection, but date-bounded by filtering downstream.
-    // TODO: tighten with where('endDate', '>=', sixMonthsAgo) once we
-    // verify every consumer can handle the narrowed window. For now it
-    // matches existing behavior (open collection read).
+    // time_off — scoped to the last 180 days + future.
+    // 2026-05-24 audit fix: was loading the ENTIRE collection on every
+    // v2 page mount. After 12 months × 30 staff that's the per-device
+    // daily read tax. All downstream consumers (Schedule, MobileHome,
+    // ScheduleAvailability) already filter by date themselves; the
+    // older history is only used by an "old PTO" admin view which can
+    // do its own one-shot query.
+    //
+    // Field is `startDate` — string in 'YYYY-MM-DD' format, so lexical
+    // comparison works as date comparison.
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'time_off'), (snap) => {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - 180);
+        const cutoffStr = cutoff.toISOString().slice(0, 10);
+        const q = query(
+            collection(db, 'time_off'),
+            where('startDate', '>=', cutoffStr),
+        );
+        const unsub = onSnapshot(q, (snap) => {
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setTimeOff(list);

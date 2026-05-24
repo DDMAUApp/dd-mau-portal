@@ -26,6 +26,14 @@
         { "fieldPath": "date",      "order": "ASCENDING" },
         { "fieldPath": "published", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "maintenanceRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "submittedBy", "order": "ASCENDING" },
+        { "fieldPath": "createdAt",   "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

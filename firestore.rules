@@ -384,11 +384,33 @@ service cloud.firestore {
     // trail of "did this push actually fire?". Block delete here; the
     // scheduledFirestoreBackup function uses admin SDK and bypasses
     // these rules if we ever want to prune old notifications server-side.
+    //
+    // 2026-05-24 — SERVER-ONLY TYPE LOCKDOWN. Before this, anyone with
+    // the public Firebase apiKey could mint a doc with `type:
+    // "shift_reminder_1h"` (or tv_offline / tv_back_online / i9_reverify_due)
+    // and trick dispatchNotification + dispatchSms into firing real
+    // push + paid Twilio SMS to any staff. These types are NEVER
+    // created by client code — only by Cloud Functions (sendShiftReminders,
+    // checkTvHeartbeats, i9ReverificationReminder). Cloud Functions bypass
+    // these rules via admin SDK, so they keep working. Adding new
+    // CF-only types? Update this list AND the function that creates them.
+    //
+    // Note: this does NOT close the SMS-spam vector for client-mintable
+    // types like coverage_request or urgent_announcement — those can
+    // still be abused. dispatchSms enforces a per-recipient cooldown
+    // (see functions/index.js) as the second line of defense. Phase 2
+    // (Firebase Auth + admin claims) closes the rest.
     match /notifications/{notifId} {
       allow read: if true;
       allow create: if request.resource.data is map
                     && (request.resource.data.createdAt == null
-                        || request.resource.data.createdAt == request.time);
+                        || request.resource.data.createdAt == request.time)
+                    && !(request.resource.data.type in [
+                        "shift_reminder_1h",
+                        "tv_offline",
+                        "tv_back_online",
+                        "i9_reverify_due",
+                    ]);
       allow update: if request.resource.data is map;
       allow delete: if false;
     }

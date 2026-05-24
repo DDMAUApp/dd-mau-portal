@@ -3004,7 +3004,7 @@ function AnnouncementCard({
             </div>
             <div className="px-4 py-3">
                 {message.mediaUrl && (
-                    <img src={message.mediaUrl} alt="" className="w-full max-h-[280px] object-cover rounded-lg mb-3" />
+                    <img src={message.mediaUrl} alt="" loading="lazy" decoding="async" className="w-full max-h-[280px] object-cover rounded-lg mb-3" />
                 )}
                 <div className="text-[15px] text-dd-text leading-snug">
                     <TranslatableText
@@ -3275,7 +3275,7 @@ function PhotoIssueCard({ message, chat, isEs, isManager, staffName, viewer, tar
                 )}
             </div>
             {message.mediaUrl && (
-                <img src={message.mediaUrl} alt="" className="w-full max-h-[300px] object-cover" />
+                <img src={message.mediaUrl} alt="" loading="lazy" decoding="async" className="w-full max-h-[300px] object-cover" />
             )}
             <div className="px-4 py-3">
                 <div className="text-xs font-bold text-dd-text-2 mb-1">

@@ -29,7 +29,7 @@ import { toast, undoToast } from '../toast';
 import {
     collection, doc, onSnapshot, query, where, addDoc, deleteDoc, updateDoc,
     setDoc, serverTimestamp, writeBatch, runTransaction, arrayUnion,
-    orderBy, limit,
+    orderBy, limit, getDocs,
 } from 'firebase/firestore';
 import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
@@ -4102,15 +4102,20 @@ ${dayBlocks}
         const lastWeekStartStr = toDateStr(lastWeekStart);
         const lastWeekEndStr = toDateStr(weekStart);
         try {
-            // Read last week directly with a one-shot query (no listener needed).
+            // 2026-05-24 audit fix: was using onSnapshot-as-getDocs which
+            // has a real race — the SDK can invoke the callback BEFORE
+            // the assignment `unsub = …` completes (Firestore fires
+            // cached snapshots synchronously). Then `unsub` is undefined,
+            // the listener leaks, and any future write to /shifts in
+            // that date range re-fires the resolve() (which is a no-op
+            // since the Promise already settled, but the leak persists).
+            // getDocs is the right tool for a one-shot read.
             const q = query(
                 collection(db, 'shifts'),
                 where('date', '>=', lastWeekStartStr),
                 where('date', '<', lastWeekEndStr),
             );
-            const snap = await new Promise((resolve, reject) => {
-                const unsub = onSnapshot(q, (s) => { unsub(); resolve(s); }, reject);
-            });
+            const snap = await getDocs(q);
             const sourceShifts = [];
             snap.forEach(d => sourceShifts.push({ id: d.id, ...d.data() }));
             // Filter to side + location

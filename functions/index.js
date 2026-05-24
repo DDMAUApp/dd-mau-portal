@@ -2396,11 +2396,66 @@ exports.checkTvHeartbeats = onSchedule(
         region: "us-central1",
     },
     async (event) => {
+        // ── 2026-05-24 — Feature flag gate ────────────────────────────
+        // Andrew turned TV offline alerts OFF while still rolling the
+        // kiosk fleet out across the two restaurants. Every time he
+        // unplugs a Pi to carry it from his house to a TV, the
+        // heartbeat goes stale and this used to fire a 📴 push to his
+        // phone — pure noise during deployment.
+        //
+        // To re-enable: set /config/feature_flags.tvOfflineAlertsEnabled
+        // = true (Firebase Console → Firestore → config/feature_flags).
+        // No redeploy needed. Default behavior with the flag missing or
+        // false is SILENT — the function runs to completion (so the
+        // Cloud Scheduler doesn't error) but writes no notifications.
+        //
+        // Fail-closed: if the flag read itself fails (network, perms),
+        // we also skip — better to miss an alert than to spam when we
+        // can't tell whether the user wants alerts on.
+        try {
+            const flagSnap = await db.doc("config/feature_flags").get();
+            const enabled = flagSnap.exists &&
+                flagSnap.data()?.tvOfflineAlertsEnabled === true;
+            if (!enabled) {
+                logger.info("checkTvHeartbeats: tvOfflineAlertsEnabled is false — skipping");
+                return;
+            }
+        } catch (e) {
+            logger.warn("checkTvHeartbeats: feature flag read failed:", e?.message);
+            return;
+        }
+
         const STALE_MS = 10 * 60_000;   // 10 min = "TV is dark"
         const now = Date.now();
-        const snap = await db.collection("tv_heartbeats").get();
+
+        // 2026-05-24 audit fix: was reading EVERY heartbeat doc every 5 min.
+        // Retired TVs stay in the collection forever (rules forbid client
+        // delete). Scoped to the last 1 hour — anything older than that has
+        // already been alerted on (alertedAt is set) so we have nothing new
+        // to do for it. Cuts read cost from O(all-TVs-ever) to O(active+
+        // recently-stale) per 5-min run. We do a second query for any TVs
+        // with alertedAt set so we can fire `tv_back_online` if they
+        // recovered — that's bounded by however many TVs are actively
+        // alerted (almost always 0–3 in a healthy fleet).
+        const lookbackMs = now - 60 * 60_000;   // 1 hour
+        const recentSnap = await db.collection("tv_heartbeats")
+            .where("lastSeenAt", ">", new Date(lookbackMs))
+            .get();
+        const alertedSnap = await db.collection("tv_heartbeats")
+            .where("alertedAt", "!=", null)
+            .get();
+        // Dedup — a doc can match both queries.
+        const seenIds = new Set();
+        const docs = [];
+        for (const d of recentSnap.docs) {
+            if (!seenIds.has(d.id)) { seenIds.add(d.id); docs.push(d); }
+        }
+        for (const d of alertedSnap.docs) {
+            if (!seenIds.has(d.id)) { seenIds.add(d.id); docs.push(d); }
+        }
+        const snap = { empty: docs.length === 0, size: docs.length, docs };
         if (snap.empty) {
-            logger.info("checkTvHeartbeats: no heartbeats yet");
+            logger.info("checkTvHeartbeats: no heartbeats in last hour + no active alerts");
             return;
         }
 

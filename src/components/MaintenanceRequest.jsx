@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db, storage } from '../firebase';
-import { doc, collection, query, orderBy, limit, onSnapshot, setDoc, deleteDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, collection, query, where, orderBy, limit, onSnapshot, setDoc, deleteDoc, getDoc, addDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { t } from '../data/translations';
 import { toast } from '../toast';
@@ -31,20 +31,25 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                 { en: "Other", es: "Otro" }
             ];
 
-            // Load this person's recent requests
+            // Load this person's recent requests.
+            // 2026-05-24 audit fix: was pulling 50 newest globally then
+            // filtering client-side by staffName. If 50 most-recent were
+            // all from another busy admin, the current user's own request
+            // would silently disappear from their list. Now scoped
+            // server-side via where('submittedBy', '==', staffName).
+            // Requires a composite index on (submittedBy ASC, createdAt DESC).
             useEffect(() => {
+                if (!staffName) return;
                 const q = query(
                     collection(db, "maintenanceRequests"),
+                    where("submittedBy", "==", staffName),
                     orderBy("createdAt", "desc"),
-                    limit(50)
+                    limit(10)
                 );
                 const unsub = onSnapshot(q, (snap) => {
                     const reqs = [];
-                    snap.forEach(doc => {
-                        const d = doc.data();
-                        if (d.submittedBy === staffName) reqs.push({ id: doc.id, ...d });
-                    });
-                    setMyRequests(reqs.slice(0, 10));
+                    snap.forEach(doc => reqs.push({ id: doc.id, ...doc.data() }));
+                    setMyRequests(reqs);
                 }, (err) => { console.error("Error loading requests:", err); });
                 return () => unsub();
             }, [staffName]);
