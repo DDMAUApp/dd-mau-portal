@@ -35,6 +35,7 @@ const MenuEditor = reactLazy(() => import('./MenuEditor'));
 // The admin UI was misleading — staff who tried to "set it up" were
 // configuring a sync that had no effect. See git log for context.
 const LabelFormatEditor = reactLazy(() => import('./LabelFormatEditor'));
+const ChatHistoryAdmin = reactLazy(() => import('./ChatHistoryAdmin'));
 
 // Wrapper enforces admin-only access BEFORE the inner component's hooks run.
 // Early-returning inside AdminPanelInner would violate React's rules-of-hooks
@@ -1012,6 +1013,9 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // hundreds of rows to reach the more important controls.
             const [checklistHistoryExpanded, setChecklistHistoryExpanded] = useState(false);
             const [inventoryHistoryExpanded, setInventoryHistoryExpanded] = useState(false);
+            // Chat history (admin-only audit view of every chat + message).
+            // Lazy-loaded — Firestore reads only fire when expanded.
+            const [chatHistoryExpanded, setChatHistoryExpanded] = useState(false);
             useEffect(() => {
                 if (!confirmingRefresh) return;
                 const t = setTimeout(() => setConfirmingRefresh(false), 10000);
@@ -3982,6 +3986,41 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             </div>
                         );
                     })()}
+
+                    {/* ── CHAT HISTORY (admin audit view) ────────────────────────────
+                        Read-only view of every chat in the system + every message
+                        in those chats. Useful for HR reviews, dispute resolution,
+                        and spot-checking channel usage. Lazy-loaded — the
+                        Firestore query only fires when admin expands the panel,
+                        so the read cost is zero for admins who never open it.
+
+                        Important: this INCLUDES private DMs and group chats the
+                        admin isn't a member of. Andrew (owner) requested this
+                        explicitly 2026-05-23 for audit purposes. The same data
+                        is technically already readable to any client (catch-all
+                        Firestore rule allows reads) but the UI didn't surface it
+                        previously. */}
+                    <div className="mt-4 mb-4 border border-gray-200 rounded-xl bg-white p-4">
+                        <button onClick={() => setChatHistoryExpanded(s => !s)}
+                            className="w-full flex items-center justify-between mb-2 -m-1 p-1 rounded hover:bg-gray-50">
+                            <div className="flex items-center gap-2">
+                                <span className="text-xl">💬</span>
+                                <h3 className="text-base font-bold text-gray-800">
+                                    {language === 'es' ? 'Historial de chats' : 'Chat history'}
+                                </h3>
+                            </div>
+                            <span className="text-gray-400 text-sm">{chatHistoryExpanded ? '▼' : '▶'}</span>
+                        </button>
+                        {chatHistoryExpanded && (
+                            <ReactSuspense fallback={
+                                <p className="text-xs text-gray-400 italic px-2 py-3">
+                                    {language === 'es' ? 'Cargando…' : 'Loading…'}
+                                </p>
+                            }>
+                                <ChatHistoryAdmin language={language} staffName={staffName} />
+                            </ReactSuspense>
+                        )}
+                    </div>
 
                     {/* ── PUSH NOTIFICATIONS DIAGNOSTIC ──────────────────────────────
                         Quick verification panel. Shows the local SW + permission +
