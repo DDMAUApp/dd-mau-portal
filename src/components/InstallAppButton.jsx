@@ -1,18 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
+
+// Lazy-load the full install splash (IOSSteps / AndroidSteps / DesktopHint).
+// 2026-05-24: lock-screen Install button used to do nothing on platforms
+// without the deferredInstallPrompt event AND that weren't iOS (most
+// notably desktop Chrome/Safari, plus Android Chrome that hadn't yet
+// fired beforeinstallprompt). The button now routes through the same
+// add-to-home-screen guide reached via the NFC-sticker install URL,
+// so EVERY tap shows OS-appropriate steps. Splash is rendered inline
+// in a fixed overlay so we don't leave the lock screen.
+const InstallSplash = lazy(() => import('./InstallSplash'));
 
 let deferredInstallPrompt = null;
 
 export default function InstallAppButton({ language, compact = false }) {
     const [installable, setInstallable] = useState(!!deferredInstallPrompt);
     const [installed, setInstalled] = useState(false);
-    const [showIOSGuide, setShowIOSGuide] = useState(false);
+    const [showInstallGuide, setShowInstallGuide] = useState(false);
 
     // Detect if already installed as PWA
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
-
-    // Detect iOS
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-    const isAndroid = /Android/.test(navigator.userAgent);
 
     useEffect(() => {
         const handler = () => setInstallable(true);
@@ -24,15 +30,23 @@ export default function InstallAppButton({ language, compact = false }) {
 
     const handleInstall = async () => {
         if (deferredInstallPrompt) {
+            // Native Android Chrome / desktop Chrome prompt available —
+            // use it for the smoothest experience.
             deferredInstallPrompt.prompt();
             const result = await deferredInstallPrompt.userChoice;
             if (result.outcome === 'accepted') {
                 setInstalled(true);
                 deferredInstallPrompt = null;
             }
-        } else if (isIOS) {
-            setShowIOSGuide(true);
+            return;
         }
+        // No native prompt — fall back to the platform-aware guide.
+        // This is what 2026-05-24 fixed: previously on iOS we showed
+        // an iOS-only modal here, and on every other platform the tap
+        // was a no-op. Now we always open the full guide which
+        // detects platform and shows the right steps (iOS Share->Add,
+        // Android Chrome menu->Install, desktop tip).
+        setShowInstallGuide(true);
     };
 
     if (installed) {
@@ -58,7 +72,12 @@ export default function InstallAppButton({ language, compact = false }) {
                     <span className="text-base leading-none">📲</span>
                     <span>{language === "es" ? "Instalar app" : "Install app"}</span>
                 </button>
-                {showIOSGuide && renderIOSGuide(language, setShowIOSGuide)}
+                {showInstallGuide && (
+                    <InstallGuideOverlay
+                        language={language}
+                        onClose={() => setShowInstallGuide(false)}
+                    />
+                )}
             </div>
         );
     }
@@ -77,52 +96,37 @@ export default function InstallAppButton({ language, compact = false }) {
                 </div>
             </button>
 
-            {showIOSGuide && renderIOSGuide(language, setShowIOSGuide)}
+            {showInstallGuide && (
+                <InstallGuideOverlay
+                    language={language}
+                    onClose={() => setShowInstallGuide(false)}
+                />
+            )}
         </div>
     );
 }
 
-// Shared iOS install-guide bottom sheet, used by both the full and compact
-// variants. The 3-step "tap Share → Add to Home Screen → Add" walkthrough.
-function renderIOSGuide(language, setShowIOSGuide) {
+// InstallGuideOverlay — full-viewport scrollable overlay that wraps
+// the existing InstallSplash component. Same content as the page reached
+// via the NFC sticker URL (?install=1), rendered as a modal overlay so
+// the lock screen stays in the stack underneath. InstallSplash already
+// handles platform detection and language; we just supply onSkip to
+// dismiss the overlay.
+function InstallGuideOverlay({ language, onClose }) {
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50" onClick={() => setShowIOSGuide(false)}>
-            <div className="bg-white rounded-t-2xl w-full max-w-lg p-6 pb-10 animate-slide-up" onClick={e => e.stopPropagation()}>
-                <div className="w-12 h-1.5 bg-gray-300 rounded-full mx-auto mb-4"></div>
-                <h3 className="text-lg font-bold text-gray-800 mb-4 text-center">
-                    {language === "es" ? "Instalar DD Mau" : "Install DD Mau"}
-                </h3>
-                <div className="space-y-4">
-                    <div className="flex items-start gap-3">
-                        <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">1</div>
-                        <div>
-                            <p className="font-bold text-gray-700">{language === "es" ? "Toca el botón de Compartir" : "Tap the Share button"}</p>
-                            <p className="text-sm text-gray-500">{language === "es" ? "El ícono de cuadrado con flecha hacia arriba en la barra inferior" : "The square with arrow icon at the bottom of Safari"}</p>
-                            <div className="mt-1 text-2xl">⬆️</div>
-                        </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                        <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">2</div>
-                        <div>
-                            <p className="font-bold text-gray-700">{language === "es" ? "Desplázate y toca" : "Scroll down and tap"}</p>
-                            <p className="text-sm text-gray-500 font-bold">"➕ {language === "es" ? "Agregar a Inicio" : "Add to Home Screen"}"</p>
-                        </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                        <div className="bg-cyan-100 text-cyan-700 rounded-full w-8 h-8 flex items-center justify-center font-bold flex-shrink-0">3</div>
-                        <div>
-                            <p className="font-bold text-gray-700">{language === "es" ? "Toca \"Agregar\"" : "Tap \"Add\""}</p>
-                            <p className="text-sm text-gray-500">{language === "es" ? "DD Mau aparecerá en tu pantalla de inicio como una app" : "DD Mau will appear on your home screen as an app"}</p>
-                        </div>
-                    </div>
+        <div className="fixed inset-0 z-50 bg-white overflow-y-auto" role="dialog" aria-modal="true">
+            <Suspense fallback={
+                <div className="min-h-screen flex items-center justify-center text-sm text-dd-text-2">
+                    {language === 'es' ? 'Cargando…' : 'Loading…'}
                 </div>
-                <button
-                    onClick={() => setShowIOSGuide(false)}
-                    className="mt-6 w-full bg-cyan-600 text-white py-3 rounded-lg font-bold text-sm hover:bg-cyan-700 transition"
-                >
-                    {language === "es" ? "Entendido" : "Got it!"}
-                </button>
-            </div>
+            }>
+                <InstallSplash language={language} onSkip={onClose} />
+            </Suspense>
         </div>
     );
 }
+
+// Legacy iOS-only bottom-sheet (kept here for posterity; replaced by the
+// InstallGuideOverlay above which reuses the full platform-aware
+// InstallSplash component). Safe to delete once the lock-screen install
+// flow has been live for a release without issues.
