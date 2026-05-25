@@ -2537,6 +2537,35 @@ function Composer({
         }
     }
 
+    // 2026-05-24 — Andrew: "if the message gets larger than 2 lines let
+    // the message input bar grow with the messages until you think we
+    // shouldnt get any bigger."
+    //
+    // Native <textarea rows={1}> stays at one row even when the content
+    // wraps to 5 — the user sees only the last line. To make it grow,
+    // we reset height to 'auto' (so the browser can recompute the
+    // natural content height), read scrollHeight, then write that back
+    // capped at maxPx. The cap = MAX_COMPOSER_PX (≈6-7 lines at
+    // text-base + line-height 1.4) so it never eats more than ~30% of
+    // a typical phone screen — past that the message list above gets
+    // squashed and the user loses context of what they're replying to.
+    // CSS overflow-y on the textarea kicks in past the cap so a 100-
+    // line paste scrolls inside the box instead of pushing the
+    // composer up to consume the whole viewport.
+    const MIN_COMPOSER_PX = 44;
+    const MAX_COMPOSER_PX = 160;
+    useEffect(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.style.height = 'auto';
+        const next = Math.min(Math.max(ta.scrollHeight, MIN_COMPOSER_PX), MAX_COMPOSER_PX);
+        ta.style.height = next + 'px';
+        // overflow toggle: hide scrollbar until we hit the cap. Without
+        // this, browsers paint a thin scrollbar on every keystroke as the
+        // height transitions, which flickers on iOS.
+        ta.style.overflowY = ta.scrollHeight > MAX_COMPOSER_PX ? 'auto' : 'hidden';
+    }, [draft]);
+
     if (recording) {
         return (
             <div className="px-3 py-3 border-t border-dd-line bg-white flex items-center gap-3">
@@ -2751,8 +2780,14 @@ function Composer({
                     onFocus={() => setShowAttachMenu(false)}
                     placeholder={isEs ? 'Mensaje…' : 'Message…'}
                     disabled={sending}
-                    className="flex-1 min-w-0 min-h-[44px] max-h-[140px] px-4 py-2.5 rounded-2xl bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
-                    style={{ lineHeight: 1.4 }}
+                    // min-h / max-h are the same constants the auto-grow
+                    // useEffect above uses — keep them in sync. resize-none
+                    // disables the browser's drag-handle (we drive height
+                    // from JS instead). Initial inline height ensures the
+                    // first paint is exactly MIN_COMPOSER_PX even before
+                    // the effect runs.
+                    className="flex-1 min-w-0 px-4 py-2.5 rounded-2xl bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                    style={{ lineHeight: 1.4, minHeight: '44px', maxHeight: '160px', height: '44px' }}
                 />
                 {empty ? (
                     <button
