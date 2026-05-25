@@ -1610,7 +1610,14 @@ async function logPrintAttempt({ printer, meta, outcome, durationMs }) {
         await addDoc(collection(db, 'print_jobs'), {
             // Printer context — keeps the log readable when admin
             // looks at "all printers' jobs" rather than per-device.
-            location: printer?.location || meta?.location || null,
+            // NOTE: getPrinterConfig/subscribePrinterConfig expose the
+            // location as `id` (e.g. 'webster'/'maryland'), NOT a
+            // `location` field — the saved printer doc has no such
+            // field. Reading printer?.location always yielded null, so
+            // every print_jobs row logged location:null and the Label
+            // Printing Center's per-printer filter (j.location === loc)
+            // matched zero rows. Use printer?.id.
+            location: printer?.id || printer?.location || meta?.location || null,
             slot:     printer?.slot     || meta?.slot     || null,
             printerName: printer?.name || null,
             printerIp:   printer?.ip   || null,

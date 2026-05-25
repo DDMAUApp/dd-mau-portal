@@ -145,14 +145,21 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
     // function may have failed.
     const [latestBackup, setLatestBackup] = useState(null);
     useEffect(() => {
-        const q = query(collection(db, 'backup_history'), orderBy('createdAt', 'desc'), limit(1));
+        // scheduledFirestoreBackup (functions/index.js) writes
+        // backup_history docs with `triggeredAt` (server timestamp) +
+        // `outputUriPrefix` — NOT `createdAt`/`path`. A query ordered by
+        // a field the docs don't have returns ZERO rows, so ordering by
+        // `createdAt` here made the card permanently show "No data" and
+        // the stale-backup badge could never fire. Order/read by the
+        // fields the CF actually writes.
+        const q = query(collection(db, 'backup_history'), orderBy('triggeredAt', 'desc'), limit(1));
         const unsub = onSnapshot(q, (snap) => {
             setLatestBackup(snap.empty ? null : { id: snap.docs[0].id, ...snap.docs[0].data() });
         }, (err) => console.warn('AdminHealth: backup_history error:', err));
         return unsub;
     }, []);
     const backupTone = (() => {
-        const m = minutesSince(latestBackup?.createdAt);
+        const m = minutesSince(latestBackup?.triggeredAt);
         if (m === null)                      return 'neutral';
         if (m < 60 * 36)                     return 'good';
         if (m < 60 * 24 * 3)                 return 'warn';
@@ -259,8 +266,8 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
                 <StatusCard
                     title={tx('Last backup', 'Último respaldo')}
                     tone={backupTone}
-                    big={latestBackup ? fmtRelative(latestBackup.createdAt, isEs) : tx('No data', 'Sin datos')}
-                    detail={latestBackup?.path ? String(latestBackup.path).split('/').slice(-2).join('/') : tx('scheduledFirestoreBackup CF', 'Función CF programada')}
+                    big={latestBackup ? fmtRelative(latestBackup.triggeredAt, isEs) : tx('No data', 'Sin datos')}
+                    detail={latestBackup?.outputUriPrefix ? String(latestBackup.outputUriPrefix).split('/').slice(-2).join('/') : tx('scheduledFirestoreBackup CF', 'Función CF programada')}
                 />
                 <StatusCard
                     title={tx('TV displays', 'Pantallas')}

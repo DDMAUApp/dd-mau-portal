@@ -468,14 +468,33 @@ for (const r of RESTAURANTS) {
             updatedAt: FieldValue.serverTimestamp(),
             lastToastSyncAt: FieldValue.serverTimestamp(),
         };
+        // Attribution sidecar — MUST be a real NESTED object, not dotted
+        // keys. set(..., { merge: true }) does NOT interpret dotted field
+        // names as paths the way update() does: a key like
+        // `attribution.Avocado.outBy` under set-merge is written as a
+        // single top-level field literally NAMED "attribution.Avocado.outBy"
+        // rather than nesting under attribution → Avocado → outBy. The
+        // dashboard reads data.attribution[item.name], so dotted keys would
+        // silently never surface (and would pollute the doc with junk
+        // dotted-name fields). set-merge DOES deep-merge nested maps, so we
+        // build the nested shape and let merge fold it into existing
+        // attribution for other items.
+        const attribution = {};
         for (const itemName of newlyOut) {
-            patch[`attribution.${itemName}.outBy`] = clockedInNames;
-            patch[`attribution.${itemName}.outAt`] = FieldValue.serverTimestamp();
+            attribution[itemName] = {
+                ...(attribution[itemName] || {}),
+                outBy: clockedInNames,
+                outAt: FieldValue.serverTimestamp(),
+            };
         }
         for (const itemName of newlyIn) {
-            patch[`attribution.${itemName}.inBy`] = clockedInNames;
-            patch[`attribution.${itemName}.inAt`] = FieldValue.serverTimestamp();
+            attribution[itemName] = {
+                ...(attribution[itemName] || {}),
+                inBy: clockedInNames,
+                inAt: FieldValue.serverTimestamp(),
+            };
         }
+        if (Object.keys(attribution).length > 0) patch.attribution = attribution;
         await eightySixRef.set(patch, { merge: true });
         console.log(`  ✓ Applied ${newlyOut.length} out + ${newlyIn.length} back-in (attribution written)`);
     }
