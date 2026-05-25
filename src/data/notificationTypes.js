@@ -112,3 +112,58 @@ export const OPT_OUT_ABLE_TYPES = NOTIFICATION_TYPES.filter(t => !t.lockedOn);
 export function canOptOutOf(typeId) {
     return !LOCKED_ON_TYPE_IDS.has(typeId);
 }
+
+// Count how many staff currently receive a given notification type.
+// A staff member RECEIVES the type unless their pushOptOut array
+// contains it. Used by the type-first admin view ("X of N receiving"
+// badge). Excludes deactivated staff (active === false). Always
+// returns N for locked-on types (everyone gets them regardless).
+export function getRecipientCount(typeId, staffList) {
+    const list = Array.isArray(staffList) ? staffList : [];
+    const active = list.filter((s) => s && s.name && s.active !== false);
+    if (LOCKED_ON_TYPE_IDS.has(typeId)) {
+        return { receiving: active.length, total: active.length };
+    }
+    const receiving = active.filter((s) => {
+        const opts = Array.isArray(s.pushOptOut) ? s.pushOptOut : [];
+        return !opts.includes(typeId);
+    }).length;
+    return { receiving, total: active.length };
+}
+
+// Helper: returns the list of staff who currently RECEIVE the given
+// type (used in the expand row to color the toggles). Mirrors
+// getRecipientCount but returns the names instead of just the count.
+export function getRecipientNames(typeId, staffList) {
+    const list = Array.isArray(staffList) ? staffList : [];
+    const active = list.filter((s) => s && s.name && s.active !== false);
+    if (LOCKED_ON_TYPE_IDS.has(typeId)) {
+        return active.map((s) => s.name);
+    }
+    return active.filter((s) => {
+        const opts = Array.isArray(s.pushOptOut) ? s.pushOptOut : [];
+        return !opts.includes(typeId);
+    }).map((s) => s.name);
+}
+
+// Build the next staff-list state with a specific TYPE's recipient
+// set replaced. recipientNames = set of names who should RECEIVE the
+// type. Everyone else gets the type added to their pushOptOut array.
+// Pure function — caller passes to runTransaction. Skips locked-on
+// types entirely (they're always-on and pushOptOut is ignored for
+// them server-side).
+export function applyOptOutBulk(currentList, typeId, recipientNames) {
+    if (LOCKED_ON_TYPE_IDS.has(typeId)) return currentList;
+    const receivers = new Set(recipientNames || []);
+    return (currentList || []).map((s) => {
+        if (!s || !s.name) return s;
+        const existing = Array.isArray(s.pushOptOut) ? s.pushOptOut : [];
+        const others = existing.filter((id) => id !== typeId);
+        const next = receivers.has(s.name) ? others : [...others, typeId];
+        // Skip the write if nothing actually changed for this staff.
+        const sameLength = next.length === existing.length;
+        const sameContent = sameLength && next.every((v, i) => v === existing[i]);
+        if (sameContent) return s;
+        return { ...s, pushOptOut: next.sort() };
+    });
+}
