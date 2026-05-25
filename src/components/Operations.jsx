@@ -41,6 +41,10 @@ const AssignTasksPanel = lazy(() => import('./AssignTasksPanel'));
 // kitchen wall tablet (TaskDisplay rendered at ?display=walltasks).
 // Lazy: only managers using the wall pull in this chunk.
 const WallTasksAdmin = lazy(() => import('./WallTasksAdmin'));
+// 2026-05-24 — per-task assignee picker (bottom sheet, multi-select).
+// Lazy so the modal chunk doesn't enter the graph unless admin opens
+// it; the modal is admin/manager-only.
+const AssigneePickerModal = lazy(() => import('./AssigneePickerModal'));
 
 // Constants
 // Time-period concept (morning/afternoon/night) was tried and abandoned — only
@@ -280,6 +284,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [editSubtasks, setEditSubtasks] = useState([]);
             const [editCompleteBy, setEditCompleteBy] = useState("");
             const [editAssignTo, setEditAssignTo] = useState("");
+            // 2026-05-24 — AssigneePickerModal state. Holds the index of
+            // the task whose picker is currently open (null = closed).
+            // Decoupled from edit mode so admin can assign without
+            // having to enter the multi-step edit form.
+            const [assigningTaskIdx, setAssigningTaskIdx] = useState(null);
             const [editFollowUp, setEditFollowUp] = useState(null); // { type: "dropdown"|"text", question: "", options: [] }
             const [showAddForm, setShowAddForm] = useState(false);
             const [newTask, setNewTask] = useState("");
@@ -2145,6 +2154,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (current.length > 0) { item.assignTo = current; } else { delete item.assignTo; }
                 setCustomTasks(updated);
                 // Only customTasks changed.
+                await writeChecklistPatch({ customTasks: updated });
+            };
+
+            // 2026-05-24 — Andrew: "make it easier to assign a staff to
+            // the tasks." Bulk-assign helper used by the AssigneePicker
+            // bottom sheet: writes the FULL new assignTo array for one
+            // task in a single Firestore round-trip (vs the per-name
+            // toggleTaskAssignee above which writes once per click).
+            const setTaskAssignees = async (taskIdx, names) => {
+                const updated = JSON.parse(JSON.stringify(customTasksRef.current));
+                const item = updated[checklistSide][PERIOD_KEY][taskIdx];
+                if (!item) return;
+                const cleaned = Array.isArray(names) ? names.filter(Boolean) : [];
+                if (cleaned.length > 0) item.assignTo = cleaned;
+                else delete item.assignTo;
+                setCustomTasks(updated);
                 await writeChecklistPatch({ customTasks: updated });
             };
 
@@ -4674,16 +4699,22 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         ))}
                                                     </div>
                                                 )}
-                                                {/* Quick assign button for admin (in edit mode) */}
-                                                {currentIsAdmin && editMode && (
-                                                    <div className="mt-1">
-                                                        <select value="" onChange={e => { if (e.target.value) toggleTaskAssignee(origIdx, e.target.value); }}
-                                                            className="border border-gray-200 rounded px-1 py-0.5 text-[10px] bg-white">
-                                                            <option value="">+ {language === "es" ? "Asignar" : "Assign"}</option>
-                                                            {(staffList || []).filter(s => s.location === storeLocation || s.location === "both").filter(s => !assignees.includes(s.name)).map(s => (
-                                                                <option key={s.id} value={s.name}>{s.name}</option>
-                                                            ))}
-                                                        </select>
+                                                {/* 2026-05-24 — Assign button (admin/manager, always visible
+                                                    no edit-mode required). Replaces the buried tiny <select>
+                                                    with a bottom-sheet multi-select picker (AssigneePickerModal).
+                                                    Andrew: "make it easier to assign a staff to the tasks." */}
+                                                {(currentIsAdmin || /manager/i.test(staffRole?.role || '')) && (
+                                                    <div className="mt-1.5">
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); setAssigningTaskIdx(origIdx); }}
+                                                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-white border border-dd-line hover:bg-dd-bg text-[11px] font-bold text-dd-text-2 active:scale-95 transition"
+                                                            title={language === "es" ? "Asignar personal" : "Assign staff"}
+                                                        >
+                                                            👤 {assignees.length === 0
+                                                                ? `+ ${language === "es" ? "Asignar" : "Assign"}`
+                                                                : `${language === "es" ? "Editar asignados" : "Edit assignees"}`}
+                                                        </button>
                                                     </div>
                                                 )}
                                                 {/* Completed by info {"\u{2014}"} for tasks without subtasks */}
@@ -5651,6 +5682,52 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             />
                         </Suspense>
                     )}
+
+                    {/* 2026-05-24 — Per-task assignee picker bottom sheet.
+                        Mounted-on-demand: only rendered when an admin/
+                        manager has tapped the 👤 button on a task card.
+                        eligibleStaff is filtered to (a) the current
+                        location AND (b) the current checklist side via
+                        resolveStaffSide, so a FOH cook never appears in
+                        a BOH closing-task picker. */}
+                    {assigningTaskIdx !== null && (() => {
+                        const currentTasks = (customTasksRef.current[checklistSide] && customTasksRef.current[checklistSide][PERIOD_KEY]) || [];
+                        const task = currentTasks[assigningTaskIdx] || null;
+                        if (!task) return null;
+                        const sideLower = (checklistSide || 'FOH').toLowerCase();   // 'foh' | 'boh'
+                        const eligibleStaff = (staffList || [])
+                            .filter(s => s && s.name)
+                            .filter(s => s.active !== false)
+                            .filter(s => s.location === storeLocation || s.location === 'both' || storeLocation === 'both')
+                            .filter(s => {
+                                const explicit = String(s.scheduleSide || '').toLowerCase();
+                                if (explicit === 'foh' || explicit === 'boh') return explicit === sideLower;
+                                if (explicit === 'both') return true;
+                                // Role-based fallback for legacy records
+                                const isFohByRole = ["FOH", "Manager", "Owner", "Shift Lead"].includes(s.role);
+                                return isFohByRole ? sideLower === 'foh' : sideLower === 'boh';
+                            });
+                        const currentAssignees = Array.isArray(task.assignTo)
+                            ? task.assignTo
+                            : (task.assignTo ? [task.assignTo] : []);
+                        const taskTitle = (task.task || '').split('\n')[0];
+                        return (
+                            <Suspense fallback={null}>
+                                <AssigneePickerModal
+                                    open={true}
+                                    onClose={() => setAssigningTaskIdx(null)}
+                                    onSave={async (names) => {
+                                        await setTaskAssignees(assigningTaskIdx, names);
+                                    }}
+                                    taskTitle={taskTitle}
+                                    eligibleStaff={eligibleStaff}
+                                    assignedNames={currentAssignees}
+                                    currentStaffName={staffName}
+                                    language={language}
+                                />
+                            </Suspense>
+                        );
+                    })()}
 
                     {activeTab === "inventory" && (
                         <div className="space-y-3">
