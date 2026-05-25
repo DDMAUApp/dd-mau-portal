@@ -97,7 +97,13 @@ const NAV_GROUPS = [
         items: [
             { tab: 'maintenance', icon: '🔧', en: 'Maintenance', es: 'Mantenimiento' },
             { tab: 'insurance',   icon: '📑', en: 'Insurance',   es: 'Seguro' },
-            { tab: 'admin',       icon: '⚙️', en: 'Admin',       es: 'Admin', requires: 'admin' },
+            { tab: 'admin',         icon: '⚙️', en: 'Admin',         es: 'Admin',           requires: 'admin' },
+            // 2026-05-24 — Andrew: "i want to add a notification page in
+            // admin where i can add who get what notifications because
+            // some people get notifications they shouldnt." Promotes the
+            // per-staff push-opt-out matrix into its own page so the
+            // AdminPanel doesn't keep growing.
+            { tab: 'notifications', icon: '🔔', en: 'Notifications', es: 'Notificaciones',  requires: 'admin' },
             // Onboarding is intentionally NOT in the main nav. It lives behind
             // the Admin page (owners-only PII) — admins enter it via the
             // launcher card at the top of AdminPanel.jsx.

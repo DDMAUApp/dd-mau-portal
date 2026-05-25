@@ -136,6 +136,47 @@ exports.dispatchNotification = onDocumentCreated(
             logger.info(`no FCM tokens for ${forStaff}, skipping push`);
             return;
         }
+
+        // ── Per-staff opt-out gate (2026-05-24) ────────────────────
+        // Admin can mute optional notification types per-staff via the
+        // /admin → Notifications page. pushOptOut: string[] on the
+        // staff record holds the type ids that should NEVER push to
+        // this person. LOCKED_ON types (chat, personal schedule
+        // changes, your own tasks) IGNORE this — they always push,
+        // because muting "you got a shift" or "@-mention" silently
+        // breaks the app's promise to staff. The /notifications doc
+        // is still kept (bell drawer still shows it), only the FCM
+        // push is suppressed. Source-of-truth for which types are
+        // locked: src/data/notificationTypes.js (mirrored below).
+        const LOCKED_ON_TYPE_IDS = new Set([
+            // chat
+            "chat_message", "chat_mention", "chat_nudge",
+            // personal schedule changes / outcomes
+            "shift_reminder_1h",
+            "shift_added", "shift_deleted", "shift_reassigned",
+            "shift_date_changed", "shift_time_changed",
+            "pto_approved", "pto_denied",
+            "swap_approved", "swap_denied",
+            "coverage_approved", "coverage_denied",
+            "week_published",
+            // your own tasks / acks
+            "task_handoff", "task_reminder", "task_comment",
+            "task_message", "task_completed",
+            "required_ack", "announcement",
+        ]);
+        const personalOptOuts = Array.isArray(me.pushOptOut) ? me.pushOptOut : [];
+        if (notif.type && personalOptOuts.includes(notif.type) && !LOCKED_ON_TYPE_IDS.has(notif.type)) {
+            logger.info(`opt-out gate: suppressing push for ${forStaff} type=${notif.type} (admin muted)`);
+            try {
+                await snap.ref.update({
+                    pushSuppressed: true,
+                    pushSuppressedReason: "staff_opt_out",
+                });
+            } catch (e) {
+                logger.warn(`could not stamp pushSuppressed for ${event.params.id}:`, e);
+            }
+            return;
+        }
         // DEDUP by exact token string. Without this, multiple stale
         // entries that all happen to share the same active token (which
         // happens after the message rotation logic in messaging.js
@@ -446,6 +487,18 @@ exports.dispatchSms = onDocumentCreated(
         const list = (staffDoc.data() || {}).list || [];
         const staff = list.find((s) => s && s.name === forStaff);
         const settings = settingsDoc.exists ? settingsDoc.data() : {};
+
+        // 2026-05-24 — Per-staff opt-out (same array dispatchNotification
+        // checks). NONE of the ALWAYS_SMS_TYPES are in LOCKED_ON_TYPE_IDS,
+        // so admin can mute any SMS-eligible type per staff. The
+        // /notifications doc + the push channel still fire (subject to
+        // their own gates); only the SMS is suppressed. Saves $0.0079
+        // per Twilio segment per muted recipient.
+        const personalOptOuts = Array.isArray(staff?.pushOptOut) ? staff.pushOptOut : [];
+        if (notif.type && personalOptOuts.includes(notif.type)) {
+            logger.info(`dispatchSms opt-out: ${forStaff} muted type=${notif.type}`);
+            return;
+        }
 
         const [eligible, reason] = smsHelpers.isSmsEligible(notif, staff, settings);
         if (!eligible) {

@@ -54,6 +54,9 @@ const Eighty6Dashboard = lazy(() => import('./components/Eighty6Dashboard').then
 const CateringOrder = lazy(() => import('./components/CateringOrder').then(m => ({ default: memo(m.default) })));
 const MaintenanceRequest = lazy(() => import('./components/MaintenanceRequest').then(m => ({ default: memo(m.default) })));
 const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ default: memo(m.default) })));
+// 2026-05-24 — per-staff push opt-out matrix (admin only). See
+// src/data/notificationTypes.js for the type registry.
+const NotificationsAdmin = lazy(() => import('./components/NotificationsAdmin'));
 const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment').then(m => ({ default: memo(m.default) })));
 const AiAssistant = lazy(() => import('./components/AiAssistant').then(m => ({ default: memo(m.default) })));
 const TardinessTracker = lazy(() => import('./components/TardinessTracker').then(m => ({ default: memo(m.default) })));
@@ -1200,6 +1203,7 @@ export default function App() {
             if (activeTab === 'health' && staffIsAdmin) return <PageErrorBoundary tabName="System Health" language={language}><AdminHealthPage language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'labels' && staffIsAdmin) return <PageErrorBoundary tabName="Label Printing" language={language}><LabelPrintingCenter language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'admin' && staffIsAdmin) return <PageErrorBoundary tabName="Admin" language={language}><AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} /></PageErrorBoundary>;
+            if (activeTab === 'notifications' && staffIsAdmin) return <PageErrorBoundary tabName="Notifications" language={language}><NotificationsAdmin language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} /></PageErrorBoundary>;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).
             return isMobile ? (
