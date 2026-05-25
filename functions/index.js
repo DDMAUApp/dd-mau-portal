@@ -1685,12 +1685,19 @@ exports.pruneAuditLogs = onSchedule(
         logger.info(`pruneAuditLogs: deleted=${totalDeleted} errors=${totalErrors} | ${report.join(", ")}`);
 
         // Write a single audit row recording this run.
+        // 2026-05-24: `cutoff` is scoped to the per-rule for-loop above
+        // (each rule has its own `cutoff` derived from its retentionDays),
+        // so referencing it here used to throw ReferenceError and the
+        // bare-catch swallowed it — the audit row silently never wrote.
+        // Compute the default-retention cutoff explicitly to match the
+        // `retentionDays: RETENTION_DAYS` field stamped on the same row.
         try {
+            const defaultCutoff = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60_000);
             await db.collection("audit").add({
                 action: "prune_audit_logs",
                 byAdmin: "cloud_function",
                 retentionDays: RETENTION_DAYS,
-                cutoff: cutoff.toISOString(),
+                cutoff: defaultCutoff.toISOString(),
                 totalDeleted,
                 totalErrors,
                 breakdown: report,
