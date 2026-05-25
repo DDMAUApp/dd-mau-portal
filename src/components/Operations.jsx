@@ -4359,76 +4359,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             </div>
                         )}
 
-                        {/* Manager dashboard — completion %, overdue, scoreboard.
-                            Shown to all staff with Ops access (Andrew's call: "everyone that has access to that page"). */}
-                        {(() => {
-                            const fohStats = getCompletionStats("FOH");
-                            const bohStats = getCompletionStats("BOH");
-                            // Per-staff scoreboard: count completed items where checks[*+_by] = staffName
-                            // Iterates all known checks and groups by who finished each.
-                            const scoreboard = new Map();
-                            const overdue = [];
-                            const ALL_TASKS = (customTasks[checklistSide] && customTasks[checklistSide][PERIOD_KEY]) || [];
-                            for (const t of ALL_TASKS) {
-                                if (t.completeBy && !isTaskComplete(t)) {
-                                    // Compare against Chicago wall-clock so devices in
-                                    // other zones don't mis-flag.
-                                    if (isPastTimeOfDay(t.completeBy)) overdue.push(t);
-                                }
-                            }
-                            for (const k of Object.keys(checks)) {
-                                if (!k.endsWith("_by")) continue;
-                                const baseKey = k.slice(0, -3);
-                                if (!checks[baseKey]) continue;
-                                const name = checks[k];
-                                if (!name) continue;
-                                scoreboard.set(name, (scoreboard.get(name) || 0) + 1);
-                            }
-                            const top = [...scoreboard.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5);
-                            const sidePct = (s) => s.total > 0 ? Math.round(s.done / s.total * 100) : 0;
-                            return (
-                                <div className="rounded-xl border border-dd-line bg-white shadow-card p-3 mb-2">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <span className="text-[11px] font-bold uppercase tracking-wider text-dd-text-2">{language === "es" ? "Resumen del día" : "Today's snapshot"}</span>
-                                        {overdue.length > 0 && (
-                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">
-                                                🚨 {overdue.length} {language === "es" ? "atrasadas" : "overdue"}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-2 mb-2">
-                                        <div className="bg-dd-green-50 border border-dd-green/30 rounded-lg p-2">
-                                            <div className="flex justify-between items-baseline text-[11px] font-bold text-dd-green-700 mb-1.5">
-                                                <span>FOH</span>
-                                                <span className="tabular-nums">{fohStats.done}/{fohStats.total} · {sidePct(fohStats)}%</span>
-                                            </div>
-                                            <div className="w-full bg-white/60 rounded-full h-1.5 overflow-hidden">
-                                                <div className="h-1.5 rounded-full bg-dd-green transition-all" style={{ width: sidePct(fohStats) + "%" }} />
-                                            </div>
-                                        </div>
-                                        <div className="bg-orange-50 border border-orange-200 rounded-lg p-2">
-                                            <div className="flex justify-between items-baseline text-[11px] font-bold text-orange-700 mb-1.5">
-                                                <span>BOH</span>
-                                                <span className="tabular-nums">{bohStats.done}/{bohStats.total} · {sidePct(bohStats)}%</span>
-                                            </div>
-                                            <div className="w-full bg-white/60 rounded-full h-1.5 overflow-hidden">
-                                                <div className="h-1.5 rounded-full bg-orange-500 transition-all" style={{ width: sidePct(bohStats) + "%" }} />
-                                            </div>
-                                        </div>
-                                    </div>
-                                    {top.length > 0 && (
-                                        <div className="flex flex-wrap gap-1">
-                                            <span className="text-[10px] font-bold text-gray-500 mr-1">🏆</span>
-                                            {top.map(([name, count]) => (
-                                                <span key={name} className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${name === staffName ? "bg-mint-100 text-mint-800 border-mint-300" : "bg-white text-gray-600 border-gray-300"}`}>
-                                                    {name === staffName ? "✓ " : ""}{name.split(" ")[0]} · {count}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-                            );
-                        })()}
+                        {/* "Today's snapshot" manager dashboard removed
+                            2026-05-25 — Andrew: "we can take off the
+                            today's snap shop in tasks no need." The card
+                            showed FOH/BOH completion %, overdue count,
+                            and a top-5 scoreboard. Per-task completion
+                            still lives inline on each task row; the
+                            scoreboard / overdue / per-side % were
+                            redundant with what staff see on their list. */}
 
                         {/* Print + Edit buttons */}
                         <div className="flex justify-end items-center gap-2 mt-1 print:hidden">
