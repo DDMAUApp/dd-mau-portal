@@ -239,8 +239,18 @@ export default function Sidebar({
                 </button>
             )}
 
-            {/* Nav groups */}
-            <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
+            {/* Nav groups.
+                2026-05-24 — min-h-0 is the Flexbox-overflow fix. In a flex
+                column, a `flex-1 overflow-y-auto` child still grows to
+                fit its content by default (min-height: auto) — items
+                past the visible viewport become unreachable because the
+                container won't shrink to enable scroll. min-h-0
+                overrides that. Pair with the taller footer (clears the
+                mobile bottom nav) and the nav now scrolls cleanly all
+                the way down to SETTINGS regardless of how many groups
+                exist. The trailing pb-4 keeps the LAST item visible
+                above the footer's border-top during scroll. */}
+            <nav className="flex-1 min-h-0 overflow-y-auto py-3 px-2 space-y-4 pb-4">
                 {filteredGroups.map(group => (
                     <div key={group.labelEn}>
                         {!collapsed && (
