@@ -58,6 +58,18 @@ export default {
         'card':     '0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06)',
         'card-hov': '0 4px 12px rgba(15, 23, 42, 0.08), 0 2px 4px rgba(15, 23, 42, 0.04)',
       },
+      // 2026-05-24 — slide-up entry for the chat composer attach drawer.
+      // Subtle 6px translate so the drawer feels like it rises from the
+      // textarea rather than appearing out of nowhere.
+      keyframes: {
+        'slide-up': {
+          '0%':   { opacity: '0', transform: 'translateY(6px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)'   },
+        },
+      },
+      animation: {
+        'slide-up': 'slide-up 180ms ease-out',
+      },
     }
   },
   plugins: [],

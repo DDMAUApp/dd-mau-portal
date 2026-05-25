@@ -2487,6 +2487,12 @@ function Composer({
     // our place between key + emoji input.
     const textareaRef = useRef(null);
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+    // Mobile-only attach drawer. On mobile the composer collapses to
+    // [+] [textarea] [send] (standard messenger pattern); tapping +
+    // reveals a tray with photo / video / poll / 86 / emoji / fix-
+    // grammar / schedule. On md+ the inline icon row is preserved and
+    // this state is unused. Andrew (2026-05-24).
+    const [showAttachMenu, setShowAttachMenu] = useState(false);
     const [elapsed, setElapsed] = useState(0);
     // 2026-05-20 — Andrew: "make the staff chat page text bar have ai
     // to help with spelling and grammer too." One-tap ✨ button calls
@@ -2667,146 +2673,157 @@ function Composer({
                     </button>
                 </div>
             )}
-            <div className="flex items-end gap-1.5">
-                {/* Image */}
-                <input
-                    ref={imageInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={onPickImage}
-                    className="hidden"
-                />
-                <button
-                    onClick={() => imageInputRef.current?.click()}
-                    disabled={sending}
-                    className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
-                    aria-label={isEs ? 'Foto' : 'Photo'}
-                    title={isEs ? 'Foto' : 'Photo'}
-                >
-                    📷
-                </button>
-                {/* Video */}
-                <input
-                    ref={videoInputRef}
-                    type="file"
-                    accept="video/*"
-                    onChange={onPickVideo}
-                    className="hidden"
-                />
-                <button
-                    onClick={() => videoInputRef.current?.click()}
-                    disabled={sending}
-                    className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
-                    aria-label={isEs ? 'Video' : 'Video'}
-                    title={isEs ? 'Video' : 'Video'}
-                >
-                    🎬
-                </button>
-                {/* Poll */}
-                {onOpenPoll && (
+            {/* 2026-05-24 — unified attach drawer. Was previously a
+                mobile-only collapsed menu PLUS an inline icon strip on
+                desktop. Andrew: "put all the bubbles in a + on the
+                left and a Send arrow on the right and thats it."
+                Same drawer + cleaner [ + | textarea | send ] layout
+                on ALL screen sizes. Reduces composer clutter and
+                matches WhatsApp / iMessage / Slack muscle memory.
+                All 7 actions live here — photo, video, poll, 86,
+                emoji, fix-grammar, schedule. Auto-closes after pick.
+                Hidden file inputs sit OUTSIDE the drawer block so a
+                hide/show transition doesn't unmount the inputs (which
+                would drop the in-flight file selection on iOS). */}
+            <input
+                ref={imageInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={onPickImage}
+                className="hidden"
+            />
+            <input
+                ref={videoInputRef}
+                type="file"
+                accept="video/*"
+                onChange={onPickVideo}
+                className="hidden"
+            />
+            {showAttachMenu && (
+                <div className="mb-2 p-2 rounded-xl bg-white shadow-lg border border-dd-line flex items-center gap-2 overflow-x-auto scrollbar-thin animate-slide-up">
                     <button
-                        onClick={onOpenPoll}
+                        onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}
                         disabled={sending}
-                        className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
-                        aria-label={isEs ? 'Encuesta' : 'Poll'}
-                        title={isEs ? 'Encuesta' : 'Poll'}
+                        className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
+                        aria-label={isEs ? 'Foto' : 'Photo'}
+                        title={isEs ? 'Foto' : 'Photo'}
                     >
-                        📊
+                        📷
                     </button>
-                )}
-                {/* 86 alert — out of stock. Bright red ring on hover
-                    so it visually stands apart from neutral actions
-                    (this is destructive/operational, not a neutral
-                    media insert). */}
-                {onOpen86 && (
                     <button
-                        onClick={onOpen86}
+                        onClick={() => { videoInputRef.current?.click(); setShowAttachMenu(false); }}
                         disabled={sending}
-                        className="w-10 h-10 rounded-full hover:bg-red-50 hover:text-red-700 flex items-center justify-center text-xl shrink-0 disabled:opacity-40 transition"
-                        aria-label={isEs ? 'Marcar 86' : 'Post 86'}
-                        title={isEs ? '86 — sin existencia' : '86 — out of stock'}
+                        className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
+                        aria-label={isEs ? 'Video' : 'Video'}
+                        title={isEs ? 'Video' : 'Video'}
                     >
-                        🚫
+                        🎬
                     </button>
-                )}
-                {/* Emoji picker — restaurant-themed catalog + recent
-                    row. Tapping toggles the picker; the picker itself
-                    inserts the chosen emoji at the cursor via
-                    insertEmoji() and keeps itself open (keepOpen)
-                    so the user can drop multiple emojis without
-                    re-opening. Andrew (2026-05-17). */}
-                <button
-                    onClick={() => setShowEmojiPicker(v => !v)}
-                    disabled={sending}
-                    className={`w-10 h-10 rounded-full flex items-center justify-center text-xl shrink-0 disabled:opacity-40 transition ${showEmojiPicker ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg'}`}
-                    aria-label={isEs ? 'Emojis' : 'Emojis'}
-                    title={isEs ? 'Emojis' : 'Emojis'}
-                >
-                    😀
-                </button>
-                {/* ✨ Spell / grammar fix — only shows when there's text
-                    in the draft. One-tap correction via aiFixText Cloud
-                    Function. Loading spinner on the button while in
-                    flight; Undo offered via toast for 6s after a fix. */}
-                {!empty && (
+                    {onOpenPoll && (
+                        <button
+                            onClick={() => { onOpenPoll(); setShowAttachMenu(false); }}
+                            disabled={sending}
+                            className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
+                            aria-label={isEs ? 'Encuesta' : 'Poll'}
+                            title={isEs ? 'Encuesta' : 'Poll'}
+                        >
+                            📊
+                        </button>
+                    )}
+                    {onOpen86 && (
+                        <button
+                            onClick={() => { onOpen86(); setShowAttachMenu(false); }}
+                            disabled={sending}
+                            className="w-11 h-11 rounded-full hover:bg-red-50 hover:text-red-700 flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition"
+                            aria-label={isEs ? 'Marcar 86' : 'Post 86'}
+                            title={isEs ? '86 — sin existencia' : '86 — out of stock'}
+                        >
+                            🚫
+                        </button>
+                    )}
                     <button
-                        onClick={handleFixGrammar}
-                        disabled={sending || fixing}
-                        className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shrink-0 disabled:opacity-40 transition ${fixing ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
-                        aria-label={isEs ? 'Corregir ortografía y gramática' : 'Fix spelling & grammar'}
-                        title={isEs ? '✨ Corregir ortografía y gramática (IA)' : '✨ Fix spelling & grammar (AI)'}
+                        onClick={() => { setShowEmojiPicker(v => !v); setShowAttachMenu(false); }}
+                        disabled={sending}
+                        className={`w-11 h-11 rounded-full flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition ${showEmojiPicker ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg'}`}
+                        aria-label={isEs ? 'Emojis' : 'Emojis'}
+                        title={isEs ? 'Emojis' : 'Emojis'}
                     >
-                        {fixing
-                            ? <span className="inline-block w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-                            : '✨'}
+                        😀
                     </button>
-                )}
-                {/* Text input */}
+                    {!empty && (
+                        <button
+                            onClick={() => { handleFixGrammar(); setShowAttachMenu(false); }}
+                            disabled={sending || fixing}
+                            className={`w-11 h-11 rounded-full flex items-center justify-center text-xl shrink-0 disabled:opacity-40 transition ${fixing ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
+                            aria-label={isEs ? 'Corregir ortografía y gramática' : 'Fix spelling & grammar'}
+                            title={isEs ? '✨ Corregir ortografía y gramática (IA)' : '✨ Fix spelling & grammar (AI)'}
+                        >
+                            {fixing
+                                ? <span className="inline-block w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                                : '✨'}
+                        </button>
+                    )}
+                    {!empty && onOpenSchedule && (
+                        <button
+                            onClick={() => { onOpenSchedule(); setShowAttachMenu(false); }}
+                            disabled={sending}
+                            className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
+                            aria-label={isEs ? 'Programar' : 'Schedule'}
+                            title={isEs ? 'Programar envío' : 'Schedule send'}
+                        >
+                            📅
+                        </button>
+                    )}
+                </div>
+            )}
+            {/* Composer row — same layout EVERYWHERE now:
+                  [ + ] [ textarea ] [ 🎤 voice OR ➤ send ]
+                Bigger textarea (min-h-44, text-base) — also stops iOS
+                Safari from zooming into the field on focus (font-size
+                ≥ 16px is the documented threshold). */}
+            <div className="flex items-end gap-2">
+                <button
+                    onClick={() => setShowAttachMenu(v => !v)}
+                    disabled={sending}
+                    className={`w-11 h-11 rounded-full flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition-transform duration-200 ${showAttachMenu ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg text-dd-text-2'}`}
+                    style={{ transform: showAttachMenu ? 'rotate(45deg)' : 'rotate(0deg)' }}
+                    aria-label={isEs ? 'Más opciones' : 'More options'}
+                    title={isEs ? 'Más opciones' : 'More options'}
+                >
+                    +
+                </button>
                 <textarea
                     ref={textareaRef}
                     rows={1}
                     value={draft}
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={onKeyDown}
+                    onFocus={() => setShowAttachMenu(false)}
                     placeholder={isEs ? 'Mensaje…' : 'Message…'}
                     disabled={sending}
-                    className="flex-1 min-w-0 px-3 py-2 rounded-2xl bg-dd-bg border border-dd-line text-[14.5px] text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green max-h-[120px]"
+                    className="flex-1 min-w-0 min-h-[44px] max-h-[140px] px-4 py-2.5 rounded-2xl bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
                     style={{ lineHeight: 1.4 }}
                 />
-                {/* Voice OR (Schedule + Send) */}
                 {empty ? (
                     <button
                         onClick={onStartRecording}
                         disabled={sending}
-                        className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
+                        className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
                         aria-label={isEs ? 'Mensaje de voz' : 'Voice message'}
                         title={isEs ? 'Voz' : 'Voice'}
                     >
                         🎤
                     </button>
                 ) : (
-                    <>
-                        {onOpenSchedule && (
-                            <button
-                                onClick={onOpenSchedule}
-                                disabled={sending}
-                                className="w-10 h-10 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg shrink-0 disabled:opacity-40"
-                                aria-label={isEs ? 'Programar' : 'Schedule'}
-                                title={isEs ? 'Programar envío' : 'Schedule send'}
-                            >
-                                📅
-                            </button>
-                        )}
-                        <button
-                            onClick={onSendText}
-                            disabled={sending}
-                            className="w-10 h-10 rounded-full bg-dd-green text-white flex items-center justify-center font-black shrink-0 disabled:opacity-40 hover:bg-dd-green-700 active:scale-95 transition"
-                            aria-label={isEs ? 'Enviar' : 'Send'}
-                        >
-                            ➤
-                        </button>
-                    </>
+                    <button
+                        onClick={onSendText}
+                        disabled={sending}
+                        className="w-11 h-11 rounded-full bg-dd-green text-white flex items-center justify-center font-black shrink-0 disabled:opacity-40 hover:bg-dd-green-700 active:scale-95 transition"
+                        aria-label={isEs ? 'Enviar' : 'Send'}
+                    >
+                        ➤
+                    </button>
                 )}
             </div>
             {/* Emoji picker — bottom sheet on mobile, popover on
