@@ -315,11 +315,25 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // Determine current user's role early
             const currentIsAdmin = isAdmin(staffName, staffList);
 
-            // New checklist system {"\u{2014}"} FOH/BOH with multiple lists per side
+            // New checklist system {"\u{2014}"} FOH/BOH with multiple lists per side.
+            //
+            // 2026-05-24 — Andrew: "everyone except admin should auto-route
+            // to their own side." We now prefer the EXPLICIT scheduleSide
+            // field set in AdminPanel ('foh' / 'boh' / 'both') over the
+            // legacy role-based inference. Falls back to role inference
+            // when scheduleSide is missing (legacy records pre-flag).
+            // Tab strip below is hidden for single-side non-admin viewers
+            // (showSideTabs gate).
             const staffRole = (staffList || []).find(s => s.name === staffName);
             const staffIsFOH = staffRole ? ["FOH", "Manager", "Owner", "Shift Lead"].includes(staffRole.role) : true;
-            const staffSide = staffIsFOH ? "FOH" : "BOH";
-            const [checklistSide, setChecklistSide] = useState(currentIsAdmin ? "FOH" : staffSide);
+            const explicitSide = staffRole?.scheduleSide;                         // 'foh' | 'boh' | 'both' | undefined
+            const viewerIsBothSide = explicitSide === 'both';
+            const viewerHasFixedSide = explicitSide === 'foh' || explicitSide === 'boh';
+            const staffSide = viewerHasFixedSide
+                ? explicitSide.toUpperCase()                                      // 'FOH' | 'BOH'
+                : (staffIsFOH ? "FOH" : "BOH");
+            const showSideTabs = currentIsAdmin || viewerIsBothSide;
+            const [checklistSide, setChecklistSide] = useState(staffSide);
             // (Removed 2026-05-09) PERIOD_KEY state — was always "all", setter
             // was never called. Direct usages below replaced with PERIOD_KEY.
             const [checks, setChecksRaw] = useState({});
@@ -4263,19 +4277,25 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         {/* FOH / BOH side selector — v2 segmented control (matches Schedule).
                             Emojis dropped — 🪑 + 🍳 don't render reliably across systems
                             (showed as fallback tofu on some browsers). Side codes alone
-                            are universally read by restaurant staff. */}
-                        <div className="flex gap-1 mb-1 bg-white border border-dd-line rounded-lg p-1 shadow-card">
-                            {["FOH", "BOH"].map(side => {
-                                const isActive = checklistSide === side;
-                                const activeBg = side === "FOH" ? "bg-dd-green text-white shadow-sm" : "bg-orange-600 text-white shadow-sm";
-                                return (
-                                    <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); setTaskFilter(""); }}
-                                        className={`flex-1 py-2 px-2 rounded-md font-bold text-sm transition active:scale-95 ${isActive ? activeBg : "text-dd-text-2 hover:bg-dd-bg"}`}>
-                                        {side}
-                                    </button>
-                                );
-                            })}
-                        </div>
+                            are universally read by restaurant staff.
+                            2026-05-24 — Andrew: hidden for single-side non-admin staff.
+                            They already landed on their side at mount; the toggle
+                            would only let them peek at the other side, which adds
+                            confusion + invites them to tick the wrong checkmarks. */}
+                        {showSideTabs && (
+                            <div className="flex gap-1 mb-1 bg-white border border-dd-line rounded-lg p-1 shadow-card">
+                                {["FOH", "BOH"].map(side => {
+                                    const isActive = checklistSide === side;
+                                    const activeBg = side === "FOH" ? "bg-dd-green text-white shadow-sm" : "bg-orange-600 text-white shadow-sm";
+                                    return (
+                                        <button key={side} onClick={() => { setChecklistSide(side); setActiveListIdx(0); setEditMode(false); setEditingIdx(null); setShowAddForm(false); setTaskFilter(""); }}
+                                            className={`flex-1 py-2 px-2 rounded-md font-bold text-sm transition active:scale-95 ${isActive ? activeBg : "text-dd-text-2 hover:bg-dd-bg"}`}>
+                                            {side}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
 
                         {/* BOH-only: pending sauce requests from FOH. Hidden when no requests. */}
                         {checklistSide === "BOH" && (

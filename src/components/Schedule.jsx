@@ -401,7 +401,21 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // double-booked / are there gaps" check; the user toggles back to
     // normal for editing since cells are too small to tap when fit.
     const [gridFitToScreen, setGridFitToScreen] = useState(false);
-    const [side, setSide] = useState('foh'); // 'foh' | 'boh'
+    // 2026-05-24 — Andrew: "everyone except admin should auto-route to
+    // their own side." If the viewer has scheduleSide === 'foh' (or
+    // 'boh'), default the Schedule grid to that side AND hide the
+    // FOH/BOH tab strip below — single-side staff never need to see
+    // the other side. Admins + scheduleSide === 'both' still see the
+    // toggle.
+    const _viewerRecord = (staffList || []).find(s => s.name === staffName);
+    const _explicitSide = _viewerRecord?.scheduleSide;
+    const _viewerIsBothSide = _explicitSide === 'both';
+    const _viewerHasFixedSide = _explicitSide === 'foh' || _explicitSide === 'boh';
+    const _viewerSide = _viewerHasFixedSide
+        ? _explicitSide
+        : (_viewerRecord ? resolveStaffSide(_viewerRecord) : 'foh');
+    // Initialize to the viewer's resolved side (admin can still flip).
+    const [side, setSide] = useState(_viewerSide); // 'foh' | 'boh'
     // Side-aware edit gates. MUST be declared AFTER `side` — used to be one
     // line before the `useState`, which threw a TDZ ReferenceError on first
     // render of Schedule and broke the whole tab. Same class of bug as the
@@ -4497,17 +4511,24 @@ ${dayBlocks}
             </div>
 
             {/* FOH / BOH segmented control — matches the v2 segmented pattern
-                from HomeV2's "All/FOH/BOH" filter on upcoming shifts. */}
-            <div className="flex gap-1 mb-3 bg-white border border-dd-line rounded-lg p-1 print:hidden">
-                <button onClick={() => setSide('foh')}
-                    className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'foh' ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                    🪑 {tx('Front of House', 'Front of House')}
-                </button>
-                <button onClick={() => setSide('boh')}
-                    className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'boh' ? 'bg-orange-600 text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                    🍳 {tx('Back of House', 'Back of House')}
-                </button>
-            </div>
+                from HomeV2's "All/FOH/BOH" filter on upcoming shifts.
+                2026-05-24 — Andrew: hidden for single-side staff. They
+                already landed on their side at mount time (state init
+                above); the toggle would only let them peek at the
+                other side, which adds confusion. Admins and explicit
+                'both'-side staff still see + use it. */}
+            {(staffIsAdmin || _viewerIsBothSide) && (
+                <div className="flex gap-1 mb-3 bg-white border border-dd-line rounded-lg p-1 print:hidden">
+                    <button onClick={() => setSide('foh')}
+                        className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'foh' ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                        🪑 {tx('Front of House', 'Front of House')}
+                    </button>
+                    <button onClick={() => setSide('boh')}
+                        className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'boh' ? 'bg-orange-600 text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                        🍳 {tx('Back of House', 'Back of House')}
+                    </button>
+                </div>
+            )}
 
             {/* Week navigator */}
             <WeekNav weekStart={weekStart} setWeekStart={setWeekStart} isEn={isEn} />
