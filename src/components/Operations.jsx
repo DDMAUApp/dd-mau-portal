@@ -6367,6 +6367,38 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 }} className="flex-1 py-3 bg-amber-600 text-white rounded-xl font-bold text-sm hover:bg-amber-700 active:scale-95 transition">
                                                     📞 {language === "es" ? "Hacer pedido" : "Place order"}
                                                 </button>
+                                                {/* 2026-05-24 — Andrew: "how do you empty it? lets
+                                                    also create a empty cart button." One-tap clear
+                                                    with confirm (rows.length protects accidental
+                                                    taps when cart is already empty). Sets the
+                                                    inventory map to {} both locally (setInventory)
+                                                    and on the canonical /ops/inventory_{loc}.counts
+                                                    doc. updateDoc not setDoc — preserves other
+                                                    fields like customInventory + lastModified.
+                                                    Closes the cart modal on success (it's empty;
+                                                    no reason to keep staring at it). */}
+                                                {rows.length > 0 && (
+                                                    <button onClick={async () => {
+                                                        const ok = window.confirm(language === "es"
+                                                            ? `¿Vaciar el carrito (${rows.length} items)? Esto no se puede deshacer.`
+                                                            : `Empty the cart (${rows.length} items)? This cannot be undone.`);
+                                                        if (!ok) return;
+                                                        setInventory({});
+                                                        try {
+                                                            await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
+                                                                counts: {},
+                                                                date: new Date().toISOString(),
+                                                            });
+                                                            toast(language === "es" ? "✓ Carrito vaciado" : "✓ Cart emptied", { kind: 'success' });
+                                                        } catch (e) {
+                                                            console.warn('empty cart persist failed:', e);
+                                                            toast(language === "es" ? "Error al vaciar" : "Could not empty", { kind: 'error' });
+                                                        }
+                                                        setShowCart(false);
+                                                    }} className="flex-1 py-3 bg-red-50 border border-red-200 text-red-700 rounded-xl font-bold text-sm hover:bg-red-100 active:scale-95 transition">
+                                                        🗑 {language === "es" ? "Vaciar" : "Empty"}
+                                                    </button>
+                                                )}
                                                 <button onClick={() => setShowCart(false)} className="flex-1 py-3 bg-gray-200 text-gray-700 rounded-xl font-bold text-sm hover:bg-gray-300 active:scale-95 transition">
                                                     {"\u{2715}"} {language === "es" ? "Cerrar" : "Close"}
                                                 </button>
@@ -8794,50 +8826,52 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
         );
     }
 
+    // 2026-05-24 — Andrew: "make it one line bar and just show the
+    // different days and once you click it, it opens send to cart."
+    // Was a 5-row vertical block (~250px tall); now a single
+    // horizontal chip strip (~50px tall). Tap a chip → restore
+    // confirm dialog (same restoreOrderEntryToCart helper, same
+    // overwrite-or-cancel prompt baked in). Vertical real estate
+    // freed up for the actual cart rows below.
     return (
         <>
             <div className="rounded-xl border border-gray-200 bg-white p-2">
-                <div className="flex items-center justify-between mb-1.5 px-1">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-500">
-                        {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
+                <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 shrink-0 px-1">
+                        {isEs ? '📋 Recientes' : '📋 Recent'}
+                    </span>
+                    {/* Horizontal scrollable strip — overflow-x-auto so a
+                        7+ order history doesn't blow out the row width. */}
+                    <div className="flex-1 min-w-0 flex items-center gap-1.5 overflow-x-auto scrollbar-thin">
+                        {rows.map(({ h, itemCount }) => {
+                            const iso = h.date || (h.id ? h.id.slice(0, 10) : null);
+                            const d = iso ? new Date(iso) : null;
+                            const dateLabel = (d && !isNaN(d.getTime()))
+                                ? d.toLocaleDateString(isEs ? 'es' : 'en',
+                                    { month: 'short', day: 'numeric' })
+                                : (h.id || '—');
+                            const isRestoring = restoringId === h.id;
+                            return (
+                                <button
+                                    key={h.id}
+                                    onClick={() => handleRestore(h)}
+                                    disabled={isRestoring}
+                                    title={isEs
+                                        ? `Reemplazar carrito con pedido del ${dateLabel} (${itemCount} items)`
+                                        : `Replace cart with ${dateLabel} order (${itemCount} items)`}
+                                    className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-orange-50 border border-orange-200 hover:bg-orange-100 active:scale-95 text-[12px] font-bold text-orange-800 disabled:opacity-50 disabled:cursor-wait transition"
+                                >
+                                    <span>{dateLabel}</span>
+                                    <span className="text-[10px] text-orange-600 font-bold">· {itemCount}</span>
+                                    {isRestoring && <span className="text-[10px]">⏳</span>}
+                                </button>
+                            );
+                        })}
                     </div>
                     <button onClick={() => setShowHistoryModal(true)}
-                        className="text-[10px] font-bold text-orange-700 hover:text-orange-900 underline">
-                        {isEs ? 'Ver todos →' : 'View all →'}
+                        className="shrink-0 text-[10px] font-bold text-orange-700 hover:text-orange-900 underline px-1">
+                        {isEs ? 'Todos →' : 'All →'}
                     </button>
-                </div>
-                <div className="space-y-1.5">
-                    {rows.map(({ h, itemCount }) => {
-                        const totalQty = Object.values(h.counts || {})
-                            .reduce((s, q) => s + (Number(q) || 0), 0);
-                        const iso = h.date || (h.id ? h.id.slice(0, 10) : null);
-                        const d = iso ? new Date(iso) : null;
-                        const dateLabel = (d && !isNaN(d.getTime()))
-                            ? d.toLocaleDateString(isEs ? 'es' : 'en',
-                                { month: 'short', day: 'numeric', year: '2-digit' })
-                            : (h.id || '—');
-                        const isRestoring = restoringId === h.id;
-                        return (
-                            <div key={h.id}
-                                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-gray-50 border border-gray-200">
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-[12px] font-black text-gray-900 truncate">
-                                        {dateLabel}
-                                    </div>
-                                    <div className="text-[10px] text-gray-600 truncate">
-                                        {itemCount} {isEs ? 'items' : 'items'} · {isEs ? 'cantidad' : 'qty'} {totalQty}
-                                    </div>
-                                </div>
-                                <button onClick={() => handleRestore(h)}
-                                    disabled={isRestoring}
-                                    className="px-2.5 py-1 rounded-md bg-orange-600 text-white text-[11px] font-bold hover:bg-orange-700 shrink-0 disabled:opacity-50 disabled:cursor-wait">
-                                    {isRestoring
-                                        ? (isEs ? '…' : '…')
-                                        : (isEs ? '↩ Al carrito' : '↩ Send to cart')}
-                                </button>
-                            </div>
-                        );
-                    })}
                 </div>
             </div>
             {showHistoryModal && (
