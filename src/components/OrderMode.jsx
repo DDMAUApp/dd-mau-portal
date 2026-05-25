@@ -186,6 +186,18 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
     // the row (Andrew 2026-05-19 — "wanted 6 but they only have 3 ...
     // in partial I can click 3 and that leaves 3 to be ordered").
     const [partialDialog, setPartialDialog] = useState(null); // { itemId, originalQty }
+    // 📋 Plan split-view toggle (Andrew 2026-05-25). Additive — when
+    // ON, the item-rows area splits into two columns: existing list
+    // on the left, vendor-grouped read-only summary on the right. OFF
+    // by default; persists per device.
+    const [planVisible, setPlanVisible] = useState(() => {
+        try { return localStorage.getItem('ddmau:orderMode:planVisible') === '1'; }
+        catch { return false; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('ddmau:orderMode:planVisible', planVisible ? '1' : '0'); }
+        catch { /* private-mode safari — no-op */ }
+    }, [planVisible]);
     const sessionId = session.id;
     const currentVendor = session.currentVendor || '';
     const items = session.items || {};
@@ -369,6 +381,17 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                         className="flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg">
                         ✏️ {tx('Edit vendors', 'Editar')}
                     </button>
+                    {/* 📋 Plan toggle — splits the items area into the
+                        existing list + a vendor-grouped read-only summary
+                        on the right. Additive; OFF by default. */}
+                    <button
+                        onClick={() => setPlanVisible(v => !v)}
+                        title={tx('See items grouped by vendor', 'Ver artículos agrupados por proveedor')}
+                        className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${planVisible
+                            ? 'bg-dd-green text-white border-dd-green'
+                            : 'bg-white text-dd-text-2 border-dd-line hover:border-dd-green'}`}>
+                        📋 {tx('Plan', 'Plan')}
+                    </button>
                 </div>
             </div>
 
@@ -418,24 +441,37 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                 />
             </div>
 
-            {/* Item rows */}
-            <div className="flex-1 overflow-y-auto">
-                {visibleEntries.length === 0 ? (
-                    <div className="p-6 text-center text-sm text-dd-text-2 italic">
-                        {statusFilter === 'all'
-                            ? tx('No items in this session.', 'Sin artículos.')
-                            : tx('No items match this filter.', 'Sin artículos en este filtro.')}
-                    </div>
-                ) : visibleEntries.map(([itemId, it]) => (
-                    <OrderItemRow
-                        key={itemId}
-                        itemId={itemId}
-                        item={it}
+            {/* Item rows — wrapped in a flex container so the Plan
+                toggle can split this area into two columns (existing
+                list on the left, vendor-grouped summary on the right).
+                On mobile (<md) the plan panel stacks below the list. */}
+            <div className={`flex-1 overflow-hidden ${planVisible
+                ? 'flex flex-col md:flex-row md:divide-x md:divide-dd-line'
+                : 'block'}`}>
+                <div className={`${planVisible ? 'md:w-1/2 min-w-0' : 'w-full'} flex-1 overflow-y-auto`}>
+                    {visibleEntries.length === 0 ? (
+                        <div className="p-6 text-center text-sm text-dd-text-2 italic">
+                            {statusFilter === 'all'
+                                ? tx('No items in this session.', 'Sin artículos.')
+                                : tx('No items match this filter.', 'Sin artículos en este filtro.')}
+                        </div>
+                    ) : visibleEntries.map(([itemId, it]) => (
+                        <OrderItemRow
+                            key={itemId}
+                            itemId={itemId}
+                            item={it}
+                            isEs={isEs}
+                            currentVendor={currentVendor}
+                            onAction={handleAction}
+                        />
+                    ))}
+                </div>
+                {planVisible && (
+                    <PlanPanel
+                        items={Object.values(items || {})}
                         isEs={isEs}
-                        currentVendor={currentVendor}
-                        onAction={handleAction}
                     />
-                ))}
+                )}
             </div>
 
             {/* Footer */}
@@ -936,6 +972,139 @@ function VendorRow({ name, tx, staffName, onRemove }) {
                     {tx('Remove', 'Quitar')}
                 </button>
             </div>
+        </div>
+    );
+}
+
+// ── PlanPanel ──────────────────────────────────────────────────────────
+// Right-column read-only summary, shown when the 📋 Plan toggle is on
+// (Andrew 2026-05-25 — "before we place the order i can use the same
+// way we first click the vendor and then can click through what item
+// is that vender"). Pure presentation: groups the session's items by
+// their planned vendor (item.vendor if marked, else preferredVendor,
+// else '(unassigned)') and lets the manager click a vendor pill to
+// scope the list to that vendor. Edits still happen back on the left
+// column — this side just answers "what am I about to order from
+// each vendor?".
+//
+// Re-renders automatically when items change (the prop comes from
+// session.items, which is Firestore-backed) so a mark on the left
+// updates the right side in real time.
+function PlanPanel({ items, isEs }) {
+    const tx = (en, es) => isEs ? es : en;
+
+    // Group items by planned vendor. '(unassigned)' bucket catches
+    // items with no vendor and no preferredVendor — usually rare, but
+    // shows up if inventory metadata is missing vendor info.
+    const grouped = useMemo(() => {
+        const map = new Map();
+        for (const it of items || []) {
+            const v = it.vendor || it.preferredVendor || '(unassigned)';
+            if (!map.has(v)) map.set(v, []);
+            map.get(v).push(it);
+        }
+        // Sort: real vendors A→Z, '(unassigned)' last.
+        return new Map(
+            [...map.entries()].sort(([a], [b]) => {
+                if (a === '(unassigned)') return 1;
+                if (b === '(unassigned)') return -1;
+                return a.localeCompare(b);
+            })
+        );
+    }, [items]);
+
+    const [selectedVendor, setSelectedVendor] = useState(null);
+    // Auto-select the first vendor whenever the set of vendors changes
+    // (e.g. an item just got marked and switched buckets).
+    useEffect(() => {
+        const first = grouped.keys().next().value;
+        if (first && (selectedVendor === null || !grouped.has(selectedVendor))) {
+            setSelectedVendor(first);
+        }
+    }, [grouped, selectedVendor]);
+
+    const rows = selectedVendor ? (grouped.get(selectedVendor) || []) : [];
+
+    return (
+        <aside className="md:w-1/2 min-w-0 bg-dd-bg/50 flex flex-col flex-1 md:flex-none overflow-hidden">
+            {/* Sticky header with vendor pills. */}
+            <div className="px-3 py-2 border-b border-dd-line bg-white sticky top-0 z-10 shrink-0">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                    📋 {tx('Plan by vendor', 'Plan por proveedor')}
+                </div>
+                {grouped.size === 0 ? (
+                    <span className="text-xs text-dd-text-2 italic">
+                        {tx('No items yet.', 'Sin artículos.')}
+                    </span>
+                ) : (
+                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                        {[...grouped.entries()].map(([vendor, list]) => {
+                            const sel = vendor === selectedVendor;
+                            return (
+                                <button
+                                    key={vendor}
+                                    onClick={() => setSelectedVendor(vendor)}
+                                    className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${sel
+                                        ? 'bg-dd-green text-white border-dd-green'
+                                        : 'bg-white text-dd-text border-dd-line hover:bg-dd-bg'}`}>
+                                    {vendor} <span className="opacity-70">({list.length})</span>
+                                </button>
+                            );
+                        })}
+                    </div>
+                )}
+            </div>
+
+            {/* Item list for the selected vendor — read-only. */}
+            <div className="flex-1 overflow-y-auto">
+                {rows.length === 0 ? (
+                    <div className="p-6 text-center text-sm text-dd-text-2 italic">
+                        {tx('No items.', 'Sin artículos.')}
+                    </div>
+                ) : (
+                    rows.map((it) => (
+                        <PlanRow key={it.itemId || it.id} item={it} isEs={isEs} />
+                    ))
+                )}
+            </div>
+        </aside>
+    );
+}
+
+// One row in the plan panel — status badge + item name + qty/unit/pack.
+// Mirrors the colors OrderItemRow uses for status so the right column
+// reads at-a-glance the same way the left does.
+function PlanRow({ item, isEs }) {
+    const tx = (en, es) => isEs ? es : en;
+    const name = isEs && item.itemNameEs ? item.itemNameEs : (item.itemName || item.name || '');
+    const badge = (() => {
+        switch (item.status) {
+            case ITEM_STATUS.ORDERED: return { label: '✓', cls: 'bg-green-100 text-green-800 border-green-200' };
+            case ITEM_STATUS.PARTIAL: return { label: '◐', cls: 'bg-amber-100 text-amber-800 border-amber-200' };
+            case ITEM_STATUS.OOS:     return { label: '🚫', cls: 'bg-red-100 text-red-800 border-red-200' };
+            default:                  return { label: '⏳', cls: 'bg-gray-100 text-gray-700 border-gray-200' };
+        }
+    })();
+    return (
+        <div className="px-3 py-2 border-b border-dd-line/60 flex items-center gap-2">
+            <span className={`text-[11px] font-black px-2 py-0.5 rounded-full border ${badge.cls}`}>
+                {badge.label}
+            </span>
+            <div className="flex-1 min-w-0">
+                <div className="text-sm font-bold text-dd-text truncate">{name}</div>
+                <div className="text-[11px] text-dd-text-2 truncate">
+                    {item.qty != null ? `${item.qty}${item.unit ? ' ' + item.unit : ''}` : ''}
+                    {item.pack ? ` · ${item.pack}` : ''}
+                    {item.note ? ` · ✎ ${item.note}` : ''}
+                </div>
+            </div>
+            {/* If vendor was explicitly assigned (vs. just preferredVendor),
+                show a tiny dot so the manager can tell the planned-vs-locked
+                distinction at a glance. */}
+            {item.vendor && (
+                <span title={tx('Vendor confirmed', 'Proveedor confirmado')}
+                    className="text-[9px] text-dd-green-700 font-black">●</span>
+            )}
         </div>
     );
 }
