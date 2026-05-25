@@ -8635,6 +8635,16 @@ function SkipOtherInput({ onSubmit, isEs }) {
 // Shared restore helper used by both RecentOrdersBar (recent 5) and
 // RecentOrdersHistoryModal (full history view). Persists the restored
 // cart to Firestore so a refresh keeps it. Returns true on success.
+//
+// 2026-05-24 — Andrew: "if there is items in cart it will stop you
+// from sending back to cart. say empty cart first." Two flow changes
+// from the previous behavior:
+//   1. Always-confirm before restoring (even into an empty cart) so a
+//      stray tap on a date chip can't silently dump items.
+//   2. NO MORE overwrite-confirm. If the cart already has items, the
+//      restore is REFUSED entirely with a "Empty cart first" alert.
+//      Forces the user to make the destructive step (empty) and the
+//      additive step (restore) explicit, separate operations.
 async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, currentInventory, isEs }) {
     const restored = {};
     for (const [id, qty] of Object.entries(entry?.counts || {})) {
@@ -8649,11 +8659,25 @@ async function restoreOrderEntryToCart({ entry, storeLocation, setInventory, cur
     const currentCount = Object.values(currentInventory || {})
         .filter(q => Number(q) > 0).length;
     if (currentCount > 0) {
-        const confirmed = window.confirm(isEs
-            ? `Reemplazar carrito actual (${currentCount} items) con ${restoredCount} items de este pedido?`
-            : `Replace current cart (${currentCount} items) with ${restoredCount} items from this order?`);
-        if (!confirmed) return false;
+        window.alert(isEs
+            ? `El carrito ya tiene ${currentCount} items. Vacía el carrito primero, luego envía este pedido.`
+            : `Cart already has ${currentCount} items. Empty the cart first, then send this order.`);
+        return false;
     }
+    // Cart is empty — confirm the restore explicitly so a stray tap
+    // doesn't dump 14 items in without warning.
+    const dateLabel = (() => {
+        const iso = entry?.date || (entry?.id ? entry.id.slice(0, 10) : null);
+        if (!iso) return '';
+        const d = new Date(iso);
+        return !isNaN(d.getTime())
+            ? d.toLocaleDateString(isEs ? 'es' : 'en', { month: 'short', day: 'numeric' })
+            : '';
+    })();
+    const confirmed = window.confirm(isEs
+        ? `Enviar este pedido al carrito${dateLabel ? ` (${dateLabel})` : ''}? Son ${restoredCount} items.`
+        : `Send this order to cart${dateLabel ? ` (${dateLabel})` : ''}? It has ${restoredCount} items.`);
+    if (!confirmed) return false;
     setInventory(restored);
     try {
         await updateDoc(doc(db, "ops", "inventory_" + storeLocation), {
@@ -8838,7 +8862,7 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
             <div className="rounded-xl border border-gray-200 bg-white p-2">
                 <div className="flex items-center gap-2">
                     <span className="text-[10px] font-black uppercase tracking-widest text-gray-500 shrink-0 px-1">
-                        {isEs ? '📋 Recientes' : '📋 Recent'}
+                        {isEs ? '📋 Pedidos recientes' : '📋 Recent orders'}
                     </span>
                     {/* Horizontal scrollable strip — overflow-x-auto so a
                         7+ order history doesn't blow out the row width. */}
