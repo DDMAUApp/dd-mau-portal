@@ -38,7 +38,7 @@
 
 import { db } from '../firebase';
 import {
-    doc, onSnapshot, getDoc, setDoc, serverTimestamp,
+    doc, onSnapshot, runTransaction, serverTimestamp,
 } from 'firebase/firestore';
 
 function refFor(location, side) {
@@ -69,18 +69,28 @@ function newWallTaskId(side) {
 // Internal: read-modify-write helper. The list is small (typical 8-20
 // items) so client-side mutation is fine and lets us preserve ordering
 // without ranks / fractional indices.
+//
+// 2026-05-24: wrapped in runTransaction so two tablets editing the
+// same wall-tasks doc concurrently can't lose each other's edits.
+// Previously a plain getDoc → setDoc(merge) had a classic
+// read-modify-write race: tablet A and tablet B both read the same
+// `items`, both mutate independently, the second write clobbers the
+// first. With runTransaction Firestore retries on contention so the
+// second mutator runs against the already-applied first write.
 async function mutateItems(location, side, mutator, extra = {}) {
     const ref = refFor(location, side);
-    const snap = await getDoc(ref);
-    const existing = Array.isArray(snap.data()?.items) ? snap.data().items : [];
-    const next = mutator([...existing]);
-    await setDoc(ref, {
-        items: next,
-        side,
-        location,
-        updatedAt: serverTimestamp(),
-        ...extra,
-    }, { merge: true });
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        const existing = Array.isArray(snap.data()?.items) ? snap.data().items : [];
+        const next = mutator([...existing]);
+        tx.set(ref, {
+            items: next,
+            side,
+            location,
+            updatedAt: serverTimestamp(),
+            ...extra,
+        }, { merge: true });
+    });
 }
 
 // Add a task to the end of the list.

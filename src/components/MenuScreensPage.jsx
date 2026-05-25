@@ -417,7 +417,10 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
             </div>
 
             <div className="flex flex-wrap items-center gap-2 md:gap-3 bg-white border border-dd-line rounded-xl px-3 py-2.5 shadow-sm">
-                <HealthStat label={tx('Total', 'Total')} value={health.total + health.unconfigured} tone="neutral" />
+                {/* health.total = filteredScreens.length already includes
+                    the isDefault (unconfigured) rows, so adding
+                    health.unconfigured double-counted them. */}
+                <HealthStat label={tx('Total', 'Total')} value={health.total} tone="neutral" />
                 <span className="text-dd-line">·</span>
                 <HealthStat label={tx('Live', 'En vivo')} value={health.live} tone="good" />
                 <HealthStat label={tx('Stale', 'Sin cambios')} value={health.stale} tone="warn" />

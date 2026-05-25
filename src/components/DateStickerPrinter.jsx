@@ -1322,29 +1322,75 @@ function BuildSheetFlatSection({
     // so per-keystroke typing doesn't fight with debounced Firestore
     // round-trips. When edit mode flips off we re-sync from props.
     const [draft, setDraft] = useState(() => normalizeForEdit(items));
+    // Track ids the user deleted locally so a subscription update
+    // (live `items` push from another device or our own pending save)
+    // doesn't re-introduce the just-deleted row inside mergeDrafts.
+    // Cleared when the user exits edit mode.
+    const deletedIdsRef = useRef(new Set());
+
+    // Debounced save — flush 600ms after the last edit. Firing
+    // immediately on every keystroke would burn write quota and
+    // race with the live subscription.
+    //
+    // 2026-05-24 fix: the 600ms timer used to evaporate if the user
+    // turned off edit mode (or unmounted the component) within the
+    // debounce window — their last keystroke never reached Firestore.
+    // We now stash the pending flush in a ref and synchronously fire
+    // it from flushPendingSave() before tearing the draft state down.
+    const saveTimer = useRef(null);
+    const pendingFlush = useRef(null);
+    const queueSave = (next) => {
+        pendingFlush.current = () => {
+            if (onSaveSection) onSaveSection(sectionKey, next);
+        };
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+            const run = pendingFlush.current;
+            saveTimer.current = null;
+            pendingFlush.current = null;
+            if (run) run();
+        }, 600);
+    };
+    // Idempotent — no-op if nothing's pending. Called from the
+    // editMode→false branch below AND from the unmount cleanup.
+    const flushPendingSave = () => {
+        if (!saveTimer.current) return;
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+        const run = pendingFlush.current;
+        pendingFlush.current = null;
+        if (run) run();
+    };
+
     useEffect(() => {
         // When edit mode is off, always mirror props. When edit mode
         // is on, also mirror props if the lengths/ids changed (e.g.
         // another admin added a row from another device) but keep
         // the user's in-progress text otherwise.
         if (!editMode) {
+            // Flush any in-flight debounce BEFORE we wipe the draft —
+            // otherwise the user's last edit (within the 600ms window)
+            // is lost when we overwrite with normalizeForEdit(items).
+            flushPendingSave();
+            // Leaving edit mode resets the per-session deletion log;
+            // next time they re-enter we trust the live items[].
+            deletedIdsRef.current = new Set();
             setDraft(normalizeForEdit(items));
         } else {
-            setDraft(prev => mergeDrafts(prev, normalizeForEdit(items)));
+            setDraft(prev => mergeDrafts(prev, normalizeForEdit(items), deletedIdsRef.current));
         }
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [items, editMode]);
 
-    // Debounced save — flush 600ms after the last edit. Firing
-    // immediately on every keystroke would burn write quota and
-    // race with the live subscription.
-    const saveTimer = useRef(null);
-    const queueSave = (next) => {
-        if (saveTimer.current) clearTimeout(saveTimer.current);
-        saveTimer.current = setTimeout(() => {
-            if (onSaveSection) onSaveSection(sectionKey, next);
-        }, 600);
-    };
+    // Unmount safety net: if the user navigates away (closes Sticker
+    // Center, switches Operations tab) inside the 600ms window we
+    // still want their last edit to land. Re-runs when onSaveSection
+    // or sectionKey change so the closure always sees the current
+    // callback at flush time.
+    useEffect(() => {
+        return () => { flushPendingSave(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [onSaveSection, sectionKey]);
 
     // Edit handlers — keep `draft` authoritative locally, fire
     // queueSave on every change.
@@ -1356,6 +1402,9 @@ function BuildSheetFlatSection({
         });
     };
     const deleteRow = (id) => {
+        // Remember this deletion so mergeDrafts doesn't undo it on
+        // the next live subscription tick (before our save lands).
+        deletedIdsRef.current.add(id);
         setDraft(prev => {
             const next = prev.filter(r => r.id !== id);
             queueSave(next);
@@ -1472,10 +1521,14 @@ function normalizeForEdit(items) {
 // Merge an incoming list from the subscription with the user's
 // in-progress draft. Rows the user has touched (different from
 // the incoming version) win; brand-new rows from another device
-// get appended; rows the user deleted but that still exist
-// elsewhere get re-introduced. Best-effort — no MVCC, last write
-// wins on conflicts.
-function mergeDrafts(draft, incoming) {
+// get appended. Best-effort — no MVCC, last write wins on conflicts.
+//
+// 2026-05-24 fix: pass `deletedIds` so a row the user just deleted
+// locally doesn't reappear on the next subscription tick before our
+// save has propagated. Without this, deleteRow → 600ms debounce →
+// subscription fires with stale items[] → the deleted row is
+// resurrected into draft, confusing the user.
+function mergeDrafts(draft, incoming, deletedIds) {
     const incomingById = new Map(incoming.map(r => [r.id, r]));
     const out = [];
     for (const d of draft) {
@@ -1490,8 +1543,12 @@ function mergeDrafts(draft, incoming) {
             out.push(d);
         }
     }
-    // Any incoming rows not in draft = new from another device.
+    // Any incoming rows not in draft = new from another device …
+    // UNLESS the user just deleted that id locally and the save is
+    // still in flight. In that case the incoming row is the stale
+    // pre-delete version — skip it.
     for (const i of incomingById.values()) {
+        if (deletedIds && deletedIds.has(i.id)) continue;
         out.push(i);
     }
     return out;
