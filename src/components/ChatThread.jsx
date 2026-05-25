@@ -2566,7 +2566,27 @@ function Composer({
 
     const empty = !draft.trim();
     return (
-        <div className="px-2 py-2 border-t border-dd-line bg-white shrink-0">
+        // 2026-05-24 — Andrew: "make sure the message input bar is stuck
+        // to the bottom bar i doesnt need to move."
+        //
+        // Belt-and-suspenders to keep this row PINNED to the bottom of
+        // its scrolling container regardless of:
+        //   • how tall the messages list grows
+        //   • whether the parent uses 100vh / 100dvh / static height
+        //   • iOS keyboard opening (visualViewport changes don't budge
+        //     this row — only the messages list above scrolls)
+        //
+        // sticky bottom-0 wins inside a flex column WHEN the parent has
+        // overflow-y other than visible (ChatThread parent does — it
+        // uses overflow-hidden). z-10 keeps it ABOVE the messages list
+        // backdrop if any message has lingering transform animations.
+        // shrink-0 already ensures flex doesn't squeeze it. translateZ(0)
+        // forces a GPU layer so iOS scrollKit doesn't reflow it during
+        // momentum scroll.
+        <div
+            className="sticky bottom-0 z-10 px-2 py-2 border-t border-dd-line bg-white shrink-0"
+            style={{ transform: 'translateZ(0)' }}
+        >
             {/* 2026-05-24 — off-shift "Notify anyway" banner removed.
                 Chat now always pushes regardless of recipient shift
                 status (forceDeliver: true on every chat send). The
