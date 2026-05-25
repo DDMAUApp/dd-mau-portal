@@ -23,7 +23,12 @@ import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
 const InventoryListsAdmin = reactLazy(() => import('./InventoryListsAdmin'));
-const MenuEditor = reactLazy(() => import('./MenuEditor'));
+// 2026-05-24 — MenuEditor (the public menu / TV menu data editor)
+// removed from AdminPanel per Andrew: "in the admin page i want to get
+// rid of public menu board. we dont need it." The component file
+// MenuEditor.jsx is left in src/components/ in case admin wants to
+// reinstate later; just re-add the import + section block at line
+// ~4251 and you're back.
 // TvConfigsEditor moved to MenuScreensPage (top-level tab 'menuscreens')
 // 2026-05-23. The breadcrumb card below renders an "→ Menu Screens" link
 // in place of the old embed; the editor chunk only loads when the
@@ -4248,15 +4253,11 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         <LabelFormatEditor language={language} byName={staffName} />
                     </ReactSuspense>
 
-                    {/* ── Menu data editor ────────────────────────────────────────
-                        MenuEditor — admin-editable overlay on top of MENU_DATA
-                        (prices, descriptions, photos, custom items, hidden flag).
-                        The OUTPUT of this editor drives every TV (mode='menu').
-                        Lazy-loaded so the chunk only enters the graph when an
-                        admin opens this section. */}
-                    <ReactSuspense fallback={<div className="text-xs text-dd-text-2 italic px-2 py-3">Loading menu editor…</div>}>
-                        <MenuEditor language={language} byName={staffName} />
-                    </ReactSuspense>
+                    {/* ── Menu data editor REMOVED 2026-05-24 ─────────────────────
+                        Andrew: "in the admin page i want to get rid of public
+                        menu board. we dont need it." MenuEditor.jsx is still
+                        in src/components/ if needed later — re-add the lazy
+                        import + Suspense block to bring it back. */}
 
                     {/* ── TV displays — moved to its own page ────────────────────
                         Andrew 2026-05-23 promoted the TvConfigsEditor block out
