@@ -30,6 +30,7 @@ import {
     formatOffsiteWhen,
 } from '../data/offsiteClock';
 import { toast } from '../toast';
+import AssigneePickerModal from './AssigneePickerModal';
 
 export default function OffsiteClockSection({
     language = 'en', staffName, staffList, viewer,
@@ -71,7 +72,12 @@ export default function OffsiteClockSection({
     }, [shifts]);
 
     // ── Add-new form state ────────────────────────────────────────
-    const [selStaff, setSelStaff] = useState('');
+    // Multi-select: admin can schedule the same assignment for >1
+    // staff in a single submit. We create one offsite_shift doc per
+    // selected name (the data model stays one-staff-per-shift so the
+    // staff prompt + admin active list + force-out flows don't change).
+    const [selStaffNames, setSelStaffNames] = useState([]);
+    const [pickerOpen, setPickerOpen] = useState(false);
     const [location, setLocation] = useState('');
     const [dateStr, setDateStr] = useState(() => {
         // Default to today's date in the staff's local timezone.
@@ -93,28 +99,66 @@ export default function OffsiteClockSection({
 
     async function handleAdd() {
         setErr('');
-        if (!selStaff) { setErr(tx('Pick a staff member.', 'Elige un miembro.')); return; }
+        if (selStaffNames.length === 0) { setErr(tx('Pick at least one staff member.', 'Elige al menos un miembro.')); return; }
         if (!location.trim()) { setErr(tx('Add a location.', 'Añade una ubicación.')); return; }
         if (!dateStr || !timeStr) { setErr(tx('Set arrival date + time.', 'Indica la fecha y hora.')); return; }
+        const dt = new Date(`${dateStr}T${timeStr}:00`);
+        if (isNaN(dt.getTime())) { setErr(tx('Bad date/time.', 'Fecha/hora inválida.')); return; }
         setBusy(true);
         try {
-            const target = candidates.find(s => s.name === selStaff);
-            const dt = new Date(`${dateStr}T${timeStr}:00`);
-            if (isNaN(dt.getTime())) { setErr(tx('Bad date/time.', 'Fecha/hora inválida.')); setBusy(false); return; }
-            await createOffsiteShift({
-                staffName: selStaff,
-                staffId: target?.id ?? null,
-                location: location.trim(),
-                scheduledArrivalAt: dt,
-                notes: notes.trim() || null,
-                createdBy: staffName || 'admin',
+            // One doc per selected staff member. Same location/time/notes
+            // on each — they're all part of the same assignment from the
+            // admin's POV. Run in parallel; collect partial failures so
+            // we can report cleanly if one staff's write fails.
+            const trimmedLocation = location.trim();
+            const trimmedNotes = notes.trim() || null;
+            const writers = selStaffNames.map((name) => {
+                const target = candidates.find(s => s.name === name);
+                return createOffsiteShift({
+                    staffName: name,
+                    staffId: target?.id ?? null,
+                    location: trimmedLocation,
+                    scheduledArrivalAt: dt,
+                    notes: trimmedNotes,
+                    createdBy: staffName || 'admin',
+                });
             });
-            // Reset the form so the next entry is one-tap.
-            setSelStaff('');
-            setLocation('');
-            setNotes('');
-            setSavedFlash(tx('Scheduled ✓', 'Programado ✓'));
-            setTimeout(() => setSavedFlash(''), 2500);
+            const results = await Promise.allSettled(writers);
+            const ok = results.filter(r => r.status === 'fulfilled').length;
+            const failed = results.length - ok;
+            if (failed > 0) {
+                const firstErr = results.find(r => r.status === 'rejected')?.reason;
+                console.warn('createOffsiteShift partial failure:', firstErr);
+                if (ok === 0) {
+                    setErr(tx('Save failed.', 'Error al guardar.'));
+                } else {
+                    setErr(tx(
+                        `Saved ${ok}, but ${failed} failed. Try again for: ${
+                            results.map((r, i) => r.status === 'rejected' ? selStaffNames[i] : null).filter(Boolean).join(', ')
+                        }`,
+                        `Guardados ${ok}, pero ${failed} fallaron. Intenta de nuevo: ${
+                            results.map((r, i) => r.status === 'rejected' ? selStaffNames[i] : null).filter(Boolean).join(', ')
+                        }`,
+                    ));
+                }
+            }
+            if (ok > 0) {
+                // Reset the form so the next entry is one-tap. Keep
+                // failed names selected if any failed so the admin can
+                // retry without re-picking everyone.
+                const failedNames = results
+                    .map((r, i) => r.status === 'rejected' ? selStaffNames[i] : null)
+                    .filter(Boolean);
+                setSelStaffNames(failedNames);
+                if (failedNames.length === 0) {
+                    setLocation('');
+                    setNotes('');
+                }
+                setSavedFlash(ok === 1
+                    ? tx('Scheduled ✓', 'Programado ✓')
+                    : tx(`Scheduled for ${ok} staff ✓`, `Programado para ${ok} miembros ✓`));
+                setTimeout(() => setSavedFlash(''), 2500);
+            }
         } catch (e) {
             console.warn('createOffsiteShift failed:', e);
             setErr(tx('Save failed.', 'Error al guardar.'));
@@ -192,21 +236,52 @@ export default function OffsiteClockSection({
                             ➕ {tx('Schedule a new assignment', 'Programar nueva asignación')}
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <label className="block">
-                                <span className="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">{tx('Staff', 'Personal')}</span>
-                                <select
-                                    value={selStaff}
-                                    onChange={(e) => setSelStaff(e.target.value)}
-                                    className="w-full px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white"
+                            <div className="block">
+                                <span className="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">
+                                    {tx('Staff', 'Personal')}
+                                    {selStaffNames.length > 0 && (
+                                        <span className="ml-1 normal-case text-purple-700">
+                                            · {selStaffNames.length} {selStaffNames.length === 1
+                                                ? tx('picked', 'elegido')
+                                                : tx('picked', 'elegidos')}
+                                        </span>
+                                    )}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setPickerOpen(true)}
+                                    className="w-full text-left px-2 py-1.5 rounded-lg border border-gray-300 text-sm bg-white hover:bg-purple-50 hover:border-purple-300 transition flex items-center justify-between"
                                 >
-                                    <option value="">{tx('Pick someone…', 'Elige a alguien…')}</option>
-                                    {candidates.map(s => (
-                                        <option key={s.id || s.name} value={s.name}>
-                                            {s.name}{s.role ? ` · ${s.role}` : ''}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                                    <span className={selStaffNames.length === 0 ? 'text-gray-400' : 'text-gray-800 font-bold'}>
+                                        {selStaffNames.length === 0
+                                            ? tx('Pick staff…', 'Elige personal…')
+                                            : selStaffNames.length <= 2
+                                                ? selStaffNames.join(', ')
+                                                : `${selStaffNames.slice(0, 2).join(', ')} +${selStaffNames.length - 2}`}
+                                    </span>
+                                    <span className="text-gray-400 text-xs">▾</span>
+                                </button>
+                                {selStaffNames.length > 0 && (
+                                    <div className="flex flex-wrap gap-1 mt-1">
+                                        {selStaffNames.map((n) => (
+                                            <span
+                                                key={n}
+                                                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[11px] font-bold border border-purple-200"
+                                            >
+                                                {n}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setSelStaffNames(prev => prev.filter(x => x !== n))}
+                                                    className="text-purple-500 hover:text-red-600 leading-none"
+                                                    aria-label={tx(`Remove ${n}`, `Quitar ${n}`)}
+                                                >
+                                                    ✕
+                                                </button>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                             <label className="block">
                                 <span className="block text-[10px] font-bold uppercase text-gray-500 mb-0.5">{tx('Location', 'Ubicación')}</span>
                                 <input
@@ -343,6 +418,20 @@ export default function OffsiteClockSection({
                     adminId={viewer?.id}
                 />
             )}
+
+            {/* Multi-select staff picker for the "Schedule new assignment"
+                form. Reuses the same modal the checklist-task editor uses
+                so admins see one consistent picker across the app. */}
+            <AssigneePickerModal
+                open={pickerOpen}
+                onClose={() => setPickerOpen(false)}
+                onSave={(names) => setSelStaffNames(names || [])}
+                taskTitle={tx('Schedule off-site assignment', 'Programar asignación fuera de sitio')}
+                eligibleStaff={candidates}
+                assignedNames={selStaffNames}
+                currentStaffName={staffName}
+                language={language}
+            />
         </div>
     );
 }
