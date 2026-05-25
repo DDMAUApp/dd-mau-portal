@@ -530,7 +530,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [splitMovingItem, setSplitMovingItem] = useState(null); // {itemId, fromPerson}
 
             // Break Planner state
-            const DEFAULT_STATIONS = [
+            // ── BOH defaults (kitchen stations) — original list ──────────
+            const DEFAULT_BOH_STATIONS = [
                 { id: "fry", nameEn: "Fry", nameEs: "Freidora", emoji: "\u{1F35F}" },
                 { id: "pho", nameEn: "Pho", nameEs: "Pho", emoji: "\u{1F372}" },
                 { id: "grill", nameEn: "Grill", nameEs: "Parrilla", emoji: "\u{1F525}" },
@@ -547,12 +548,27 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 { id: "prep3", nameEn: "Prep 3", nameEs: "Prep 3", emoji: "\u{1F52A}" },
                 { id: "prep4", nameEn: "Prep 4", nameEs: "Prep 4", emoji: "\u{1F52A}" }
             ];
+            // ── FOH defaults (front-of-house positions) — Andrew 2026-05-25:
+            //   "breaks need to have a FOH version". Defaults are starting
+            //   points; admin can rename/add via the existing edit-stations
+            //   UI (Cashier 1 / Cashier 2 / Drinks / Expo / Service / Manager
+            //   matches a small-to-medium FOH lineup). The 'manager' id is
+            //   special-cased downstream to filter to leadership roles.
+            const DEFAULT_FOH_STATIONS = [
+                { id: "cashier1", nameEn: "Cashier 1", nameEs: "Cajero 1", emoji: "\u{1F4B0}" },
+                { id: "cashier2", nameEn: "Cashier 2", nameEs: "Cajero 2", emoji: "\u{1F4B0}" },
+                { id: "drinks",   nameEn: "Drinks",    nameEs: "Bebidas",  emoji: "\u{1F9CB}" },
+                { id: "expo",     nameEn: "Expo",      nameEs: "Expo",     emoji: "\u{1F514}" },
+                { id: "service",  nameEn: "Service",   nameEs: "Servicio", emoji: "\u{1F91D}" },
+                { id: "manager",  nameEn: "Manager",   nameEs: "Gerente",  emoji: "\u{1F454}" }
+            ];
             const DEFAULT_BREAK_WAVES = [
                 { id: "wave1", time: "13:30" },
                 { id: "wave2", time: "14:30" }
             ];
-            // Skill stations for the matrix (unique skills, not position slots)
-            const SKILL_STATIONS = [
+            // Skill stations for the matrix (unique skills, not position slots).
+            // Per-side — BOH skills are kitchen-only, FOH skills are front.
+            const BOH_SKILL_STATIONS = [
                 { id: "fry", nameEn: "Fry", emoji: "\u{1F35F}" },
                 { id: "pho", nameEn: "Pho", emoji: "\u{1F372}" },
                 { id: "grill", nameEn: "Grill", emoji: "\u{1F525}" },
@@ -564,14 +580,49 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 { id: "dish", nameEn: "Dish", emoji: "\u{1F9FD}" },
                 { id: "prep", nameEn: "Prep", emoji: "\u{1F52A}" }
             ];
-            // Map position IDs to skill IDs (fried rice 1&2 -> friedrice, prep1-4 -> prep)
+            const FOH_SKILL_STATIONS = [
+                { id: "cashier", nameEn: "Cashier", emoji: "\u{1F4B0}" },
+                { id: "drinks",  nameEn: "Drinks",  emoji: "\u{1F9CB}" },
+                { id: "expo",    nameEn: "Expo",    emoji: "\u{1F514}" },
+                { id: "service", nameEn: "Service", emoji: "\u{1F91D}" }
+            ];
+            // Map position IDs to skill IDs. cashier1/2 → cashier and
+            // prep1-4 → prep collapse multi-slot positions to one skill.
             const positionToSkill = (posId) => {
                 if (posId.startsWith("friedrice")) return "friedrice";
                 if (posId.startsWith("prep")) return "prep";
+                if (posId.startsWith("cashier")) return "cashier";
                 return posId;
             };
 
-            const [customStations, setCustomStations] = useState(JSON.parse(JSON.stringify(DEFAULT_STATIONS)));
+            // ── Side toggle for the Break Planner ──────────────────────
+            // Default to BOH (the only side that existed before). Persists
+            // per device — most managers run breaks for one side at a time.
+            const [breakSide, setBreakSide] = useState(() => {
+                try { return localStorage.getItem('ddmau:breakSide') === 'FOH' ? 'FOH' : 'BOH'; }
+                catch { return 'BOH'; }
+            });
+            useEffect(() => {
+                try { localStorage.setItem('ddmau:breakSide', breakSide); }
+                catch { /* private-mode safari — no-op */ }
+            }, [breakSide]);
+
+            // Per-side custom stations. Storing as a {FOH, BOH} map keeps
+            // the toggle instant — no re-fetch round-trip on switch.
+            const [customStationsBySide, setCustomStationsBySide] = useState(() => ({
+                FOH: JSON.parse(JSON.stringify(DEFAULT_FOH_STATIONS)),
+                BOH: JSON.parse(JSON.stringify(DEFAULT_BOH_STATIONS)),
+            }));
+            const customStations = customStationsBySide[breakSide];
+            const setCustomStations = (next) => setCustomStationsBySide((prev) => {
+                const value = typeof next === 'function' ? next(prev[breakSide]) : next;
+                return { ...prev, [breakSide]: value };
+            });
+            // Currently-active skill stations + default stations follow the
+            // side toggle. Used by the matrix + the "reset" affordance.
+            const SKILL_STATIONS = breakSide === 'FOH' ? FOH_SKILL_STATIONS : BOH_SKILL_STATIONS;
+            const DEFAULT_STATIONS = breakSide === 'FOH' ? DEFAULT_FOH_STATIONS : DEFAULT_BOH_STATIONS;
+
             const [editingStations, setEditingStations] = useState(false);
             const [newStationName, setNewStationName] = useState("");
             const [newStationEmoji, setNewStationEmoji] = useState("\u{1F4CD}");
@@ -606,12 +657,22 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // collapsed so a fresh page load doesn't dedicate a whole
             // row to labor info every time.
             const [showLaborDetails, setShowLaborDetails] = useState(false);
-            // FOH_ROLES_LIST hoisted to module scope so the useMemo dep array
-            // doesn't churn on every render. fohStaff was unused — removed.
+            // FOH_ROLES_LIST hoisted to module scope so the useMemo dep
+            // array doesn't churn on every render.
+            //
+            // 2026-05-25: fohStaff brought back to power the FOH side of
+            // the Break Planner. breakStaff is the side-conditional list
+            // the planner actually uses; everything outside the planner
+            // keeps using bohStaff (kitchen-skills-matrix elsewhere etc).
             const bohStaff = useMemo(
                 () => (staffList || []).filter(s => s.role && !FOH_ROLES_LIST.includes(s.role) && (s.location === storeLocation || s.location === "both")),
                 [staffList, storeLocation]
             );
+            const fohStaff = useMemo(
+                () => (staffList || []).filter(s => s.role && FOH_ROLES_LIST.includes(s.role) && (s.location === storeLocation || s.location === "both")),
+                [staffList, storeLocation]
+            );
+            const breakStaff = breakSide === 'FOH' ? fohStaff : bohStaff;
 
             // ── Memoized inventory lookup + Sysco price matching ──
             // Vendor match overrides + categories (Firestore-backed, see useEffect below).
@@ -958,14 +1019,32 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return () => unsubMatrix();
             }, []);
 
-            // Load custom stations from Firestore
+            // Load custom stations from Firestore — one doc per side.
+            //
+            // 2026-05-25: split per-side for the new FOH break planner.
+            // BOH has a backward-compat fallback to the legacy
+            // /config/stations doc (BOH-only before the FOH side existed),
+            // so existing custom BOH stations survive the migration without
+            // an explicit data move. FOH is a fresh namespace.
             useEffect(() => {
-                const unsubStations = onSnapshot(doc(db, "config", "stations"), (docSnap) => {
-                    if (docSnap.exists() && docSnap.data().stations && docSnap.data().stations.length > 0) {
-                        setCustomStations(docSnap.data().stations);
+                const unsubBOH = onSnapshot(doc(db, "config", "stations_BOH"), (snap) => {
+                    if (snap.exists() && Array.isArray(snap.data().stations) && snap.data().stations.length > 0) {
+                        setCustomStationsBySide((prev) => ({ ...prev, BOH: snap.data().stations }));
+                    } else {
+                        // BOH-side fallback to the legacy doc.
+                        getDoc(doc(db, "config", "stations")).then((legacy) => {
+                            if (legacy.exists() && Array.isArray(legacy.data().stations) && legacy.data().stations.length > 0) {
+                                setCustomStationsBySide((prev) => ({ ...prev, BOH: legacy.data().stations }));
+                            }
+                        }).catch((err) => console.warn('legacy stations read failed:', err));
                     }
-                }, (err) => console.warn('stations snapshot error:', err));
-                return () => unsubStations();
+                }, (err) => console.warn('stations_BOH snapshot error:', err));
+                const unsubFOH = onSnapshot(doc(db, "config", "stations_FOH"), (snap) => {
+                    if (snap.exists() && Array.isArray(snap.data().stations) && snap.data().stations.length > 0) {
+                        setCustomStationsBySide((prev) => ({ ...prev, FOH: snap.data().stations }));
+                    }
+                }, (err) => console.warn('stations_FOH snapshot error:', err));
+                return () => { unsubBOH(); unsubFOH(); };
             }, []);
 
             // ── Vendor match overrides + categories (Firestore-backed) ──
@@ -1264,7 +1343,11 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             const saveStations = async (stations) => {
                 try {
-                    await setDoc(doc(db, "config", "stations"), { stations, updatedAt: new Date().toISOString() });
+                    // 2026-05-25: per-side persistence. Writes always go to
+                    // the side-suffixed doc; the legacy /config/stations
+                    // doc is read-only (fallback for BOH on first load) and
+                    // becomes orphaned once the user saves once.
+                    await setDoc(doc(db, "config", "stations_" + breakSide), { stations, side: breakSide, updatedAt: new Date().toISOString() });
                 } catch (err) { console.error("Error saving stations:", err); }
             };
 
@@ -1349,24 +1432,40 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     .sort((a, b) => (coverLoad[a] || 0) - (coverLoad[b] || 0));
             };
 
-            // Load break plan from Firestore {"\u{2014}"} keyed by selected date + location
+            // Load break plan from Firestore — keyed by selected date +
+            // location + side. 2026-05-25: side suffix added for the FOH
+            // break planner. Pre-existing docs were BOH-only and stored at
+            // breakPlan_{loc}_{date}; on BOH we transparently fall back to
+            // that legacy key if the new key is empty so existing data
+            // keeps showing without a write migration.
             useEffect(() => {
-                // Reset plan while loading new date/location
+                // Reset plan while loading new date/location/side
                 setBreakPlan({ stations: {}, waves: {} });
                 setBreakWaveTimes(DEFAULT_BREAK_WAVES.map(w => w.time));
                 let cancelled = false;
-                const docId = "breakPlan_" + storeLocation + "_" + breakDate;
+                const docId = "breakPlan_" + storeLocation + "_" + breakSide + "_" + breakDate;
                 const unsubBreakPlan = onSnapshot(doc(db, "ops", docId), (docSnap) => {
                     if (cancelled) return;
                     if (docSnap.exists()) {
                         setBreakPlan(docSnap.data().plan || { stations: {}, waves: {} });
                         if (docSnap.data().waveTimes) setBreakWaveTimes(docSnap.data().waveTimes);
+                    } else if (breakSide === 'BOH') {
+                        // BOH only: fall back to the pre-side-split key
+                        // (breakPlan_{loc}_{date}) so existing data shows
+                        // up. First save to the new key supersedes it.
+                        const legacyId = "breakPlan_" + storeLocation + "_" + breakDate;
+                        getDoc(doc(db, "ops", legacyId)).then((legacy) => {
+                            if (cancelled) return;
+                            if (legacy.exists() && legacy.data()?.plan) {
+                                setBreakPlan(legacy.data().plan);
+                                if (Array.isArray(legacy.data().waveTimes)) setBreakWaveTimes(legacy.data().waveTimes);
+                            }
+                        }).catch((err) => console.warn('legacy breakPlan read failed:', err));
                     }
                 });
-                // Also migrate old single-doc format for today if needed.
-                // Guard with `cancelled` so a date/location change mid-migration doesn't write
-                // the old date's plan to the old docId after the user has navigated away.
-                if (breakDate === getTodayKey()) {
+                // Migration of the OLDEST key (breakPlan_{date}, no loc),
+                // BOH-only, kept for parity with the pre-2026-05-25 behavior.
+                if (breakSide === 'BOH' && breakDate === getTodayKey()) {
                     const oldDocId = "breakPlan_" + breakDate;
                     getDoc(doc(db, "ops", oldDocId)).then(oldDocSnap => {
                         if (cancelled) return;
@@ -1381,9 +1480,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     }).catch(err => console.error("Migration read error:", err));
                 }
                 return () => { cancelled = true; unsubBreakPlan(); };
-            }, [breakDate, storeLocation]);
+            }, [breakDate, storeLocation, breakSide]);
 
-            const breakPlanDocRef = () => doc(db, "ops", "breakPlan_" + storeLocation + "_" + breakDate);
+            const breakPlanDocRef = () => doc(db, "ops", "breakPlan_" + storeLocation + "_" + breakSide + "_" + breakDate);
             // Race-safe break-plan mutator. Pass (livePlan, liveTimes) => { plan, times }.
             // Two shift leads adjusting different stations / wave breakers concurrently
             // used to clobber each other (full-doc setDoc). Now both edits land.
@@ -8048,6 +8147,27 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
 
                     {activeTab === "breaks" && (
                         <div className="space-y-4">
+                            {/* Side toggle — FOH vs. BOH break planning.
+                                Each side has its own stations, plan doc,
+                                and staff candidate pool. Defaults to BOH
+                                (pre-2026-05-25 behavior). */}
+                            <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+                                <button
+                                    onClick={() => setBreakSide('BOH')}
+                                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${breakSide === 'BOH'
+                                        ? 'bg-orange-500 text-white shadow-sm'
+                                        : 'text-gray-600 hover:bg-white'}`}>
+                                    🍳 {language === 'es' ? 'Cocina (BOH)' : 'Kitchen (BOH)'}
+                                </button>
+                                <button
+                                    onClick={() => setBreakSide('FOH')}
+                                    className={`flex-1 py-2 rounded-lg text-sm font-bold transition ${breakSide === 'FOH'
+                                        ? 'bg-dd-green text-white shadow-sm'
+                                        : 'text-gray-600 hover:bg-white'}`}>
+                                    🤝 {language === 'es' ? 'Frente (FOH)' : 'Front (FOH)'}
+                                </button>
+                            </div>
+
                             {/* Date picker */}
                             <div className="flex items-center gap-2">
                                 <button onClick={() => setBreakDate(addDaysKey(breakDate, -1))}
@@ -8097,7 +8217,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             {/* Copy from another day */}
                             {breakDate !== getTodayKey() && Object.keys(breakPlan.stations || {}).length === 0 && (
                                 <button onClick={async () => {
-                                    const todayDocSnap = await getDoc(doc(db, "ops", "breakPlan_" + storeLocation + "_" + getTodayKey()));
+                                    // Side-suffixed key (2026-05-25). For BOH, fall back to
+                                    // the pre-side-split key if the new one is empty.
+                                    let todayDocSnap = await getDoc(doc(db, "ops", "breakPlan_" + storeLocation + "_" + breakSide + "_" + getTodayKey()));
+                                    if (!todayDocSnap.exists() && breakSide === 'BOH') {
+                                        todayDocSnap = await getDoc(doc(db, "ops", "breakPlan_" + storeLocation + "_" + getTodayKey()));
+                                    }
                                     if (todayDocSnap.exists() && todayDocSnap.data().plan) {
                                         const plan = todayDocSnap.data().plan;
                                         const times = todayDocSnap.data().waveTimes || DEFAULT_BREAK_WAVES.map(w => w.time);
@@ -8136,7 +8261,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {bohStaff.map((staff, idx) => (
+                                                {breakStaff.map((staff, idx) => (
                                                     <tr key={staff.id} className={idx % 2 === 0 ? "bg-white" : "bg-gray-50"}>
                                                         <td className={`px-3 py-1.5 font-bold text-gray-800 sticky left-0 z-10 ${idx % 2 === 0 ? "bg-white" : "bg-gray-50"}`}>
                                                             {staff.name.split(" ")[0]}
@@ -8166,7 +8291,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     {/* Quick stats */}
                                     <div className="px-4 py-2 bg-purple-50 border-t border-purple-200 flex flex-wrap gap-3">
                                         {SKILL_STATIONS.map(s => {
-                                            const count = bohStaff.filter(st => skillsMatrix[st.name + "_" + s.id]).length;
+                                            const count = breakStaff.filter(st => skillsMatrix[st.name + "_" + s.id]).length;
                                             return (
                                                 <span key={s.id} className={`text-xs font-bold ${count === 0 ? "text-red-500" : count <= 2 ? "text-orange-500" : "text-gray-500"}`}>
                                                     {s.emoji} {count}
@@ -8246,7 +8371,14 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     onChange={e => updateStationAssignment(pos.id, e.target.value)}
                                                 >
                                                     <option value="">{"\u{2014}"}</option>
-                                                    {(pos.id === "manager" ? (staffList || []).filter(s => ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role) && (s.location === storeLocation || s.location === "both")) : bohStaff).map(s => (
+                                                    {(pos.id === "manager"
+                                                        ? (staffList || []).filter(s => (
+                                                            breakSide === 'FOH'
+                                                                ? ["Manager", "Owner", "Shift Lead"].includes(s.role)
+                                                                : ["Kitchen Manager", "Asst Kitchen Manager", "Manager", "Shift Lead"].includes(s.role)
+                                                          ) && (s.location === storeLocation || s.location === "both"))
+                                                        : breakStaff
+                                                      ).map(s => (
                                                         <option key={s.id} value={s.name}>{s.name}</option>
                                                     ))}
                                                 </select>
