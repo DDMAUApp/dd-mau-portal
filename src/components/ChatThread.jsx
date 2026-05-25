@@ -33,7 +33,14 @@ import { ChatAvatar, chatDisplayName } from './ChatShared';
 // for the rationale on the incremental ChatThread split.
 import { previewScheduledList, relativeTime, groupByDate } from './chatThreadHelpers';
 import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CATEGORIES, formatChatName, canSeeReceiptsForMessage, getSeenByForMessage, pollTally, isPollOpen, canEditMessage } from '../data/chat';
-import { offShiftMembers } from '../data/offShift';
+// 2026-05-24 — Andrew: "make all messages in the chat push regardless
+// if they are working or not." Removed the off-shift gate UI entirely.
+// Server-side chat_message/chat_mention are already in
+// ALWAYS_DELIVER_TYPES so they bypass the off-shift gate; we now also
+// always send forceDeliver: true as a belt-and-suspenders so a future
+// edit to ALWAYS_DELIVER_TYPES can't accidentally re-introduce silent
+// chat suppression. `offShiftMembers` import deleted (no remaining
+// callers in this file).
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { postEightySixToChat } from '../data/eightySixChat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
@@ -285,12 +292,8 @@ function ChatThreadInner({
     // We don't store the draft text here — the inline editor manages
     // its own local input state. We just track WHICH bubble.
     const [editingMessageId, setEditingMessageId] = useState(null);
-    // "Notify anyway" — when ON, the next message bypasses the
-    // server's off-shift gate (notif.forceDeliver=true). User has
-    // to flip it for each message; we don't make it sticky because
-    // chronic override defeats the point. Visible only when at
-    // least one recipient is off-shift.
-    const [notifyAnyway, setNotifyAnyway] = useState(false);
+    // 2026-05-24 — `notifyAnyway` state removed (chat always pushes).
+    // See the import-block comment up top.
     // ── Scheduled messages in this chat (for the banner above composer)
     // Light subscription — we just need the count + a quick list to show
     // the "📅 3 scheduled · view" link. Detailed cancel/edit lives in
@@ -372,45 +375,13 @@ function ChatThreadInner({
         [messages]
     );
 
-    // ── Off-shift member detection ─────────────────────────────
-    // We subscribe to today's + yesterday's published shifts (small
-    // collection, refreshes when anyone publishes/unpublishes) and
-    // compute which members of THIS chat aren't currently on shift.
-    // The Cloud Function does the same gate at push time; the client
-    // computation feeds the "🔕 N off-shift" header indicator + the
-    // composer's "Notify anyway" toggle.
-    //
-    // Yesterday is included so overnight shifts (date=yesterday in CT,
-    // end-time crossed midnight UTC) still count as "on shift".
-    // Andrew (2026-05-17). Sized small (members + 2 dates × published
-    // shifts) so the snapshot is cheap.
-    const [todayShifts, setTodayShifts] = useState([]);
-    useEffect(() => {
-        const today = new Date();
-        const yest = new Date(today.getTime() - 86400_000);
-        const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        const dateRange = [fmt(yest), fmt(today)];
-        const q = query(
-            collection(db, 'shifts'),
-            where('date', 'in', dateRange),
-            where('published', '==', true),
-        );
-        const unsub = onSnapshot(q, (snap) => {
-            const list = [];
-            snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-            setTodayShifts(list);
-        }, (err) => console.warn('today shifts snapshot failed:', err));
-        return () => unsub();
-    }, []);
-
-    // The off-shift subset of THIS chat's members, excluding the
-    // current user (we know whether WE are on shift; the indicator
-    // is about who RECEIVES our message). Recomputes when chat
-    // members or today's shifts change.
-    const offShiftRecipients = useMemo(() => {
-        const others = (chat?.members || []).filter(n => n && n !== staffName);
-        return offShiftMembers(others, todayShifts, staffList);
-    }, [chat?.members, staffName, staffList, todayShifts]);
+    // 2026-05-24 — off-shift detection subscription + memo deleted.
+    // The Cloud Function still has its off-shift gate, but chat_message
+    // / chat_mention are in ALWAYS_DELIVER_TYPES so they bypass it.
+    // Per Andrew's "all chat pushes regardless of shift", we additionally
+    // always send forceDeliver: true from this file. The "today's shifts"
+    // snapshot that fed this is gone — saves an unnecessary subscription
+    // per chat thread.
 
     // Subscribe to MY pending scheduled messages in this chat. The
     // Cloud Function flips status='sent' (or deletes) when delivered;
@@ -517,7 +488,8 @@ function ChatThreadInner({
         // the send fails we want to recover the EXACT body the
         // user typed, even if they've started typing the next one.
         const capturedReply = replyTarget;
-        const capturedNotify = notifyAnyway;
+        // 2026-05-24 — chat always force-delivers. See top-of-file comment.
+        const capturedNotify = true;
         try {
             await sendMessage({
                 chat, staffName, viewer, staffList,
@@ -528,7 +500,7 @@ function ChatThreadInner({
             });
             setDraft('');
             setReplyTarget(null);
-            setNotifyAnyway(false);
+            // notifyAnyway removed 2026-05-24 — chat always pushes.
         } catch (e) {
             console.warn('send text failed:', e);
             setFailedSends(prev => {
@@ -631,11 +603,11 @@ function ChatThreadInner({
                 mediaType: file.type,
                 width, height, duration,
                 replyTo: replyTarget,
-                forceDeliver: notifyAnyway,
+                forceDeliver: true,   // 2026-05-24 — always push chat (was: notifyAnyway)
             });
             setDraft('');
             setReplyTarget(null);
-            setNotifyAnyway(false);
+            // notifyAnyway removed 2026-05-24 — chat always pushes.
         } catch (err) {
             console.warn(`${kind} send failed:`, err);
             toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
@@ -1007,10 +979,10 @@ function ChatThreadInner({
                 text: '📊 ' + payload.question,
                 poll: payload,
                 replyTo: replyTarget,
-                forceDeliver: notifyAnyway,
+                forceDeliver: true,   // 2026-05-24 — always push chat (was: notifyAnyway)
             });
             setReplyTarget(null);
-            setNotifyAnyway(false);
+            // notifyAnyway removed 2026-05-24 — chat always pushes.
             setShowPollModal(false);
         } catch (e) {
             console.warn('poll create failed:', e);
@@ -1370,18 +1342,15 @@ function ChatThreadInner({
                     // match the live staff list (someone might be added
                     // or renamed between scheduling and sending).
                     ...(replyTarget && replyTarget.id ? { replyTo: replyTarget } : {}),
-                    // Carry the sender's "Notify anyway" intent into the
-                    // future. Without this, the Cloud Function would
-                    // apply the off-shift gate at DELIVERY time, even
-                    // though the manager already made the explicit
-                    // override decision at SCHEDULING time. Surface in
-                    // the audit trail of the scheduled doc.
-                    ...(notifyAnyway ? { forceDeliver: true } : {}),
+                    // 2026-05-24 — chat always pushes. Stamp forceDeliver
+                    // on the scheduled doc so the Cloud Function honors
+                    // the same always-deliver intent at fire time.
+                    forceDeliver: true,
                 },
             });
             setDraft('');
             setReplyTarget(null);
-            setNotifyAnyway(false);
+            // notifyAnyway removed 2026-05-24 — chat always pushes.
             setShowScheduleModal(false);
             toast(tx('Scheduled', 'Programado'), { kind: 'success' });
         } catch (e) {
@@ -1433,14 +1402,10 @@ function ChatThreadInner({
                             {chat.type === 'dm'
                                 ? (typingNames.length > 0
                                     ? tx('typing…', 'escribiendo…')
-                                    : (offShiftRecipients.length > 0
-                                        ? `🔕 ${tx('off-shift · won\'t be pushed', 'fuera de turno · sin push')}`
-                                        : tx('Direct message · tap for info', 'Mensaje directo · tap info')))
+                                    : tx('Direct message · tap for info', 'Mensaje directo · tap info'))
                                 : (typingNames.length > 0
                                     ? `${formatChatName(typingNames[0])} ${tx('is typing…', 'está escribiendo…')}`
-                                    : (offShiftRecipients.length > 0
-                                        ? `${(chat.members || []).length} ${tx('members', 'miembros')} · 🔕 ${offShiftRecipients.length} ${tx('off-shift', 'fuera de turno')}`
-                                        : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`))}
+                                    : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`)}
                         </div>
                     </div>
                 </button>
@@ -1724,9 +1689,6 @@ function ChatThreadInner({
                 recording={recording}
                 replyTarget={replyTarget}
                 onClearReply={() => setReplyTarget(null)}
-                offShiftRecipients={offShiftRecipients}
-                notifyAnyway={notifyAnyway}
-                onToggleNotifyAnyway={() => setNotifyAnyway(v => !v)}
                 onSendText={handleSendText}
                 onPickImage={(e) => handleMediaPick(e, 'image')}
                 onPickVideo={(e) => handleMediaPick(e, 'video')}
@@ -2473,7 +2435,6 @@ function AudioPlayer({ src, duration, isMine }) {
 function Composer({
     isEs, draft, setDraft, sending, recording,
     replyTarget, onClearReply,
-    offShiftRecipients = [], notifyAnyway = false, onToggleNotifyAnyway,
     onSendText, onPickImage, onPickVideo,
     onStartRecording, onStopRecording, onCancelRecording,
     onOpenPoll, onOpenSchedule, onOpen86,
@@ -2606,48 +2567,16 @@ function Composer({
     const empty = !draft.trim();
     return (
         <div className="px-2 py-2 border-t border-dd-line bg-white shrink-0">
-            {/* Off-shift recipient indicator — appears above the
-                composer when at least one recipient is currently off
-                shift (per the server's gate window: 30min-before-
-                start through end-time). Surfaces:
-                  • who's silenced and how many
-                  • a "Notify anyway" toggle that sets forceDeliver=
-                    true on the notification doc, which makes the
-                    Cloud Function bypass the gate for this message
-                Always-reachable members (managers, owners) are
-                already excluded by offShiftMembers() so they never
-                count toward this number. Andrew (2026-05-17). */}
-            {offShiftRecipients.length > 0 && (
-                <button
-                    type="button"
-                    onClick={onToggleNotifyAnyway}
-                    className={`w-full flex items-center gap-2 mb-1 px-2 py-1.5 rounded-lg border text-left transition ${notifyAnyway
-                        ? 'bg-amber-50 border-amber-300'
-                        : 'bg-dd-bg border-dd-line hover:bg-dd-bg/70'}`}
-                    aria-label={isEs ? 'Notificar de todos modos' : 'Notify anyway'}
-                >
-                    <span className="text-base shrink-0">{notifyAnyway ? '🔔' : '🔕'}</span>
-                    <div className="flex-1 min-w-0">
-                        <div className={`text-[11.5px] font-bold ${notifyAnyway ? 'text-amber-800' : 'text-dd-text-2'}`}>
-                            {notifyAnyway
-                                ? (isEs
-                                    ? `Notificando de todos modos a ${offShiftRecipients.length}`
-                                    : `Will push ${offShiftRecipients.length} anyway`)
-                                : (isEs
-                                    ? `🔕 ${offShiftRecipients.length} fuera de turno · no recibirán push`
-                                    : `🔕 ${offShiftRecipients.length} off-shift · won't get push`)}
-                        </div>
-                        <div className="text-[10.5px] text-dd-text-2 truncate">
-                            {offShiftRecipients.slice(0, 3).map(n => n.split(' ')[0]).join(', ')}
-                            {offShiftRecipients.length > 3 && ` +${offShiftRecipients.length - 3}`}
-                            {' · '}
-                            {notifyAnyway
-                                ? (isEs ? 'tap para desactivar' : 'tap to undo')
-                                : (isEs ? 'tap para notificar' : 'tap to notify anyway')}
-                        </div>
-                    </div>
-                </button>
-            )}
+            {/* 2026-05-24 — off-shift "Notify anyway" banner removed.
+                Chat now always pushes regardless of recipient shift
+                status (forceDeliver: true on every chat send). The
+                banner was a noisy confusing UI surface anyway: users
+                read "won't get push" and assumed the message wouldn't
+                fan out, even though chat_message + chat_mention were
+                ALREADY in the Cloud Function's ALWAYS_DELIVER_TYPES
+                set and therefore always pushed. Belt-and-suspenders
+                forceDeliver makes the server-side guarantee explicit
+                from the client. */}
             {/* Reply preview pill — shown above the input row when the
                 user has tapped Reply on a message. The ✕ clears the
                 target; tapping the body does nothing (intentionally —

@@ -297,8 +297,18 @@ export default function Sidebar({
                 and log out (returns to the lock screen). All wired from App.jsx
                 so they actually do something. The footer was the source of the
                 "lock screen is gone" bug — the Log Out button used to be a
-                pure presentational stub with no onClick handler. */}
-            <div className="border-t border-dd-charcoal-2 p-2 space-y-1 shrink-0">
+                pure presentational stub with no onClick handler.
+                2026-05-24 — Andrew: "the more button slides over the sidebar
+                and at the bottom there is refresh page. that's too low — the
+                bottom bar with home / schedule / ops / 86 covers it." The
+                sidebar is fixed top-0 h-screen and the MobileBottomNav is
+                fixed bottom-0 — same z layer, nav sits on top. Add bottom
+                padding on mobile to lift the footer above the nav + the
+                iPhone home indicator. Desktop has no bottom nav so we keep
+                the tight pb-2. */}
+            <div
+                className="border-t border-dd-charcoal-2 px-2 pt-2 space-y-1 shrink-0 pb-[calc(0.5rem+5.5rem+env(safe-area-inset-bottom))] md:pb-2"
+            >
                 {!collapsed && staffName && (
                     <div className="flex items-center gap-2 mb-2 px-2">
                         <div className="w-7 h-7 rounded-full bg-dd-green text-white flex items-center justify-center text-[11px] font-bold shrink-0">
