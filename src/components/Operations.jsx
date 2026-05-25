@@ -8645,20 +8645,31 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
     // Bumped to force a reload from the Retry button (changes the effect dep).
     const [retryNonce, setRetryNonce] = useState(0);
 
-    // 2026-05-23: Andrew reported "stuck on Loading…" on phone PWA.
-    // Hardening:
-    //   1. If storeLocation === "both" (admin's header toggle), skip the
-    //      query (no inventoryHistory_both collection exists) and show a
-    //      helpful "switch location" message instead of spinning forever.
-    //   2. 10s timeout that flips out of the loading state so the bar
-    //      shows an error + Retry button instead of an indefinite spinner
-    //      (Firestore on a flaky network can hang the read indefinitely
-    //      with no error fired).
-    //   3. Surface caught errors visibly (was console-only).
+    // 2026-05-24 (round 2): Andrew "timed out — check your connection"
+    // on Webster. The previous round used one-shot getDocs which doesn't
+    // hit Firestore's offline cache — meaning every page-load was a full
+    // network round-trip and a 10s budget is too tight on cellular /
+    // restaurant Wi-Fi that's bouncing between APs.
+    //
+    // Hardening (cumulative across rounds):
+    //   1. storeLocation === 'both' → render the switch-location prompt,
+    //      skip the query entirely (no inventoryHistory_both collection).
+    //   2. Switched getDocs → onSnapshot. onSnapshot serves CACHED docs
+    //      synchronously on first render, then quietly upgrades when the
+    //      live read arrives. Net: the bar paints recent orders in ~50ms
+    //      on a warm device, even with no network. The previous getDocs
+    //      had no cache hook at all.
+    //   3. Timeout bumped 10s → 25s. The cache should serve immediately,
+    //      so the timeout only matters for cold-install no-cache cases —
+    //      25s gives cellular real headroom while still surfacing dead
+    //      connections.
+    //   4. orderBy('date', 'desc') stays — `date` is a scalar string and
+    //      its desc index auto-creates per Firestore single-field rules.
+    //   5. Switched unsub return so React cleans the listener on
+    //      location change / unmount (otherwise we leak one listener per
+    //      mount).
     useEffect(() => {
         if (!storeLocation) return;
-        // "both" hits a non-existent collection — skip the fetch entirely
-        // and let the render branch below show the switch-location prompt.
         if (storeLocation === 'both') {
             setLoading(false);
             setLoadError(null);
@@ -8669,34 +8680,35 @@ function RecentOrdersBar({ storeLocation, setInventory, currentInventory, langua
         setLoading(true);
         setLoadError(null);
         const colRef = collection(db, "inventoryHistory_" + storeLocation);
-        // Order by `date` (ISO string set on every snapshot) desc — was
-        // orderBy('__name__', 'desc') but Firestore requires a manual
-        // composite index for desc on __name__ (only ASC is auto-created).
-        // `date` is a regular field so its desc index auto-creates.
-        // The bar shows the 5 most recent inline; the "View all" button
-        // below opens a modal that loads up to 100.
         const timeoutId = setTimeout(() => {
             if (cancelled) return;
             setLoadError(isEs
                 ? 'Tiempo de espera agotado. Revisa tu conexión.'
                 : 'Timed out. Check your connection.');
             setLoading(false);
-        }, 10000);
-        getDocs(query(colRef, orderBy('date', 'desc'), limit(5)))
-            .then(snap => {
+        }, 25_000);
+        const q = query(colRef, orderBy('date', 'desc'), limit(5));
+        const unsub = onSnapshot(q,
+            (snap) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
-                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+                setLoadError(null);
                 setLoading(false);
-            })
-            .catch(err => {
+            },
+            (err) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
-                console.warn('RecentOrdersBar load failed:', err);
+                console.warn('RecentOrdersBar snapshot failed:', err);
                 setLoadError(err?.message || (isEs ? 'Error al cargar' : 'Failed to load'));
                 setLoading(false);
-            });
-        return () => { cancelled = true; clearTimeout(timeoutId); };
+            },
+        );
+        return () => {
+            cancelled = true;
+            clearTimeout(timeoutId);
+            try { unsub(); } catch {}
+        };
     }, [storeLocation, retryNonce, isEs]);
 
     async function handleRestore(entry) {
@@ -8858,9 +8870,10 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
     const [searchTerm, setSearchTerm] = useState('');
     const [retryNonce, setRetryNonce] = useState(0);
 
-    // Same hardening as RecentOrdersBar (10s timeout, visible errors,
-    // "both" location prompt). Andrew's "stuck on Loading…" report
-    // 2026-05-23 applied to the bar; making the modal symmetric.
+    // 2026-05-24 (round 2): same fix as RecentOrdersBar — switched
+    // getDocs → onSnapshot for cache warmth, bumped timeout to 25s.
+    // The modal opens cached docs synchronously and refreshes when
+    // the live read arrives. Modal stays usable on bad cellular.
     useEffect(() => {
         if (!storeLocation) return;
         if (storeLocation === 'both') {
@@ -8879,22 +8892,29 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
                 ? 'Tiempo de espera agotado. Revisa tu conexión.'
                 : 'Timed out. Check your connection.');
             setLoading(false);
-        }, 10000);
-        getDocs(query(colRef, orderBy('date', 'desc'), limit(100)))
-            .then(snap => {
+        }, 25_000);
+        const q = query(colRef, orderBy('date', 'desc'), limit(100));
+        const unsub = onSnapshot(q,
+            (snap) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
-                setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+                setHistory(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+                setLoadError(null);
                 setLoading(false);
-            })
-            .catch(err => {
+            },
+            (err) => {
                 if (cancelled) return;
                 clearTimeout(timeoutId);
-                console.warn('RecentOrdersHistoryModal load failed:', err);
+                console.warn('RecentOrdersHistoryModal snapshot failed:', err);
                 setLoadError(err?.message || (isEs ? 'Error al cargar' : 'Failed to load'));
                 setLoading(false);
-            });
-        return () => { cancelled = true; clearTimeout(timeoutId); };
+            },
+        );
+        return () => {
+            cancelled = true;
+            clearTimeout(timeoutId);
+            try { unsub(); } catch {}
+        };
     }, [storeLocation, retryNonce, isEs]);
 
     async function handleRestoreInModal(entry) {
