@@ -28,6 +28,11 @@ const SauceLog           = lazy(() => import('./SauceLog'));
 // SauceLogBohBanner stays eager — it's small (128 lines) and renders
 // inline as a banner above the Tasks list, not behind a sub-tab.
 import SauceLogBohBanner from './SauceLogBohBanner';
+// CartPlanView — focused vendor-assignment workflow inside the cart
+// modal. Eager (small file, opened only when Plan is tapped but
+// shouldn't show a loading flash when the manager hits the button
+// mid-ordering).
+import CartPlanView from './CartPlanView';
 import { toast, undoToast } from '../toast';
 // CSV importer — lazy so the parser doesn't bloat the Operations chunk
 // for the common case where nobody clicks Import.
@@ -493,6 +498,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // by manager's choices, not auto-detected vendor.
             const [cartArmedVendor, setCartArmedVendor] = useState(null);
             const [cartVendorOverride, setCartVendorOverride] = useState({}); // { itemId: vendorName }
+            // 2026-05-26 — Plan mode replaces the previous in-row
+            // "Assign to" pill bar. Toggle on from the cart footer; the
+            // cart body swaps to a focused vendor-pick-then-tap-items
+            // assignment view. Stays inside the cart modal so closing
+            // the modal also exits Plan; we don't persist this — every
+            // cart open starts in normal view.
+            const [cartPlanMode, setCartPlanMode] = useState(false);
             // Saved Lists section at the bottom of the inventory tab is
             // collapsed by default (Andrew 2026-05-22). It mounts the
             // heavy InventoryHistory lazy chunk, so leaving it closed
@@ -6193,57 +6205,32 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 <h3 className="font-bold text-base sm:text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"} · {totalQty} {language === "es" ? "total" : "total"}</h3>
                                                 <button onClick={() => setShowCart(false)} className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white font-bold hover:bg-white/30 transition">{"\u{2715}"}</button>
                                             </div>
-                                            {/* Vendor quick-assign bar (Andrew 2026-05-22).
-                                                Tap a vendor pill to arm it. While armed, table
-                                                rows become click-to-assign — every tap moves
-                                                that row to the armed vendor. Tap the armed pill
-                                                again to disarm. Items keep their assignment
-                                                until cleared; the "Save by vendor" footer
-                                                button persists the assignments into the saved
-                                                snapshot grouped by vendor. */}
-                                            {assignVendors.length > 0 && (
-                                                <div className="border-b border-gray-200 bg-amber-50/70 px-3 py-2 flex flex-wrap gap-1.5 items-center flex-shrink-0">
-                                                    <span className="text-[11px] font-bold uppercase tracking-wide text-amber-700 mr-1">
-                                                        🎯 {language === "es" ? "Asignar a:" : "Assign to:"}
-                                                    </span>
-                                                    {assignVendors.map(v => {
-                                                        const isArmed = cartArmedVendor === v;
-                                                        const count = rows.filter(r => effectiveVendor(r) === v).length;
-                                                        return (
-                                                            <button
-                                                                key={v}
-                                                                onClick={() => setCartArmedVendor(isArmed ? null : v)}
-                                                                className={`text-xs font-bold px-2.5 py-1 rounded-full border transition ${
-                                                                    isArmed
-                                                                        ? 'bg-amber-600 text-white border-amber-700 ring-2 ring-amber-300'
-                                                                        : 'bg-white text-gray-700 border-gray-300 hover:border-amber-400'
-                                                                }`}
-                                                            >
-                                                                {v}
-                                                                {count > 0 && (
-                                                                    <span className={`ml-1.5 px-1.5 py-0.5 rounded-full text-[10px] ${isArmed ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-600'}`}>{count}</span>
-                                                                )}
-                                                            </button>
-                                                        );
-                                                    })}
-                                                    {Object.keys(cartVendorOverride).length > 0 && (
-                                                        <button
-                                                            onClick={clearAssignments}
-                                                            className="text-[10px] font-bold px-2 py-1 rounded-full bg-white border border-red-200 text-red-600 hover:bg-red-50 ml-auto"
-                                                        >
-                                                            ✕ {language === "es" ? "Borrar" : "Clear"}
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            )}
-                                            {cartArmedVendor && (
-                                                <div className="bg-amber-100 border-b border-amber-300 px-3 py-1.5 text-[11px] font-bold text-amber-800 flex-shrink-0">
-                                                    ✓ {language === "es"
-                                                        ? `ARMADO — toca un artículo para asignarlo a ${cartArmedVendor}`
-                                                        : `ARMED — tap any item to assign it to ${cartArmedVendor}`}
-                                                </div>
-                                            )}
-                                            {/* Comparison table */}
+                                            {/* Old in-cart "Assign to" pill bar removed
+                                                2026-05-26. The same mechanic now lives in a
+                                                focused Plan view (toggled from the footer
+                                                "Plan" button) — see CartPlanView further
+                                                down. The cart body shows comparison data;
+                                                Plan mode shows the assignment workflow. */}
+                                            {/* Plan view — replaces the comparison table
+                                                when Plan mode is on. Vendor pills at top,
+                                                items list below with chips showing assigned
+                                                vendor; armed vendor + tap-to-assign with
+                                                silent reassign. */}
+                                            {cartPlanMode ? (
+                                                <CartPlanView
+                                                    rows={rows}
+                                                    language={language}
+                                                    assignVendors={assignVendors}
+                                                    cartArmedVendor={cartArmedVendor}
+                                                    setCartArmedVendor={setCartArmedVendor}
+                                                    cartVendorOverride={cartVendorOverride}
+                                                    setCartVendorOverride={setCartVendorOverride}
+                                                    effectiveVendor={effectiveVendor}
+                                                    onDone={() => { setCartPlanMode(false); setCartArmedVendor(null); }}
+                                                    onClearAll={clearAssignments}
+                                                />
+                                            ) : (
+                                            /* Comparison table */
                                             <div className="flex-1 overflow-auto">
                                                 {rows.length === 0 ? (
                                                     <div className="p-8 text-center text-gray-400">{language === "es" ? "El carrito está vacío" : "Cart is empty"}</div>
@@ -6266,16 +6253,11 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                 const isVendorOnly = r.kind === "vendor-only";
                                                                 const myEffVendor = effectiveVendor(r);
                                                                 const isOverridden = !!cartVendorOverride[r.id];
-                                                                const isClickable = !!cartArmedVendor;
-                                                                const isAssignedToArmed = cartArmedVendor && myEffVendor === cartArmedVendor;
                                                                 return (
                                                                     <tr
                                                                         key={r.id}
-                                                                        onClick={() => assignRow(r.id)}
                                                                         className={`border-t transition ${
-                                                                            isClickable
-                                                                                ? `cursor-pointer ${isAssignedToArmed ? 'bg-amber-50' : 'hover:bg-amber-50/50 hover:outline hover:outline-2 hover:outline-amber-300'}`
-                                                                                : (isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50")
+                                                                            isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50"
                                                                         }`}
                                                                         style={isOverridden ? { boxShadow: 'inset 3px 0 0 0 #b45309' } : undefined}
                                                                     >
@@ -6366,8 +6348,26 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                     </div>
                                                 )}
                                             </div>
+                                            )}
                                             {/* Footer buttons */}
                                             <div className="border-t border-gray-200 p-3 flex gap-2 flex-shrink-0 bg-gray-50 flex-wrap">
+                                                {/* 📋 Plan — opens the focused Plan view that
+                                                    replaces the in-cart "Assign to" pill bar.
+                                                    The badge counts how many items already
+                                                    have a manual override so the manager can
+                                                    see planning progress at a glance. */}
+                                                {!cartPlanMode && rows.length > 0 && (
+                                                    <button
+                                                        onClick={() => { setCartPlanMode(true); setCartArmedVendor(null); }}
+                                                        className="flex-1 min-w-[120px] py-3 bg-purple-600 text-white rounded-xl font-bold text-sm hover:bg-purple-700 active:scale-95 transition flex items-center justify-center gap-1.5">
+                                                        📋 {language === "es" ? "Planear" : "Plan"}
+                                                        {Object.keys(cartVendorOverride).length > 0 && (
+                                                            <span className="bg-white/25 px-1.5 py-0.5 rounded-full text-[10px]">
+                                                                {Object.keys(cartVendorOverride).length}/{rows.length}
+                                                            </span>
+                                                        )}
+                                                    </button>
+                                                )}
                                                 <button onClick={printInventory} className="flex-1 min-w-[120px] py-3 bg-blue-600 text-white rounded-xl font-bold text-sm hover:bg-blue-700 active:scale-95 transition">
                                                     {"\u{1F5A8}\u{FE0F}"} {language === "es" ? "Imprimir" : "Print"}
                                                 </button>
@@ -6383,7 +6383,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 {/* Place order — opens OrderMode. Snapshot the
                                                     rows we just built so the order session has
                                                     the same items the admin is looking at, even
-                                                    if inventory changes mid-session. */}
+                                                    if inventory changes mid-session.
+                                                    2026-05-26 bug fix: the vendor field used to
+                                                    read r.preferredVendor and ignore the cart's
+                                                    manual overrides, so the manager's Plan
+                                                    never carried into OrderMode. Now uses
+                                                    effectiveVendor(r) = override || preferred. */}
                                                 <button onClick={() => {
                                                     if (rows.length === 0) {
                                                         toast(language === "es" ? "El carrito está vacío." : "Cart is empty.");
@@ -6397,7 +6402,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                         category: r.category,
                                                         subcat: r.subcat || '',
                                                         pack: r.pack,
-                                                        vendor: r.preferredVendor,
+                                                        vendor: effectiveVendor(r) || r.preferredVendor,
                                                         preferredVendor: r.preferredVendor,
                                                     })));
                                                     setShowCart(false);
