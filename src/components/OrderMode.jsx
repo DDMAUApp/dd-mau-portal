@@ -471,8 +471,11 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                 </div>
                 {planVisible && (
                     <PlanPanel
-                        items={Object.values(items || {})}
+                        items={Object.entries(items || {}).map(([id, it]) => ({ ...it, _itemId: id }))}
                         isEs={isEs}
+                        currentVendor={currentVendor}
+                        onToggleVendor={onToggleVendor}
+                        onAction={handleAction}
                     />
                 )}
             </div>
@@ -980,20 +983,24 @@ function VendorRow({ name, tx, staffName, onRemove }) {
 }
 
 // ── PlanPanel ──────────────────────────────────────────────────────────
-// Right-column read-only summary, shown when the 📋 Plan toggle is on
-// (Andrew 2026-05-25 — "before we place the order i can use the same
-// way we first click the vendor and then can click through what item
-// is that vender"). Pure presentation: groups the session's items by
-// their planned vendor (item.vendor if marked, else preferredVendor,
-// else '(unassigned)') and lets the manager click a vendor pill to
-// scope the list to that vendor. Edits still happen back on the left
-// column — this side just answers "what am I about to order from
-// each vendor?".
+// Right-column vendor-scoped item list, shown when the 📋 Plan toggle
+// is on. Groups session.items by planned vendor (item.vendor if
+// marked, else preferredVendor, else '(unassigned)') and lets the
+// manager click a vendor pill to scope the list to that vendor's
+// items.
 //
-// Re-renders automatically when items change (the prop comes from
-// session.items, which is Firestore-backed) so a mark on the left
-// updates the right side in real time.
-function PlanPanel({ items, isEs }) {
+// 2026-05-25: shipped read-only.
+// 2026-05-26 (Andrew): "the whole point of the order mode page is to
+// be able to tick off item while ordering but the list on the right
+// isnt able to do that". Made the rows INTERACTIVE — each one is now
+// the same OrderItemRow used on the left with the full action button
+// set (ordered / partial / OOS / edit qty / edit note). Vendor pills
+// here are tied to OrderMode's currentVendor (instead of a separate
+// internal selectedVendor) so tapping a pill arms that vendor for
+// attribution AND scopes the panel in one tap. Both panels write to
+// session.items, so a mark here ripples to the left via the live
+// snapshot.
+function PlanPanel({ items, isEs, currentVendor, onToggleVendor, onAction }) {
     const tx = (en, es) => isEs ? es : en;
 
     // Group items by planned vendor. '(unassigned)' bucket catches
@@ -1016,16 +1023,17 @@ function PlanPanel({ items, isEs }) {
         );
     }, [items]);
 
-    const [selectedVendor, setSelectedVendor] = useState(null);
-    // Auto-select the first vendor whenever the set of vendors changes
-    // (e.g. an item just got marked and switched buckets).
-    useEffect(() => {
-        const first = grouped.keys().next().value;
-        if (first && (selectedVendor === null || !grouped.has(selectedVendor))) {
-            setSelectedVendor(first);
-        }
-    }, [grouped, selectedVendor]);
-
+    // 2026-05-26 — the right column's "selected vendor" is now tied
+    // to OrderMode's currentVendor (Andrew: "the whole point of the
+    // order mode page is to be able to tick off item while ordering
+    // but the list on the right isnt able to do that"). Tapping a
+    // pill here arms that vendor for attribution AND scopes the
+    // panel to its items in one tap. Falls through to nothing-shown
+    // until the manager picks a vendor — clearer than auto-showing
+    // an arbitrary first bucket.
+    const selectedVendor = currentVendor && grouped.has(currentVendor)
+        ? currentVendor
+        : null;
     const rows = selectedVendor ? (grouped.get(selectedVendor) || []) : [];
 
     return (
@@ -1034,6 +1042,11 @@ function PlanPanel({ items, isEs }) {
             <div className="px-3 py-2 border-b border-dd-line bg-white sticky top-0 z-10 shrink-0">
                 <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
                     📋 {tx('Plan by vendor', 'Plan por proveedor')}
+                    {selectedVendor && (
+                        <span className="ml-1.5 normal-case text-amber-700">
+                            · {tx('marking for', 'marcando para')} {selectedVendor}
+                        </span>
+                    )}
                 </div>
                 {grouped.size === 0 ? (
                     <span className="text-xs text-dd-text-2 italic">
@@ -1043,13 +1056,21 @@ function PlanPanel({ items, isEs }) {
                     <div className="flex gap-1.5 overflow-x-auto pb-1">
                         {[...grouped.entries()].map(([vendor, list]) => {
                             const sel = vendor === selectedVendor;
+                            const isUnassigned = vendor === '(unassigned)';
                             return (
                                 <button
                                     key={vendor}
-                                    onClick={() => setSelectedVendor(vendor)}
+                                    onClick={() => {
+                                        // '(unassigned)' is a label, not a real
+                                        // vendor — don't try to arm it.
+                                        if (isUnassigned) return;
+                                        onToggleVendor && onToggleVendor(vendor);
+                                    }}
                                     className={`shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${sel
-                                        ? 'bg-dd-green text-white border-dd-green'
-                                        : 'bg-white text-dd-text border-dd-line hover:bg-dd-bg'}`}>
+                                        ? 'bg-amber-600 text-white border-amber-700'
+                                        : isUnassigned
+                                            ? 'bg-white text-dd-text-2 border-dashed border-dd-line italic cursor-default'
+                                            : 'bg-white text-dd-text border-dd-line hover:bg-dd-bg'}`}>
                                     {vendor} <span className="opacity-70">({list.length})</span>
                                 </button>
                             );
@@ -1058,15 +1079,31 @@ function PlanPanel({ items, isEs }) {
                 )}
             </div>
 
-            {/* Item list for the selected vendor — read-only. */}
+            {/* Items for the selected vendor — INTERACTIVE. Reuses
+                OrderItemRow so ordered / partial / OOS / edit qty /
+                edit note behave the same as on the left. Marks here
+                write to session.items and ripple to the left list
+                via the live snapshot. */}
             <div className="flex-1 overflow-y-auto">
-                {rows.length === 0 ? (
+                {!selectedVendor ? (
+                    <div className="p-6 text-center text-sm text-dd-text-2 italic">
+                        {tx('Tap a vendor above to mark its items.',
+                            'Toca un proveedor arriba para marcar sus artículos.')}
+                    </div>
+                ) : rows.length === 0 ? (
                     <div className="p-6 text-center text-sm text-dd-text-2 italic">
                         {tx('No items.', 'Sin artículos.')}
                     </div>
                 ) : (
                     rows.map((it) => (
-                        <PlanRow key={it.itemId || it.id} item={it} isEs={isEs} />
+                        <OrderItemRow
+                            key={it._itemId}
+                            itemId={it._itemId}
+                            item={it}
+                            isEs={isEs}
+                            currentVendor={currentVendor}
+                            onAction={onAction}
+                        />
                     ))
                 )}
             </div>
@@ -1074,40 +1111,7 @@ function PlanPanel({ items, isEs }) {
     );
 }
 
-// One row in the plan panel — status badge + item name + qty/unit/pack.
-// Mirrors the colors OrderItemRow uses for status so the right column
-// reads at-a-glance the same way the left does.
-function PlanRow({ item, isEs }) {
-    const tx = (en, es) => isEs ? es : en;
-    const name = isEs && item.itemNameEs ? item.itemNameEs : (item.itemName || item.name || '');
-    const badge = (() => {
-        switch (item.status) {
-            case ITEM_STATUS.ORDERED: return { label: '✓', cls: 'bg-green-100 text-green-800 border-green-200' };
-            case ITEM_STATUS.PARTIAL: return { label: '◐', cls: 'bg-amber-100 text-amber-800 border-amber-200' };
-            case ITEM_STATUS.OOS:     return { label: '🚫', cls: 'bg-red-100 text-red-800 border-red-200' };
-            default:                  return { label: '⏳', cls: 'bg-gray-100 text-gray-700 border-gray-200' };
-        }
-    })();
-    return (
-        <div className="px-3 py-2 border-b border-dd-line/60 flex items-center gap-2">
-            <span className={`text-[11px] font-black px-2 py-0.5 rounded-full border ${badge.cls}`}>
-                {badge.label}
-            </span>
-            <div className="flex-1 min-w-0">
-                <div className="text-sm font-bold text-dd-text truncate">{name}</div>
-                <div className="text-[11px] text-dd-text-2 truncate">
-                    {item.qty != null ? `${item.qty}${item.unit ? ' ' + item.unit : ''}` : ''}
-                    {item.pack ? ` · ${item.pack}` : ''}
-                    {item.note ? ` · ✎ ${item.note}` : ''}
-                </div>
-            </div>
-            {/* If vendor was explicitly assigned (vs. just preferredVendor),
-                show a tiny dot so the manager can tell the planned-vs-locked
-                distinction at a glance. */}
-            {item.vendor && (
-                <span title={tx('Vendor confirmed', 'Proveedor confirmado')}
-                    className="text-[9px] text-dd-green-700 font-black">●</span>
-            )}
-        </div>
-    );
-}
+// PlanRow removed 2026-05-26 — was the read-only row used by an early
+// version of the Plan panel. The panel now reuses OrderItemRow (the
+// same component the left list uses) so check-offs work from either
+// side. Kept the removal in history rather than the file.
