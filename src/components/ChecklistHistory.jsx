@@ -1,8 +1,40 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { collection, getDocs, getDoc, doc, query, orderBy, limit } from 'firebase/firestore';
+import { getDoc, doc } from 'firebase/firestore';
 
 const TIME_PERIODS = [{ id: "all", nameEn: "All Tasks", nameEs: "Todas las Tareas" }];
+
+// Number of calendar days back to probe for history. 30 is plenty for
+// the manager flipping back through "what got done last week" while
+// staying well under the 60-read-per-open cost of the earlier query.
+const HISTORY_LOOKBACK_DAYS = 30;
+
+// Today in Chicago wall-clock (where the restaurant lives), formatted
+// as YYYY-MM-DD — must match the docId scheme writers use in
+// Operations.jsx (getTodayKey()). Without TZ-pinning, a manager on the
+// East Coast at 11pm would compute "tomorrow" and miss today's doc.
+function todayCentralKey() {
+    const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Chicago',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    });
+    return fmt.format(new Date()); // already YYYY-MM-DD
+}
+
+// Walk N days back from a YYYY-MM-DD string and return the list of
+// keys, newest first. Pure date math — no TZ math past the seed key.
+function lastNDayKeys(seedKey, n) {
+    const [y, m, d] = seedKey.split('-').map(Number);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+        const dt = new Date(Date.UTC(y, m - 1, d - i));
+        const yy = dt.getUTCFullYear();
+        const mm = String(dt.getUTCMonth() + 1).padStart(2, '0');
+        const dd = String(dt.getUTCDate()).padStart(2, '0');
+        out.push(`${yy}-${mm}-${dd}`);
+    }
+    return out;
+}
 
 export default function ChecklistHistory({ language, storeLocation, timePeriods }) {
     // Use passed timePeriods or fall back to default
@@ -15,19 +47,40 @@ export default function ChecklistHistory({ language, storeLocation, timePeriods 
     const [expandedPhoto, setExpandedPhoto] = useState(null);
 
     useEffect(() => {
-        // 2026-05-24 audit fix: was getDocs(entire collection).slice(30).
-        // After 2 years that's 730+ reads per tab open per store.
-        // The collection has both 'YYYY-MM-DD' and 'YYYY-MM-DD_saved'
-        // doc IDs; the _saved variant sorts AFTER the bare date in
-        // __name__-desc order, so we fetch 60 and keep the 30 bare dates
-        // — guarantees we cover all 30 days even if every one has both
-        // a bare and a _saved doc.
+        // 2026-05-26: switched from a list query (orderBy __name__ desc
+        // limit 60) to a calendar-based parallel fetch.
+        //
+        // Why: the orderBy('__name__', 'desc') query was failing on the
+        // live Firestore project with FAILED_PRECONDITION ("the query
+        // requires an index") — even though descending __name__ is
+        // typically auto-indexed. With no error UI, the whole History
+        // tab silently showed empty for ~5 days. Verified against the
+        // raw collection: data IS there (2026-05-24 and earlier),
+        // sortable by docId.
+        //
+        // New approach: compute the last N day-strings client-side,
+        // getDoc() each in parallel, keep the ones that exist. Both
+        // bare 'YYYY-MM-DD' and '_saved' variants are checked so days
+        // that have only the rollover snapshot still appear as a
+        // selectable date. ~30 reads/open, same cost ceiling as the
+        // old query, deterministic, no index dependency.
         const fetchHistory = async () => {
             try {
-                const colRef = collection(db, "checklistHistory_" + storeLocation);
-                const q = query(colRef, orderBy("__name__", "desc"), limit(60));
-                const snapshot = await getDocs(q);
-                const dates = snapshot.docs.map(docData => docData.id).filter(d => !d.includes("_")).slice(0, 30);
+                const today = todayCentralKey();
+                const keys = lastNDayKeys(today, HISTORY_LOOKBACK_DAYS);
+                const reads = keys.flatMap((k) => [
+                    getDoc(doc(db, "checklistHistory_" + storeLocation, k)),
+                    getDoc(doc(db, "checklistHistory_" + storeLocation, k + "_saved")),
+                ]);
+                const results = await Promise.allSettled(reads);
+                const dates = [];
+                for (let i = 0; i < keys.length; i++) {
+                    const bare = results[i * 2];
+                    const saved = results[i * 2 + 1];
+                    const exists = (bare.status === 'fulfilled' && bare.value.exists())
+                                || (saved.status === 'fulfilled' && saved.value.exists());
+                    if (exists) dates.push(keys[i]);
+                }
                 setHistoryDates(dates);
                 if (dates.length > 0) setSelectedDate(dates[0]);
             } catch (err) { console.error("Error loading history:", err); }
