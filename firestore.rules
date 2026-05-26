@@ -117,6 +117,16 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Inbox category list (Andrew 2026-05-26). Editable category
+    // taxonomy. Admin-gated client-side; pollGmail reads it at the
+    // start of every run to build the classifier prompt. Same Phase-2
+    // tightening planned as inbox_routing_rules.
+    match /config/inbox_categories {
+      allow read: if true;
+      allow create, update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
     // Recipes doc — hardened after the 2026-05-09 Import Master incident.
     // The bug clobbered 39 of 40 recipes in a single write by replacing
     // each one with a master-default version. Since the doc is one giant
@@ -431,6 +441,9 @@ service cloud.firestore {
                         // owners + cost SMS spend.
                         "email_inquiry_catering",
                         "email_inquiry_complaint",
+                        // 2026-05-26 — CF-only. pollGmail pings owners
+                        // when the classifier returns low confidence.
+                        "email_needs_classification",
                     ]);
       allow update: if request.resource.data is map;
       allow delete: if false;

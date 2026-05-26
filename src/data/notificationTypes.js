@@ -100,6 +100,11 @@ export const NOTIFICATION_TYPES = [
     // to non-owner forStaff as defense-in-depth.
     { id: 'email_inquiry_catering',  category: 'mgmt', en: 'Catering inquiry (email)',   es: 'Consulta de catering (email)', lockedOn: false, ownerOnly: true },
     { id: 'email_inquiry_complaint', category: 'mgmt', en: 'Customer complaint (email)', es: 'Queja de cliente (email)',     lockedOn: false, ownerOnly: true },
+    // 2026-05-26 — review-queue ping. Fires when the classifier is
+    // unsure and needs owner input. Owner-only audience like the
+    // other email_* types; opens the InboxTriage tab where a popup
+    // walks the owner through each unsure email.
+    { id: 'email_needs_classification', category: 'mgmt', en: 'Email needs classification', es: 'Email necesita clasificar', lockedOn: false, ownerOnly: true },
     // 2026-05-26 — staff-facing forward of a triaged email. Andrew or
     // Julie either manually forwards via the Inbox UI or an
     // auto-routing rule fires. Locked-on for the recipient (no

@@ -24,22 +24,33 @@ import {
 } from 'firebase/firestore';
 import { toast } from '../toast';
 
-// Display config for each category. Color tones picked so a glance at
-// the chip row tells the manager what kind of attention each email needs
-// — red for complaint, green for catering (revenue), neutral for the
-// less time-sensitive buckets.
-const CATEGORIES = [
-    { id: 'catering',  en: 'Catering',  es: 'Catering',  emoji: '🍱', tone: 'green'  },
-    { id: 'complaint', en: 'Complaints',es: 'Quejas',    emoji: '⚠️', tone: 'red'    },
-    { id: 'vendor',    en: 'Vendors',   es: 'Proveedor', emoji: '🚚', tone: 'blue'   },
-    { id: 'bill',      en: 'Bills',     es: 'Facturas',  emoji: '🧾', tone: 'amber'  },
-    // 2026-05-26 — Andrew: "add toast. that anything thats not catering
-    // from toast submission". Toast POS noise (daily summaries,
-    // receipts) gets its own bucket so it stops drowning the other
-    // categories. Actual Toast catering orders still route to 'catering'
-    // (precedence rule lives in the classifier prompt).
-    { id: 'toast',     en: 'Toast',     es: 'Toast',     emoji: '🍞', tone: 'purple' },
-    { id: 'other',     en: 'Other',     es: 'Otros',     emoji: '✉️', tone: 'gray'   },
+// Default seed list for /config/inbox_categories on first ever load.
+// Andrew 2026-05-26: "make the classifications bubbles able to add
+// and subtract" — categories are now Firestore-backed. The doc may
+// not exist on first run, so we fall back to this list AND seed it
+// on first edit. Tone is the color bucket the chip uses (see
+// TONE_CLASSES below). `description` is the one-line hint that
+// gets injected into the classifier prompt so the model knows what
+// the category means — owners can edit it as they refine the AI.
+const DEFAULT_CATEGORIES = [
+    { id: 'catering',  en: 'Catering',  es: 'Catering',  emoji: '🍱', tone: 'green',  description: 'someone asking about catering, large orders, events, group meals, off-site service. INCLUDES Toast online-order receipts where the order is a catering / large-party / event submission' },
+    { id: 'complaint', en: 'Complaints',es: 'Quejas',    emoji: '⚠️', tone: 'red',    description: 'a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating' },
+    { id: 'vendor',    en: 'Vendors',   es: 'Proveedor', emoji: '🚚', tone: 'blue',   description: 'a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request' },
+    { id: 'bill',      en: 'Bills',     es: 'Facturas',  emoji: '🧾', tone: 'amber',  description: 'an invoice, statement, payment due, utility bill, subscription receipt' },
+    { id: 'toast',     en: 'Toast',     es: 'Toast',     emoji: '🍞', tone: 'purple', description: 'automated emails from Toast POS (toasttab.com, toastpos.com, Toast Now, etc.): daily sales summaries, transaction notices, online-order receipts, loyalty reports, payroll-from-Toast. IMPORTANT: if the Toast email is a CATERING order, classify as catering instead.' },
+    { id: 'other',     en: 'Other',     es: 'Otros',     emoji: '✉️', tone: 'gray',   description: 'anything else (marketing, spam, personal, employee, banking notices, social media)' },
+];
+
+// Tone classes — the visual color buckets a category can choose from.
+// Owners pick one when adding a new category. The 'other' fallback
+// always uses gray.
+const TONE_OPTIONS = [
+    { id: 'green',  label: 'Green'  },
+    { id: 'red',    label: 'Red'    },
+    { id: 'blue',   label: 'Blue'   },
+    { id: 'amber',  label: 'Amber'  },
+    { id: 'purple', label: 'Purple' },
+    { id: 'gray',   label: 'Gray'   },
 ];
 
 const TONE_CLASSES = {
@@ -94,9 +105,17 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
     const [showTriaged, setShowTriaged] = useState(false);
     // /config/inbox_routing_rules — owner-only-managed forwarding rules.
     const [routingRules, setRoutingRules] = useState(DEFAULT_ROUTING_RULES);
+    // /config/inbox_categories — editable category list. Seeded from
+    // DEFAULT_CATEGORIES; owners can add/remove via the UI.
+    const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
     // Modal coordination — null = closed, otherwise = the open modal's data.
     const [routingModalCategory, setRoutingModalCategory] = useState(null); // category id
     const [sendModalItem, setSendModalItem] = useState(null);                // email_intel doc
+    const [categoryEditor, setCategoryEditor] = useState(null);              // 'new' | <category id> | null
+    // Classification queue (low-confidence emails the AI flagged for
+    // human review). Auto-pops when items exist and the user hasn't
+    // dismissed it for this session.
+    const [queueDismissed, setQueueDismissed] = useState(false);
 
     // Live subscription to /email_intel. Cap at 200 most recent so the
     // tab loads fast even after a year of mail.
@@ -143,6 +162,32 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                 });
             },
             (err) => console.warn('inbox_routing_rules subscribe failed:', err),
+        );
+        return unsub;
+    }, []);
+
+    // Categories — editable list. Falls back to DEFAULT_CATEGORIES if
+    // the doc doesn't exist yet (first ever load). On first edit the
+    // UI persists the list, after which Firestore is the source of
+    // truth. Always force-includes 'other' as the last entry — it's
+    // the fallback bucket and the UI doesn't allow deleting it.
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'config', 'inbox_categories'),
+            (snap) => {
+                if (!snap.exists() || !Array.isArray(snap.data()?.list) || snap.data().list.length === 0) {
+                    setCategories(DEFAULT_CATEGORIES);
+                    return;
+                }
+                const list = snap.data().list.filter((c) => c && c.id);
+                // Guarantee 'other' is in the list. If somehow deleted,
+                // re-add it from defaults.
+                if (!list.find((c) => c.id === 'other')) {
+                    const otherDefault = DEFAULT_CATEGORIES.find((c) => c.id === 'other');
+                    if (otherDefault) list.push(otherDefault);
+                }
+                setCategories(list);
+            },
+            (err) => console.warn('inbox_categories subscribe failed:', err),
         );
         return unsub;
     }, []);
@@ -243,12 +288,14 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                 </div>
                 <button
                     onClick={() => setShowTriaged(v => !v)}
+                    title={tx('Done = "I\'ve handled this — hide it from the default view". Marking an email Done removes it from the list.',
+                              'Hecho = "Ya lo manejé — ocúltalo de la vista". Al marcar Hecho desaparece de la lista.')}
                     className={`text-[11px] font-bold px-2 py-1 rounded-full border transition ${showTriaged
                         ? 'bg-dd-green text-white border-dd-green'
                         : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'}`}>
                     {showTriaged
-                        ? `✓ ${tx('Showing triaged', 'Triados visibles')}`
-                        : tx('Hide triaged', 'Ocultar triados')}
+                        ? `✓ ${tx('Showing done', 'Mostrando hechos')}`
+                        : tx('Hide done', 'Ocultar hechos')}
                 </button>
             </div>
 
@@ -331,9 +378,9 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                         : 'bg-white text-dd-text border-dd-line hover:bg-dd-bg'}`}>
                     {tx('All', 'Todos')} <span className="opacity-70">({counts.all || 0})</span>
                 </button>
-                {CATEGORIES.map(c => {
+                {categories.map(c => {
                     const sel = filter === c.id;
-                    const tone = TONE_CLASSES[c.tone];
+                    const tone = TONE_CLASSES[c.tone] || TONE_CLASSES.gray;
                     const rule = routingRules.rules?.[c.id] || { enabled: false, recipients: [] };
                     const routingOn = routingRules.masterEnabled && rule.enabled && rule.recipients.length > 0;
                     return (
@@ -362,6 +409,13 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                         </span>
                     );
                 })}
+                {/* Add new category — opens an editor modal. */}
+                <button
+                    onClick={() => setCategoryEditor('new')}
+                    title={tx('Add a new category', 'Añadir nueva categoría')}
+                    className="shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg hover:text-dd-text">
+                    ➕ {tx('Add category', 'Añadir categoría')}
+                </button>
             </div>
 
             {/* Email rows */}
@@ -375,13 +429,12 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                     </div>
                 ) : (
                     filtered.map(item => {
-                        // Fallback to 'other' (last entry) when the LLM
-                        // returns something we don't recognize. Index-by-id
-                        // rather than position so reordering CATEGORIES
-                        // later doesn't silently break the fallback.
-                        const cat = CATEGORIES.find(c => c.id === item.category)
-                            || CATEGORIES.find(c => c.id === 'other');
-                        const tone = TONE_CLASSES[cat.tone];
+                        // Fallback to 'other' when the LLM returns a
+                        // category we don't recognize (or a now-deleted one).
+                        const cat = categories.find(c => c.id === item.category)
+                            || categories.find(c => c.id === 'other')
+                            || DEFAULT_CATEGORIES[DEFAULT_CATEGORIES.length - 1];
+                        const tone = TONE_CLASSES[cat.tone] || TONE_CLASSES.gray;
                         return (
                             <div key={item.id} className={`p-3 ${item.triaged ? 'bg-dd-bg/50' : 'bg-white'}`}>
                                 <div className="flex items-start gap-2.5">
@@ -403,7 +456,7 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                                                     aria-label={tx('Change category', 'Cambiar categoría')}
                                                     title={tx('Change category — AI will learn', 'Cambiar categoría — la IA aprende')}
                                                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
-                                                    {CATEGORIES.map(c => (
+                                                    {categories.map(c => (
                                                         <option key={c.id} value={c.id}>{isEs ? c.es : c.en}</option>
                                                     ))}
                                                 </select>
@@ -466,14 +519,16 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                                             {item.triaged ? (
                                                 <button
                                                     onClick={() => unmarkTriaged(item.id)}
+                                                    title={tx('Restore to the list', 'Volver a la lista')}
                                                     className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg">
-                                                    {tx('Unmark', 'Desmarcar')}
+                                                    {tx('Undone', 'Deshacer')}
                                                 </button>
                                             ) : (
                                                 <button
                                                     onClick={() => markTriaged(item.id)}
+                                                    title={tx('Mark as handled — hides it from the list', 'Marcar como hecho — lo oculta de la lista')}
                                                     className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg">
-                                                    ✓ {tx('Triaged', 'Triado')}
+                                                    ✓ {tx('Done', 'Hecho')}
                                                 </button>
                                             )}
                                         </div>
@@ -497,19 +552,47 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
                 <RoutingRulesModal
                     categoryId={routingModalCategory}
                     routingRules={routingRules}
+                    categories={categories}
                     staffList={staffList}
                     actorName={staffName}
                     language={language}
                     onClose={() => setRoutingModalCategory(null)}
+                    onDeleteCategory={() => {
+                        setRoutingModalCategory(null);
+                        setCategoryEditor(routingModalCategory);
+                    }}
                 />
             )}
             {sendModalItem && (
                 <SendToStaffModal
                     item={sendModalItem}
+                    categories={categories}
                     staffList={staffList}
                     actorName={staffName}
                     language={language}
                     onClose={() => setSendModalItem(null)}
+                />
+            )}
+            {categoryEditor && (
+                <CategoryEditorModal
+                    mode={categoryEditor === 'new' ? 'new' : 'edit'}
+                    categoryId={categoryEditor === 'new' ? null : categoryEditor}
+                    categories={categories}
+                    actorName={staffName}
+                    language={language}
+                    onClose={() => setCategoryEditor(null)}
+                />
+            )}
+            {/* Classification queue — pops when the AI flagged any
+                emails as low-confidence and the user hasn't dismissed
+                it for this session. */}
+            {!queueDismissed && items.some(it => it.needsClassification) && (
+                <ClassifyQueueModal
+                    items={items.filter(it => it.needsClassification)}
+                    categories={categories}
+                    actorName={staffName}
+                    language={language}
+                    onClose={() => setQueueDismissed(true)}
                 />
             )}
         </div>
@@ -524,10 +607,13 @@ export default function InboxTriage({ language = 'en', staffName = '', staffList
 // One modal per category. Toggle enable + pick recipient staff. The
 // master killswitch is shown at the top of the InboxTriage page (not
 // here) — this modal only writes the per-category half of the rules.
-function RoutingRulesModal({ categoryId, routingRules, staffList, actorName, language, onClose }) {
+function RoutingRulesModal({ categoryId, routingRules, categories, staffList, actorName, language, onClose, onDeleteCategory }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
-    const cat = CATEGORIES.find(c => c.id === categoryId);
+    const cat = (categories || []).find(c => c.id === categoryId);
+    // 'other' is the fallback bucket — keep it un-deletable so the
+    // chip-rendering code always has something to fall through to.
+    const canDelete = categoryId && categoryId !== 'other';
     const initial = routingRules.rules?.[categoryId] || { enabled: false, recipients: [] };
     const [enabled, setEnabled] = useState(!!initial.enabled);
     const [recipients, setRecipients] = useState(new Set(initial.recipients || []));
@@ -643,15 +729,23 @@ function RoutingRulesModal({ categoryId, routingRules, staffList, actorName, lan
                 </div>
 
                 {/* Footer */}
-                <div className="px-4 py-3 border-t border-dd-line flex gap-2 bg-white">
-                    <button onClick={onClose} disabled={saving}
-                        className="flex-1 py-2 rounded-lg border border-dd-line text-sm font-bold text-dd-text-2 hover:bg-dd-bg">
-                        {tx('Cancel', 'Cancelar')}
-                    </button>
-                    <button onClick={handleSave} disabled={saving}
-                        className="flex-1 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 disabled:opacity-60">
-                        {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
-                    </button>
+                <div className="px-4 py-3 border-t border-dd-line flex flex-col gap-2 bg-white">
+                    <div className="flex gap-2">
+                        <button onClick={onClose} disabled={saving}
+                            className="flex-1 py-2 rounded-lg border border-dd-line text-sm font-bold text-dd-text-2 hover:bg-dd-bg">
+                            {tx('Cancel', 'Cancelar')}
+                        </button>
+                        <button onClick={handleSave} disabled={saving}
+                            className="flex-1 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 disabled:opacity-60">
+                            {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                        </button>
+                    </div>
+                    {canDelete && (
+                        <button onClick={onDeleteCategory}
+                            className="text-[11px] font-bold text-red-600 hover:text-red-700 hover:underline mt-1 self-center">
+                            🗑 {tx('Delete this category', 'Borrar esta categoría')}
+                        </button>
+                    )}
                 </div>
             </div>
         </div>
@@ -663,7 +757,7 @@ function RoutingRulesModal({ categoryId, routingRules, staffList, actorName, lan
 // subject + sender + 200-char snippet. Type: email_forwarded. The
 // staff sees an in-app notification + push, but cannot open the
 // InboxTriage tab (it's gated to ids 40/41).
-function SendToStaffModal({ item, staffList, actorName, language, onClose }) {
+function SendToStaffModal({ item, categories, staffList, actorName, language, onClose }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
     const [recipients, setRecipients] = useState(new Set());
@@ -692,7 +786,9 @@ function SendToStaffModal({ item, staffList, actorName, language, onClose }) {
         const subject = item.subject || '(no subject)';
         const fromName = item.fromName || item.from || '';
         const snippet = (item.snippet || '').slice(0, 200);
-        const cat = CATEGORIES.find(c => c.id === item.category) || CATEGORIES.find(c => c.id === 'other');
+        const cat = (categories || []).find(c => c.id === item.category)
+            || (categories || []).find(c => c.id === 'other')
+            || { emoji: '✉️', en: 'Other', es: 'Otros' };
         try {
             await Promise.all(names.map(name =>
                 addDoc(collection(db, 'notifications'), {
@@ -802,6 +898,331 @@ function SendToStaffModal({ item, staffList, actorName, language, onClose }) {
                     <button onClick={handleSend} disabled={sending || recipients.size === 0}
                         className="flex-1 py-2 rounded-lg bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-50">
                         {sending ? tx('Sending…', 'Enviando…') : tx('Send', 'Enviar')}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── CategoryEditorModal — add / edit / delete a category ─────────────
+// Andrew 2026-05-26: "make the classifications bubbles able to add and
+// subtract". Owners pick emoji + label + color tone + a short
+// description (the description gets fed into the classifier prompt so
+// the AI knows what each category means).
+function CategoryEditorModal({ mode, categoryId, categories, actorName, language, onClose }) {
+    const isEs = language === 'es';
+    const tx = (en, es) => isEs ? es : en;
+    const existing = mode === 'edit' ? (categories || []).find(c => c.id === categoryId) : null;
+    const [emoji, setEmoji] = useState(existing?.emoji || '📨');
+    const [labelEn, setLabelEn] = useState(existing?.en || '');
+    const [labelEs, setLabelEs] = useState(existing?.es || '');
+    const [tone, setTone] = useState(existing?.tone || 'blue');
+    const [description, setDescription] = useState(existing?.description || '');
+    const [saving, setSaving] = useState(false);
+
+    const slugify = (s) => (s || '')
+        .toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 30);
+
+    const save = async () => {
+        if (saving) return;
+        const en = (labelEn || '').trim();
+        if (!en) {
+            toast(tx('Name is required', 'El nombre es obligatorio'), { kind: 'error' });
+            return;
+        }
+        const id = existing?.id || slugify(en);
+        if (!id) {
+            toast(tx('Could not derive an id', 'No se pudo derivar id'), { kind: 'error' });
+            return;
+        }
+        if (!existing && (categories || []).find(c => c.id === id)) {
+            toast(tx('A category with that id already exists.', 'Ya existe una categoría con ese id.'), { kind: 'error' });
+            return;
+        }
+        const newCat = {
+            id,
+            en,
+            es: (labelEs || en).trim(),
+            emoji: emoji || '📨',
+            tone,
+            description: (description || '').trim().slice(0, 400),
+        };
+        const next = [...(categories || [])];
+        const idx = next.findIndex(c => c.id === id);
+        if (idx >= 0) next[idx] = newCat;
+        else {
+            // Insert before 'other' so 'other' stays last.
+            const otherIdx = next.findIndex(c => c.id === 'other');
+            if (otherIdx >= 0) next.splice(otherIdx, 0, newCat);
+            else next.push(newCat);
+        }
+        setSaving(true);
+        try {
+            await setDoc(doc(db, 'config', 'inbox_categories'),
+                { list: next, updatedAt: serverTimestamp(), updatedBy: actorName || 'admin' },
+                { merge: true });
+            toast(tx('Saved', 'Guardado'), { kind: 'success' });
+            onClose?.();
+        } catch (e) {
+            console.warn('CategoryEditorModal save failed:', e);
+            toast(tx('Could not save', 'No se pudo guardar'), { kind: 'error' });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const remove = async () => {
+        if (!existing || existing.id === 'other') return;
+        if (!window.confirm(tx(
+            `Delete "${existing.en}"? Existing emails in this category will fall back to Other. The AI will stop using it on new mail.`,
+            `¿Borrar "${existing.es || existing.en}"? Los emails actuales caerán en Otros. La IA dejará de usarla en mail nuevo.`,
+        ))) return;
+        setSaving(true);
+        try {
+            const next = (categories || []).filter(c => c.id !== existing.id);
+            await setDoc(doc(db, 'config', 'inbox_categories'),
+                { list: next, updatedAt: serverTimestamp(), updatedBy: actorName || 'admin' },
+                { merge: true });
+            toast(tx('Deleted', 'Borrado'), { kind: 'success' });
+            onClose?.();
+        } catch (e) {
+            console.warn('CategoryEditorModal delete failed:', e);
+            toast(tx('Could not delete', 'No se pudo borrar'), { kind: 'error' });
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
+            onClick={onClose}>
+            <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
+                onClick={(e) => e.stopPropagation()}>
+                <div className="px-4 pt-4 pb-3 border-b border-dd-line">
+                    <h2 className="text-base font-black text-dd-text">
+                        {mode === 'edit'
+                            ? tx(`Edit "${existing?.en || ''}"`, `Editar "${existing?.es || existing?.en || ''}"`)
+                            : tx('New category', 'Nueva categoría')}
+                    </h2>
+                    <p className="text-[11px] text-dd-text-2 mt-0.5">
+                        {tx(
+                            'Description is fed to the AI so it knows what mail belongs here.',
+                            'La descripción se le da a la IA para que sepa qué emails encajan.',
+                        )}
+                    </p>
+                </div>
+
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                        <label className="block">
+                            <span className="block text-[10px] font-bold uppercase text-dd-text-2 mb-0.5">{tx('Emoji', 'Emoji')}</span>
+                            <input value={emoji} onChange={(e) => setEmoji(e.target.value.slice(0, 4))} maxLength={4}
+                                className="w-full px-2 py-1.5 rounded-lg border border-dd-line text-2xl text-center" />
+                        </label>
+                        <label className="block">
+                            <span className="block text-[10px] font-bold uppercase text-dd-text-2 mb-0.5">{tx('Color', 'Color')}</span>
+                            <select value={tone} onChange={(e) => setTone(e.target.value)}
+                                className="w-full px-2 py-2 rounded-lg border border-dd-line text-sm bg-white">
+                                {TONE_OPTIONS.map(t => (
+                                    <option key={t.id} value={t.id}>{t.label}</option>
+                                ))}
+                            </select>
+                        </label>
+                    </div>
+                    <label className="block">
+                        <span className="block text-[10px] font-bold uppercase text-dd-text-2 mb-0.5">{tx('Name (English)', 'Nombre (inglés)')}</span>
+                        <input value={labelEn} onChange={(e) => setLabelEn(e.target.value)} maxLength={30}
+                            placeholder={tx('e.g. Reservations', 'ej. Reservas')}
+                            className="w-full px-2 py-1.5 rounded-lg border border-dd-line text-sm" />
+                    </label>
+                    <label className="block">
+                        <span className="block text-[10px] font-bold uppercase text-dd-text-2 mb-0.5">{tx('Name (Spanish, optional)', 'Nombre (español, opcional)')}</span>
+                        <input value={labelEs} onChange={(e) => setLabelEs(e.target.value)} maxLength={30}
+                            placeholder={tx('Defaults to the English name', 'Por defecto, el nombre en inglés')}
+                            className="w-full px-2 py-1.5 rounded-lg border border-dd-line text-sm" />
+                    </label>
+                    <label className="block">
+                        <span className="block text-[10px] font-bold uppercase text-dd-text-2 mb-0.5">{tx('Description (AI prompt)', 'Descripción (prompt IA)')}</span>
+                        <textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={400} rows={3}
+                            placeholder={tx('e.g. "guests asking to book a table, OpenTable confirmations, large-party requests"',
+                                            'ej. "clientes pidiendo reservar mesa, confirmaciones de OpenTable, grupos grandes"')}
+                            className="w-full px-2 py-1.5 rounded-lg border border-dd-line text-sm" />
+                        <div className="text-[10px] text-dd-text-2 mt-0.5">
+                            {tx('The clearer this is, the better the AI categorizes.',
+                                'Cuanto más claro, mejor clasifica la IA.')}
+                        </div>
+                    </label>
+                </div>
+
+                <div className="px-4 py-3 border-t border-dd-line flex flex-col gap-2 bg-white">
+                    <div className="flex gap-2">
+                        <button onClick={onClose} disabled={saving}
+                            className="flex-1 py-2 rounded-lg border border-dd-line text-sm font-bold text-dd-text-2 hover:bg-dd-bg">
+                            {tx('Cancel', 'Cancelar')}
+                        </button>
+                        <button onClick={save} disabled={saving}
+                            className="flex-1 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 disabled:opacity-60">
+                            {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                        </button>
+                    </div>
+                    {existing && existing.id !== 'other' && (
+                        <button onClick={remove} disabled={saving}
+                            className="text-[11px] font-bold text-red-600 hover:text-red-700 hover:underline mt-1 self-center">
+                            🗑 {tx('Delete category', 'Borrar categoría')}
+                        </button>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// ── ClassifyQueueModal — walks owners through low-confidence emails ──
+// Andrew 2026-05-26: "if unsure make a email classification question
+// that sends to only julie and andrew in the notifications to check
+// inbox when i or julie enters inbox it pops up a classification
+// window."
+//
+// Auto-shows when the email_intel snapshot has any items with
+// needsClassification === true. The user clicks a category bubble for
+// each one; that:
+//   1. Sets the category on the doc.
+//   2. Clears needsClassification (= one less queued item).
+//   3. Appends a correction row to /email_intel_corrections so the AI
+//      learns this owner's preference for next time.
+function ClassifyQueueModal({ items, categories, actorName, language, onClose }) {
+    const isEs = language === 'es';
+    const tx = (en, es) => isEs ? es : en;
+    const [idx, setIdx] = useState(0);
+    const [busy, setBusy] = useState(false);
+    const total = items.length;
+    const item = items[idx];
+
+    if (!item) return null;
+
+    const advance = () => {
+        if (idx + 1 >= items.length) onClose?.();
+        else setIdx(idx + 1);
+    };
+
+    const pick = async (newCategory) => {
+        if (busy) return;
+        setBusy(true);
+        try {
+            await updateDoc(doc(db, 'email_intel', item.id), {
+                category: newCategory,
+                needsClassification: false,
+                manuallyCorrected: true,
+                manuallyCorrectedAt: serverTimestamp(),
+                manuallyCorrectedBy: actorName || 'admin',
+            });
+            await addDoc(collection(db, 'email_intel_corrections'), {
+                gmailId: item.id,
+                fromName: item.fromName || item.from || '',
+                from: item.from || '',
+                subject: item.subject || '',
+                snippet: (item.snippet || '').slice(0, 600),
+                oldCategory: item.category || 'other',
+                newCategory,
+                correctedBy: actorName || 'admin',
+                correctedAt: serverTimestamp(),
+                source: 'queue',
+            });
+            advance();
+        } catch (e) {
+            console.warn('ClassifyQueueModal pick failed:', e);
+            toast(tx('Could not save', 'No se pudo guardar'), { kind: 'error' });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-2"
+            onClick={onClose}>
+            <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[92vh]"
+                onClick={(e) => e.stopPropagation()}>
+                <div className="px-4 pt-4 pb-3 border-b border-dd-line">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-base font-black text-dd-text">
+                            🤔 {tx('Help classify', 'Ayuda a clasificar')}
+                        </h2>
+                        <span className="text-[11px] font-bold text-dd-text-2 whitespace-nowrap">
+                            {idx + 1} / {total}
+                        </span>
+                    </div>
+                    <p className="text-[11px] text-dd-text-2 mt-0.5">
+                        {tx(
+                            "The AI wasn't sure about this email. Pick a category — it learns from your choice.",
+                            'La IA no estaba segura. Elige una categoría — aprende de tu elección.',
+                        )}
+                    </p>
+                </div>
+
+                {/* Email preview */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2">
+                        {tx('From', 'De')}
+                    </div>
+                    <div className="text-sm text-dd-text">
+                        {item.fromName || item.from || '(unknown)'}
+                    </div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 pt-2">
+                        {tx('Subject', 'Asunto')}
+                    </div>
+                    <div className="text-sm font-bold text-dd-text">
+                        {item.subject || '(no subject)'}
+                    </div>
+                    {item.snippet && (
+                        <>
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 pt-2">
+                                {tx('Snippet', 'Fragmento')}
+                            </div>
+                            <div className="text-[12px] text-dd-text-2 bg-dd-bg/60 rounded p-2 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                                {item.snippet}
+                            </div>
+                        </>
+                    )}
+                    {item.reasoning && (
+                        <div className="text-[10px] italic text-dd-text-2 mt-1">
+                            🧠 {tx('AI guess', 'IA dijo')}: {item.category || 'other'} — "{item.reasoning}"
+                        </div>
+                    )}
+                </div>
+
+                {/* Category bubbles */}
+                <div className="p-3 border-t border-dd-line/60 bg-dd-bg/40">
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1.5">
+                        {tx('Tap the right category', 'Toca la categoría correcta')}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                        {(categories || []).map(c => {
+                            const tone = TONE_CLASSES[c.tone] || TONE_CLASSES.gray;
+                            return (
+                                <button
+                                    key={c.id}
+                                    disabled={busy}
+                                    onClick={() => pick(c.id)}
+                                    className={`px-3 py-2 rounded-full text-sm font-bold border transition disabled:opacity-50 ${tone.chip} hover:ring-2 hover:ring-offset-1 hover:ring-dd-text/20`}>
+                                    {c.emoji} {isEs ? c.es : c.en}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                <div className="px-4 py-3 border-t border-dd-line flex gap-2 bg-white">
+                    <button onClick={advance} disabled={busy}
+                        className="flex-1 py-2 rounded-lg border border-dd-line text-sm font-bold text-dd-text-2 hover:bg-dd-bg">
+                        {tx('Skip', 'Saltar')}
+                    </button>
+                    <button onClick={onClose} disabled={busy}
+                        className="flex-1 py-2 rounded-lg border border-dd-line text-sm font-bold text-dd-text-2 hover:bg-dd-bg">
+                        {tx('Close', 'Cerrar')}
                     </button>
                 </div>
             </div>

@@ -163,6 +163,7 @@ exports.dispatchNotification = onDocumentCreated(
         const OWNER_ONLY_TYPE_IDS = new Set([
             "email_inquiry_catering",
             "email_inquiry_complaint",
+            "email_needs_classification",
         ]);
         const OWNER_STAFF_IDS = new Set([40, 41]);
         if (OWNER_ONLY_TYPE_IDS.has(notif.type) && !OWNER_STAFF_IDS.has(me.id)) {
@@ -487,6 +488,7 @@ exports.dispatchSms = onDocumentCreated(
         const OWNER_ONLY_SMS_TYPES = new Set([
             "email_inquiry_catering",
             "email_inquiry_complaint",
+            "email_needs_classification",
         ]);
         const OWNER_STAFF_IDS_SMS = new Set([40, 41]);
         if (OWNER_ONLY_SMS_TYPES.has(notif.type)) {
@@ -3553,6 +3555,34 @@ exports.pollGmail = onSchedule(
             logger.warn(`pollGmail: routing rules load failed: ${e.message}`);
         }
 
+        // ── Load categories (editable, Firestore-backed) ────────────
+        // Andrew 2026-05-26: categories are now editable in the UI;
+        // pollGmail reads the live list so newly-added categories
+        // (e.g. "Reservations") start catching emails on the next run.
+        // Falls back to a hardcoded MVP list when the doc doesn't
+        // exist yet — the InboxTriage UI uses the same shape.
+        const DEFAULT_CATEGORIES_CF = [
+            { id: "catering",  en: "Catering",   description: "catering inquiries, large orders, events, group meals, off-site service. INCLUDES Toast catering order receipts." },
+            { id: "complaint", en: "Complaints", description: "a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating." },
+            { id: "vendor",    en: "Vendors",    description: "a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request." },
+            { id: "bill",      en: "Bills",      description: "invoices, statements, payment due, utility bills, subscription receipts." },
+            { id: "toast",     en: "Toast",      description: "automated Toast POS emails (toasttab.com etc.): daily summaries, transaction notices, online-order receipts, loyalty reports. NOT catering — Toast catering orders go to 'catering' instead." },
+            { id: "other",     en: "Other",      description: "anything else (marketing, spam, personal, employee, banking notices, social media)." },
+        ];
+        let activeCategories = DEFAULT_CATEGORIES_CF;
+        try {
+            const catSnap = await db.doc("config/inbox_categories").get();
+            if (catSnap.exists && Array.isArray(catSnap.data()?.list) && catSnap.data().list.length > 0) {
+                activeCategories = catSnap.data().list.filter((c) => c && c.id && c.en);
+                if (!activeCategories.find((c) => c.id === "other")) {
+                    activeCategories.push({ id: "other", en: "Other", description: "anything else." });
+                }
+            }
+        } catch (e) {
+            logger.warn(`pollGmail: categories load failed: ${e.message}`);
+        }
+        const validCategoryIds = activeCategories.map((c) => c.id);
+
         // ── Resume from last poll ────────────────────────────────────
         const stateRef = db.doc("system/gmail_sync_state");
         const stateSnap = await stateRef.get();
@@ -3690,16 +3720,25 @@ exports.pollGmail = onSchedule(
             // ── Classify with Claude Haiku ──────────────────────────
             let category = "other";
             let reasoning = "";
+            let confidence = "low"; // default low if model fails to provide → human review
             try {
+                // Build the category list from the live Firestore doc.
+                // 'category' must be one of these ids; the AI also returns
+                // a 'confidence' tag — when "low", the email gets flagged
+                // for human review (a notification fires to Andrew + Julie
+                // and a popup shows up next time they open the Inbox tab).
+                const categoryLines = activeCategories
+                    .map((c) => `- ${c.id} — ${c.description || c.en}`)
+                    .join("\n");
                 const prompt = `You triage emails for a restaurant. Classify ONE email into exactly one of:
-- catering — someone asking about catering, large orders, events, group meals, off-site service. INCLUDES Toast online-order receipts where the order is a catering / large-party / event submission (look for catering language, large guest counts, off-site delivery).
-- complaint — a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating.
-- vendor — a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request.
-- bill — an invoice, statement, payment due, utility bill, subscription receipt.
-- toast — automated emails from Toast POS (toasttab.com, toastpos.com, Toast Now, etc.): daily sales summaries, transaction notices, online-order receipts, loyalty reports, payroll-from-Toast. IMPORTANT: if the Toast email is a CATERING order, classify as 'catering' instead — catering wins over toast.
-- other — anything else (marketing, spam, personal, employee, banking notices, social media).
+${categoryLines}
 
-Reply with ONLY a JSON object: {"category":"<one of the 6>","reason":"<6-12 word reason>"}
+Reply with ONLY a JSON object:
+{"category":"<one of: ${validCategoryIds.join(', ')}>","confidence":"high|low","reason":"<6-12 word reason>"}
+
+Confidence:
+- "high" — the email clearly fits one category
+- "low" — ambiguous, mixed signals, or doesn't quite match any category. When in doubt, say "low" — a manager will help classify.
 ${correctionExamples}
 
 Email:
@@ -3713,10 +3752,12 @@ Body snippet: ${snippet}`;
                     const match = text.match(/\{[\s\S]*?\}/);
                     if (match) {
                         const parsed = JSON.parse(match[0]);
-                        const valid = ["catering", "complaint", "vendor", "bill", "toast", "other"];
-                        if (valid.includes(parsed.category)) {
+                        if (validCategoryIds.includes(parsed.category)) {
                             category = parsed.category;
                             reasoning = (parsed.reason || "").slice(0, 120);
+                            // Accept either "high" or "low"; anything else
+                            // falls through to "low" (= human review).
+                            confidence = parsed.confidence === "high" ? "high" : "low";
                         }
                     }
                 } else {
@@ -3727,10 +3768,19 @@ Body snippet: ${snippet}`;
             }
 
             // ── Write to /email_intel ────────────────────────────────
-            // Preserve smsSent across re-classification so we don't
-            // double-text on a retry.
+            // Preserve smsSent + manually-corrected flags across a
+            // re-classification so we don't undo owner inputs.
             const gmailUrl = `https://mail.google.com/mail/u/0/#all/${id}`;
             const wasSmsSent = !!prev?.smsSent;
+            // If the manager has already manually reclassified this
+            // email, we MUST NOT overwrite their category. The AI's
+            // current pass writes confidence + reasoning + freshness
+            // metadata, but the human's category stands. Same for
+            // needsClassification — once the manager has answered
+            // it, don't re-flag it later.
+            const respectsManualCategory = prev?.manuallyCorrected === true;
+            const finalCategory = respectsManualCategory ? prev.category : category;
+            const needsClassification = !respectsManualCategory && confidence !== "high";
             await intelRef.set({
                 gmailId: id,
                 gmailUrl,
@@ -3738,16 +3788,24 @@ Body snippet: ${snippet}`;
                 fromName,
                 subject,
                 snippet,
-                category,
+                category: finalCategory,
                 reasoning,
+                confidence,
+                needsClassification,
                 receivedAt: FieldValue.serverTimestamp(),
                 internalDate: internalMs,
                 triaged: !!prev?.triaged,
                 smsSent: wasSmsSent,
+                manuallyCorrected: respectsManualCategory,
                 classifiedAt: FieldValue.serverTimestamp(),
             });
             if (isRetry) reclassified++;
             else classified++;
+
+            // Use the FINAL (post-manual-override) category for SMS
+            // + auto-forward routing decisions — never the AI's fresh
+            // guess if the human disagreed.
+            category = finalCategory;
 
             // ── Real-time SMS for time-sensitive categories ──────────
             // Only catering + complaint trigger SMS today; vendor/bill
@@ -3849,6 +3907,52 @@ Body snippet: ${snippet}`;
                     logger.warn(`pollGmail: auto-forward failed for ${id}: ${e.message}`);
                 }
             }
+        }
+
+        // ── Review queue notification (Andrew 2026-05-26) ───────────
+        // "if unsure make a email classification question that sends
+        // to only julie and andrew in the notifications to check inbox
+        // when i or julie enters inbox it pops up a classification
+        // window." Count how many email_intel docs currently need
+        // human review (across the full collection, not just this
+        // run — handles the case where prior runs left items pending).
+        try {
+            const pendingSnap = await db.collection("email_intel")
+                .where("needsClassification", "==", true)
+                .limit(50)
+                .get();
+            const pendingCount = pendingSnap.size;
+            if (pendingCount > 0) {
+                const staffDoc = await db.doc("config/staff").get();
+                const list = (staffDoc.data() || {}).list || [];
+                const ownerNames = list
+                    .filter((s) => s && s.name && (s.id === 40 || s.id === 41))
+                    .map((s) => s.name);
+                // De-dup: one notification per owner per RUN tag so the
+                // owner doesn't accumulate one per hour for the same
+                // pending queue. The tag uses the run's start hour so a
+                // subsequent run that same hour collapses on the OS side.
+                const hourTag = new Date().toISOString().slice(0, 13); // YYYY-MM-DDTHH
+                for (const name of ownerNames) {
+                    await db.collection("notifications").add({
+                        forStaff: name,
+                        type: "email_needs_classification",
+                        title: `🤔 ${pendingCount} email${pendingCount === 1 ? '' : 's'} need${pendingCount === 1 ? 's' : ''} classification`,
+                        body: "Open the Inbox tab to help the AI categorize. Each pick teaches it for next time.",
+                        deepLink: "inbox",
+                        link: "/?tab=inbox",
+                        tag: `email_needs_classification:${hourTag}:${name}`,
+                        priority: "normal",
+                        forceDeliver: false,
+                        createdAt: FieldValue.serverTimestamp(),
+                        read: false,
+                        createdBy: "pollGmail.reviewQueue",
+                    });
+                }
+                logger.info(`pollGmail: pinged ${ownerNames.length} owner(s) — ${pendingCount} email(s) need classification.`);
+            }
+        } catch (e) {
+            logger.warn(`pollGmail: review-queue notify failed: ${e.message}`);
         }
 
         // ── Persist sync state ─────────────────────────────────────
