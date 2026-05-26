@@ -148,6 +148,38 @@ exports.dispatchNotification = onDocumentCreated(
             return;
         }
 
+        // ── OWNER-ONLY type gate (2026-05-26) ──────────────────────
+        // Andrew: "i want to make sure that all of the inbox functions
+        // do not let anyone else see it except julie and andrew." The
+        // sender (pollGmail) already addresses only ids 40/41, but
+        // this is defense in depth: if ANYTHING ever writes an
+        // owner-only-typed notification to a non-owner forStaff, we
+        // refuse to push it and stamp the doc as suppressed. The
+        // in-bell doc is still preserved for forensics but no FCM
+        // fan-out, no SMS routing, no surprise pages.
+        //
+        // Source of truth: src/data/notificationTypes.js → ownerOnly
+        // flag. Keep this list in sync.
+        const OWNER_ONLY_TYPE_IDS = new Set([
+            "email_inquiry_catering",
+            "email_inquiry_complaint",
+        ]);
+        const OWNER_STAFF_IDS = new Set([40, 41]);
+        if (OWNER_ONLY_TYPE_IDS.has(notif.type) && !OWNER_STAFF_IDS.has(me.id)) {
+            logger.warn(
+                `owner-only gate: refused to push type=${notif.type} to non-owner forStaff=${forStaff} (id=${me.id})`
+            );
+            try {
+                await snap.ref.update({
+                    pushSuppressed: true,
+                    pushSuppressedReason: "owner_only_type",
+                });
+            } catch (e) {
+                logger.warn(`could not stamp pushSuppressed for ${event.params.id}:`, e);
+            }
+            return;
+        }
+
         // ── Per-staff opt-out gate (2026-05-24) ────────────────────
         // Admin can mute optional notification types per-staff via the
         // /admin → Notifications page. pushOptOut: string[] on the
@@ -444,6 +476,30 @@ exports.dispatchSms = onDocumentCreated(
 
         const forStaff = notif.forStaff;
         if (!forStaff) return;
+
+        // ── OWNER-ONLY type gate (2026-05-26) ──────────────────────
+        // Mirror of the dispatchNotification owner-only gate. If a
+        // notification with an inbox-triage type ever ends up with a
+        // non-owner forStaff (it shouldn't — pollGmail only writes
+        // for ids 40/41), we refuse to text them. Defense in depth
+        // against any future writer that might forget the owner-only
+        // contract.
+        const OWNER_ONLY_SMS_TYPES = new Set([
+            "email_inquiry_catering",
+            "email_inquiry_complaint",
+        ]);
+        const OWNER_STAFF_IDS_SMS = new Set([40, 41]);
+        if (OWNER_ONLY_SMS_TYPES.has(notif.type)) {
+            const staffDocPre = await db.doc("config/staff").get();
+            const listPre = (staffDocPre.data() || {}).list || [];
+            const recipient = listPre.find((s) => s && s.name === forStaff);
+            if (!recipient || !OWNER_STAFF_IDS_SMS.has(recipient.id)) {
+                logger.warn(
+                    `dispatchSms owner-only gate: refused type=${notif.type} for non-owner forStaff=${forStaff} (id=${recipient?.id ?? "n/a"})`
+                );
+                return;
+            }
+        }
 
         // Dedup — trigger may fire twice under retry pressure. Exactly-
         // once SMS semantics per notification doc.

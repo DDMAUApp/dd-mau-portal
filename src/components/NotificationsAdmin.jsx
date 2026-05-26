@@ -30,6 +30,7 @@ import {
     NOTIFICATION_CATEGORIES,
     NOTIFICATION_TYPES,
     LOCKED_ON_TYPE_IDS,
+    OWNER_ONLY_TYPE_IDS,
     getRecipientNames,
     applyOptOutBulk,
 } from '../data/notificationTypes';
@@ -125,6 +126,10 @@ function TypeRow({ type, expanded, onToggleExpand, staffList, setStaffList, acto
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const locked = LOCKED_ON_TYPE_IDS.has(type.id);
+    // Owner-only types behave like locked types in this UI — no per-staff
+    // toggle picker, can't be muted, can't be redirected. They render with
+    // a distinct "owners only" label so it's clear who actually gets them.
+    const ownerOnly = OWNER_ONLY_TYPE_IDS.has(type.id);
 
     // Active staff = candidates we render toggles for. Skipping
     // active === false keeps deactivated rows out of the picker.
@@ -159,20 +164,27 @@ function TypeRow({ type, expanded, onToggleExpand, staffList, setStaffList, acto
                                 🔒 {tx('always on', 'siempre activo')}
                             </span>
                         )}
+                        {ownerOnly && (
+                            <span className="ml-2 text-[10px] uppercase font-black text-amber-700 align-middle">
+                                👑 {tx('owners only', 'solo dueños')}
+                            </span>
+                        )}
                     </div>
                     <div className="text-[11px] text-dd-text-2 mt-0.5">
-                        {locked
-                            ? `${totalCount} ${tx('recipients (cannot mute)', 'destinatarios (no se puede silenciar)')}`
-                            : `${receivingCount} ${tx('of', 'de')} ${totalCount} ${tx('receiving', 'reciben')}`}
+                        {ownerOnly
+                            ? `${receivingCount} ${tx('owner(s) only — cannot be shared', 'dueño(s) solamente — no se puede compartir')}`
+                            : locked
+                                ? `${totalCount} ${tx('recipients (cannot mute)', 'destinatarios (no se puede silenciar)')}`
+                                : `${receivingCount} ${tx('of', 'de')} ${totalCount} ${tx('receiving', 'reciben')}`}
                     </div>
                 </div>
-                {!locked && (
+                {!locked && !ownerOnly && (
                     <span className={`text-dd-text-2 text-base shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}>
                         ▾
                     </span>
                 )}
             </button>
-            {expanded && !locked && (
+            {expanded && !locked && !ownerOnly && (
                 <ExpandedRecipientPicker
                     type={type}
                     activeStaff={activeStaff}

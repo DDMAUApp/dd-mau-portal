@@ -90,8 +90,16 @@ export const NOTIFICATION_TYPES = [
     // fans out to owners (ids 40/41); future work: optional rollup
     // to managers (Andrew: "i want to be able to sent to managers
     // one day").
-    { id: 'email_inquiry_catering',  category: 'mgmt', en: 'Catering inquiry (email)',   es: 'Consulta de catering (email)', lockedOn: false },
-    { id: 'email_inquiry_complaint', category: 'mgmt', en: 'Customer complaint (email)', es: 'Queja de cliente (email)',     lockedOn: false },
+    // 2026-05-26 update — Andrew: "i want to make sure that all of
+    // the inbox functions do not let anyone else see it except julie
+    // and andrew." Marked ownerOnly so the per-staff matrix in
+    // NotificationsAdmin doesn't render non-owners as recipients
+    // (which they never were — pollGmail only writes for ids 40/41 —
+    // but the UI default made it LOOK like everyone got them).
+    // dispatchNotification also refuses to deliver ownerOnly types
+    // to non-owner forStaff as defense-in-depth.
+    { id: 'email_inquiry_catering',  category: 'mgmt', en: 'Catering inquiry (email)',   es: 'Consulta de catering (email)', lockedOn: false, ownerOnly: true },
+    { id: 'email_inquiry_complaint', category: 'mgmt', en: 'Customer complaint (email)', es: 'Queja de cliente (email)',     lockedOn: false, ownerOnly: true },
 
     // ── OPT-OUT-ABLE — TV health ──────────────────────────────────
     { id: 'tv_offline',     category: 'tv', en: 'A menu TV went offline',  es: 'Una TV se desconectó',    lockedOn: false },
@@ -110,6 +118,25 @@ export const LOCKED_ON_TYPE_IDS = new Set(
     NOTIFICATION_TYPES.filter(t => t.lockedOn).map(t => t.id)
 );
 
+// Pre-computed lookup: set of every OWNER-ONLY type id. These notifications
+// are intended for the owners (Andrew + Julie, ids 40/41) only — no
+// per-staff opt-in / opt-out concept applies. NotificationsAdmin hides
+// non-owners from the per-row recipient list for these. dispatchNotification
+// refuses to deliver to non-owner forStaff as defense in depth.
+export const OWNER_ONLY_TYPE_IDS = new Set(
+    NOTIFICATION_TYPES.filter(t => t.ownerOnly).map(t => t.id)
+);
+
+// Owner ids — kept here so both the admin UI and the (mirrored) server
+// gating can read from one place. Matches isAdmin() in src/data/staff.js.
+export const OWNER_STAFF_IDS = new Set([40, 41]);
+
+// True if a staff record has owner-tier access (ids 40/41).
+export function isOwnerStaff(staff) {
+    if (!staff) return false;
+    return OWNER_STAFF_IDS.has(staff.id);
+}
+
 // Pre-computed list: every type the admin CAN toggle. Used by the
 // "Mute all in category" affordance.
 export const OPT_OUT_ABLE_TYPES = NOTIFICATION_TYPES.filter(t => !t.lockedOn);
@@ -126,9 +153,16 @@ export function canOptOutOf(typeId) {
 // contains it. Used by the type-first admin view ("X of N receiving"
 // badge). Excludes deactivated staff (active === false). Always
 // returns N for locked-on types (everyone gets them regardless).
+// Owner-only types report ONLY active owners as receivers.
 export function getRecipientCount(typeId, staffList) {
     const list = Array.isArray(staffList) ? staffList : [];
     const active = list.filter((s) => s && s.name && s.active !== false);
+    if (OWNER_ONLY_TYPE_IDS.has(typeId)) {
+        const owners = active.filter(isOwnerStaff);
+        // Total still = total active so the badge reads "2 of N" and
+        // makes it visually clear this type doesn't fan out broadly.
+        return { receiving: owners.length, total: active.length };
+    }
     if (LOCKED_ON_TYPE_IDS.has(typeId)) {
         return { receiving: active.length, total: active.length };
     }
@@ -142,9 +176,13 @@ export function getRecipientCount(typeId, staffList) {
 // Helper: returns the list of staff who currently RECEIVE the given
 // type (used in the expand row to color the toggles). Mirrors
 // getRecipientCount but returns the names instead of just the count.
+// Owner-only types: returns only the owner names.
 export function getRecipientNames(typeId, staffList) {
     const list = Array.isArray(staffList) ? staffList : [];
     const active = list.filter((s) => s && s.name && s.active !== false);
+    if (OWNER_ONLY_TYPE_IDS.has(typeId)) {
+        return active.filter(isOwnerStaff).map((s) => s.name);
+    }
     if (LOCKED_ON_TYPE_IDS.has(typeId)) {
         return active.map((s) => s.name);
     }
@@ -161,6 +199,10 @@ export function getRecipientNames(typeId, staffList) {
 // types entirely (they're always-on and pushOptOut is ignored for
 // them server-side).
 export function applyOptOutBulk(currentList, typeId, recipientNames) {
+    // Owner-only types have no per-staff opt-out concept — recipients
+    // are fixed (the owners). Bail without changes if someone wired the
+    // UI to try to bulk-toggle one.
+    if (OWNER_ONLY_TYPE_IDS.has(typeId)) return currentList;
     if (LOCKED_ON_TYPE_IDS.has(typeId)) return currentList;
     const receivers = new Set(recipientNames || []);
     return (currentList || []).map((s) => {

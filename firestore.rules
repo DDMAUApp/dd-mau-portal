@@ -410,9 +410,38 @@ service cloud.firestore {
                         "tv_offline",
                         "tv_back_online",
                         "i9_reverify_due",
+                        // 2026-05-26 — owner-inbox-triage types are
+                        // CF-only (written by pollGmail). Clients
+                        // never need to create one and absolutely
+                        // shouldn't be able to forge a fake catering
+                        // inquiry / complaint that would page the
+                        // owners + cost SMS spend.
+                        "email_inquiry_catering",
+                        "email_inquiry_complaint",
                     ]);
       allow update: if request.resource.data is map;
       allow delete: if false;
+    }
+
+    // ── email_intel — owner inbox triage payload (CF-only writes) ──────
+    // Written exclusively by the pollGmail Cloud Function (admin SDK
+    // bypasses these rules). Clients READ for the InboxTriage admin
+    // tab; UI is gated to ids 40/41 in App.jsx + Sidebar. Phase 2
+    // (Firebase Auth + custom claims) will tighten reads to owners
+    // only; until then any apiKey-holder can technically read these,
+    // which is why subjects/snippets stay short and bodies stay out.
+    match /email_intel/{id} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // ── system/* — Cloud Function bookkeeping (no client access) ───────
+    // gmail_sync_state, gmail_sync_lock, etc. The InboxTriage component
+    // subscribes to system/gmail_sync_state for the setup banner so we
+    // allow read; everything else stays CF-only.
+    match /system/{docId} {
+      allow read: if true;
+      allow create, update, delete: if false;
     }
 
     // ── TV displays + devices ──────────────────────────────────────────
