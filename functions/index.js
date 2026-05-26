@@ -3423,6 +3423,32 @@ exports.pollGmail = onSchedule(
         oauth2.setCredentials({ refresh_token: GMAIL_OAUTH_REFRESH_TOKEN.value() });
         const gmail = google.gmail({ version: "v1", auth: oauth2 });
 
+        // ── Concurrency lock (Andrew 2026-05-26) ─────────────────────
+        // The first-day bring-up had three runs race (one cron tick +
+        // two manual force-runs from the Scheduler UI). Each saw "77
+        // new messages" and slammed the Anthropic API in parallel,
+        // tripping a 429 rate limit and saddling ~half the messages
+        // with a fallback category of "other". Acquire a transactional
+        // lock so only one run can be classifying at a time; expire
+        // after 9 minutes so a crashed run doesn't wedge the next
+        // hour's tick.
+        const lockRef = db.doc("system/gmail_sync_lock");
+        const lockAcquired = await db.runTransaction(async (txn) => {
+            const snap = await txn.get(lockRef);
+            const heldUntil = snap.exists ? Number(snap.data().heldUntil || 0) : 0;
+            if (heldUntil > Date.now()) return false; // someone else holds it
+            txn.set(lockRef, {
+                heldUntil: Date.now() + 9 * 60 * 1000,
+                heldBy: "pollGmail",
+                acquiredAt: FieldValue.serverTimestamp(),
+            });
+            return true;
+        });
+        if (!lockAcquired) {
+            logger.info("pollGmail: another instance is already running — skipping.");
+            return;
+        }
+
         // ── Resume from last poll ────────────────────────────────────
         const stateRef = db.doc("system/gmail_sync_state");
         const stateSnap = await stateRef.get();
@@ -3460,14 +3486,51 @@ exports.pollGmail = onSchedule(
         logger.info(`pollGmail: ${messageIds.length} new message(s).`);
 
         // ── Classify + write each ──────────────────────────────────────
+        // Anthropic call helper with retry-on-429. Haiku has burst
+        // limits; concurrent classifications can trip them even at
+        // low total volume. 3 attempts, exponential backoff
+        // (1s / 3s / 7s) so a transient rate-limit clears within
+        // one minute total wait.
+        const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+        async function classifyWithRetry(prompt) {
+            const backoffsMs = [1000, 3000, 7000];
+            for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+                const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                    method: "POST",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-api-key": ANTHROPIC_API_KEY.value(),
+                        "anthropic-version": "2023-06-01",
+                    },
+                    body: JSON.stringify({
+                        model: "claude-haiku-4-5",
+                        max_tokens: 80,
+                        messages: [{ role: "user", content: prompt }],
+                    }),
+                });
+                if (resp.ok) return resp;
+                // 429 (rate limit) and 5xx — retryable. 4xx other than
+                // 429 means we built a bad request; don't retry.
+                const retryable = resp.status === 429 || (resp.status >= 500 && resp.status < 600);
+                if (!retryable || attempt >= backoffsMs.length) return resp;
+                await sleep(backoffsMs[attempt]);
+            }
+        }
+
         let maxInternalMs = lastInternalMs;
         let classified = 0;
+        let reclassified = 0;
         for (const id of messageIds) {
-            // Skip if we already processed this exact id (Gmail's listing
-            // can include retries within the after: window).
+            // 2026-05-26: skip only if a PRIOR classification succeeded
+            // (reasoning is set, i.e. the LLM actually responded). Skip
+            // doc without reasoning means an earlier 429/network error
+            // — re-try it this run so the 429 fallback "other" gets
+            // replaced with the real category.
             const intelRef = db.doc("email_intel/" + id);
             const existing = await intelRef.get();
-            if (existing.exists) continue;
+            const prev = existing.exists ? existing.data() : null;
+            if (prev && prev.reasoning) continue;
+            const isRetry = !!prev;
 
             // Pull headers + snippet (small, no body — saves the cost of
             // shipping the full body through the LLM and Firestore).
@@ -3498,19 +3561,7 @@ exports.pollGmail = onSchedule(
             let category = "other";
             let reasoning = "";
             try {
-                const classifyResp = await fetch("https://api.anthropic.com/v1/messages", {
-                    method: "POST",
-                    headers: {
-                        "content-type": "application/json",
-                        "x-api-key": ANTHROPIC_API_KEY.value(),
-                        "anthropic-version": "2023-06-01",
-                    },
-                    body: JSON.stringify({
-                        model: "claude-haiku-4-5",
-                        max_tokens: 80,
-                        messages: [{
-                            role: "user",
-                            content: `You triage emails for a restaurant. Classify ONE email into exactly one of:
+                const prompt = `You triage emails for a restaurant. Classify ONE email into exactly one of:
 - catering — someone asking about catering, large orders, events, group meals, off-site service
 - complaint — a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating
 - vendor — a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request
@@ -3522,10 +3573,8 @@ Reply with ONLY a JSON object: {"category":"<one of the 5>","reason":"<6-12 word
 Email:
 From: ${from}
 Subject: ${subject}
-Body snippet: ${snippet}`,
-                        }],
-                    }),
-                });
+Body snippet: ${snippet}`;
+                const classifyResp = await classifyWithRetry(prompt);
                 if (classifyResp.ok) {
                     const j = await classifyResp.json();
                     const text = j.content?.[0]?.text || "";
@@ -3539,14 +3588,17 @@ Body snippet: ${snippet}`,
                         }
                     }
                 } else {
-                    logger.warn(`pollGmail: Anthropic ${classifyResp.status} on id=${id}`);
+                    logger.warn(`pollGmail: Anthropic ${classifyResp.status} on id=${id} (final after retries)`);
                 }
             } catch (e) {
                 logger.warn(`pollGmail: classify failed for id=${id}: ${e.message}`);
             }
 
             // ── Write to /email_intel ────────────────────────────────
+            // Preserve smsSent across re-classification so we don't
+            // double-text on a retry.
             const gmailUrl = `https://mail.google.com/mail/u/0/#all/${id}`;
+            const wasSmsSent = !!prev?.smsSent;
             await intelRef.set({
                 gmailId: id,
                 gmailUrl,
@@ -3558,18 +3610,23 @@ Body snippet: ${snippet}`,
                 reasoning,
                 receivedAt: FieldValue.serverTimestamp(),
                 internalDate: internalMs,
-                triaged: false,
-                smsSent: false,
+                triaged: !!prev?.triaged,
+                smsSent: wasSmsSent,
                 classifiedAt: FieldValue.serverTimestamp(),
             });
-            classified++;
+            if (isRetry) reclassified++;
+            else classified++;
 
             // ── Real-time SMS for time-sensitive categories ──────────
             // Only catering + complaint trigger SMS today; vendor/bill
             // are visible in the in-app inbox tab. dispatchSms picks
             // up the notification docs we write here and routes via
             // Twilio to each owner's phoneE164.
-            if (category === "catering" || category === "complaint") {
+            //
+            // 2026-05-26: skip if smsSent is already true. A re-classify
+            // run (replacing a 429-fallback 'other' with a real category)
+            // mustn't double-page the owners.
+            if (!wasSmsSent && (category === "catering" || category === "complaint")) {
                 const notifType = category === "catering"
                     ? "email_inquiry_catering"
                     : "email_inquiry_complaint";
@@ -3620,7 +3677,12 @@ Body snippet: ${snippet}`,
             lastInternalDate: maxInternalMs,
             lastRunAt: FieldValue.serverTimestamp(),
             lastClassifiedCount: classified,
+            lastReclassifiedCount: reclassified,
         }, { merge: true });
-        logger.info(`pollGmail: classified ${classified} new email(s).`);
+        // Release the concurrency lock — set heldUntil to 0 so the
+        // next run can acquire immediately (don't `delete` the doc
+        // so failed-run forensics survive: acquiredAt timestamps).
+        await lockRef.set({ heldUntil: 0, releasedAt: FieldValue.serverTimestamp() }, { merge: true });
+        logger.info(`pollGmail: classified ${classified} new + reclassified ${reclassified}.`);
     },
 );
