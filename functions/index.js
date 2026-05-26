@@ -2138,6 +2138,22 @@ exports.eightySixAlertsHourly = onSchedule(
 // Idempotency: we compare BEFORE → AFTER set membership, so a write
 // that doesn't actually add anything (e.g. low-stock list grew but
 // 86 list unchanged) produces zero notifications.
+// 2026-05-26 — Andrew flagged that the Toast scraper sometimes writes
+// raw Toast item GUIDs to /ops/86_{loc}.items[].name when it can't
+// resolve them to a human name (saw: "d77ac06e-6527-467c-a505-
+// 28a1fb8ef895"). Pushing "🚫 86: d77ac06e-..." to every staff phone
+// is worse than not pushing at all — it spams + tells no one what's
+// actually out. Guard the realtime handler so UUID-shaped names get
+// dropped entirely from the diff. The fix on the scraper side is to
+// either skip those items or write "Unknown ({guid})"; this is
+// belt-and-suspenders.
+const looks86NameValid = (s) => {
+    if (!s || typeof s !== "string") return false;
+    const t = s.trim();
+    if (!t) return false;
+    return !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
+};
+
 const realtime86Handler = (location) => async (event) => {
     try {
         const before = event.data?.before;
@@ -2145,11 +2161,11 @@ const realtime86Handler = (location) => async (event) => {
         if (!after?.exists) return;  // doc deleted — no alert
         const beforeNames = new Set(
             ((before?.exists ? (before.data() || {}).items : []) || [])
-                .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name)
+                .filter((i) => i && i.status === "OUT_OF_STOCK" && looks86NameValid(i.name))
                 .map((i) => i.name)
         );
         const afterItems = ((after.data() || {}).items || [])
-            .filter((i) => i && i.status === "OUT_OF_STOCK" && i.name);
+            .filter((i) => i && i.status === "OUT_OF_STOCK" && looks86NameValid(i.name));
         const afterNames = new Set(afterItems.map((i) => i.name));
         const newlyOut = afterItems.filter((i) => !beforeNames.has(i.name));
         // Back-in-stock: was OUT_OF_STOCK before, isn't anymore (either

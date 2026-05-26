@@ -228,10 +228,20 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                         : storeLocation === 'both'     ? tx('Both Locations', 'Ambas')
                         :                                tx('Webster Groves', 'Webster Groves');
 
+    // 2026-05-26 — filter items where `name` is a Toast item GUID
+    // (UUID shape) instead of a human-readable string. The Toast
+    // scraper on Railway writes the raw GUID when it can't resolve
+    // the item to its local name, which surfaces as "🚫 86: d77ac06e-
+    // 6527-..." in the dashboard — useless to staff. Hiding them is
+    // the temporary fix until the scraper learns to skip-or-name them.
+    const looksLikeGuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || '').trim());
+    const hasReadableName = (i) => i?.name && !looksLikeGuid(i.name);
+
     // Group items by status so 86'd shows above low-stock — cooks need
     // to see "what's totally out" first, then "what's running low".
-    const out = items.filter(i => i.status === 'OUT_OF_STOCK');
-    const low = items.filter(i => i.status !== 'OUT_OF_STOCK');
+    const out = items.filter(i => i.status === 'OUT_OF_STOCK' && hasReadableName(i));
+    const low = items.filter(i => i.status !== 'OUT_OF_STOCK' && hasReadableName(i));
+    const hiddenGuidCount = items.filter(i => !hasReadableName(i)).length;
 
     return (
         <div className="space-y-4">
@@ -489,22 +499,39 @@ function Section({ title, count, tone, items, attribution = {}, formatTime, isEs
         //   • outBy/outAt     — legacy Cloud Function + Railway scraper
         // Accept either so the dashboard never silently drops attribution.
         const fallbackBy = item?.addedBy || item?.outBy;
-        const outByList = attr?.outBy
+        let outByList = attr?.outBy
             ? (Array.isArray(attr.outBy) ? attr.outBy : [attr.outBy])
             : (Array.isArray(fallbackBy) ? fallbackBy
-                : (fallbackBy ? [fallbackBy] : []));
+                : (fallbackBy ? String(fallbackBy).split(/\s*,\s*/) : []));
         const outAtRaw = attr?.outAt || item?.addedAt || item?.outAt;
-        if (outByList.length === 0 && !outAtRaw) return null;
+
+        // 2026-05-26 — Andrew: "it doesnt say who did it just that it
+        // could be the whole staff so it named all possible staff."
+        // The Toast scraper currently writes the ENTIRE clocked-in
+        // roster as `outBy` when it detects an 86 transition (because
+        // it can't know which specific cook noticed it). Listing 20
+        // names is worse than no attribution — collapse to a single
+        // "Auto-detected (Toast)" tag instead. Heuristic: 4+ names
+        // OR 3+ names AND no one in particular = auto-detected.
+        const looksAutoDetected = outByList.length >= 4
+            || (outByList.length >= 3 && item?.source === 'toast');
+        if (looksAutoDetected) {
+            outByList = []; // suppress the listing
+        }
+
+        if (outByList.length === 0 && !outAtRaw && !looksAutoDetected) return null;
         const namesStr = outByList.length === 1
             ? outByList[0]
             : outByList.length > 1
-                ? outByList.map(n => n.split(' ')[0]).join(' or ')
+                ? outByList.map(n => String(n).trim().split(' ')[0]).join(' or ')
                 : null;
         const timeStr = outAtRaw ? formatTime(outAtRaw) : null;
         return (
             <div className="text-[10px] text-dd-text-2 mt-0.5 italic">
-                {namesStr && <>🙋 {isEs ? `Marcado por ${namesStr}` : `Marked by ${namesStr}`}</>}
-                {namesStr && timeStr && <> · </>}
+                {looksAutoDetected
+                    ? <>🤖 {isEs ? 'Detectado por Toast' : 'Auto-detected (Toast)'}</>
+                    : namesStr && <>🙋 {isEs ? `Marcado por ${namesStr}` : `Marked by ${namesStr}`}</>}
+                {(looksAutoDetected || namesStr) && timeStr && <> · </>}
                 {timeStr && <>{isEs ? 'a las' : 'at'} {timeStr}</>}
             </div>
         );
