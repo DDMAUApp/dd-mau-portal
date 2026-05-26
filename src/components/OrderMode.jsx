@@ -362,6 +362,20 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                         : <span className="text-dd-text-2 italic">{tx('pick a vendor', 'elige un proveedor')}</span>}
                 </div>
                 <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    {/* 📋 Plan toggle — pinned to the FRONT of the pill row
+                        so it doesn't get lost behind the horizontal scroll
+                        when the vendor list is long (Andrew 2026-05-26).
+                        Splits the items area into the existing list + a
+                        vendor-grouped read-only summary on the right.
+                        Additive; OFF by default. */}
+                    <button
+                        onClick={() => setPlanVisible(v => !v)}
+                        title={tx('See items grouped by vendor', 'Ver artículos agrupados por proveedor')}
+                        className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${planVisible
+                            ? 'bg-dd-green text-white border-dd-green'
+                            : 'bg-white text-dd-text-2 border-dd-line hover:border-dd-green'}`}>
+                        📋 {tx('Plan', 'Plan')}
+                    </button>
                     {vendorList.length === 0 ? (
                         <span className="text-xs text-dd-text-2 italic">
                             {tx('No vendors yet. Add one →', 'Sin proveedores. Añade uno →')}
@@ -380,17 +394,6 @@ function SessionView({ session, tx, isEs, staffName, vendorList, onOpenVendorEdi
                     <button onClick={onOpenVendorEditor}
                         className="flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border border-dashed border-dd-line text-dd-text-2 hover:bg-dd-bg">
                         ✏️ {tx('Edit vendors', 'Editar')}
-                    </button>
-                    {/* 📋 Plan toggle — splits the items area into the
-                        existing list + a vendor-grouped read-only summary
-                        on the right. Additive; OFF by default. */}
-                    <button
-                        onClick={() => setPlanVisible(v => !v)}
-                        title={tx('See items grouped by vendor', 'Ver artículos agrupados por proveedor')}
-                        className={`flex-shrink-0 px-2.5 py-1 rounded-full text-xs font-bold border transition ${planVisible
-                            ? 'bg-dd-green text-white border-dd-green'
-                            : 'bg-white text-dd-text-2 border-dd-line hover:border-dd-green'}`}>
-                        📋 {tx('Plan', 'Plan')}
                     </button>
                 </div>
             </div>
