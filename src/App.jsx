@@ -1209,7 +1209,7 @@ export default function App() {
             if (activeTab === 'admin' && staffIsAdmin) return <PageErrorBoundary tabName="Admin" language={language}><AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} /></PageErrorBoundary>;
             if (activeTab === 'notifications' && staffIsAdmin) return <PageErrorBoundary tabName="Notifications" language={language}><NotificationsAdmin language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} /></PageErrorBoundary>;
             // 📧 Inbox triage — owner-only (ids 40/41 via staffIsAdmin).
-            if (activeTab === 'inbox' && staffIsAdmin) return <PageErrorBoundary tabName="Inbox" language={language}><InboxTriage language={language} /></PageErrorBoundary>;
+            if (activeTab === 'inbox' && staffIsAdmin) return <PageErrorBoundary tabName="Inbox" language={language}><InboxTriage language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).
             return isMobile ? (

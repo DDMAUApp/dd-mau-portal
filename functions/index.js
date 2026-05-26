@@ -3505,6 +3505,54 @@ exports.pollGmail = onSchedule(
             return;
         }
 
+        // ── Load few-shot examples from manager corrections ─────────
+        // Andrew 2026-05-26: "the classification ai should learn as
+        // changes are made." Every time Andrew or Julie clicks the
+        // category dropdown on a row in the InboxTriage UI, a
+        // correction row is appended to /email_intel_corrections. We
+        // load the most recent 30 corrections and stuff them into
+        // every classification prompt as examples. The model picks
+        // up the pattern (e.g. "emails from <vendor X> are 'vendor'
+        // even though they look like 'bill'") without any retraining.
+        let correctionExamples = "";
+        try {
+            const correctionsSnap = await db.collection("email_intel_corrections")
+                .orderBy("correctedAt", "desc")
+                .limit(30)
+                .get();
+            if (!correctionsSnap.empty) {
+                const lines = [];
+                correctionsSnap.forEach(d => {
+                    const c = d.data();
+                    if (!c || !c.newCategory) return;
+                    lines.push(
+                        `- From: ${(c.fromName || c.from || '').slice(0, 80)} | Subject: ${(c.subject || '').slice(0, 100)} | Snippet: ${(c.snippet || '').slice(0, 160)} → ${c.newCategory}`
+                    );
+                });
+                if (lines.length > 0) {
+                    correctionExamples =
+                        "\n\nPRIOR MANAGER CORRECTIONS (use these as guidance — when an email looks similar, match the manager's choice):\n"
+                        + lines.join("\n");
+                }
+            }
+        } catch (e) {
+            // Non-fatal — fall back to zero-shot prompt.
+            logger.warn(`pollGmail: corrections load failed: ${e.message}`);
+        }
+
+        // ── Load routing rules + killswitch ─────────────────────────
+        // Auto-forwarding to staff requires BOTH masterEnabled to be
+        // true AND the category's per-rule enabled flag. Until Andrew
+        // flips the master, this is a no-op (no notifications fan out
+        // to staff). Stored at /config/inbox_routing_rules.
+        let routingRules = { masterEnabled: false, rules: {} };
+        try {
+            const rulesSnap = await db.doc("config/inbox_routing_rules").get();
+            if (rulesSnap.exists) routingRules = { ...routingRules, ...(rulesSnap.data() || {}) };
+        } catch (e) {
+            logger.warn(`pollGmail: routing rules load failed: ${e.message}`);
+        }
+
         // ── Resume from last poll ────────────────────────────────────
         const stateRef = db.doc("system/gmail_sync_state");
         const stateSnap = await stateRef.get();
@@ -3652,6 +3700,7 @@ exports.pollGmail = onSchedule(
 - other — anything else (marketing, spam, personal, employee, banking notices, social media).
 
 Reply with ONLY a JSON object: {"category":"<one of the 6>","reason":"<6-12 word reason>"}
+${correctionExamples}
 
 Email:
 From: ${from}
@@ -3752,6 +3801,53 @@ Body snippet: ${snippet}`;
                     });
                 }
                 await intelRef.update({ smsSent: true });
+            }
+
+            // ── Auto-forward to staff (Andrew 2026-05-26) ────────────
+            // "set that one come in it auto sends to a staff. once i
+            // turn that on." Master killswitch + per-category enable
+            // both must be true. Only fires for genuinely NEW emails
+            // (not retries) — preventing the cleanup pass from
+            // forwarding the same email twice if a manager changes
+            // routing rules after the original send.
+            const rule = routingRules.rules?.[category];
+            if (
+                !isRetry
+                && routingRules.masterEnabled === true
+                && rule?.enabled === true
+                && Array.isArray(rule.recipients)
+                && rule.recipients.length > 0
+            ) {
+                const fwdSnippet = (snippet || "").slice(0, 200);
+                const fwdTitle = `📤 New ${category}: ${subject || "(no subject)"}`.slice(0, 120);
+                const fwdBody = `From ${fromName} · ${fwdSnippet}`.slice(0, 600);
+                const writes = rule.recipients.map((name) =>
+                    db.collection("notifications").add({
+                        forStaff: name,
+                        type: "email_forwarded",
+                        title: fwdTitle,
+                        body: fwdBody,
+                        deepLink: "/",
+                        tag: `email_forwarded:${id}:${name}`,
+                        priority: "high",
+                        forceDeliver: true,
+                        createdAt: FieldValue.serverTimestamp(),
+                        read: false,
+                        createdBy: "pollGmail.autoForward",
+                        sourceGmailId: id,
+                    })
+                );
+                try {
+                    await Promise.all(writes);
+                    await intelRef.update({
+                        forwardedToStaff: rule.recipients,
+                        lastForwardedAt: FieldValue.serverTimestamp(),
+                        lastForwardedBy: "auto",
+                    });
+                    logger.info(`pollGmail: auto-forwarded ${id} (${category}) to ${rule.recipients.length} recipient(s).`);
+                } catch (e) {
+                    logger.warn(`pollGmail: auto-forward failed for ${id}: ${e.message}`);
+                }
             }
         }
 

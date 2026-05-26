@@ -104,6 +104,19 @@ service cloud.firestore {
                    && request.resource.data.triggeredAt == request.time;
     }
 
+    // Inbox routing rules — owner-only forwarding configuration (Andrew
+    // 2026-05-26). Master killswitch + per-category recipient lists.
+    // Client UI in InboxTriage is gated to admin ids 40/41. Without
+    // Firebase Auth we can't strictly enforce that at the rules level,
+    // so we accept map-shaped writes for now (same posture as other
+    // admin-gated config docs in this file). Phase 2 will tighten via
+    // custom claims.
+    match /config/inbox_routing_rules {
+      allow read: if true;
+      allow create, update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
     // Recipes doc — hardened after the 2026-05-09 Import Master incident.
     // The bug clobbered 39 of 40 recipes in a single write by replacing
     // each one with a master-default version. Since the doc is one giant
@@ -430,9 +443,34 @@ service cloud.firestore {
     // (Firebase Auth + custom claims) will tighten reads to owners
     // only; until then any apiKey-holder can technically read these,
     // which is why subjects/snippets stay short and bodies stay out.
+    //
+    // 2026-05-26 update — added narrow client UPDATE allow so the
+    // InboxTriage UI can:
+    //   - mark items triaged
+    //   - manually reclassify (category + manuallyCorrected* fields)
+    //   - stamp forwardedToStaff after a manual send-to-staff
+    // No create/delete from clients. Without Firebase Auth this is
+    // open to anyone with the apiKey, but the same caveat applies to
+    // every other client-writable path in the app today — Phase 2
+    // will close it via custom claims.
     match /email_intel/{id} {
       allow read: if true;
-      allow create, update, delete: if false;
+      allow create, delete: if false;
+      allow update: if request.resource.data is map;
+    }
+
+    // ── email_intel_corrections — manager-supplied training signal ─────
+    // Append-only. Each row records a manual reclassification: who
+    // changed it, when, and from→to. pollGmail loads the most recent
+    // 30 as few-shot examples in the classification prompt so the
+    // model picks up the owner's preferences over time. No updates
+    // or deletes — corrections are immutable history.
+    match /email_intel_corrections/{id} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.newCategory in
+                       ['catering','complaint','vendor','bill','toast','other'];
+      allow update, delete: if false;
     }
 
     // ── system/* — Cloud Function bookkeeping (no client access) ───────

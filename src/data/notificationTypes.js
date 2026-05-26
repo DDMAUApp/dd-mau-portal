@@ -100,6 +100,13 @@ export const NOTIFICATION_TYPES = [
     // to non-owner forStaff as defense-in-depth.
     { id: 'email_inquiry_catering',  category: 'mgmt', en: 'Catering inquiry (email)',   es: 'Consulta de catering (email)', lockedOn: false, ownerOnly: true },
     { id: 'email_inquiry_complaint', category: 'mgmt', en: 'Customer complaint (email)', es: 'Queja de cliente (email)',     lockedOn: false, ownerOnly: true },
+    // 2026-05-26 — staff-facing forward of a triaged email. Andrew or
+    // Julie either manually forwards via the Inbox UI or an
+    // auto-routing rule fires. Locked-on for the recipient (no
+    // per-staff opt-out): if a manager forwarded it, they should see
+    // it. NOT ownerOnly — explicitly meant for non-owner staff to
+    // receive operationally.
+    { id: 'email_forwarded',         category: 'broadcasts', en: 'Email forwarded to you',   es: 'Email reenviado a ti',    lockedOn: true },
 
     // ── OPT-OUT-ABLE — TV health ──────────────────────────────────
     { id: 'tv_offline',     category: 'tv', en: 'A menu TV went offline',  es: 'Una TV se desconectó',    lockedOn: false },
