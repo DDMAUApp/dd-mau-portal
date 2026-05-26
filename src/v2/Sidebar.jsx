@@ -104,6 +104,11 @@ const NAV_GROUPS = [
             // per-staff push-opt-out matrix into its own page so the
             // AdminPanel doesn't keep growing.
             { tab: 'notifications', icon: '🔔', en: 'Notifications', es: 'Notificaciones',  requires: 'admin' },
+            // 2026-05-26 — Andrew: "i want to make sure the notifications
+            // only got to julie and andrew the owners". Owner-only inbox
+            // triage tab. The 'requires: admin' gate matches owners (ids
+            // 40/41) per the existing isAdmin definition in staff.js.
+            { tab: 'inbox',         icon: '📧', en: 'Inbox',         es: 'Bandeja',         requires: 'admin' },
             // Onboarding is intentionally NOT in the main nav. It lives behind
             // the Admin page (owners-only PII) — admins enter it via the
             // launcher card at the top of AdminPanel.jsx.

@@ -48,6 +48,17 @@ const TWILIO_FROM_NUMBER = defineSecret("TWILIO_FROM_NUMBER");
 // roughly $0.0015 each at restaurant-scale inventory size.
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 
+// Gmail OAuth — powers pollGmail (owner inbox triage). Three secrets:
+//   - GMAIL_OAUTH_CLIENT_ID, GMAIL_OAUTH_CLIENT_SECRET: from the
+//     OAuth 2.0 client created in Google Cloud Console (Desktop app type).
+//   - GMAIL_OAUTH_REFRESH_TOKEN: minted once via the local helper at
+//     scripts/gmail-oauth-setup.mjs after Andrew/Julie complete the
+//     consent flow.
+// Set with: firebase functions:secrets:set GMAIL_OAUTH_CLIENT_ID (etc.)
+const GMAIL_OAUTH_CLIENT_ID = defineSecret("GMAIL_OAUTH_CLIENT_ID");
+const GMAIL_OAUTH_CLIENT_SECRET = defineSecret("GMAIL_OAUTH_CLIENT_SECRET");
+const GMAIL_OAUTH_REFRESH_TOKEN = defineSecret("GMAIL_OAUTH_REFRESH_TOKEN");
+
 // 2026-05-23 — Toast Connect API secrets removed. Powered syncToastMenuStatus,
 // which was a redundant duplicate of the Railway scraper that already writes
 // /ops/86_<location>. The Cloud Function 401'd in production because nothing
@@ -3359,5 +3370,257 @@ exports.translateMessage = onCall(
             sourceLang: detectedSourceLang,
             cached: false,
         };
+    },
+);
+
+// ── pollGmail — owner inbox triage (Andrew 2026-05-26) ────────────────────
+//
+// Scheduled hourly. Pulls new messages from Andrew's Gmail via OAuth,
+// classifies each one with Claude Haiku into:
+//   catering | complaint | vendor | bill | other
+// and writes a row per email to /email_intel for the in-app admin
+// "Inbox" tab. For 'catering' and 'complaint' (time-sensitive types),
+// also writes notification docs that the existing dispatchSms picks
+// up and texts Andrew + Julie.
+//
+// State: /system/gmail_sync_state.lastInternalDate — Gmail's internal
+// message timestamp (epoch ms). We query "after:<seconds>" so we only
+// fetch genuinely new mail each hour. First run defaults to "last 24h"
+// to seed without scanning the whole mailbox.
+//
+// Scope: gmail.readonly only. The CF never writes to or moves the
+// inbox; triage state lives entirely in Firestore.
+//
+// Why owner-only audience: Andrew: "i want to make sure the
+// notifications only got to julie and andrew the owners". Recipients
+// are hardcoded to staff records with id 40 or 41 here; the future
+// manager-rollup (Andrew: "i want to be able to sent to managers one
+// day") will read an admin toggle from /config/inboxTriage instead.
+exports.pollGmail = onSchedule(
+    {
+        schedule: "every 60 minutes",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        timeoutSeconds: 300,
+        memory: "512MiB",
+        secrets: [
+            GMAIL_OAUTH_CLIENT_ID,
+            GMAIL_OAUTH_CLIENT_SECRET,
+            GMAIL_OAUTH_REFRESH_TOKEN,
+            ANTHROPIC_API_KEY,
+        ],
+    },
+    async () => {
+        const { google } = require("googleapis");
+
+        // Build OAuth client. Refresh token is long-lived so this
+        // works without any human re-consent until Andrew revokes
+        // the app via myaccount.google.com/permissions.
+        const oauth2 = new google.auth.OAuth2(
+            GMAIL_OAUTH_CLIENT_ID.value(),
+            GMAIL_OAUTH_CLIENT_SECRET.value(),
+        );
+        oauth2.setCredentials({ refresh_token: GMAIL_OAUTH_REFRESH_TOKEN.value() });
+        const gmail = google.gmail({ version: "v1", auth: oauth2 });
+
+        // ── Resume from last poll ────────────────────────────────────
+        const stateRef = db.doc("system/gmail_sync_state");
+        const stateSnap = await stateRef.get();
+        const lastInternalMs = stateSnap.exists ? Number(stateSnap.data().lastInternalDate || 0) : 0;
+        // First run: look back 24h so we don't scan the whole mailbox.
+        const seedMs = Date.now() - 24 * 60 * 60 * 1000;
+        const afterMs = Math.max(lastInternalMs, seedMs);
+        const afterSec = Math.floor(afterMs / 1000);
+        const query = `after:${afterSec}`;
+
+        logger.info(`pollGmail: query="${query}" (afterMs=${afterMs})`);
+
+        // ── List message ids since last poll ────────────────────────
+        // Page through at most 100 (one hour shouldn't have more than
+        // that in a real inbox; if it does, we'll catch up next tick).
+        let messageIds = [];
+        let nextPageToken;
+        let pages = 0;
+        do {
+            const list = await gmail.users.messages.list({
+                userId: "me",
+                q: query,
+                maxResults: 50,
+                pageToken: nextPageToken,
+            });
+            for (const m of (list.data.messages || [])) messageIds.push(m.id);
+            nextPageToken = list.data.nextPageToken;
+            pages++;
+        } while (nextPageToken && messageIds.length < 100 && pages < 5);
+
+        if (messageIds.length === 0) {
+            logger.info("pollGmail: no new messages.");
+            return;
+        }
+        logger.info(`pollGmail: ${messageIds.length} new message(s).`);
+
+        // ── Classify + write each ──────────────────────────────────────
+        let maxInternalMs = lastInternalMs;
+        let classified = 0;
+        for (const id of messageIds) {
+            // Skip if we already processed this exact id (Gmail's listing
+            // can include retries within the after: window).
+            const intelRef = db.doc("email_intel/" + id);
+            const existing = await intelRef.get();
+            if (existing.exists) continue;
+
+            // Pull headers + snippet (small, no body — saves the cost of
+            // shipping the full body through the LLM and Firestore).
+            const msg = await gmail.users.messages.get({
+                userId: "me",
+                id,
+                format: "metadata",
+                metadataHeaders: ["From", "Subject", "Date"],
+            });
+
+            const headers = (msg.data.payload?.headers || []).reduce((acc, h) => {
+                acc[h.name.toLowerCase()] = h.value || "";
+                return acc;
+            }, {});
+            const from = headers["from"] || "(unknown sender)";
+            const subject = headers["subject"] || "(no subject)";
+            const snippet = (msg.data.snippet || "").slice(0, 800);
+            const internalMs = Number(msg.data.internalDate) || Date.now();
+            if (internalMs > maxInternalMs) maxInternalMs = internalMs;
+
+            // Pretty-extract just the name part of From: "Jane Doe <a@b.com>"
+            const fromName = (() => {
+                const m = from.match(/^(.+?)\s*<.*>$/);
+                return m ? m[1].replace(/^"|"$/g, "") : from;
+            })();
+
+            // ── Classify with Claude Haiku ──────────────────────────
+            let category = "other";
+            let reasoning = "";
+            try {
+                const classifyResp = await fetch("https://api.anthropic.com/v1/messages", {
+                    method: "POST",
+                    headers: {
+                        "content-type": "application/json",
+                        "x-api-key": ANTHROPIC_API_KEY.value(),
+                        "anthropic-version": "2023-06-01",
+                    },
+                    body: JSON.stringify({
+                        model: "claude-haiku-4-5",
+                        max_tokens: 80,
+                        messages: [{
+                            role: "user",
+                            content: `You triage emails for a restaurant. Classify ONE email into exactly one of:
+- catering — someone asking about catering, large orders, events, group meals, off-site service
+- complaint — a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating
+- vendor — a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request
+- bill — an invoice, statement, payment due, utility bill, subscription receipt
+- other — anything else (marketing, spam, personal, employee, banking notices)
+
+Reply with ONLY a JSON object: {"category":"<one of the 5>","reason":"<6-12 word reason>"}
+
+Email:
+From: ${from}
+Subject: ${subject}
+Body snippet: ${snippet}`,
+                        }],
+                    }),
+                });
+                if (classifyResp.ok) {
+                    const j = await classifyResp.json();
+                    const text = j.content?.[0]?.text || "";
+                    const match = text.match(/\{[\s\S]*?\}/);
+                    if (match) {
+                        const parsed = JSON.parse(match[0]);
+                        const valid = ["catering", "complaint", "vendor", "bill", "other"];
+                        if (valid.includes(parsed.category)) {
+                            category = parsed.category;
+                            reasoning = (parsed.reason || "").slice(0, 120);
+                        }
+                    }
+                } else {
+                    logger.warn(`pollGmail: Anthropic ${classifyResp.status} on id=${id}`);
+                }
+            } catch (e) {
+                logger.warn(`pollGmail: classify failed for id=${id}: ${e.message}`);
+            }
+
+            // ── Write to /email_intel ────────────────────────────────
+            const gmailUrl = `https://mail.google.com/mail/u/0/#all/${id}`;
+            await intelRef.set({
+                gmailId: id,
+                gmailUrl,
+                from,
+                fromName,
+                subject,
+                snippet,
+                category,
+                reasoning,
+                receivedAt: FieldValue.serverTimestamp(),
+                internalDate: internalMs,
+                triaged: false,
+                smsSent: false,
+                classifiedAt: FieldValue.serverTimestamp(),
+            });
+            classified++;
+
+            // ── Real-time SMS for time-sensitive categories ──────────
+            // Only catering + complaint trigger SMS today; vendor/bill
+            // are visible in the in-app inbox tab. dispatchSms picks
+            // up the notification docs we write here and routes via
+            // Twilio to each owner's phoneE164.
+            if (category === "catering" || category === "complaint") {
+                const notifType = category === "catering"
+                    ? "email_inquiry_catering"
+                    : "email_inquiry_complaint";
+                const title = category === "catering"
+                    ? `🍱 Catering inquiry: ${fromName}`
+                    : `⚠️ Complaint: ${fromName}`;
+                const body = subject;
+
+                // Look up owners by id (40 = Andrew, 41 = Julie). Future
+                // managers-rollup will read /config/inboxTriage.recipients
+                // to extend this list.
+                const staffDoc = await db.doc("config/staff").get();
+                const list = (staffDoc.data() || {}).list || [];
+                const ownerNames = list
+                    .filter(s => s && s.name && (s.id === 40 || s.id === 41))
+                    .map(s => s.name);
+
+                for (const name of ownerNames) {
+                    await db.collection("notifications").add({
+                        forStaff: name,
+                        type: notifType,
+                        title,
+                        body,
+                        deepLink: "inbox",
+                        link: "/?tab=inbox",
+                        // Tag with the gmail id so a duplicate Gmail
+                        // event can't double-page either owner.
+                        tag: `${notifType}:${id}`,
+                        // dispatchSms reads these to render the SMS
+                        // template — same shape the smsTemplates use.
+                        smsVars: {
+                            from: fromName.slice(0, 60),
+                            subject: subject.slice(0, 80),
+                        },
+                        priority: "high",
+                        forceDeliver: true,
+                        createdAt: FieldValue.serverTimestamp(),
+                        read: false,
+                        createdBy: "pollGmail",
+                    });
+                }
+                await intelRef.update({ smsSent: true });
+            }
+        }
+
+        // ── Persist sync state ─────────────────────────────────────
+        await stateRef.set({
+            lastInternalDate: maxInternalMs,
+            lastRunAt: FieldValue.serverTimestamp(),
+            lastClassifiedCount: classified,
+        }, { merge: true });
+        logger.info(`pollGmail: classified ${classified} new email(s).`);
     },
 );

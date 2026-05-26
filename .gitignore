@@ -7,4 +7,5 @@ dist-snapshot/
 toast-menu-snapshot.json
 firebase-service-account.json
 serviceAccountKey.json
+gmail-oauth-client.json
 backups/

@@ -57,6 +57,10 @@ const AdminPanel = lazy(() => import('./components/AdminPanel').then(m => ({ def
 // 2026-05-24 — per-staff push opt-out matrix (admin only). See
 // src/data/notificationTypes.js for the type registry.
 const NotificationsAdmin = lazy(() => import('./components/NotificationsAdmin'));
+// 📧 Inbox triage — owner-only admin tab (Andrew 2026-05-26). Reads
+// /email_intel written by the pollGmail Cloud Function. Lazy because
+// non-owners never load it.
+const InboxTriage = lazy(() => import('./components/InboxTriage'));
 const InsuranceEnrollment = lazy(() => import('./components/InsuranceEnrollment').then(m => ({ default: memo(m.default) })));
 const AiAssistant = lazy(() => import('./components/AiAssistant').then(m => ({ default: memo(m.default) })));
 const TardinessTracker = lazy(() => import('./components/TardinessTracker').then(m => ({ default: memo(m.default) })));
@@ -1204,6 +1208,8 @@ export default function App() {
             if (activeTab === 'labels' && staffIsAdmin) return <PageErrorBoundary tabName="Label Printing" language={language}><LabelPrintingCenter language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'admin' && staffIsAdmin) return <PageErrorBoundary tabName="Admin" language={language}><AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} /></PageErrorBoundary>;
             if (activeTab === 'notifications' && staffIsAdmin) return <PageErrorBoundary tabName="Notifications" language={language}><NotificationsAdmin language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} /></PageErrorBoundary>;
+            // 📧 Inbox triage — owner-only (ids 40/41 via staffIsAdmin).
+            if (activeTab === 'inbox' && staffIsAdmin) return <PageErrorBoundary tabName="Inbox" language={language}><InboxTriage language={language} /></PageErrorBoundary>;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
             // Tab not accessible — bounce home (uses same mobile/desktop split).
             return isMobile ? (

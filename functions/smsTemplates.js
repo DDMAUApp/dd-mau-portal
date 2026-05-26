@@ -131,6 +131,17 @@ const TEMPLATES = {
         en: "DD Mau: New task from {assigner}: {summary}. Reply STOP to opt out.",
         es: "DD Mau: Nueva tarea de {assigner}: {summary}. Responde STOP para no recibir.",
     },
+    // 2026-05-26 — owner inbox triage. {from} is the sender's name or
+    // email; {subject} is the email subject line, truncated upstream so
+    // the full SMS fits Twilio's single-segment 160-char budget.
+    email_inquiry_catering: {
+        en: "DD Mau: 🍱 Catering inquiry from {from}: {subject}. Reply STOP to opt out.",
+        es: "DD Mau: 🍱 Consulta de catering de {from}: {subject}. Responde STOP para no recibir.",
+    },
+    email_inquiry_complaint: {
+        en: "DD Mau: ⚠️ Customer complaint from {from}: {subject}. Reply STOP to opt out.",
+        es: "DD Mau: ⚠️ Queja de cliente de {from}: {subject}. Responde STOP para no recibir.",
+    },
 };
 
 // The set of notification types eligible for SMS. dispatchSms checks

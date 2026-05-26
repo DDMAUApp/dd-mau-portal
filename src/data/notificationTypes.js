@@ -84,6 +84,14 @@ export const NOTIFICATION_TYPES = [
     { id: 'pto_denied_mgmt',       category: 'mgmt', en: 'PTO denied (rollup)',          es: 'PTO negado (resumen)',        lockedOn: false },
     { id: 'swap_request',          category: 'mgmt', en: 'Swap request to approve',      es: 'Solicitud de cambio',         lockedOn: false },
     { id: 'coverage_request',      category: 'mgmt', en: 'Coverage request',             es: 'Solicitud de cobertura',      lockedOn: false },
+    // 2026-05-26 — owner inbox triage. pollGmail classifies inbound
+    // mail and writes a notification for these types when a catering
+    // inquiry or customer complaint lands. Today the dispatcher only
+    // fans out to owners (ids 40/41); future work: optional rollup
+    // to managers (Andrew: "i want to be able to sent to managers
+    // one day").
+    { id: 'email_inquiry_catering',  category: 'mgmt', en: 'Catering inquiry (email)',   es: 'Consulta de catering (email)', lockedOn: false },
+    { id: 'email_inquiry_complaint', category: 'mgmt', en: 'Customer complaint (email)', es: 'Queja de cliente (email)',     lockedOn: false },
 
     // ── OPT-OUT-ABLE — TV health ──────────────────────────────────
     { id: 'tv_offline',     category: 'tv', en: 'A menu TV went offline',  es: 'Una TV se desconectó',    lockedOn: false },

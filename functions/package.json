@@ -18,6 +18,7 @@
     "firebase-admin": "^12.6.0",
     "firebase-functions": "^7.2.5",
     "google-auth-library": "^9.14.0",
+    "googleapis": "^144.0.0",
     "twilio": "^5.3.0"
   },
   "private": true
