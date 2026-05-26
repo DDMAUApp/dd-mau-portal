@@ -3535,11 +3535,37 @@ exports.pollGmail = onSchedule(
             pages++;
         } while (nextPageToken && messageIds.length < 100 && pages < 5);
 
+        // ── Cleanup pass: pick up previously-failed classifications ─
+        // Andrew 2026-05-26: the first-day 429 storm left ~36 docs with
+        // category='other' + reasoning='' (the LLM fallback). Gmail's
+        // after: cursor advanced past them, so the main loop would never
+        // see them again. Each run also retries up to 50 of these
+        // orphans so the misclassified 'other' bucket drains naturally.
+        const retryIds = [];
+        try {
+            const failedSnap = await db.collection("email_intel")
+                .where("reasoning", "==", "")
+                .limit(50)
+                .get();
+            failedSnap.forEach((d) => {
+                if (!messageIds.includes(d.id)) retryIds.push(d.id);
+            });
+        } catch (e) {
+            // Non-fatal — main loop still processes new mail.
+            logger.warn(`pollGmail: failed-classification scan errored: ${e.message}`);
+        }
+        if (retryIds.length > 0) {
+            logger.info(`pollGmail: cleanup pass — retrying ${retryIds.length} failed classification(s).`);
+            messageIds.push(...retryIds);
+        }
+
         if (messageIds.length === 0) {
             logger.info("pollGmail: no new messages.");
+            // Release the lock even when there's nothing to do.
+            await lockRef.set({ heldUntil: 0, releasedAt: FieldValue.serverTimestamp() }, { merge: true });
             return;
         }
-        logger.info(`pollGmail: ${messageIds.length} new message(s).`);
+        logger.info(`pollGmail: ${messageIds.length - retryIds.length} new + ${retryIds.length} retry message(s).`);
 
         // ── Classify + write each ──────────────────────────────────────
         // Anthropic call helper with retry-on-429. Haiku has burst
