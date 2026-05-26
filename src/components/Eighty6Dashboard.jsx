@@ -531,51 +531,56 @@ function Section({ title, count, tone, items, attribution = {}, formatTime, isEs
     // first names for compactness when there are multiple; full name
     // when only one.
     const renderAttribution = (item) => {
+        // 2026-05-26 — Andrew: "the only place we put items on the 86
+        // report is toast. and it would pull the name no problem. we
+        // wanted to have the name and time it was put into 86." So:
+        //   - Toast-sourced items (source='toast'): show ONLY the time
+        //     ("Out since 4:23pm"). Toast genuinely doesn't know which
+        //     staff member caused the 86 — the previous "Marked by
+        //     <20 staff names>" was wrong and confusing.
+        //   - Chat-sourced items (source='chat', source='manual', or
+        //     anything else): the staffer typing 🚫 in chat IS the
+        //     attribution, so show "Marked by Maria at 4:23pm" as before.
+        //
         // Attribution map was originally keyed by item.name. If the
         // name has since been repaired from a GUID to the human name
         // (sync-toast-86-attribution.mjs in-place rename), the
         // existing attribution row is still under the old GUID key.
         // Try the guid sidecar as a fallback. Belt and suspenders.
         const attr = attribution?.[item.name] || (item.guid ? attribution?.[item.guid] : null);
-        // Prefer Toast attribution map when present; fall back to per-item
-        // fields. Two field-name conventions seen in items[]:
-        //   • addedBy/addedAt — manual 86 from chat (ChatThread.jsx)
-        //   • outBy/outAt     — legacy Cloud Function + Railway scraper
-        // Accept either so the dashboard never silently drops attribution.
+        const outAtRaw = attr?.outAt || item?.addedAt || item?.outAt;
+        const timeStr = outAtRaw ? formatTime(outAtRaw) : null;
+
+        const isToast = item?.source === 'toast';
+        if (isToast) {
+            if (!timeStr) return null;
+            return (
+                <div className="text-[10px] text-dd-text-2 mt-0.5 italic">
+                    ⏱ {isEs ? 'Sin existencia desde' : 'Out since'} {timeStr}
+                </div>
+            );
+        }
+
+        // Chat-sourced / legacy / manual path — staff attribution is real.
         const fallbackBy = item?.addedBy || item?.outBy;
-        let outByList = attr?.outBy
+        const outByList = attr?.outBy
             ? (Array.isArray(attr.outBy) ? attr.outBy : [attr.outBy])
             : (Array.isArray(fallbackBy) ? fallbackBy
                 : (fallbackBy ? String(fallbackBy).split(/\s*,\s*/) : []));
-        const outAtRaw = attr?.outAt || item?.addedAt || item?.outAt;
-
-        // 2026-05-26 — Andrew: "it doesnt say who did it just that it
-        // could be the whole staff so it named all possible staff."
-        // The Toast scraper currently writes the ENTIRE clocked-in
-        // roster as `outBy` when it detects an 86 transition (because
-        // it can't know which specific cook noticed it). Listing 20
-        // names is worse than no attribution — collapse to a single
-        // "Auto-detected (Toast)" tag instead. Heuristic: 4+ names
-        // OR 3+ names AND no one in particular = auto-detected.
-        const looksAutoDetected = outByList.length >= 4
-            || (outByList.length >= 3 && item?.source === 'toast');
-        if (looksAutoDetected) {
-            outByList = []; // suppress the listing
-        }
-
-        if (outByList.length === 0 && !outAtRaw && !looksAutoDetected) return null;
-        const namesStr = outByList.length === 1
-            ? outByList[0]
-            : outByList.length > 1
-                ? outByList.map(n => String(n).trim().split(' ')[0]).join(' or ')
+        // Defensive: if a legacy non-toast row somehow has 4+ names
+        // (e.g. an old buggy write), strip them. We'd rather show
+        // "at 4:23pm" alone than parade everyone.
+        const cleanNames = outByList.length >= 4 ? [] : outByList;
+        const namesStr = cleanNames.length === 1
+            ? cleanNames[0]
+            : cleanNames.length > 1
+                ? cleanNames.map(n => String(n).trim().split(' ')[0]).join(' or ')
                 : null;
-        const timeStr = outAtRaw ? formatTime(outAtRaw) : null;
+        if (!namesStr && !timeStr) return null;
         return (
             <div className="text-[10px] text-dd-text-2 mt-0.5 italic">
-                {looksAutoDetected
-                    ? <>🤖 {isEs ? 'Detectado por Toast' : 'Auto-detected (Toast)'}</>
-                    : namesStr && <>🙋 {isEs ? `Marcado por ${namesStr}` : `Marked by ${namesStr}`}</>}
-                {(looksAutoDetected || namesStr) && timeStr && <> · </>}
+                {namesStr && <>🙋 {isEs ? `Marcado por ${namesStr}` : `Marked by ${namesStr}`}</>}
+                {namesStr && timeStr && <> · </>}
                 {timeStr && <>{isEs ? 'a las' : 'at'} {timeStr}</>}
             </div>
         );

@@ -487,16 +487,19 @@ for (const r of RESTAURANTS) {
         .filter(Boolean);
     console.log(`  • ${clockedInNames.length} staff clocked in at transition: ${clockedInNames.join(', ') || '(none)'}`);
 
-    // 6. Apply transitions: update items[] AND write the attribution sidecar.
-    //    This is the ONLY place Toast pushes to items[] (no bulk sync —
-    //    Andrew 2026-05-23). For each newlyOut item we push a new entry
-    //    with source='toast', addedBy=clocked-in names (or 'Toast POS'
-    //    fallback), addedAt=now. For each newlyIn item we remove it from
-    //    items[] (its return to stock means it shouldn't be 86'd anymore).
-    //    Manual entries are never touched. The attribution sidecar is
-    //    written in parallel so the dashboard's renderAttribution can
-    //    show full names + timestamps for items that transitioned.
-    //    (eightySixRef declared above in the items[] sync block.)
+    // 6. Apply transitions: update items[] AND write the time-only
+    //    attribution sidecar.
+    //
+    // Andrew 2026-05-26: "the only place we put items on the 86 report
+    // is toast. and it would pull the name no problem. we wanted to
+    // have the name and time it was put into 86." The previous version
+    // also tried to attribute each transition to "whoever was clocked
+    // in at that moment", which produced the "Marked by 20 staff"
+    // dump in the dashboard — Toast genuinely doesn't know which
+    // specific cook caused the 86, so any attribution was a guess.
+    // Dropped: addedBy on items[], outBy/inBy on the attribution map.
+    // Kept: addedAt on items[], outAt/inAt on attribution (the time
+    // is real and useful).
     {
         const snap = await eightySixRef.get();
         const data = snap.exists ? (snap.data() || {}) : {};
@@ -510,7 +513,6 @@ for (const r of RESTAURANTS) {
         // Append newlyOut items (dedup by name).
         const presentLower = new Set(next.map(i => String(i?.name || '').toLowerCase()));
         const nowIso = new Date().toISOString();
-        const addedBy = clockedInNames.length > 0 ? clockedInNames.join(', ') : 'Toast POS';
         for (const name of newlyOut) {
             if (presentLower.has(String(name).toLowerCase())) continue;
             const meta = currentOutMetaByName.get(name) || {};
@@ -518,7 +520,9 @@ for (const r of RESTAURANTS) {
                 name,
                 status: 'OUT_OF_STOCK',
                 source: 'toast',
-                addedBy,
+                // No addedBy — Toast doesn't know which staff 86'd it.
+                // The dashboard now shows "Out since {time}" for
+                // source=toast and doesn't display a "Marked by" line.
                 addedAt: meta.lastUpdatedIso || nowIso,
             });
         }
@@ -529,35 +533,26 @@ for (const r of RESTAURANTS) {
             updatedAt: FieldValue.serverTimestamp(),
             lastToastSyncAt: FieldValue.serverTimestamp(),
         };
-        // Attribution sidecar — MUST be a real NESTED object, not dotted
-        // keys. set(..., { merge: true }) does NOT interpret dotted field
-        // names as paths the way update() does: a key like
-        // `attribution.Avocado.outBy` under set-merge is written as a
-        // single top-level field literally NAMED "attribution.Avocado.outBy"
-        // rather than nesting under attribution → Avocado → outBy. The
-        // dashboard reads data.attribution[item.name], so dotted keys would
-        // silently never surface (and would pollute the doc with junk
-        // dotted-name fields). set-merge DOES deep-merge nested maps, so we
-        // build the nested shape and let merge fold it into existing
-        // attribution for other items.
+        // Attribution sidecar — kept for the time only. set(merge:true)
+        // does NOT interpret dotted field names as paths (a key like
+        // `attribution.Avocado.outAt` would write a literal flat field
+        // named that), so we build the nested shape explicitly.
         const attribution = {};
         for (const itemName of newlyOut) {
             attribution[itemName] = {
                 ...(attribution[itemName] || {}),
-                outBy: clockedInNames,
                 outAt: FieldValue.serverTimestamp(),
             };
         }
         for (const itemName of newlyIn) {
             attribution[itemName] = {
                 ...(attribution[itemName] || {}),
-                inBy: clockedInNames,
                 inAt: FieldValue.serverTimestamp(),
             };
         }
         if (Object.keys(attribution).length > 0) patch.attribution = attribution;
         await eightySixRef.set(patch, { merge: true });
-        console.log(`  ✓ Applied ${newlyOut.length} out + ${newlyIn.length} back-in (attribution written)`);
+        console.log(`  ✓ Applied ${newlyOut.length} out + ${newlyIn.length} back-in (time-only attribution)`);
     }
 
     // 7. Update the cursor.
