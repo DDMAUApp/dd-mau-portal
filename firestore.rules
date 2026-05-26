@@ -127,6 +127,16 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Toast menu items map (Andrew 2026-05-26). GUID→name lookup
+    // written by scripts/sync-toast-86-attribution.mjs every run.
+    // Eighty6Dashboard reads it to resolve any item still stored
+    // with a raw Toast GUID as its name. Script-only writes (admin
+    // SDK bypasses these rules); clients are read-only.
+    match /config/toast_menu_items {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
     // Recipes doc — hardened after the 2026-05-09 Import Master incident.
     // The bug clobbered 39 of 40 recipes in a single write by replacing
     // each one with a master-default version. Since the doc is one giant

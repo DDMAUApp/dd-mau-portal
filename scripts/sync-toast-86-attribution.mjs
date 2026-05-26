@@ -301,16 +301,74 @@ for (const r of RESTAURANTS) {
     if (!inventory) { console.warn(`  ⚠ skipping ${r.location} — inventory unavailable`); continue; }
     const itemNames = await fetchItemNames(r.guid);
 
+    // 2026-05-26 — Andrew: "2 and 3 should be on the list but it need
+    // to have the menu name not the id." The Railway scraper (and the
+    // old code below) wrote raw Toast GUIDs to items[].name when it
+    // couldn't resolve them. Two fixes now:
+    //
+    //   a. PERSIST the GUID→name map to /config/toast_menu_items so
+    //      the Eighty6Dashboard can do live lookups for any GUID-named
+    //      rows the Railway scraper drops in between our runs.
+    //   b. REPAIR existing items[] on /ops/86_{loc} on every run: any
+    //      row whose name matches a GUID and the menu map can resolve
+    //      gets its name replaced inline with the resolved value. The
+    //      guid sticks around in a sidecar field so future cross-refs
+    //      still work.
+    const GUID_RE_SYNC = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    {
+        // (a) Persist the map.
+        const mapObj = Object.fromEntries(itemNames);
+        await db.collection('config').doc('toast_menu_items').set({
+            map: mapObj,
+            entries: Object.keys(mapObj).length,
+            updatedAt: FieldValue.serverTimestamp(),
+            updatedFromRestaurant: r.guid,
+            location: r.location,
+        }, { merge: true });
+        console.log(`  • Wrote /config/toast_menu_items (${Object.keys(mapObj).length} entries)`);
+
+        // (b) Repair any GUID-named rows in the live 86 doc.
+        const repairSnap = await eightySixRef.get();
+        const existing = repairSnap.exists ? ((repairSnap.data() || {}).items || []) : [];
+        let repairedCount = 0;
+        const repaired = existing.map((it) => {
+            if (!it?.name || !GUID_RE_SYNC.test(String(it.name))) return it;
+            const resolved = itemNames.get(it.name);
+            if (!resolved || GUID_RE_SYNC.test(resolved)) return it;  // still unknown — leave alone
+            repairedCount++;
+            return { ...it, name: resolved, guid: it.guid || it.name };
+        });
+        if (repairedCount > 0) {
+            await eightySixRef.set(
+                { items: repaired, updatedAt: FieldValue.serverTimestamp() },
+                { merge: true },
+            );
+            console.log(`  ✓ Repaired ${repairedCount} GUID-named row(s) using menu map`);
+        }
+    }
+
     // 2. Resolve current OUT_OF_STOCK set as human names + capture each
     //    item's lastUpdated timestamp so we can attribute "who was clocked
     //    in when this item went 86." Toast's stock API field name has
     //    varied across versions (lastUpdated, modifiedDate, updatedAt) —
     //    we try all of them and fall back to "now" if none are present.
+    //
+    // 2026-05-26: when an item has NO menu mapping at all, SKIP it
+    // instead of writing the bare GUID as its name. Better an item
+    // silently miss this cycle than show up as "🚫 86: d77ac06e..."
+    // for the team. Next run resolves it once the Toast menu API
+    // catches up.
     const currentOutNames = new Set();
     const currentOutMetaByName = new Map();
+    let skippedUnresolvable = 0;
     for (const inv of (Array.isArray(inventory) ? inventory : [])) {
         if (inv?.status !== 'OUT_OF_STOCK') continue;
-        const name = itemNames.get(inv.guid) || inv.guid;
+        const resolved = itemNames.get(inv.guid);
+        if (!resolved || GUID_RE_SYNC.test(resolved)) {
+            skippedUnresolvable += 1;
+            continue;
+        }
+        const name = resolved;
         currentOutNames.add(name);
         const lastUpdatedIso = inv.lastUpdated || inv.modifiedDate
             || inv.updatedAt || inv.lastModifiedDate || null;
@@ -319,6 +377,9 @@ for (const r of RESTAURANTS) {
             lastUpdatedIso,                                  // may be null
             lastUpdatedDate: lastUpdatedIso ? new Date(lastUpdatedIso) : null,
         });
+    }
+    if (skippedUnresolvable > 0) {
+        console.warn(`  ⚠ skipped ${skippedUnresolvable} Toast 86 item(s) with no menu name (will retry next run)`);
     }
     console.log(`  • Currently 86'd: ${currentOutNames.size} item(s)`);
 

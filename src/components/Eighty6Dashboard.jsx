@@ -30,6 +30,14 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
     // the sync script started running) won't have an entry — display
     // gracefully degrades to no name shown.
     const [attribution, setAttribution] = useState({});
+    // Toast menu items map (guid → human name), written by
+    // sync-toast-86-attribution.mjs. Used to resolve any row whose
+    // items[].name is still a raw Toast GUID before the script has
+    // gotten around to repairing it. Andrew 2026-05-26: "the 2 and 3
+    // should be on the list but it need to have the menu name not
+    // the id." With this map the dashboard can show the real name
+    // even when the upstream scraper wrote the bare GUID.
+    const [toastMenuMap, setToastMenuMap] = useState({});
     const [loading, setLoading] = useState(true);
     // 2026-05-16 — alert settings: hours of day when scheduled reminders
     // fire + global on/off. Stored at /config/eighty_six_alerts. Read here
@@ -54,6 +62,20 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                 });
             }
         }, (err) => console.warn('alert settings snapshot failed:', err));
+        return unsub;
+    }, []);
+
+    // Subscribe to the Toast menu GUID→name map (published by
+    // scripts/sync-toast-86-attribution.mjs). Used to resolve any
+    // GUID-named row to its human name at render time, so the
+    // dashboard never displays "🚫 86: d77ac06e-..." to staff.
+    useEffect(() => {
+        const unsub = onSnapshot(doc(db, 'config', 'toast_menu_items'), (snap) => {
+            if (snap.exists()) {
+                const m = (snap.data() || {}).map;
+                setToastMenuMap(m && typeof m === 'object' ? m : {});
+            }
+        }, (err) => console.warn('toast_menu_items snapshot failed:', err));
         return unsub;
     }, []);
 
@@ -228,20 +250,37 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                         : storeLocation === 'both'     ? tx('Both Locations', 'Ambas')
                         :                                tx('Webster Groves', 'Webster Groves');
 
-    // 2026-05-26 — filter items where `name` is a Toast item GUID
-    // (UUID shape) instead of a human-readable string. The Toast
-    // scraper on Railway writes the raw GUID when it can't resolve
-    // the item to its local name, which surfaces as "🚫 86: d77ac06e-
-    // 6527-..." in the dashboard — useless to staff. Hiding them is
-    // the temporary fix until the scraper learns to skip-or-name them.
+    // 2026-05-26 — Andrew: "the 2 and 3 should be on the list but it
+    // need to have the menu name not the id." Resolve GUID-shaped
+    // names to their human menu name using the live /config/
+    // toast_menu_items map. If the map doesn't have it, show
+    // "Unknown item (Toast …{short-guid})" so the manager still sees
+    // SOMETHING is 86'd and knows it needs investigation.
     const looksLikeGuid = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || '').trim());
-    const hasReadableName = (i) => i?.name && !looksLikeGuid(i.name);
+    const resolveName = (i) => {
+        const raw = String(i?.name || '').trim();
+        if (!raw) return null;
+        if (!looksLikeGuid(raw)) return raw;
+        // GUID-shaped name → look up the menu map.
+        const fromMap = toastMenuMap[raw];
+        if (fromMap && !looksLikeGuid(fromMap)) return fromMap;
+        // Last resort: short-guid placeholder so the row still renders
+        // and the manager can flag it.
+        return `Unknown item (Toast ${raw.slice(0, 8)}…)`;
+    };
+    // Decorate each item with a resolved display name + a flag so the
+    // row UI can mark unresolved rows distinctly if it wants to.
+    const decorated = items.map((i) => {
+        const resolved = resolveName(i);
+        const isUnresolved = looksLikeGuid(String(i?.name || ''))
+            && !(toastMenuMap[String(i.name).trim()] && !looksLikeGuid(toastMenuMap[String(i.name).trim()]));
+        return { ...i, _displayName: resolved, _isUnresolved: isUnresolved };
+    }).filter(i => i._displayName);
 
     // Group items by status so 86'd shows above low-stock — cooks need
     // to see "what's totally out" first, then "what's running low".
-    const out = items.filter(i => i.status === 'OUT_OF_STOCK' && hasReadableName(i));
-    const low = items.filter(i => i.status !== 'OUT_OF_STOCK' && hasReadableName(i));
-    const hiddenGuidCount = items.filter(i => !hasReadableName(i)).length;
+    const out = decorated.filter(i => i.status === 'OUT_OF_STOCK');
+    const low = decorated.filter(i => i.status !== 'OUT_OF_STOCK');
 
     return (
         <div className="space-y-4">
@@ -492,7 +531,12 @@ function Section({ title, count, tone, items, attribution = {}, formatTime, isEs
     // first names for compactness when there are multiple; full name
     // when only one.
     const renderAttribution = (item) => {
-        const attr = attribution?.[item.name];
+        // Attribution map was originally keyed by item.name. If the
+        // name has since been repaired from a GUID to the human name
+        // (sync-toast-86-attribution.mjs in-place rename), the
+        // existing attribution row is still under the old GUID key.
+        // Try the guid sidecar as a fallback. Belt and suspenders.
+        const attr = attribution?.[item.name] || (item.guid ? attribution?.[item.guid] : null);
         // Prefer Toast attribution map when present; fall back to per-item
         // fields. Two field-name conventions seen in items[]:
         //   • addedBy/addedAt — manual 86 from chat (ChatThread.jsx)
@@ -549,8 +593,8 @@ function Section({ title, count, tone, items, attribution = {}, formatTime, isEs
                 {items.map((item, idx) => (
                     <li key={idx} className={`flex items-start justify-between gap-3 px-4 py-3 transition ${itemBg}`}>
                         <div className="min-w-0 flex-1">
-                            <span className="font-bold text-dd-text truncate block">
-                                {item.name}
+                            <span className={`font-bold truncate block ${item._isUnresolved ? 'text-amber-700 italic' : 'text-dd-text'}`}>
+                                {item._displayName || item.name}
                             </span>
                             {/* Attribution line — "Marked by X at Y".
                                 Two sources: the per-item addedBy/addedAt
