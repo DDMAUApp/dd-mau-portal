@@ -31,15 +31,22 @@ const CATEGORIES = [
     { id: 'complaint', en: 'Complaints',es: 'Quejas',    emoji: '⚠️', tone: 'red'    },
     { id: 'vendor',    en: 'Vendors',   es: 'Proveedor', emoji: '🚚', tone: 'blue'   },
     { id: 'bill',      en: 'Bills',     es: 'Facturas',  emoji: '🧾', tone: 'amber'  },
+    // 2026-05-26 — Andrew: "add toast. that anything thats not catering
+    // from toast submission". Toast POS noise (daily summaries,
+    // receipts) gets its own bucket so it stops drowning the other
+    // categories. Actual Toast catering orders still route to 'catering'
+    // (precedence rule lives in the classifier prompt).
+    { id: 'toast',     en: 'Toast',     es: 'Toast',     emoji: '🍞', tone: 'purple' },
     { id: 'other',     en: 'Other',     es: 'Otros',     emoji: '✉️', tone: 'gray'   },
 ];
 
 const TONE_CLASSES = {
-    green: { chip: 'bg-dd-green-50 text-dd-green-700 border-dd-green/30', dot: 'bg-dd-green' },
-    red:   { chip: 'bg-red-50      text-red-700      border-red-200',     dot: 'bg-red-500'  },
-    blue:  { chip: 'bg-blue-50     text-blue-700     border-blue-200',    dot: 'bg-blue-500' },
-    amber: { chip: 'bg-amber-50    text-amber-700    border-amber-200',   dot: 'bg-amber-500'},
-    gray:  { chip: 'bg-gray-100    text-gray-700     border-gray-200',    dot: 'bg-gray-400' },
+    green:  { chip: 'bg-dd-green-50 text-dd-green-700 border-dd-green/30', dot: 'bg-dd-green'   },
+    red:    { chip: 'bg-red-50      text-red-700      border-red-200',     dot: 'bg-red-500'    },
+    blue:   { chip: 'bg-blue-50     text-blue-700     border-blue-200',    dot: 'bg-blue-500'   },
+    amber:  { chip: 'bg-amber-50    text-amber-700    border-amber-200',   dot: 'bg-amber-500'  },
+    purple: { chip: 'bg-purple-50   text-purple-700   border-purple-200',  dot: 'bg-purple-500' },
+    gray:   { chip: 'bg-gray-100    text-gray-700     border-gray-200',    dot: 'bg-gray-400'   },
 };
 
 function fmtWhen(item, locale) {
@@ -217,7 +224,12 @@ export default function InboxTriage({ language = 'en' }) {
                     </div>
                 ) : (
                     filtered.map(item => {
-                        const cat = CATEGORIES.find(c => c.id === item.category) || CATEGORIES[4];
+                        // Fallback to 'other' (last entry) when the LLM
+                        // returns something we don't recognize. Index-by-id
+                        // rather than position so reordering CATEGORIES
+                        // later doesn't silently break the fallback.
+                        const cat = CATEGORIES.find(c => c.id === item.category)
+                            || CATEGORIES.find(c => c.id === 'other');
                         const tone = TONE_CLASSES[cat.tone];
                         return (
                             <div key={item.id} className={`p-3 ${item.triaged ? 'bg-dd-bg/50' : 'bg-white'}`}>

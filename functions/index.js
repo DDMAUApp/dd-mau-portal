@@ -3644,13 +3644,14 @@ exports.pollGmail = onSchedule(
             let reasoning = "";
             try {
                 const prompt = `You triage emails for a restaurant. Classify ONE email into exactly one of:
-- catering — someone asking about catering, large orders, events, group meals, off-site service
-- complaint — a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating
-- vendor — a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request
-- bill — an invoice, statement, payment due, utility bill, subscription receipt
-- other — anything else (marketing, spam, personal, employee, banking notices)
+- catering — someone asking about catering, large orders, events, group meals, off-site service. INCLUDES Toast online-order receipts where the order is a catering / large-party / event submission (look for catering language, large guest counts, off-site delivery).
+- complaint — a customer is unhappy: bad food, slow service, rude staff, refund request, sick after eating.
+- vendor — a vendor (Sysco, US Foods, suppliers, distributors) asking a question, sending order confirmations, or making a request.
+- bill — an invoice, statement, payment due, utility bill, subscription receipt.
+- toast — automated emails from Toast POS (toasttab.com, toastpos.com, Toast Now, etc.): daily sales summaries, transaction notices, online-order receipts, loyalty reports, payroll-from-Toast. IMPORTANT: if the Toast email is a CATERING order, classify as 'catering' instead — catering wins over toast.
+- other — anything else (marketing, spam, personal, employee, banking notices, social media).
 
-Reply with ONLY a JSON object: {"category":"<one of the 5>","reason":"<6-12 word reason>"}
+Reply with ONLY a JSON object: {"category":"<one of the 6>","reason":"<6-12 word reason>"}
 
 Email:
 From: ${from}
@@ -3663,7 +3664,7 @@ Body snippet: ${snippet}`;
                     const match = text.match(/\{[\s\S]*?\}/);
                     if (match) {
                         const parsed = JSON.parse(match[0]);
-                        const valid = ["catering", "complaint", "vendor", "bill", "other"];
+                        const valid = ["catering", "complaint", "vendor", "bill", "toast", "other"];
                         if (valid.includes(parsed.category)) {
                             category = parsed.category;
                             reasoning = (parsed.reason || "").slice(0, 120);
