@@ -4253,3 +4253,136 @@ exports.pruneSystemLogs = onSchedule(
         }
     },
 );
+
+// ── watchScraperFreshness — detect hung Railway scrapers ─────────────────
+//
+// 2026-05-27 — Andrew: "the bug finder in the app didnt catch this." The
+// in-script crash reporters (scripts/sync-toast-86-attribution.mjs and
+// the Python labor scraper) catch CRASHES — anything that throws. They
+// don't catch HANGS — when a Playwright `wait_for_selector` blocks
+// forever (USFOODS Ionic page) the process stays alive, Railway shows
+// "Online", and Firestore quietly stops getting fresh writes.
+//
+// This function is the external observer: every 15 min during business
+// hours it checks the `updatedAt` timestamp on the four docs the
+// scrapers maintain. If any of them is older than the configured
+// freshness threshold, it writes a critical /error_logs row so the
+// in-app Error Report tab surfaces the silent failure.
+//
+// Cooldown dedup: a marker doc in /system/ records the last alert per
+// check key — repeated alerts for the same stale doc are suppressed
+// for 60 min so a multi-hour outage produces one row per hour, not
+// 16 rows. After the scraper recovers, the next stale event re-arms.
+//
+// Schedule: every 15 minutes between 10am and 11pm Central. Restaurants
+// are closed overnight; alerting at 3am that the scraper hasn't polled
+// in 4 hours when nothing's happening anyway is just noise.
+exports.watchScraperFreshness = onSchedule(
+    {
+        schedule: "*/15 10-23 * * *",
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        timeoutSeconds: 60,
+        memory: "256MiB",
+        secrets: [SENTRY_DSN],
+    },
+    async () => {
+        // Each check: path to a doc the scraper writes, expected freshness
+        // ceiling in minutes, and a stable key for the cooldown marker.
+        // Thresholds reflect each scraper's nominal poll cadence:
+        //   - labor scraper polls every ~2 min → 30 min stale = 15 missed
+        //   - 86 sync runs every 5 min via cron → 20 min stale = 4 missed
+        // We pad both up a little vs the bare cadence so a single slow
+        // poll (network blip, Toast 429) doesn't trigger.
+        const CHECKS = [
+            { docPath: "ops/labor_webster",  thresholdMin: 30, key: "labor_webster",  label: "Toast labor scraper (Webster)" },
+            { docPath: "ops/labor_maryland", thresholdMin: 30, key: "labor_maryland", label: "Toast labor scraper (Maryland Heights)" },
+            { docPath: "ops/86_webster",     thresholdMin: 20, key: "86_webster",     label: "Toast 86 sync (Webster)" },
+            { docPath: "ops/86_maryland",    thresholdMin: 20, key: "86_maryland",    label: "Toast 86 sync (Maryland Heights)" },
+        ];
+
+        const COOLDOWN_MS = 60 * 60 * 1000; // re-alert at most once per hour
+        const nowMs = Date.now();
+        const report = [];
+
+        for (const c of CHECKS) {
+            try {
+                const snap = await db.doc(c.docPath).get();
+                if (!snap.exists) {
+                    report.push(`${c.key}: doc missing — skipped`);
+                    continue;
+                }
+                const data = snap.data() || {};
+                // The scrapers write updatedAt as an ISO string (Python uses
+                // datetime.now(timezone.utc).isoformat(); the Node cron uses
+                // FieldValue.serverTimestamp() which read-decodes to a
+                // Firestore Timestamp). Handle both shapes.
+                let updatedMs = null;
+                if (typeof data.updatedAt === "string") {
+                    const t = Date.parse(data.updatedAt);
+                    if (!isNaN(t)) updatedMs = t;
+                } else if (data.updatedAt && typeof data.updatedAt.toMillis === "function") {
+                    updatedMs = data.updatedAt.toMillis();
+                } else if (data.updatedAt && typeof data.updatedAt._seconds === "number") {
+                    updatedMs = data.updatedAt._seconds * 1000;
+                }
+                if (updatedMs == null) {
+                    report.push(`${c.key}: no parseable updatedAt — skipped`);
+                    continue;
+                }
+
+                const minutesAgo = Math.round((nowMs - updatedMs) / 60000);
+                if (minutesAgo <= c.thresholdMin) {
+                    report.push(`${c.key}: fresh (${minutesAgo}m)`);
+                    continue;
+                }
+
+                // Stale. Check the cooldown marker before firing an alert
+                // to avoid spamming /error_logs every 15 min during a
+                // multi-hour outage.
+                const markerRef = db.doc(`system/watchdog_marker_${c.key}`);
+                const markerSnap = await markerRef.get();
+                const lastAlertMs = markerSnap.exists ? (markerSnap.data()?.lastAlertMs || 0) : 0;
+                if (lastAlertMs && (nowMs - lastAlertMs) < COOLDOWN_MS) {
+                    report.push(`${c.key}: stale (${minutesAgo}m) — in cooldown`);
+                    continue;
+                }
+
+                // Fire the alert. Schema matches /error_logs rows written
+                // by src/data/logger.js and the in-script reporters so
+                // ErrorReportPage groups identical "X scraper stale"
+                // entries together.
+                const errorMessage = `${c.label} hasn't written to ${c.docPath} in ${minutesAgo} minutes (threshold ${c.thresholdMin}m). Likely a hung Playwright wait, a Toast API outage, or a crashed Railway container that Railway hasn't restarted.`;
+                await db.collection("error_logs").add({
+                    severity: "critical",
+                    source: "watchdog",
+                    feature: `scraper-stale-${c.key}`,
+                    errorName: "ScraperStale",
+                    errorMessage,
+                    stack: "",
+                    meta: {
+                        docPath: c.docPath,
+                        minutesAgo,
+                        thresholdMin: c.thresholdMin,
+                        lastUpdatedIso: new Date(updatedMs).toISOString(),
+                    },
+                    resolved: false,
+                    ts: FieldValue.serverTimestamp(),
+                    occurredAt: nowMs,
+                });
+                await markerRef.set({
+                    lastAlertMs: nowMs,
+                    lastMinutesAgo: minutesAgo,
+                    hitCount: ((markerSnap.exists && markerSnap.data()?.hitCount) || 0) + 1,
+                }, { merge: true });
+                report.push(`${c.key}: STALE ${minutesAgo}m — alerted`);
+            } catch (e) {
+                report.push(`${c.key}: check failed — ${e?.message || e}`);
+                logger.warn(`watchScraperFreshness: ${c.key} check failed`, e?.message || e);
+                captureWithContext(e, { fn: "watchScraperFreshness", tags: { check: c.key } });
+            }
+        }
+
+        logger.info(`watchScraperFreshness: ${report.join(" | ")}`);
+    },
+);
