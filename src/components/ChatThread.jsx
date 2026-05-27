@@ -2930,11 +2930,17 @@ function Composer({
                 Bigger textarea (min-h-44, text-base) — also stops iOS
                 Safari from zooming into the field on focus (font-size
                 ≥ 16px is the documented threshold). */}
+            {/* 2026-05-27 — Composer styled to match the Zenzap reference
+                photo: circular dark-fill buttons flanking a pill-shaped
+                input, no top divider, flush black bar. The `ddmau-composer-
+                btn` class hook lets index.css apply the dark circular fill
+                on mobile while keeping the existing light styling on
+                desktop (which still uses the two-pane white layout). */}
             <div className="flex items-end gap-2">
                 <button
                     onClick={() => setShowAttachMenu(v => !v)}
                     disabled={sending}
-                    className={`w-11 h-11 rounded-full flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition-transform duration-200 ${showAttachMenu ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg text-dd-text-2'}`}
+                    className={`ddmau-composer-btn w-11 h-11 rounded-full flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition-transform duration-200 ${showAttachMenu ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg text-dd-text-2'}`}
                     style={{ transform: showAttachMenu ? 'rotate(45deg)' : 'rotate(0deg)' }}
                     aria-label={isEs ? 'Más opciones' : 'More options'}
                     title={isEs ? 'Más opciones' : 'More options'}
@@ -2956,14 +2962,18 @@ function Composer({
                     // from JS instead). Initial inline height ensures the
                     // first paint is exactly MIN_COMPOSER_PX even before
                     // the effect runs.
-                    className="flex-1 min-w-0 px-4 py-2.5 rounded-2xl bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                    // rounded-full gives a proper pill shape: corners
+                    // clamp to half the box height, so single-line stays
+                    // a stadium / lozenge and multi-line stays smoothly
+                    // rounded at the ends. Matches the Zenzap reference.
+                    className="flex-1 min-w-0 px-4 py-2.5 rounded-full bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
                     style={{ lineHeight: 1.4, minHeight: '44px', maxHeight: '160px', height: '44px' }}
                 />
                 {empty ? (
                     <button
                         onClick={onStartRecording}
                         disabled={sending}
-                        className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
+                        className="ddmau-composer-btn w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
                         aria-label={isEs ? 'Mensaje de voz' : 'Voice message'}
                         title={isEs ? 'Voz' : 'Voice'}
                     >
@@ -2973,7 +2983,12 @@ function Composer({
                     <button
                         onClick={onSendText}
                         disabled={sending}
-                        className="w-11 h-11 rounded-full bg-dd-green text-white flex items-center justify-center font-black shrink-0 disabled:opacity-40 hover:bg-dd-green-700 active:scale-95 transition"
+                        // `ddmau-composer-btn-send` keeps the brand green on
+                        // dark mobile (overrides the generic composer-btn
+                        // dark-fill rule) so the send arrow stays bold and
+                        // unmissable, the way iMessage's blue send button
+                        // anchors the right edge.
+                        className="ddmau-composer-btn ddmau-composer-btn-send w-11 h-11 rounded-full bg-dd-green text-white flex items-center justify-center font-black shrink-0 disabled:opacity-40 hover:bg-dd-green-700 active:scale-95 transition"
                         aria-label={isEs ? 'Enviar' : 'Send'}
                     >
                         ➤

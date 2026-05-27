@@ -257,13 +257,44 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     }
 
     /* ── Composer textarea ── */
+    /* No visible border — the Zenzap reference shows just a darker pill
+       fill against the black bar. Border colors set transparent here. */
     .ddmau-chat-shell textarea {
         background-color: #1c1c1c !important;
         color: #fff !important;
-        border-color: rgba(255, 255, 255, 0.15) !important;
+        border-color: transparent !important;
     }
     .ddmau-chat-shell textarea::placeholder {
         color: rgba(255, 255, 255, 0.4) !important;
+    }
+    /* Drop the hairline divider above the composer. Default Tailwind
+       `border-t border-dd-line` was being recolored to white/10 by the
+       border-dd-line override earlier in this stylesheet — but the
+       reference shows NO divider. Set to transparent for a flush bar. */
+    .ddmau-chat-shell .sticky.bottom-0 {
+        border-top-color: transparent !important;
+    }
+
+    /* ── Composer +, mic, send buttons ──
+       Circular dark fills that read as tappable on the black bar (matches
+       the Zenzap reference photo — small subtle "pucks" flanking the
+       input pill). Send button overrides this to keep the brand green. */
+    .ddmau-chat-shell .ddmau-composer-btn {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        color: #fff !important;
+    }
+    .ddmau-chat-shell .ddmau-composer-btn:hover {
+        background-color: rgba(255, 255, 255, 0.14) !important;
+    }
+    /* Send button — keep dd-green (brand). The :hover state below
+       inherits Tailwind's hover:bg-dd-green-700 since these rules don't
+       override hover for the send button. */
+    .ddmau-chat-shell .ddmau-composer-btn-send {
+        background-color: #1F7A4D !important;  /* dd-green */
+        color: #fff !important;
+    }
+    .ddmau-chat-shell .ddmau-composer-btn-send:hover {
+        background-color: #166442 !important;  /* dd-green-700 */
     }
 
     /* ── Date separator ("TODAY", "Yesterday", date) inside thread ── */
