@@ -40,16 +40,28 @@ import { redactString, redactStack, redactObject } from './redact';
 // available (test runners, the rare SSR path).
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : 'dev';
 
-// Read DSN from env. Vite exposes import.meta.env at module-init time.
-// In a Node-side script (tests, scripts/) import.meta.env may not be
-// present; the typeof guard avoids a ReferenceError.
+// DD Mau public Sentry DSN. Sentry treats DSNs as project identifiers,
+// not credentials — they're meant to live in client-side JS bundles
+// and abuse is controlled by per-project ingest rate limits, not key
+// secrecy. Hardcoded as a fallback so the GitHub Actions build (which
+// doesn't see local .env.local) still picks it up; local dev can
+// override with VITE_SENTRY_DSN in .env.local.
+//
+// To rotate: replace this string AND the matching env var in
+// .env.local + the SENTRY_DSN Firebase secret (functions side).
+const FALLBACK_DSN = 'https://d821c1d28812f5b6325d657a6ce5e7bb@o4511459059433472.ingest.us.sentry.io/4511459084861440';
+
+// Read DSN from env, with the hardcoded fallback above. Vite exposes
+// import.meta.env at module-init time. In a Node-side script (tests,
+// scripts/) import.meta.env may not be present; the typeof guard
+// avoids a ReferenceError.
 function getDsn() {
     try {
         if (typeof import.meta !== 'undefined' && import.meta.env) {
-            return import.meta.env.VITE_SENTRY_DSN || null;
+            return import.meta.env.VITE_SENTRY_DSN || FALLBACK_DSN || null;
         }
     } catch {}
-    return null;
+    return FALLBACK_DSN || null;
 }
 
 // True iff Sentry is wired up. Lets call sites short-circuit when
