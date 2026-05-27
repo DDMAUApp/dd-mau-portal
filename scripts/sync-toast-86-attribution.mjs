@@ -209,24 +209,52 @@ async function fetchInventory(restaurantGuid) {
     return r.json();
 }
 
-// GET /menus/v2/menuItems — resolve item guid → human-readable name.
-// Cached per restaurant since menu items don't change minute-to-minute.
+// GET /menus/v2/menus — resolve item guid → human-readable name.
+//
+// 2026-05-27 — Was hitting `/menus/v2/menuItems` which returned 404 on
+// every run (Toast deprecated/never-shipped that flat endpoint; the
+// real one returns a nested tree from `/menus/v2/menus`). With 404 the
+// map was empty → all 208 OOS items (51 Webster + 157 Maryland) got
+// silently skipped because we couldn't resolve their names. Switching
+// to the published-menu endpoint AND walking the nested tree
+// (menus[].groups[].items[]) gives us the GUID→name map the rest of
+// the script depends on. We also walk modifierGroups[].modifierOptions[]
+// because Toast lets staff 86 individual modifiers ("no avocado") and
+// those also surface as OUT_OF_STOCK rows in /stock/v1/inventory.
+//
+// Cached per restaurant since menus don't change minute-to-minute and
+// this endpoint returns the entire menu tree (can be 100+ KB).
 const itemNameCacheByRestaurant = new Map();
 async function fetchItemNames(restaurantGuid) {
     if (itemNameCacheByRestaurant.has(restaurantGuid)) {
         return itemNameCacheByRestaurant.get(restaurantGuid);
     }
-    const r = await fetch(`${HOST}/menus/v2/menuItems`, { headers: apiHeaders(restaurantGuid) });
+    const r = await fetch(`${HOST}/menus/v2/menus`, { headers: apiHeaders(restaurantGuid) });
     if (!r.ok) {
-        console.warn(`⚠ /menus/v2/menuItems failed (${r.status}) — falling back to GUIDs`);
+        console.warn(`⚠ /menus/v2/menus failed (${r.status}) — falling back to GUIDs`);
         itemNameCacheByRestaurant.set(restaurantGuid, new Map());
         return new Map();
     }
-    const items = await r.json();
+    const data = await r.json();
     const map = new Map();
-    for (const it of (Array.isArray(items) ? items : [])) {
-        if (it?.guid) map.set(it.guid, it.name || it.guid);
-    }
+    // Toast's `/menus/v2/menus` response shape (abbreviated):
+    //   { menus: [ { groups: [ { items: [ { guid, name, ... } ],
+    //                            modifierGroups: [ { modifierOptions: [...] } ] } ] } ] }
+    // Items can also have nested modifierGroups; modifierOptions also
+    // carry their own guid/name. We walk both so every guid Toast
+    // exposes via /stock/v1/inventory has a chance to resolve.
+    const walk = (node) => {
+        if (!node || typeof node !== 'object') return;
+        if (node.guid && node.name) map.set(node.guid, String(node.name));
+        // Recurse into common child arrays. Skip unknown keys to avoid
+        // walking circular structures or huge irrelevant payloads.
+        for (const key of ['menus', 'groups', 'items', 'modifierGroups', 'modifierOptions']) {
+            const v = node[key];
+            if (Array.isArray(v)) for (const child of v) walk(child);
+        }
+    };
+    walk(data);
+    console.log(`  • Toast menu: ${map.size} named entries fetched`);
     itemNameCacheByRestaurant.set(restaurantGuid, map);
     return map;
 }
