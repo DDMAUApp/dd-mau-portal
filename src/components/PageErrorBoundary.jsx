@@ -28,6 +28,26 @@
 import { Component } from 'react';
 import { logError, breadcrumb } from '../data/logger';
 
+// Chunk-load error pattern — matches Safari/Chrome/Firefox wording for
+// "the lazy-imported JS file no longer exists." This is ALWAYS a
+// stale-cache situation: the user has an old index.html cached that
+// references chunk hashes that have been rotated by subsequent deploys.
+// The fix is to force-reload once. We MUST NOT log these to /error_logs
+// at severity=critical because they're noise — every staff member on
+// every deploy boundary would generate one and bury real bugs.
+//
+// Mirror of the pattern in src/App.jsx for the global ErrorBoundary.
+// Keep them in sync.
+const CHUNK_ERR_PATTERN = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module/i;
+const RELOAD_FLAG_KEY = 'ddmau:errorBoundaryReloaded';
+
+function isChunkError(err) {
+    if (!err) return false;
+    const msg = String(err.message || err || '');
+    const name = err.name || '';
+    return CHUNK_ERR_PATTERN.test(msg) || name === 'ChunkLoadError';
+}
+
 export default class PageErrorBoundary extends Component {
     constructor(props) {
         super(props);
@@ -43,6 +63,31 @@ export default class PageErrorBoundary extends Component {
         // console has the full stack with HMR symbol mapping).
         // eslint-disable-next-line no-console
         console.error(`[${tab}] render crashed:`, error, info);
+
+        // 2026-05-27 — stale-cache chunk-load errors get the auto-reload
+        // path and are NEVER logged to /error_logs. A Kitchen Manager
+        // iPad with an old index.html bundle caught this hitting the
+        // Operations tab, generating a noise row in the Error Report.
+        // The global ErrorBoundary in App.jsx already does this for
+        // top-level catches; PageErrorBoundary needs the same logic
+        // because lazy chunks inside a route can throw THERE, not at
+        // the top level. The sessionStorage flag prevents reload-loop
+        // if the reload itself fails for some other reason — flag is
+        // cleared by ChunkReloadFlagReset on first successful render.
+        if (isChunkError(error)) {
+            let alreadyTried = null;
+            try { alreadyTried = sessionStorage.getItem(RELOAD_FLAG_KEY); } catch {}
+            if (!alreadyTried) {
+                try { sessionStorage.setItem(RELOAD_FLAG_KEY, String(Date.now())); } catch {}
+                // Defer so React can finish painting the fallback in case
+                // reload is blocked or fails — same pattern as the global
+                // ErrorBoundary in App.jsx.
+                setTimeout(() => { try { window.location.reload(); } catch {} }, 50);
+            }
+            // Either way (auto-reloading OR already tried), we skip the
+            // /error_logs write. Chunk errors aren't actionable bugs.
+            return;
+        }
 
         // Drop a breadcrumb FIRST so the error_logs row's recentActions
         // array captures the boundary trip itself (helps disambiguate
