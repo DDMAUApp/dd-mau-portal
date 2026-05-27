@@ -1462,72 +1462,52 @@ function ChatThreadInner({
                 viewport (after the bottom-nav-hide change). Without
                 this padding, the back button sits BEHIND the notch on
                 PWA installs and can't be tapped. */}
-            <header className="safe-top px-3 py-2.5 border-b border-dd-line bg-white flex items-center gap-2 shrink-0">
-                {/* 2026-05-27 — Andrew: "when you hide the bottom nav
-                    we need a back arrow at the top left." Upgraded from
-                    a 32×32 minimalist arrow to a prominent pill-style
-                    back button. Sits in a translucent backdrop-blur
-                    surface so it stays visible against any header
-                    background; sized large enough to hit on mobile
-                    (44pt touch target via px-3 + py-1.5 = ~44pt total).
-                    Crisp SVG chevron beats the `←` glyph which renders
-                    differently across devices. md:hidden hides on
-                    desktop where the sidebar gives back-by-itself UX. */}
+            {/* 2026-05-27 — Andrew: "make it look like this. look how
+                the top and bottom looks." Restructured the header into
+                three floating elements (Zenzap / iMessage / Slack iOS
+                pattern):
+                  [○ back]  [🍴 Maryland FOH — 12 members ]  [○ ⚙]
+                Back arrow and settings are small circular "pucks"; the
+                title is a rounded pill chip carrying avatar + name +
+                subtitle. No bottom border, no full-width bg — the chip
+                bg + the chat shell bg create depth via elevation, not
+                a divider line. ddmau-header-back-puck /
+                ddmau-header-chip / ddmau-header-action-puck are the
+                CSS hooks for the layered dark fills (see index.css). */}
+            <header className="safe-top px-3 pt-2.5 pb-2 bg-white flex items-center gap-2 shrink-0">
                 <button
                     onClick={onBack}
-                    // 2026-05-27 — `ddmau-back-pill` hook is the only
-                    // class CSS needs to recolor this pill on mobile
-                    // (translucent white over the black chat shell).
-                    className="ddmau-back-pill md:hidden flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full bg-dd-bg/80 backdrop-blur-sm border border-dd-line/60 text-dd-text hover:bg-dd-bg active:scale-95 transition shrink-0 font-bold text-sm"
+                    className="ddmau-header-back-puck md:hidden w-10 h-10 rounded-full flex items-center justify-center shrink-0 active:scale-95 transition"
                     aria-label={tx('Back to chats', 'Volver a chats')}
                 >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
-                    <span>{tx('Chats', 'Chats')}</span>
                 </button>
                 <button
                     onClick={onOpenSettings}
-                    className="flex items-center gap-3 min-w-0 flex-1 -mx-1 px-1 py-0.5 rounded-lg hover:bg-dd-bg active:bg-dd-bg text-left"
+                    className="ddmau-header-chip flex items-center gap-2.5 min-w-0 flex-1 px-2.5 py-1.5 rounded-2xl active:scale-[0.98] transition text-left"
                     title={tx('Open chat info', 'Abrir info del chat')}
                 >
-                    <ChatAvatar chat={chat} viewerName={staffName} size={36} />
+                    <ChatAvatar chat={chat} viewerName={staffName} size={32} />
                     <div className="min-w-0 flex-1">
-                        <div className="text-[15px] font-black text-dd-text truncate">
+                        <div className="text-[15px] font-black text-dd-text leading-tight truncate">
                             {chatDisplayName(chat, staffName)}
                         </div>
                         <div className="text-[11px] text-dd-text-2 truncate">
                             {chat.type === 'dm'
                                 ? (typingNames.length > 0
                                     ? tx('typing…', 'escribiendo…')
-                                    : tx('Direct message · tap for info', 'Mensaje directo · tap info'))
+                                    : tx('Direct message', 'Mensaje directo'))
                                 : (typingNames.length > 0
                                     ? `${formatChatName(typingNames[0])} ${tx('is typing…', 'está escribiendo…')}`
-                                    : `${(chat.members || []).length} ${tx('members', 'miembros')} · ${tx('tap to manage', 'tap para gestionar')}`)}
+                                    : `${(chat.members || []).length} ${tx('members', 'miembros')}`)}
                         </div>
                     </div>
                 </button>
-                {/* Members button — labeled, large, unmissable. Only
-                    shown on group/channel chats (DMs don't have
-                    addable members). On groups it's the primary
-                    add/remove path; on channels it opens the info
-                    modal showing auto-managed membership. */}
-                {chat.type !== 'dm' && (
-                    <button
-                        onClick={onOpenSettings}
-                        className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-dd-sage-50 border border-dd-green/30 hover:bg-dd-green/10 text-[11px] font-black text-dd-green-700 active:scale-95 transition shrink-0"
-                    >
-                        <span>👥</span>
-                        <span>{tx('Members', 'Miembros')}</span>
-                        <span className="tabular-nums opacity-70">({(chat.members || []).length})</span>
-                    </button>
-                )}
-                {/* Settings gear — always visible. Same destination as
-                    the header-name tap above; kept for users who learn
-                    the iconography. */}
                 <button
                     onClick={onOpenSettings}
-                    className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg shrink-0"
+                    className="ddmau-header-action-puck w-10 h-10 rounded-full flex items-center justify-center text-base shrink-0 active:scale-95 transition"
                     aria-label={tx('Settings', 'Configuración')}
                     title={canEdit ? tx('Edit', 'Editar') : tx('Info', 'Info')}
                 >

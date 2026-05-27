@@ -185,18 +185,21 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
         padding-top: 0 !important;
         padding-bottom: 0 !important;
     }
-    /* Make EVERYTHING under the chat shell black. The `:has()`
-       selector promotes the html element to black when the body has
+    /* Make EVERYTHING under the chat shell near-black. The `:has()`
+       selector promotes the html element when the body has
        data-chat-thread-open — covers the very-top status-bar strip
        on iOS PWA installs where iOS samples the html bg for the
        notch area. Safari 15.4+ supports :has() so this works on
-       every iPhone the staff use. */
+       every iPhone the staff use.
+       Uses #0a0a0a (not pure #000) so the iPhone OLED renders the
+       safe-area zones as the same near-black the chat shell shows,
+       avoiding a perceived seam where pure-#000 meets #0a0a0a. */
     html:has(body[data-chat-thread-open="true"]),
     body[data-chat-thread-open="true"],
     body[data-chat-thread-open="true"] .bg-dd-sage,
     body[data-chat-thread-open="true"] #root,
     body[data-chat-thread-open="true"] #root > div {
-        background-color: #000 !important;
+        background-color: #0a0a0a !important;
     }
     /* ChatCenter's outer flex container subtracts the v2 header (56px)
        and bottom nav (~60px) from 100dvh. When BOTH are hidden by the
@@ -215,28 +218,28 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     }
 }
 
-/* 2026-05-27 — dark-theme chat surface. Andrew: "make it all look
-   like the black background." Mobile-first; desktop keeps the
-   familiar two-pane white surface so the dashboards layered next to
-   it (Schedule, Operations) still look consistent on widescreen.
-   The rules use blanket child selectors instead of editing every
-   Tailwind className across ~4000 lines of ChatThread.jsx — fewer
-   moving pieces, easier to revert. !important is needed because
-   Tailwind utility classes generate single-class selectors that
-   would otherwise win on order. */
+/* 2026-05-27 — dark-theme chat surface, refined.
+   Andrew: "make it look like this. look how the top and bottom looks
+   and how the chat room have a lite black in the background. make it
+   black black and make it more modern."
+   Zenzap / iMessage iOS-native pattern: the background is a very-near-
+   black (#0a0a0a) and elevated chrome (chips, bubbles, composer pill)
+   sits at a slightly-lighter near-black (#1c1c1e — same as iOS dark
+   surfaces). The contrast between the two layers reads as depth
+   without ever lifting above pure dark. No dividers, no white-tinted
+   borders — elevation alone separates the layers.
+   Mobile-first; desktop keeps the familiar two-pane white surface so
+   the dashboards next to it (Schedule, Operations) still look
+   consistent on widescreen. !important is used because Tailwind
+   utility classes generate single-class selectors that would
+   otherwise win on order. */
 @media (max-width: 767px) {
-    /* ── Backgrounds ── */
+    /* ── Layer 1 — page background (near-black) ── */
     .ddmau-chat-shell,
     .ddmau-chat-shell aside,
     .ddmau-chat-shell section,
     .ddmau-chat-shell header {
-        background-color: #000 !important;
-    }
-    /* The composer sticky bar (border-t + bg-white) + the pinned
-       banner (bg-amber-50) live inside ChatThread as plain divs. */
-    .ddmau-chat-shell .sticky.bottom-0 {
-        background-color: #000 !important;
-        border-top-color: rgba(255, 255, 255, 0.1) !important;
+        background-color: #0a0a0a !important;
     }
 
     /* ── Text colors ── */
@@ -244,13 +247,13 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
         color: #fff !important;
     }
     .ddmau-chat-shell .text-dd-text-2 {
-        color: rgba(255, 255, 255, 0.6) !important;
+        color: rgba(255, 255, 255, 0.55) !important;
     }
 
-    /* ── Borders ── */
+    /* ── Borders (subtle, on elevated chips only) ── */
     .ddmau-chat-shell .border-dd-line,
     .ddmau-chat-shell [class*="border-dd-line"] {
-        border-color: rgba(255, 255, 255, 0.1) !important;
+        border-color: rgba(255, 255, 255, 0.06) !important;
     }
 
     /* ── Hover / active surface tints ── */
@@ -258,58 +261,76 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     .ddmau-chat-shell .active\:bg-dd-bg:active {
         background-color: rgba(255, 255, 255, 0.06) !important;
     }
-    /* Active chat row in the list — was bg-dd-sage-50 / bg-dd-bg */
     .ddmau-chat-shell .bg-dd-bg,
     .ddmau-chat-shell .bg-dd-bg\/80 {
         background-color: rgba(255, 255, 255, 0.06) !important;
     }
 
-    /* ── Message bubble (other person) ── */
-    /* JSX-added .ddmau-bubble-other class wins over the bg-white blanket
-       only because we list it AFTER the .bg-white rule in this stylesheet
-       and both have the same specificity (single class + !important). */
+    /* ── Layer 2 — elevated chrome (header chip, bubbles, composer) ── */
+    /* JSX-added marker classes are listed AFTER the .bg-white blanket
+       so they win on specificity (both are single-class + !important). */
     .ddmau-chat-shell .bg-white {
-        background-color: #000 !important;
-    }
-    .ddmau-chat-shell .ddmau-bubble-other {
-        background-color: #1f1f1f !important;
-        color: #fff !important;
-        border-color: rgba(255, 255, 255, 0.08) !important;
+        background-color: #0a0a0a !important;
     }
 
-    /* ── Composer textarea ── */
-    /* No visible border — the Zenzap reference shows just a darker pill
-       fill against the black bar. Border colors set transparent here. */
+    /* Other-person message bubble — slightly lighter than the page so
+       the message visibly "sits on" the chat, like iMessage's gray. */
+    .ddmau-chat-shell .ddmau-bubble-other {
+        background-color: #1c1c1e !important;
+        color: #fff !important;
+        border-color: transparent !important;
+    }
+
+    /* Header chip (floating pill containing avatar + name + subtitle).
+       Compact dark fill, no outline, gentle radius. Matches the
+       "Front of House" capsule in the Zenzap reference. */
+    .ddmau-chat-shell .ddmau-header-chip {
+        background-color: #1c1c1e !important;
+    }
+    .ddmau-chat-shell .ddmau-header-chip:active {
+        background-color: #2a2a2c !important;
+    }
+
+    /* Header back arrow + settings pucks — small circular dark
+       buttons flanking the chip. Subtle elevated fill so they read
+       as tappable without competing with the chip. */
+    .ddmau-chat-shell .ddmau-header-back-puck,
+    .ddmau-chat-shell .ddmau-header-action-puck {
+        background-color: #1c1c1e !important;
+        color: #fff !important;
+    }
+    .ddmau-chat-shell .ddmau-header-back-puck:hover,
+    .ddmau-chat-shell .ddmau-header-action-puck:hover {
+        background-color: #2a2a2c !important;
+    }
+
+    /* Composer textarea — pill input. Same elevated fill as the
+       header chip so the top and bottom of the screen feel like one
+       coherent system. No border. */
     .ddmau-chat-shell textarea {
-        background-color: #1c1c1c !important;
+        background-color: #1c1c1e !important;
         color: #fff !important;
         border-color: transparent !important;
     }
     .ddmau-chat-shell textarea::placeholder {
         color: rgba(255, 255, 255, 0.4) !important;
     }
-    /* Drop the hairline divider above the composer. Default Tailwind
-       `border-t border-dd-line` was being recolored to white/10 by the
-       border-dd-line override earlier in this stylesheet — but the
-       reference shows NO divider. Set to transparent for a flush bar. */
+
+    /* Composer outer bar: flush black, no divider. */
     .ddmau-chat-shell .sticky.bottom-0 {
+        background-color: #0a0a0a !important;
         border-top-color: transparent !important;
     }
 
-    /* ── Composer +, mic, send buttons ──
-       Circular dark fills that read as tappable on the black bar (matches
-       the Zenzap reference photo — small subtle "pucks" flanking the
-       input pill). Send button overrides this to keep the brand green. */
+    /* Composer +, mic, send buttons — circular elevated pucks
+       flanking the input pill. Send button stays brand green. */
     .ddmau-chat-shell .ddmau-composer-btn {
-        background-color: rgba(255, 255, 255, 0.08) !important;
+        background-color: #1c1c1e !important;
         color: #fff !important;
     }
     .ddmau-chat-shell .ddmau-composer-btn:hover {
-        background-color: rgba(255, 255, 255, 0.14) !important;
+        background-color: #2a2a2c !important;
     }
-    /* Send button — keep dd-green (brand). The :hover state below
-       inherits Tailwind's hover:bg-dd-green-700 since these rules don't
-       override hover for the send button. */
     .ddmau-chat-shell .ddmau-composer-btn-send {
         background-color: #1F7A4D !important;  /* dd-green */
         color: #fff !important;
@@ -318,16 +339,10 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
         background-color: #166442 !important;  /* dd-green-700 */
     }
 
-    /* ── Date separator ("TODAY", "Yesterday", date) inside thread ── */
+    /* Date separator ("TODAY", "Yesterday", date) — subdued so it
+       feels like a system stamp, not message content. */
     .ddmau-chat-shell .ddmau-chat-divider {
-        color: rgba(255, 255, 255, 0.5) !important;
-    }
-
-    /* ── Header back-arrow pill — was bg-dd-bg/80 + border-dd-line/60 ── */
-    .ddmau-chat-shell .ddmau-back-pill {
-        background-color: rgba(255, 255, 255, 0.08) !important;
-        border-color: rgba(255, 255, 255, 0.12) !important;
-        color: #fff !important;
+        color: rgba(255, 255, 255, 0.4) !important;
     }
 }
 
