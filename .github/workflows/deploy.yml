@@ -37,7 +37,7 @@ jobs:
         # must be set as GitHub Actions Repository Secrets for the
         # source maps to upload to Sentry on each deploy. Without
         # them, sentry.io stack traces show minified names like
-        // 'Ll' / '$' / 'ge' instead of real function names.
+        # 'Ll' / '$' / 'ge' instead of real function names.
         #
         # To configure:
         # https://github.com/DDMAUApp/dd-mau-portal/settings/secrets/actions
