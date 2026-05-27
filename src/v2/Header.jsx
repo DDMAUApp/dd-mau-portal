@@ -42,7 +42,12 @@ export default function Header({
         // Background extends INTO the iPhone safe area; content row gets
         // pushed below the notch via padding-top: env(safe-area-inset-top).
         <header
-            className="sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-dd-line/80"
+            // 2026-05-27 — `ddmau-app-header` class is the hook CSS uses
+            // to hide this whole strip on mobile when a chat thread is
+            // open (body[data-chat-thread-open="true"]). See index.css.
+            // The chat thread provides its own back-arrow + title header
+            // and takes the full screen, Zenzap / iMessage style.
+            className="ddmau-app-header sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-dd-line/80"
             style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
             <div className="h-14 md:h-16 px-3 sm:px-6 flex items-center gap-2 md:gap-3">

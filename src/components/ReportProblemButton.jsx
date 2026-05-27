@@ -154,7 +154,10 @@ export default function ReportProblemButton({ language = 'en' }) {
             <button
                 onClick={() => setOpen(true)}
                 aria-label={tx('Report a problem', 'Reportar problema')}
-                className="fixed right-3 bottom-20 md:bottom-4 z-40 bg-dd-text/90 text-white rounded-full px-3 py-2 text-[11px] font-black shadow-lg hover:bg-dd-text active:scale-95 transition flex items-center gap-1.5"
+                // ddmau-report-fab — class CSS uses to hide this FAB while
+                // a chat thread is open (it floats on top of the composer
+                // and the new floating-bubble + attach menu otherwise).
+                className="ddmau-report-fab fixed right-3 bottom-20 md:bottom-4 z-40 bg-dd-text/90 text-white rounded-full px-3 py-2 text-[11px] font-black shadow-lg hover:bg-dd-text active:scale-95 transition flex items-center gap-1.5"
             >
                 <span aria-hidden>🪲</span>
                 <span>{tx('Report', 'Reportar')}</span>

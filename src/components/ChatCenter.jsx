@@ -437,7 +437,12 @@ export default function ChatCenter({
     // invalid fall back to the previous vh value — keeps the old
     // pre-fix behavior intact rather than collapsing to auto-height.
     return (
-        <div className="flex h-[calc(100vh-220px)] h-[calc(100dvh_-_146px_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
+        /* 2026-05-27 — `ddmau-chat-shell` hook lets CSS expand this
+           container to the full viewport on mobile when a chat thread
+           is open (the v2 app header + bottom nav get hidden so the
+           calc above leaves a 116px void up top). Also drives the
+           dark-theme color overrides for mobile chat. See index.css. */
+        <div className="ddmau-chat-shell flex h-[calc(100vh-220px)] h-[calc(100dvh_-_146px_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
             {/* ── LEFT PANE: chat list ──────────────────────────── */}
             <aside className={`${mobileShowList ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-[340px] md:border-r border-dd-line bg-white shrink-0`}>
                 {/* Header */}

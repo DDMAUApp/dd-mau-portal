@@ -1475,7 +1475,10 @@ function ChatThreadInner({
                     desktop where the sidebar gives back-by-itself UX. */}
                 <button
                     onClick={onBack}
-                    className="md:hidden flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full bg-dd-bg/80 backdrop-blur-sm border border-dd-line/60 text-dd-text hover:bg-dd-bg active:scale-95 transition shrink-0 font-bold text-sm"
+                    // 2026-05-27 — `ddmau-back-pill` hook is the only
+                    // class CSS needs to recolor this pill on mobile
+                    // (translucent white over the black chat shell).
+                    className="ddmau-back-pill md:hidden flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full bg-dd-bg/80 backdrop-blur-sm border border-dd-line/60 text-dd-text hover:bg-dd-bg active:scale-95 transition shrink-0 font-bold text-sm"
                     aria-label={tx('Back to chats', 'Volver a chats')}
                 >
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1571,9 +1574,20 @@ function ChatThreadInner({
             <div
                 ref={scrollRef}
                 onScroll={handleScroll}
-                className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain px-3 py-2 space-y-1"
+                className="flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-contain px-3 py-2"
                 style={{ WebkitOverflowScrolling: 'touch' }}
             >
+                {/* 2026-05-27 — Andrew: "the chats and how its not stuch
+                    to the bottom." iMessage / Zenzap pin messages to the
+                    BOTTOM of the visible area when the thread is short,
+                    not float them in the middle. Trick: wrap the message
+                    list in a flex column with `min-h-full justify-end`
+                    inside the overflow-y-auto scroller. Short threads
+                    sit at the bottom (justify-end pushes them down to
+                    fill the min-height); long threads grow past min-h
+                    and scroll normally with oldest at the top, newest
+                    at the bottom — same UX. */}
+                <div className="flex flex-col justify-end min-h-full space-y-1">
                 {/* Load-older button — only when we haven't reached the
                     bottom of the message history yet. Bumps the limit
                     by 50 and re-runs the subscription. */}
@@ -1589,7 +1603,7 @@ function ChatThreadInner({
                 )}
                 {grouped.map((group) => (
                     <div key={group.label}>
-                        <div className="text-center text-[11px] font-bold text-dd-text-2 uppercase tracking-widest py-3">
+                        <div className="ddmau-chat-divider text-center text-[11px] font-bold text-dd-text-2 uppercase tracking-widest py-3">
                             {group.label}
                         </div>
                         {group.messages.map((msg, i) => {
@@ -1697,6 +1711,7 @@ function ChatThreadInner({
                         {tx('Be the first to say hi 👋', '¡Sé el primero en saludar 👋!')}
                     </div>
                 )}
+                </div>
             </div>
 
             {/* ── Upload progress ─────────────────────────────── */}
@@ -2169,7 +2184,10 @@ function MessageBubbleInner({
                             ? 'bg-dd-green text-white rounded-br-md'
                             : (mentioned
                                 ? 'bg-amber-50 text-dd-text border border-amber-300 rounded-bl-md'
-                                : 'bg-white text-dd-text border border-dd-line rounded-bl-md')}`}
+                                /* `ddmau-bubble-other` flips this to a
+                                   dark surface on mobile via index.css —
+                                   keeps the white bubble on desktop. */
+                                : 'ddmau-bubble-other bg-white text-dd-text border border-dd-line rounded-bl-md')}`}
                     >
                         {/* Quoted reply preview — rendered ABOVE the bubble's
                             own content so the thread context reads top-down

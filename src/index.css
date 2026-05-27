@@ -161,6 +161,132 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     display: none !important;
 }
 
+/* 2026-05-27 — companion rules to the bottom-nav-hide above. When a
+   chat thread is open ON MOBILE, also drop the v2 app shell header
+   AND the main element's vertical padding so the chat surface fills
+   the whole screen. The chat thread renders its own back-arrow pill
+   with safe-area-inset-top padding, so the area under the iPhone
+   notch is still clearance — not occluded.
+   Andrew 2026-05-27 — "the top button to go back to the main chat is
+   too low. make it all look like the black background." */
+@media (max-width: 767px) {
+    body[data-chat-thread-open="true"] .ddmau-app-header {
+        display: none !important;
+    }
+    body[data-chat-thread-open="true"] main {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+    }
+    /* ChatCenter's outer flex container subtracts the v2 header (56px)
+       and bottom nav (~60px) from 100dvh. When BOTH are hidden by the
+       rules above, the container still uses that calc and leaves a
+       ~116px void at the top of the screen. Force the chat shell to
+       fill the viewport (minus iPhone safe areas) so messages sit
+       flush against the back button + the keyboard. */
+    body[data-chat-thread-open="true"] .ddmau-chat-shell {
+        height: 100vh !important;
+        height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        margin-left: 0 !important;
+        margin-right: 0 !important;
+        border-radius: 0 !important;
+    }
+}
+
+/* 2026-05-27 — dark-theme chat surface. Andrew: "make it all look
+   like the black background." Mobile-first; desktop keeps the
+   familiar two-pane white surface so the dashboards layered next to
+   it (Schedule, Operations) still look consistent on widescreen.
+   The rules use blanket child selectors instead of editing every
+   Tailwind className across ~4000 lines of ChatThread.jsx — fewer
+   moving pieces, easier to revert. !important is needed because
+   Tailwind utility classes generate single-class selectors that
+   would otherwise win on order. */
+@media (max-width: 767px) {
+    /* ── Backgrounds ── */
+    .ddmau-chat-shell,
+    .ddmau-chat-shell aside,
+    .ddmau-chat-shell section,
+    .ddmau-chat-shell header {
+        background-color: #000 !important;
+    }
+    /* The composer sticky bar (border-t + bg-white) + the pinned
+       banner (bg-amber-50) live inside ChatThread as plain divs. */
+    .ddmau-chat-shell .sticky.bottom-0 {
+        background-color: #000 !important;
+        border-top-color: rgba(255, 255, 255, 0.1) !important;
+    }
+
+    /* ── Text colors ── */
+    .ddmau-chat-shell .text-dd-text {
+        color: #fff !important;
+    }
+    .ddmau-chat-shell .text-dd-text-2 {
+        color: rgba(255, 255, 255, 0.6) !important;
+    }
+
+    /* ── Borders ── */
+    .ddmau-chat-shell .border-dd-line,
+    .ddmau-chat-shell [class*="border-dd-line"] {
+        border-color: rgba(255, 255, 255, 0.1) !important;
+    }
+
+    /* ── Hover / active surface tints ── */
+    .ddmau-chat-shell .hover\:bg-dd-bg:hover,
+    .ddmau-chat-shell .active\:bg-dd-bg:active {
+        background-color: rgba(255, 255, 255, 0.06) !important;
+    }
+    /* Active chat row in the list — was bg-dd-sage-50 / bg-dd-bg */
+    .ddmau-chat-shell .bg-dd-bg,
+    .ddmau-chat-shell .bg-dd-bg\/80 {
+        background-color: rgba(255, 255, 255, 0.06) !important;
+    }
+
+    /* ── Message bubble (other person) ── */
+    /* JSX-added .ddmau-bubble-other class wins over the bg-white blanket
+       only because we list it AFTER the .bg-white rule in this stylesheet
+       and both have the same specificity (single class + !important). */
+    .ddmau-chat-shell .bg-white {
+        background-color: #000 !important;
+    }
+    .ddmau-chat-shell .ddmau-bubble-other {
+        background-color: #1f1f1f !important;
+        color: #fff !important;
+        border-color: rgba(255, 255, 255, 0.08) !important;
+    }
+
+    /* ── Composer textarea ── */
+    .ddmau-chat-shell textarea {
+        background-color: #1c1c1c !important;
+        color: #fff !important;
+        border-color: rgba(255, 255, 255, 0.15) !important;
+    }
+    .ddmau-chat-shell textarea::placeholder {
+        color: rgba(255, 255, 255, 0.4) !important;
+    }
+
+    /* ── Date separator ("TODAY", "Yesterday", date) inside thread ── */
+    .ddmau-chat-shell .ddmau-chat-divider {
+        color: rgba(255, 255, 255, 0.5) !important;
+    }
+
+    /* ── Header back-arrow pill — was bg-dd-bg/80 + border-dd-line/60 ── */
+    .ddmau-chat-shell .ddmau-back-pill {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        border-color: rgba(255, 255, 255, 0.12) !important;
+        color: #fff !important;
+    }
+}
+
+/* Hide the floating Report-a-Problem bug button inside chat threads
+   on mobile — it covers the message composer in landscape and stacks
+   on top of the new floating + attach bubble in portrait. The button
+   is still reachable from every other page. */
+body[data-chat-thread-open="true"] .ddmau-report-fab {
+    display: none !important;
+}
+
 /* Screenshot protection for recipes */
 .recipe-protected {
     -webkit-user-select: none;
