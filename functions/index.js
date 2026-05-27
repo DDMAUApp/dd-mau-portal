@@ -59,6 +59,37 @@ const GMAIL_OAUTH_CLIENT_ID = defineSecret("GMAIL_OAUTH_CLIENT_ID");
 const GMAIL_OAUTH_CLIENT_SECRET = defineSecret("GMAIL_OAUTH_CLIENT_SECRET");
 const GMAIL_OAUTH_REFRESH_TOKEN = defineSecret("GMAIL_OAUTH_REFRESH_TOKEN");
 
+// Sentry — Andrew 2026-05-26. Backend-side init. The DSN lives as a
+// Firebase secret so the deployed bundle never embeds it as plaintext.
+// Set with: firebase functions:secrets:set SENTRY_DSN
+// If the secret isn't set, every Sentry call in functions/sentry.js is
+// a no-op — safe to deploy without it (the secret can be added later
+// and individual functions that use it will pick it up on their next
+// cold start once the secret is attached to their config).
+const SENTRY_DSN = defineSecret("SENTRY_DSN");
+
+// Initialize Sentry at module load — this fires once per Cloud Function
+// cold start. SENTRY_DSN.value() throws if the secret isn't attached to
+// the function being invoked, so we guard with try/catch and let
+// initSentry's "no DSN" branch handle the falsy case.
+//
+// IMPORTANT: each function that wants Sentry to actually fire must
+// declare `secrets: [SENTRY_DSN]` in its options block — Firebase
+// only mounts secrets on functions that explicitly list them.
+const { initSentry: initBackendSentry, captureWithContext } = require("./sentry");
+try {
+    const dsn = SENTRY_DSN.value();
+    initBackendSentry({
+        dsn,
+        release: process.env.K_REVISION || process.env.GAE_VERSION || "unknown",
+        environment: process.env.FUNCTIONS_EMULATOR === "true" ? "dev" : "prod",
+    });
+} catch {
+    // SENTRY_DSN not attached to this function's secrets list, or
+    // not configured at all. initSentry's "no DSN" path runs.
+    initBackendSentry({ dsn: null });
+}
+
 // 2026-05-23 — Toast Connect API secrets removed. Powered syncToastMenuStatus,
 // which was a redundant duplicate of the Railway scraper that already writes
 // /ops/86_<location>. The Cloud Function 401'd in production because nothing
@@ -470,7 +501,7 @@ exports.dispatchSms = onDocumentCreated(
     {
         document: "notifications/{id}",
         region: "us-central1",
-        secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER],
+        secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER, SENTRY_DSN],
     },
     async (event) => {
         const snap = event.data;
@@ -681,7 +712,7 @@ exports.dispatchSms = onDocumentCreated(
 exports.twilioInbound = onRequest(
     {
         region: "us-central1",
-        secrets: [TWILIO_AUTH_TOKEN],
+        secrets: [TWILIO_AUTH_TOKEN, SENTRY_DSN],
         cors: false,
         invoker: "public",
     },
@@ -841,7 +872,7 @@ function sendTwiml(res, message) {
 exports.twilioStatusCallback = onRequest(
     {
         region: "us-central1",
-        secrets: [TWILIO_AUTH_TOKEN],
+        secrets: [TWILIO_AUTH_TOKEN, SENTRY_DSN],
         cors: false,
         invoker: "public",
     },
@@ -2531,7 +2562,7 @@ exports.aiSearch = onCall(
         region: "us-central1",
         cors: true,
         maxInstances: 5,
-        secrets: [ANTHROPIC_API_KEY],
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
     },
     async (request) => {
         // Same IP rate-limit shape as translateMessage.
@@ -2688,7 +2719,7 @@ exports.aiFixText = onCall(
         region: "us-central1",
         cors: true,
         maxInstances: 5,
-        secrets: [ANTHROPIC_API_KEY],
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
     },
     async (request) => {
         const ip = request.rawRequest?.ip
@@ -2990,7 +3021,7 @@ exports.aiExtractMenu = onCall(
         maxInstances: 5,
         timeoutSeconds: 120,   // vision calls can take 20-60s for multi-page menus
         memory: "512MiB",      // base64 + JSON parsing of multi-image responses
-        secrets: [ANTHROPIC_API_KEY],
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
     },
     async (request) => {
         const ip = request.rawRequest?.ip
@@ -3202,7 +3233,7 @@ exports.aiGeneratePromo = onCall(
         region: "us-central1",
         cors: true,
         maxInstances: 5,
-        secrets: [ANTHROPIC_API_KEY],
+        secrets: [ANTHROPIC_API_KEY, SENTRY_DSN],
     },
     async (request) => {
         const ip = request.rawRequest?.ip
@@ -3492,6 +3523,7 @@ exports.pollGmail = onSchedule(
             GMAIL_OAUTH_CLIENT_SECRET,
             GMAIL_OAUTH_REFRESH_TOKEN,
             ANTHROPIC_API_KEY,
+            SENTRY_DSN,
         ],
     },
     async () => {
@@ -4022,7 +4054,7 @@ Body snippet: ${snippet}`;
 // alert time. Two rows within 60 minutes of each other with the same
 // signature collapse — only the first triggers a notification.
 exports.onCriticalError = onDocumentCreated(
-    { document: "error_logs/{id}", region: "us-central1" },
+    { document: "error_logs/{id}", region: "us-central1", secrets: [SENTRY_DSN] },
     async (event) => {
         const snap = event.data;
         if (!snap) return;
@@ -4065,6 +4097,7 @@ exports.onCriticalError = onDocumentCreated(
             });
         } catch (e) {
             logger.warn(`onCriticalError: cooldown txn failed for sig=${sig}:`, e?.message || e);
+            captureWithContext(e, { fn: "onCriticalError", tags: { phase: "cooldown" } });
             // Fall through to alert anyway — better to over-page than
             // silently drop a real crit.
             shouldAlert = true;
@@ -4116,6 +4149,7 @@ exports.onCriticalError = onDocumentCreated(
                 });
             } catch (e) {
                 logger.warn(`onCriticalError: notify ${o.name} failed:`, e?.message || e);
+                captureWithContext(e, { fn: "onCriticalError", tags: { phase: "notify" }, extra: { recipient: o.name } });
             }
         }
         logger.info(`onCriticalError: paged ${owners.length} owner(s) — sig="${sig}" ref=${ref}.`);
@@ -4151,6 +4185,7 @@ exports.pruneSystemLogs = onSchedule(
         region: "us-central1",
         timeoutSeconds: 540,
         memory: "512MiB",
+        secrets: [SENTRY_DSN],
     },
     async () => {
         const SCAN_LIMIT = 1500;

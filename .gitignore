@@ -4,6 +4,9 @@ dist-snapshot/
 .DS_Store
 *.log
 .env
+.env.local
+.env.*.local
+.sentryclirc
 toast-menu-snapshot.json
 firebase-service-account.json
 serviceAccountKey.json

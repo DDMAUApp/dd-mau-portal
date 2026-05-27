@@ -44,6 +44,7 @@
 import { db } from '../firebase';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { redactObject, redactString, redactStack, redactUrl } from './redact';
+import { setSentryIdentity, captureException as sentryCapture } from './sentryClient';
 
 // App version is set at build time via __APP_VERSION__ in vite.config.js.
 // In dev / Vitest the define is missing — fall back to a sentinel
@@ -161,9 +162,28 @@ function buildCommonContext() {
 // Returns the doc id of the written row (or null if the write
 // failed). Never throws.
 export async function logError({ error, severity = 'error', feature, meta } = {}) {
+    const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));
+
+    // Fire to Sentry FIRST (synchronously, so it queues before any
+    // Firestore round-trip). It's a no-op when Sentry isn't wired
+    // up. Wrapped in try/catch so a Sentry init issue can never
+    // suppress the Firestore write below.
+    try {
+        sentryCapture(errObj, {
+            level: severity === 'critical' ? 'fatal'
+                : severity === 'error'    ? 'error'
+                : severity === 'warn'     ? 'warning'
+                :                            'info',
+            tags: {
+                feature: feature || 'unknown',
+                severity,
+            },
+            extra: meta != null ? { meta: redactObject(meta) } : undefined,
+        });
+    } catch {}
+
     try {
         const ctx = buildCommonContext();
-        const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));
         const row = {
             ...ctx,
             severity,
@@ -182,7 +202,8 @@ export async function logError({ error, severity = 'error', feature, meta } = {}
     } catch (e) {
         // Never recurse — just warn. If logging is broken (rules
         // misconfigured, offline, etc.) the original error is still
-        // surfaced to the user via the error boundary.
+        // surfaced to the user via the error boundary AND has already
+        // gone to Sentry above.
         if (typeof console !== 'undefined') {
             // eslint-disable-next-line no-console
             console.warn('[logger] logError write failed:', e);
@@ -224,12 +245,20 @@ export async function logSecurityEvent({ kind, path, op, reason, meta } = {}) {
 // Called by App.jsx after PIN unlock so subsequent log rows carry
 // staff identity. Tear-down (e.g. on logout) should pass empty
 // values. Idempotent.
+//
+// Also mirrors the identity into Sentry (see src/data/sentryClient.js)
+// so every Sentry event auto-tags the staff name + role + location.
+// Sentry's setUser is the canonical way to filter "show me errors
+// only on the Webster manager iPads."
 export function setIdentity({ staffId, staffName, role, location } = {}) {
     if (typeof window === 'undefined') return;
     window.__ddmau_staffId   = staffId   ?? null;
     window.__ddmau_staffName = staffName ?? null;
     window.__ddmau_role      = role      ?? 'anonymous';
     window.__ddmau_location  = location  ?? null;
+    // Mirror to Sentry. setSentryIdentity is a no-op when Sentry isn't
+    // wired up (DSN missing), so this is safe in every environment.
+    try { setSentryIdentity({ staffId, staffName, role, location }); } catch {}
 }
 
 // ── public: installGlobalHandlers ───────────────────────────────────

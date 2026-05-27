@@ -3,6 +3,20 @@ import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
 import { copyFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+// Sentry source map upload plugin — Andrew 2026-05-26. Runs on every
+// `npm run build`. Reads three env vars from the local shell or CI:
+//   • SENTRY_AUTH_TOKEN  — created at sentry.io → User Settings → Auth Tokens
+//                          (scopes: project:write, project:releases). SECRET.
+//   • SENTRY_ORG         — your Sentry org slug (visible in URLs).
+//   • SENTRY_PROJECT     — the project slug; we use 'dd-mau-portal'.
+//
+// If any of these are missing the plugin is omitted entirely — local
+// dev builds work without Sentry credentials. Source maps still get
+// generated (sourcemap: 'hidden' below) so the plugin can ingest them
+// when the env is configured; the `filesToDeleteAfterUpload` setting
+// then strips them from /dist before deploy so production never ships
+// the maps.
+import { sentryVitePlugin } from '@sentry/vite-plugin'
 
 // GitHub Pages SPA fallback: serve index.html for any unknown path.
 // Pages doesn't natively rewrite to index.html, but it DOES serve
@@ -44,7 +58,36 @@ export default defineConfig({
     __APP_BUILT_AT__: JSON.stringify(APP_BUILT_AT),
     __APP_OPERATOR__: JSON.stringify('Shih Technology'),
   },
-  plugins: [react(), spa404Fallback()],
+  plugins: [
+    react(),
+    spa404Fallback(),
+    // Sentry source-map upload — only attached when the three env vars
+    // are present. Local dev/build without Sentry creds = no plugin,
+    // no upload, no warning. CI/owner laptop with creds = source maps
+    // are uploaded to Sentry on every build so stack traces in the
+    // Sentry dashboard show source code instead of minified output.
+    // The release tag matches __APP_VERSION__ so Sentry's "this deploy
+    // introduced N errors" UI lines up with our app version label.
+    ...(process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT
+      ? [sentryVitePlugin({
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+          org: process.env.SENTRY_ORG,
+          project: process.env.SENTRY_PROJECT,
+          release: { name: APP_VERSION, finalize: true },
+          sourcemaps: {
+            assets: ['./dist/**/*.js', './dist/**/*.js.map'],
+            // After upload, delete the .map files so production
+            // doesn't serve them. Sentry has them; the browser
+            // doesn't need them.
+            filesToDeleteAfterUpload: ['./dist/**/*.map'],
+          },
+          // Suppress the "no auth token" / "no org" warnings if any
+          // env var is empty — we already gate above so this is a
+          // safety net for partial configs.
+          silent: false,
+        })]
+      : []),
+  ],
   // Strip noisy console calls from production builds.
   // `pure` marks these as side-effect-free so esbuild removes them
   // when minifying (production only — dev keeps everything so we can
@@ -66,7 +109,20 @@ export default defineConfig({
   base: '/',
   build: {
     outDir: 'dist',
-    sourcemap: false,
+    // 2026-05-26 — sourcemap generation is gated on Sentry being
+    // configured. The Sentry vite plugin needs maps to upload to its
+    // backend; if Sentry isn't configured we DON'T want to generate
+    // them because they'd ship to GitHub Pages unprotected and any
+    // visitor could URL-guess /assets/*.js.map to recover near-source
+    // code. Conditional:
+    //   • Sentry creds set → sourcemap: 'hidden' (generated, no
+    //     //# sourceMappingURL= comment, plugin uploads + deletes from
+    //     dist via filesToDeleteAfterUpload).
+    //   • Sentry creds NOT set → sourcemap: false (no .map files
+    //     generated at all → nothing leaks).
+    sourcemap: (process.env.SENTRY_AUTH_TOKEN && process.env.SENTRY_ORG && process.env.SENTRY_PROJECT)
+      ? 'hidden'
+      : false,
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       output: {

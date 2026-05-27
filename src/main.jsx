@@ -5,7 +5,12 @@ import AppToast from './components/AppToast.jsx';
 import './index.css';
 import './firebase.js';
 import { setupPWA } from './pwa.js';
+// Sentry — Andrew 2026-05-26. Initialised BEFORE React renders so
+// the very first render is instrumented. No-op when VITE_SENTRY_DSN
+// is missing (dev or fresh-clone state) — see src/data/sentryClient.js.
+import { initSentry } from './data/sentryClient.js';
 
+initSentry();
 setupPWA();
 
 // AppToast subscribes to the module-level toast queue. Rendering it
