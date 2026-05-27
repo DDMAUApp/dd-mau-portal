@@ -168,7 +168,15 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
    with safe-area-inset-top padding, so the area under the iPhone
    notch is still clearance — not occluded.
    Andrew 2026-05-27 — "the top button to go back to the main chat is
-   too low. make it all look like the black background." */
+   too low. make it all look like the black background."
+   Andrew follow-up — "make the whole chat page black from top to
+   bottom. also the background all black." The chat shell fills
+   `100dvh − safe-area-inset-top − safe-area-inset-bottom`; those
+   excluded strips (under the notch and over the home indicator) show
+   the surface BEHIND the chat. The app shell wraps everything in
+   `bg-dd-sage`, so the strips read as sage green by default. Blacken
+   the body + the sage wrapper so the whole viewport — including the
+   iPhone safe-area zones — is solid black while chat is open. */
 @media (max-width: 767px) {
     body[data-chat-thread-open="true"] .ddmau-app-header {
         display: none !important;
@@ -176,6 +184,19 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     body[data-chat-thread-open="true"] main {
         padding-top: 0 !important;
         padding-bottom: 0 !important;
+    }
+    /* Make EVERYTHING under the chat shell black. The `:has()`
+       selector promotes the html element to black when the body has
+       data-chat-thread-open — covers the very-top status-bar strip
+       on iOS PWA installs where iOS samples the html bg for the
+       notch area. Safari 15.4+ supports :has() so this works on
+       every iPhone the staff use. */
+    html:has(body[data-chat-thread-open="true"]),
+    body[data-chat-thread-open="true"],
+    body[data-chat-thread-open="true"] .bg-dd-sage,
+    body[data-chat-thread-open="true"] #root,
+    body[data-chat-thread-open="true"] #root > div {
+        background-color: #000 !important;
     }
     /* ChatCenter's outer flex container subtracts the v2 header (56px)
        and bottom nav (~60px) from 100dvh. When BOTH are hidden by the
