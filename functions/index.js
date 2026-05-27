@@ -357,6 +357,72 @@ exports.dispatchNotification = onDocumentCreated(
             }
         }
 
+        // ── Coalesce burst-fired notifications (2026-05-27) ─────────
+        // Andrew: "the urgent sauce alert just notified me 17 times
+        // please look at that."
+        // Root cause: Yeiry tapped through 12 sauces in the SauceLog in
+        // ~4 minutes. Each tap creates one /notifications doc per
+        // manager × 4 managers, then dispatchNotification fans each
+        // doc out to that manager's FCM tokens. With 2 tokens you got
+        // ~24 pushes — felt like the phone was screaming.
+        // Fix: per (recipient, type) cooldown marker. If the SAME
+        // recipient already got a push of the SAME type within the
+        // configured window, we suppress the FCM push but KEEP the
+        // /notifications doc — so the bell drawer still accumulates
+        // every entry (manager opens the app and sees all 12 sauces),
+        // there's just no second-by-second phone ping per request.
+        // Types not listed here behave as before (no coalesce).
+        const COALESCE_WINDOW_SEC = {
+            sauce_urgent:     90,   // bursts of sauce requests collapse to one ping
+            sauce_request:    300,  // 5 min — non-urgent are batchier
+            // ChatThread already groups its own pings (debounced send-
+            // burst); leaving chat_message at zero to keep that.
+        };
+        const coalesceSec = COALESCE_WINDOW_SEC[notif.type];
+        if (typeof coalesceSec === "number" && coalesceSec > 0) {
+            const markerRef = db.doc(`system/notif_cooldown_${forStaff.replace(/[^A-Za-z0-9_]/g, "_")}_${notif.type}`);
+            try {
+                const markerSnap = await markerRef.get();
+                const lastPushMs = markerSnap.exists ? (markerSnap.data()?.lastPushMs || 0) : 0;
+                const now = Date.now();
+                if (lastPushMs && (now - lastPushMs) < coalesceSec * 1000) {
+                    logger.info(`coalesce gate: suppressing push for ${forStaff} type=${notif.type} (last push ${Math.round((now - lastPushMs) / 1000)}s ago, window=${coalesceSec}s)`);
+                    // Stamp the doc so the Error Report / forensic tooling
+                    // shows this push was intentionally suppressed.
+                    try {
+                        await snap.ref.update({
+                            pushSuppressed: true,
+                            pushSuppressedReason: "coalesced_burst",
+                        });
+                    } catch (e) {
+                        logger.warn(`could not stamp pushSuppressed (coalesce) for ${event.params.id}:`, e);
+                    }
+                    // Bump the marker so the cooldown keeps extending
+                    // while bursts continue. Also track how many got
+                    // suppressed so we can show "+5 more" in the bell
+                    // summary later if we want.
+                    try {
+                        await markerRef.set({
+                            lastPushMs: lastPushMs,  // unchanged — the FIRST push of the burst defines the window
+                            suppressedInWindow: (markerSnap.data()?.suppressedInWindow || 0) + 1,
+                            lastSuppressedAt: now,
+                        }, { merge: true });
+                    } catch {}
+                    return;
+                }
+                // Not in cooldown → push goes through, stamp the marker.
+                await markerRef.set({
+                    lastPushMs: now,
+                    suppressedInWindow: 0,
+                    lastPushAt: now,
+                }, { merge: true });
+            } catch (e) {
+                // Fail open — better to over-notify than drop a push
+                // because the marker read/write failed.
+                logger.warn(`coalesce check failed for ${forStaff} type=${notif.type}:`, e?.message || e);
+            }
+        }
+
         const isManagerOrOwner = (() => {
             if (me.id === 40 || me.id === 41) return true; // owners
             return !!me.role && /manager|owner/i.test(me.role);
