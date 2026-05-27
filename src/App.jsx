@@ -617,6 +617,22 @@ export default function App() {
     const [language, setLanguage] = useState(() => SS.get("language", "en"));
     const [activeTab, setActiveTab] = useState(() => SS.get("activeTab", "home"));
     const [staffList, setStaffList] = useState(DEFAULT_STAFF);
+    // 2026-05-27 — Bug #3 from the audit dossier. `staffList` starts
+    // as DEFAULT_STAFF (a hardcoded array of 71 names baked into
+    // staff.js) so the PIN lock screen can render instantly on cold
+    // launch. The hardcoded list is good UX for that case, but it's
+    // a STALE source of truth — any staff hired after the hardcoded
+    // list was written isn't in it. If our staff-name-validation
+    // effect (below) runs against the stale list, it can:
+    //   • briefly log out a freshly-hired staff member because they
+    //     "don't exist" in DEFAULT_STAFF
+    //   • briefly flip access flags (isAdmin/isManager/hasOpsAccess)
+    //     to the wrong value for a few hundred ms
+    // staffListReady flips true on the first real /config/staff
+    // snapshot. Effects that should wait for real data gate on it.
+    // The PIN screen still gets the instant cold-launch render
+    // because it reads `staffList` directly, not `staffListReady`.
+    const [staffListReady, setStaffListReady] = useState(false);
     // Persist session-level state on every change. Logout (setStaffName(null))
     // also clears the stored value via SS.set's null branch.
     useEffect(() => { SS.set("staffName", staffName); }, [staffName]);
@@ -810,13 +826,36 @@ export default function App() {
         // scheduleSide / etc.).
         let prevShapeHash = '';
         const unsubscribe = onSnapshot(doc(db, "config", "staff"), (docSnap) => {
-            if (!docSnap.exists()) return;
+            if (!docSnap.exists()) {
+                // The doc not existing is still a valid "we've heard
+                // back from Firestore" signal — flip ready so gated
+                // effects can stop waiting. Without this, a fresh
+                // project with no /config/staff doc would hang the
+                // validation effect forever.
+                setStaffListReady(true);
+                return;
+            }
             const list = docSnap.data().list;
-            if (!Array.isArray(list)) return;
+            if (!Array.isArray(list)) {
+                setStaffListReady(true);
+                return;
+            }
             const hash = computeStaffListShapeHash(list);
-            if (hash === prevShapeHash) return;
+            if (hash === prevShapeHash) {
+                // Same shape — still flip ready (first snapshot might
+                // hash-match the placeholder).
+                setStaffListReady(true);
+                return;
+            }
             prevShapeHash = hash;
             setStaffList(list);
+            setStaffListReady(true);
+        }, (err) => {
+            // Network-error path: surface to logger but DON'T flip
+            // ready, so gated effects keep waiting for real data
+            // rather than running against the stale placeholder.
+            // The subscription will re-fire when Firestore reconnects.
+            console.warn('config/staff snapshot error:', err);
         });
         return () => unsubscribe();
     }, []);
@@ -825,8 +864,19 @@ export default function App() {
     // entry, force a clean logout instead of silently leaving them "signed
     // in" as a name that no longer exists (no shifts, no permissions, no
     // way to detect the orphan from the UI).
+    //
+    // 2026-05-27 — Bug #3 from the audit dossier. Previously this ran on
+    // every staffList change INCLUDING the initial DEFAULT_STAFF
+    // placeholder. A staff member added AFTER the hardcoded list was
+    // written (e.g. a new hire) would not be in DEFAULT_STAFF, the
+    // validation would fail on cold launch, and they'd get auto-logged
+    // out before the real /config/staff snapshot landed. The
+    // staffListReady gate (set when the real Firestore snapshot
+    // arrives — see the staff subscription effect above) makes the
+    // validation wait for real data.
     useEffect(() => {
         if (!staffName) return;
+        if (!staffListReady) return;
         if (!Array.isArray(staffList) || staffList.length === 0) return;
         const exists = staffList.some(s => s.name === staffName);
         if (!exists) {
@@ -834,7 +884,7 @@ export default function App() {
             setStaffName(null);
             setActiveTab("home");
         }
-    }, [staffName, staffList]);
+    }, [staffName, staffList, staffListReady]);
     // Andrew 2026-05-21: "the site is still very glitchy". Wrapped each
     // access-gate derivation in useMemo so the BOOLEAN results stabilize
     // across staffList re-emits (lastSeen ticks etc.). The useMemo body

@@ -33,6 +33,11 @@ import {
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
+// 2026-05-27 — breadcrumb every chat-open + chat-back so the Sentry
+// timeline panel shows what the user did before any chat-related
+// error. Tiny, in-memory ring buffer; attached to the next error_logs
+// row and to every Sentry event. See src/data/logger.js for the ring.
+import { breadcrumb } from '../data/logger';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
@@ -506,6 +511,10 @@ export default function ChatCenter({
                                 viewerName={staffName}
                                 active={c.id === activeChatId}
                                 onClick={() => {
+                                    breadcrumb('chat.open', c.id, {
+                                        type: c.type || 'unknown',
+                                        memberCount: Array.isArray(c.members) ? c.members.length : 0,
+                                    });
                                     setActiveChatId(c.id);
                                     setMobileShowList(false);
                                 }}
@@ -532,7 +541,11 @@ export default function ChatCenter({
                             viewer={viewer}
                             viewerTier={viewerTier}
                             jumpToMessageId={jumpToMessageId}
-                            onBack={() => { setActiveChatId(null); setMobileShowList(true); }}
+                            onBack={() => {
+                                breadcrumb('chat.back', activeChat?.id || 'unknown');
+                                setActiveChatId(null);
+                                setMobileShowList(true);
+                            }}
                             onOpenSettings={() => setShowSettings(true)}
                         />
                     </Suspense>

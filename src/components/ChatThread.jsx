@@ -45,6 +45,11 @@ import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { postEightySixToChat } from '../data/eightySixChat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
+// 2026-05-27 — breadcrumb every send so the Sentry timeline shows
+// "user sent a message of type=X to chat=Y" before any error that
+// fires afterward. Single chokepoint at the bottom-of-file
+// sendMessage(); covers text, image, video, voice, poll, 86 paths.
+import { breadcrumb } from '../data/logger';
 import { recordAudit } from '../data/audit';
 import { claimCoverage, approveCoverage, denyCoverage, withdrawCoverage } from '../data/coverage';
 import { toast } from '../toast';
@@ -2954,6 +2959,19 @@ async function sendMessage({
     replyTo, poll, eightySixData, forceDeliver = false,
 }) {
     if (!chat?.id) return;
+    // Breadcrumb every send for Sentry forensics — single chokepoint
+    // catches all message paths (text/image/video/voice/poll/86).
+    // We capture type + a short tag for chat id + whether there was
+    // attached media. Body text deliberately omitted (might contain
+    // PII, scrubbed by redactor anyway, but skip to be tidy).
+    try {
+        breadcrumb('chat.send', `${type || 'unknown'}@${chat.id.slice(0, 10)}`, {
+            hasMedia: !!mediaUrl,
+            hasPoll: !!poll,
+            hasReplyTo: !!(replyTo && replyTo.id),
+            textLen: typeof text === 'string' ? text.length : 0,
+        });
+    } catch {}
     const { mentions } = parseMentions(text, staffList);
     // Sanitize the reply target. We carry only the four fields the
     // bubble renderer + jump-to-message handler actually use, so the
