@@ -1456,14 +1456,32 @@ function ChatThreadInner({
             {/* The whole avatar+name+subtitle block is tappable so
                 opening "members + settings" is unmissable. The trailing
                 Members chip is an extra-obvious entry point for the
-                manage-membership flow Andrew kept missing. */}
-            <header className="px-3 py-2.5 border-b border-dd-line bg-white flex items-center gap-2 shrink-0">
+                manage-membership flow Andrew kept missing.
+                2026-05-27 — added `safe-top` so the header clears the
+                iPhone notch when the chat thread takes the full
+                viewport (after the bottom-nav-hide change). Without
+                this padding, the back button sits BEHIND the notch on
+                PWA installs and can't be tapped. */}
+            <header className="safe-top px-3 py-2.5 border-b border-dd-line bg-white flex items-center gap-2 shrink-0">
+                {/* 2026-05-27 — Andrew: "when you hide the bottom nav
+                    we need a back arrow at the top left." Upgraded from
+                    a 32×32 minimalist arrow to a prominent pill-style
+                    back button. Sits in a translucent backdrop-blur
+                    surface so it stays visible against any header
+                    background; sized large enough to hit on mobile
+                    (44pt touch target via px-3 + py-1.5 = ~44pt total).
+                    Crisp SVG chevron beats the `←` glyph which renders
+                    differently across devices. md:hidden hides on
+                    desktop where the sidebar gives back-by-itself UX. */}
                 <button
                     onClick={onBack}
-                    className="md:hidden w-8 h-8 rounded-full hover:bg-dd-bg flex items-center justify-center text-dd-text text-xl"
-                    aria-label={tx('Back', 'Atrás')}
+                    className="md:hidden flex items-center gap-1 pl-2 pr-3 py-1.5 rounded-full bg-dd-bg/80 backdrop-blur-sm border border-dd-line/60 text-dd-text hover:bg-dd-bg active:scale-95 transition shrink-0 font-bold text-sm"
+                    aria-label={tx('Back to chats', 'Volver a chats')}
                 >
-                    ←
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                    <span>{tx('Chats', 'Chats')}</span>
                 </button>
                 <button
                     onClick={onOpenSettings}
