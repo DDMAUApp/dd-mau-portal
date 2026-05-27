@@ -224,33 +224,15 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
     // the hook call. This empty useEffect block is intentionally
     // gone — kept the comment as a breadcrumb for future migrations.
 
-    // 2026-05-26 — Andrew: "lets just make sure all the other info is
-    // used when a item is put in 86." Subscribe to the OTHER location's
-    // 86 list too so we can show "still in stock at <other location>"
-    // when an item is out here but not over there. Useful for runner
-    // logistics — Andrew can call the other store to send some.
-    const otherLocation = storeLocation === 'webster' ? 'maryland'
-                        : storeLocation === 'maryland' ? 'webster'
-                        : null;
-    const [otherItems, setOtherItems] = useState([]);
-    useEffect(() => {
-        if (!otherLocation) { setOtherItems([]); return; }
-        const unsub = onSnapshot(doc(db, 'ops', `86_${otherLocation}`), (s) => {
-            setOtherItems(s.exists() ? (s.data().items || []) : []);
-        }, (err) => console.warn('cross-location 86 subscribe failed:', err));
-        return unsub;
-    }, [otherLocation]);
-
-    // Slug helper for cross-location lookups + relative-time renderer.
-    const slug86 = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-    const otherOutSlugs = new Set(
-        (otherItems || [])
-            .filter(i => i?.status === 'OUT_OF_STOCK' && i?.name)
-            .map(i => slug86(i.name))
-    );
-    const otherLocationLabel = otherLocation === 'maryland'
-        ? tx('Maryland Heights', 'Maryland Heights')
-        : tx('Webster Groves', 'Webster Groves');
+    // 2026-05-27 — Andrew: "the 86 item have a still in stock maryland
+    // heights. lets take that off and just but day and time it was put
+    // out of stock." Removed the cross-location subscription that
+    // powered the "Still in stock at <other location>" hint. The
+    // attribution line under each item already shows day + time (via
+    // formatDateTime → 'Today at 4:23pm' / 'Yesterday at 4:23pm' /
+    // 'May 25 at 4:23pm'), which is the only thing the user wanted to
+    // see. Dropping the subscription also saves one Firestore listener
+    // per dashboard open.
 
     // "3h ago" / "Yesterday" / "Mar 14" — compact relative span next to
     // the full timestamp. Surfaces "how long has this been out" without
@@ -451,8 +433,6 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                             formatTime={formatDateTime}
                             isEs={isEs}
                             relativeAgo={relativeAgo}
-                            otherOutSlugs={otherOutSlugs}
-                            otherLocationLabel={otherLocationLabel}
                         />
                     )}
                     {low.length > 0 && (
@@ -465,8 +445,6 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                             formatTime={formatDateTime}
                             isEs={isEs}
                             relativeAgo={relativeAgo}
-                            otherOutSlugs={otherOutSlugs}
-                            otherLocationLabel={otherLocationLabel}
                         />
                     )}
                 </div>
@@ -613,14 +591,13 @@ function Eighty6SettingsModal({ settings, recipients, isEs, sending, onClose, on
 
 function Section({
     title, count, tone, items, attribution = {}, formatTime, isEs,
-    // 2026-05-26 — extra helpers from the parent so we can render the
-    // time-elapsed chip + a "still in stock at <other location>" hint
-    // when applicable. All optional so the component remains reusable.
+    // relativeAgo renders the "· 4h ago" trailer on the attribution
+    // line so admins see how long an item's been out at a glance.
+    // 2026-05-27 — otherOutSlugs / otherLocationLabel were removed
+    // alongside the cross-location hint; the parent stopped passing
+    // them too. See the comment block in the JSX below.
     relativeAgo = () => null,
-    otherOutSlugs = null,
-    otherLocationLabel = '',
 }) {
-    const slug86 = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const accent = tone === 'danger' ? 'bg-red-500' : 'bg-amber-500';
     const pill   = tone === 'danger' ? 'bg-red-50 text-red-700 border-red-200'
                                      : 'bg-amber-50 text-amber-800 border-amber-200';
@@ -731,21 +708,21 @@ function Section({
                                     “{item.note}”
                                 </div>
                             )}
-                            {/* 2026-05-26 — cross-location hint. If
-                                viewing a single location and the OTHER
-                                store doesn't have this item in its 86
-                                list, it's probably in stock there.
-                                Useful for runners. otherOutSlugs is
-                                null when viewing 'both' locations. */}
-                            {item.status === 'OUT_OF_STOCK'
-                                && otherOutSlugs
-                                && !otherOutSlugs.has(slug86(item._displayName || item.name)) && (
-                                <div className="text-[10px] text-dd-green-700 mt-0.5 font-bold">
-                                    📦 {isEs
-                                        ? `Aún disponible en ${otherLocationLabel}`
-                                        : `Still in stock at ${otherLocationLabel}`}
-                                </div>
-                            )}
+                            {/* 2026-05-27 — Andrew: "the 86 item have a
+                                still in stock maryland heights. lets take
+                                that off and just but day and time it was
+                                put out of stock." Removed the
+                                cross-location "Still in stock at
+                                <other location>" hint. The attribution
+                                line above already shows day + time
+                                (renderAttribution → formatDateTime
+                                produces 'Today at 4:23pm' / 'Yesterday
+                                at 4:23pm' / 'May 25 at 4:23pm'), which
+                                is all the user wants for each 86 row.
+                                The cross-location subscription and the
+                                otherOutSlugs / otherLocationLabel props
+                                were also dropped — see parent component
+                                where the supporting state was removed. */}
                         </div>
                         <span className={`flex-shrink-0 text-[11px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-md border ${pill}`}>
                             {item.status === 'OUT_OF_STOCK'
