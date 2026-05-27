@@ -462,19 +462,17 @@ export default function ChatCenter({
         <div className="ddmau-chat-shell flex h-[calc(100vh-220px)] h-[calc(100dvh_-_146px_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
             {/* ── LEFT PANE: chat list ──────────────────────────── */}
             <aside className={`${mobileShowList ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-[340px] md:border-r border-dd-line bg-white shrink-0`}>
-                {/* Header — mobile chat home gets a stripped-down version
-                    (Andrew 2026-05-27: "under the new back button there is
-                    a chat sign. take that off. remove the bell thats under
-                    the main bell"). On mobile we keep only the search
-                    affordance; the "+ new chat" button moves to a floating
-                    FAB at the bottom (see end of file). Desktop keeps the
-                    full three-action layout because there's no separate
-                    bottom FAB on the two-pane web layout. */}
-                <div className="px-4 py-3 md:border-b border-dd-line flex items-center justify-between bg-white shrink-0 gap-2">
-                    {/* Title only renders on desktop — mobile uses the v2
-                        header's back arrow + the chat list itself reads as
-                        the page header. */}
-                    <h1 className="hidden md:block text-[18px] font-black text-dd-text tracking-tight">
+                {/* Header — desktop only.
+                    Andrew 2026-05-27 round 2: "put the search emoji next
+                    to the search chats bar and move everything up. the
+                    report bug tab at the bottom can go too. at the bottom
+                    there is a white line across the bottom above the +."
+                    Mobile drops this row entirely; the search pill below
+                    becomes the topmost element under the v2 header so
+                    everything moves up. The previous mobile-only 🔍 icon
+                    button is folded into the search pill as a prefix. */}
+                <div className="hidden md:flex px-4 py-3 md:border-b border-dd-line items-center justify-between bg-white shrink-0 gap-2">
+                    <h1 className="text-[18px] font-black text-dd-text tracking-tight">
                         💬 {tx('Chat', 'Chat')}
                     </h1>
                     <div className="flex items-center gap-1 md:ml-auto">
@@ -486,11 +484,9 @@ export default function ChatCenter({
                         >
                             🔍
                         </button>
-                        {/* Bell + new-chat button are desktop-only. On
-                            mobile, the FAB at the bottom handles new chats. */}
                         <button
                             onClick={() => setShowNotifSettings(true)}
-                            className="hidden md:flex w-9 h-9 rounded-full hover:bg-dd-bg items-center justify-center text-lg"
+                            className="w-9 h-9 rounded-full hover:bg-dd-bg items-center justify-center text-lg flex"
                             aria-label={tx('Notifications', 'Notificaciones')}
                             title={tx('Notifications', 'Notificaciones')}
                         >
@@ -498,7 +494,7 @@ export default function ChatCenter({
                         </button>
                         <button
                             onClick={() => setShowActionMenu(true)}
-                            className="hidden md:flex w-9 h-9 rounded-full bg-dd-green text-white text-lg font-black items-center justify-center shadow-sm hover:bg-dd-green-700 active:scale-95 transition"
+                            className="w-9 h-9 rounded-full bg-dd-green text-white text-lg font-black items-center justify-center shadow-sm hover:bg-dd-green-700 active:scale-95 transition flex"
                             aria-label={tx('New', 'Nuevo')}
                         >
                             +
@@ -506,15 +502,30 @@ export default function ChatCenter({
                     </div>
                 </div>
 
-                {/* Search */}
-                <div className="px-3 py-2 border-b border-dd-line shrink-0">
-                    <input
-                        type="search"
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder={tx('Search chats…', 'Buscar chats…')}
-                        className="w-full px-3 py-2 rounded-lg bg-dd-bg border border-dd-line text-sm text-dd-text placeholder:text-dd-text-2 focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
-                    />
+                {/* Search — single pill with inline 🔍 icon prefix.
+                    iOS / iMessage / WhatsApp pattern: one rounded
+                    container with the icon and input combined, no
+                    separate row above. The wrapping div carries the pill
+                    chrome via `ddmau-chat-search-pill`; the icon and the
+                    input are flush inside it. The border-b that was
+                    here previously is gone (Andrew: "white line across
+                    the bottom") — separator collapses into the bg
+                    contrast between the search pill (#1c1c1e) and the
+                    chat surface (#0a0a0a). */}
+                <div className="px-3 pt-2 pb-1 shrink-0">
+                    <label className="ddmau-chat-search-pill flex items-center gap-2 px-3 rounded-full bg-dd-bg border border-dd-line focus-within:ring-2 focus-within:ring-dd-green/30 focus-within:border-dd-green transition">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 opacity-60">
+                            <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" />
+                            <path d="M20 20l-3.5-3.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                        </svg>
+                        <input
+                            type="search"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder={tx('Search chats', 'Buscar chats')}
+                            className="w-full py-2 bg-transparent text-sm text-dd-text placeholder:text-dd-text-2 focus:outline-none"
+                        />
+                    </label>
                 </div>
 
                 {/* Chat list.
