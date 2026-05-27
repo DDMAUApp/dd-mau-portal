@@ -85,6 +85,13 @@ const NAV_GROUPS = [
             // Lives in BUSINESS because it's "is the platform up?"
             // observability, not a Settings tweak.
             { tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado',      requires: 'admin' },
+            // Error Report — owner-only triage view for bug reports,
+            // crashes, and AI failures. Andrew 2026-05-27: "make a
+            // spot where i can say look at the error report and we
+            // both can see all the errors." Sits next to System
+            // Health because they're the two "what's broken right
+            // now?" surfaces.
+            { tab: 'errorreport', icon: '🐛',  en: 'Error Report', es: 'Errores',     requires: 'admin' },
             // Label Printing — per-printer status + recent jobs feed
             // + test print. Admin-only same as Health.
             { tab: 'labels',      icon: '🏷', en: 'Label Printing',es: 'Etiquetas',  requires: 'admin' },

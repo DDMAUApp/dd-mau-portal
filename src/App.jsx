@@ -75,6 +75,13 @@ const MenuScreensPage = lazy(() => import('./components/MenuScreensPage').then(m
 // TVs, backups, recent audit). Surfaces "is this broken or is it
 // me?" data in one place so admins stop hunting across 4 tabs.
 const AdminHealthPage = lazy(() => import('./components/AdminHealthPage').then(m => ({ default: memo(m.default) })));
+// Error Report — owner-only triage view for /error_logs + /bug_reports
+// + AI failures. Andrew 2026-05-27: "lets not put errors in the
+// notifications. make a spot where i can say look at the error report
+// and we both can see all the errors." This is that spot. Sections
+// moved out of AdminHealthPage so Health stays focused on systems
+// status and ErrorReport is a single-purpose tab.
+const ErrorReportPage = lazy(() => import('./components/ErrorReportPage').then(m => ({ default: memo(m.default) })));
 // Label Printing Center — admin-only label-printer dashboard. Test
 // prints, per-printer status, and a live feed of recent print jobs
 // (success / fail / error message) sourced from /print_jobs.
@@ -898,7 +905,7 @@ export default function App() {
     // don't have permission for.
     useEffect(() => {
         if (!staffName) return;
-        if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health" || activeTab === "labels") && !staffIsAdmin) {
+        if ((activeTab === "admin" || activeTab === "labor" || activeTab === "menuscreens" || activeTab === "health" || activeTab === "errorreport" || activeTab === "labels") && !staffIsAdmin) {
             setActiveTab("home");
         }
         // tardies + handoff are manager-or-admin only — same defensive bounce.
@@ -1260,6 +1267,7 @@ export default function App() {
             if (activeTab === 'handoff' && isManager) return <ShiftHandoff language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} />;
             if (activeTab === 'menuscreens' && staffIsAdmin) return <PageErrorBoundary tabName="Menu Screens" language={language}><MenuScreensPage language={language} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'health' && staffIsAdmin) return <PageErrorBoundary tabName="System Health" language={language}><AdminHealthPage language={language} staffName={staffName} /></PageErrorBoundary>;
+            if (activeTab === 'errorreport' && staffIsAdmin) return <PageErrorBoundary tabName="Error Report" language={language}><ErrorReportPage language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'labels' && staffIsAdmin) return <PageErrorBoundary tabName="Label Printing" language={language}><LabelPrintingCenter language={language} staffName={staffName} /></PageErrorBoundary>;
             if (activeTab === 'admin' && staffIsAdmin) return <PageErrorBoundary tabName="Admin" language={language}><AdminPanel language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} storeLocation={effectiveLocation} onNavigate={(tab) => setActiveTab(tab)} hasOnboardingAccess={hasOnboardingAccess} /></PageErrorBoundary>;
             if (activeTab === 'notifications' && staffIsAdmin) return <PageErrorBoundary tabName="Notifications" language={language}><NotificationsAdmin language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} /></PageErrorBoundary>;

@@ -4028,31 +4028,30 @@ Body snippet: ${snippet}`;
     },
 );
 
-// ── onCriticalError — page owners when /error_logs gets a crit row ──────
+// ── onCriticalError — record-only marker for severity='critical' rows ──
 //
 // Andrew 2026-05-26 — bug-logging system. The frontend logger
 // (src/data/logger.js) writes a row to /error_logs every time a crash
-// is observed. Most rows are severity=error/warn — we surface those in
-// the AdminHealthPage dashboard and let the owners catch them on their
-// next glance. severity='critical' is reserved for things that need
-// immediate attention (top-level shell crash, the global ErrorBoundary
-// catching a render failure, etc.).
+// is observed. severity='critical' is reserved for things that need
+// immediate attention (top-level shell crash, etc.).
 //
-// This function fans out an in-app FCM notification to the owners
-// (Andrew + Julie, ids 40/41) for every critical-severity row, with
-// per-signature dedup so a 200-row crit-error storm pages them once
-// per hour per error type rather than 200 times.
+// 2026-05-27 update — Andrew: "lets not put errors in the notifications.
+// make a spot where i can say look at the error report and we both can
+// see all the errors." Disabled the bell-notification fan-out path.
+// This function NOW just stamps a cooldown marker for forensic dedup —
+// errors land in /error_logs (and via the FE SDK, also in Sentry) and
+// the Error Report tab is where the owners go to triage them when they
+// choose to look. No bell noise, no SMS spend. Sentry's mobile app is
+// the canonical "page me on this" channel; in-app bell is reserved
+// for things requiring an action (chat, schedule changes, etc.).
 //
-// SMS path: NOT enabled by default. To opt in, add 'critical_error_alert'
-// to ALWAYS_SMS_TYPES in functions/smsTemplates.js — the existing
-// dispatchSms CF will pick it up from the /notifications doc. We
-// hold off shipping SMS by default because crash storms could blow
-// Twilio spend and a 3am page on a fixable bug isn't worth the
-// startle. FCM push is enough for daytime-paged ops.
+// Kept the function (vs deleted) because the cooldown doc is still
+// useful for future dedup logic, and the function is a safe place to
+// add Slack/Discord/SMS fan-out later if Andrew changes his mind.
 //
 // Dedup: /system/error_alert_cooldown_{sigHash} doc carries the last
-// alert time. Two rows within 60 minutes of each other with the same
-// signature collapse — only the first triggers a notification.
+// observation time per signature. Useful for "this error has fired N
+// times in the past hour" telemetry in the Error Report dashboard.
 exports.onCriticalError = onDocumentCreated(
     { document: "error_logs/{id}", region: "us-central1", secrets: [SENTRY_DSN] },
     async (event) => {
@@ -4076,83 +4075,29 @@ exports.onCriticalError = onDocumentCreated(
             sigHash |= 0;
         }
         const cooldownId = `error_alert_cooldown_${(sigHash >>> 0).toString(36)}`;
-
-        // Cooldown check + write atomically via transaction so two
-        // concurrent crit rows don't both alert.
         const cooldownRef = db.doc(`system/${cooldownId}`);
-        const COOLDOWN_MS = 60 * 60_000; // 1 hour per signature
-        let shouldAlert = false;
+
+        // Stamp the cooldown doc with the latest observation. Read-modify-
+        // write in a transaction so concurrent crits keep an accurate
+        // hit-count. The lastAlertMs name is preserved for backcompat
+        // with the previous notification-fan-out version.
         try {
             await db.runTransaction(async (txn) => {
                 const cur = await txn.get(cooldownRef);
-                const lastMs = cur.exists ? (cur.data()?.lastAlertMs || 0) : 0;
-                if (Date.now() - lastMs >= COOLDOWN_MS) {
-                    shouldAlert = true;
-                    txn.set(cooldownRef, {
-                        lastAlertMs: Date.now(),
-                        lastSig: sig.slice(0, 200),
-                        lastErrorLogId: event.params.id,
-                    }, { merge: true });
-                }
+                const prev = cur.exists ? cur.data() || {} : {};
+                txn.set(cooldownRef, {
+                    lastAlertMs: Date.now(),
+                    lastSig: sig.slice(0, 200),
+                    lastErrorLogId: event.params.id,
+                    hitCount: (prev.hitCount || 0) + 1,
+                    firstSeenMs: prev.firstSeenMs || Date.now(),
+                }, { merge: true });
             });
         } catch (e) {
-            logger.warn(`onCriticalError: cooldown txn failed for sig=${sig}:`, e?.message || e);
+            logger.warn(`onCriticalError: cooldown stamp failed for sig=${sig}:`, e?.message || e);
             captureWithContext(e, { fn: "onCriticalError", tags: { phase: "cooldown" } });
-            // Fall through to alert anyway — better to over-page than
-            // silently drop a real crit.
-            shouldAlert = true;
         }
-        if (!shouldAlert) {
-            logger.info(`onCriticalError: cooldown active for sig="${sig}" — skipping fan-out.`);
-            return;
-        }
-
-        // Look up owners.
-        const staffDoc = await db.doc("config/staff").get();
-        const list = (staffDoc.data() || {}).list || [];
-        const owners = list.filter((s) => s && s.name && (s.id === 40 || s.id === 41));
-        if (owners.length === 0) {
-            logger.warn("onCriticalError: no owner staff found, skipping page.");
-            return;
-        }
-
-        // Compose a tight one-line page. Title fits a phone lock-screen
-        // preview; body has the short ref so the owner can find the
-        // exact row in the Health dashboard.
-        const feature = (data.feature || "unknown").slice(0, 40);
-        const errName = (data.errorName || "Error").slice(0, 40);
-        const errMsg = (data.errorMessage || "").slice(0, 120);
-        const ref = event.params.id.slice(0, 8);
-
-        const title = `🚨 ${errName} in ${feature}`;
-        const body = `${errMsg}\nref: ${ref} · v${data.appVersion || "?"}`;
-
-        // Fan out — one /notifications doc per owner. dispatchNotification
-        // CF picks these up via its onDocumentCreated trigger and routes
-        // to each owner's FCM tokens.
-        for (const o of owners) {
-            try {
-                await db.collection("notifications").add({
-                    forStaff: o.name,
-                    type: "critical_error_alert",
-                    title,
-                    body,
-                    deepLink: "health",
-                    link: "/?tab=health",
-                    tag: `critical_error_alert:${cooldownId}:${o.name}`,
-                    priority: "high",
-                    forceDeliver: true,
-                    createdAt: FieldValue.serverTimestamp(),
-                    read: false,
-                    createdBy: "onCriticalError",
-                    sourceErrorLogId: event.params.id,
-                });
-            } catch (e) {
-                logger.warn(`onCriticalError: notify ${o.name} failed:`, e?.message || e);
-                captureWithContext(e, { fn: "onCriticalError", tags: { phase: "notify" }, extra: { recipient: o.name } });
-            }
-        }
-        logger.info(`onCriticalError: paged ${owners.length} owner(s) — sig="${sig}" ref=${ref}.`);
+        logger.info(`onCriticalError: recorded sig="${sig}" ref=${event.params.id.slice(0, 8)} — bell fan-out disabled per owner directive.`);
     },
 );
 
