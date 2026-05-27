@@ -21,7 +21,7 @@
 // the three /chats/channel_{key} docs so they always exist with
 // up-to-date membership. Cheap (3 writes + only when membership drifts).
 
-import { useState, useEffect, useMemo, useRef, memo, lazy, Suspense, useDeferredValue } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, memo, lazy, Suspense, useDeferredValue } from 'react';
 import { db } from '../firebase';
 import {
     collection, doc, query, where, onSnapshot,
@@ -85,6 +85,16 @@ export default function ChatCenter({
     // in) UNION channels which the auto-sync below keeps me in. Single
     // listener per query; result lists are merged + deduped by id.
     const [chats, setChats] = useState([]);
+    // 2026-05-27 — load/error UX state. Andrew: "about half the time
+    // the separate chats do not load the first time." Root cause of
+    // the chat LIST half of that bug: the onSnapshot error handler was
+    // a silent console.warn. A transient permission-denied / network
+    // error killed the subscription and left the user with an empty
+    // chat list with no indication anything went wrong. Now we surface
+    // load state + error state so the user can retry without a refresh.
+    const [chatsLoading, setChatsLoading] = useState(true);
+    const [chatsError, setChatsError] = useState(null);
+    const [chatsSubGen, setChatsSubGen] = useState(0);
     useEffect(() => {
         if (!staffName) return;
         // Firestore can't do "array-contains-any with OR another filter"
@@ -98,6 +108,15 @@ export default function ChatCenter({
         // miss 5 with no UI indication. Now adds `orderBy(lastActivityAt, desc)`
         // so the cap consistently keeps the freshest chats. Composite
         // index defined in firestore.indexes.json (members + lastActivityAt).
+        setChatsLoading(true);
+        setChatsError(null);
+        const timeoutId = setTimeout(() => {
+            // 6s on the chat list is more generous than the 8s on the
+            // message thread — chat list is the primary surface so a
+            // slow-network signal here matters more.
+            setChatsError((prev) => prev || 'timeout');
+            setChatsLoading(false);
+        }, 6000);
         const q = query(
             collection(db, 'chats'),
             where('members', 'array-contains', staffName),
@@ -105,6 +124,7 @@ export default function ChatCenter({
             limit(100),
         );
         const unsub = onSnapshot(q, (snap) => {
+            clearTimeout(timeoutId);
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             // Sort: unread first (within unread, newest first),
@@ -118,9 +138,30 @@ export default function ChatCenter({
                 return ms(b.lastActivityAt) - ms(a.lastActivityAt);
             });
             setChats(list);
-        }, (err) => console.warn('chats snapshot failed:', err));
-        return () => unsub();
-    }, [staffName]);
+            setChatsLoading(false);
+            setChatsError(null);
+        }, (err) => {
+            clearTimeout(timeoutId);
+            console.warn('chats snapshot failed:', err);
+            setChatsError(err?.code || err?.message || 'load-failed');
+            setChatsLoading(false);
+        });
+        return () => {
+            clearTimeout(timeoutId);
+            unsub();
+        };
+    }, [staffName, chatsSubGen]);
+
+    // Retry handler — bumps chatsSubGen to re-fire the subscription
+    // effect with a fresh listener. The error-state UI's Retry button
+    // calls this. Most chat-snapshot failures are transient (network
+    // hiccup, Firestore re-establishing its WebSocket); a retry tap
+    // recovers cleanly.
+    const retryChatsLoad = useCallback(() => {
+        setChatsError(null);
+        setChatsLoading(true);
+        setChatsSubGen(g => g + 1);
+    }, []);
 
     // ── Auto-channel sync ─────────────────────────────────────────
     // On first mount + whenever staffList changes, make sure the
@@ -410,9 +451,48 @@ export default function ChatCenter({
                     />
                 </div>
 
-                {/* Chat list */}
+                {/* Chat list.
+                    2026-05-27 — gate the empty-state copy behind
+                    chatsLoading + chatsError so a slow first-fetch
+                    doesn't briefly tell the user "No chats yet" and
+                    a transient snapshot error gets a Retry button
+                    instead of silently showing the same empty state.
+                    Order matters: loading wins, then error, then
+                    empty, then the actual rendered list. */}
                 <div className="flex-1 overflow-y-auto">
-                    {filteredChats.length === 0 ? (
+                    {chatsLoading && chats.length === 0 ? (
+                        <div className="p-8 text-center text-sm text-dd-text-2">
+                            <div className="inline-block w-6 h-6 border-2 border-dd-line border-t-dd-green rounded-full animate-spin mb-3" />
+                            <div>{tx('Loading chats…', 'Cargando chats…')}</div>
+                        </div>
+                    ) : chatsError && chats.length === 0 ? (
+                        <div className="p-6 text-center">
+                            <div className="text-3xl mb-2">⚠️</div>
+                            <div className="text-sm font-bold text-dd-text mb-1">
+                                {tx("Couldn't load chats", 'No se pudo cargar')}
+                            </div>
+                            <div className="text-[12px] text-dd-text-2 mb-3 max-w-xs mx-auto">
+                                {chatsError === 'timeout'
+                                    ? tx(
+                                        'Network is slow — try again in a moment.',
+                                        'Red lenta — intenta de nuevo.',
+                                    )
+                                    : tx(
+                                        'Tap retry. If it keeps happening, check Wi-Fi or tell Andrew.',
+                                        'Toca reintentar. Si sigue, revisa Wi-Fi o avísale a Andrew.',
+                                    )}
+                            </div>
+                            <button
+                                onClick={retryChatsLoad}
+                                className="px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm"
+                            >
+                                ↻ {tx('Retry', 'Reintentar')}
+                            </button>
+                            <div className="text-[10px] text-dd-text-2/70 mt-2 font-mono break-all">
+                                {String(chatsError).slice(0, 80)}
+                            </div>
+                        </div>
+                    ) : filteredChats.length === 0 ? (
                         <div className="p-8 text-center text-sm text-dd-text-2">
                             {search
                                 ? tx('No matches', 'Sin resultados')

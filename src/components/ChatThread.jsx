@@ -162,31 +162,103 @@ function ChatThreadInner({
     const [messages, setMessages] = useState([]);
     const [messageLimit, setMessageLimit] = useState(50);
     const [hasMore, setHasMore] = useState(true);
+    // 2026-05-27 — load/error UX state. Andrew: "about half the time
+    // the separate chats do not load the first time." Root cause:
+    // ChatThread had ZERO loading state — between mount and first
+    // snapshot arrival (200–2000ms on slow restaurant Wi-Fi), users
+    // saw a blank chat with no signal that anything was loading.
+    // Worse: switching from chat A to chat B kept rendering chat A's
+    // messages until chat B's first snapshot landed, because we never
+    // reset the `messages` array on chat change.
+    //
+    //   loading   → true while we're waiting on the FIRST snapshot
+    //                for this chat. Flips false once we hear back
+    //                (success or empty). Used to render the spinner
+    //                + suppress the "no messages yet" empty state
+    //                during the initial fetch.
+    //   loadError → set when onSnapshot's error callback fires. The
+    //                old behavior was console.warn only → silent
+    //                failure → user assumes "it didn't load" and
+    //                refreshes. Now the UI surfaces a Retry button
+    //                that bumps subscriptionGen to force a re-sub.
+    //   subscriptionGen → manual reset key. Bumped by Retry to force
+    //                a fresh subscription without changing chat.id.
+    const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState(null);
+    const [subscriptionGen, setSubscriptionGen] = useState(0);
+
     useEffect(() => {
         if (!chat?.id) return;
-        // Reset pagination when switching chats.
+        // Reset pagination AND messages AND loading state on chat
+        // switch. Resetting messages is the key fix for the "shows
+        // previous chat's content briefly" symptom. Resetting loading
+        // back to true tells the UI to show a spinner until the new
+        // chat's first snapshot lands.
         setMessageLimit(50);
         setHasMore(true);
+        setMessages([]);
+        setLoading(true);
+        setLoadError(null);
     }, [chat?.id]);
+
     useEffect(() => {
         if (!chat?.id) return;
+        // The mount-to-first-snapshot fallback. If 8 seconds pass and
+        // the snapshot still hasn't arrived (slow Wi-Fi, Firestore
+        // sync hiccup), surface an error state with Retry instead of
+        // leaving the spinner spinning forever.
+        const timeoutId = setTimeout(() => {
+            // Use a functional check so we don't capture stale state.
+            // If loading is still true after 8s, something's wrong.
+            setLoadError((prev) => prev || 'timeout');
+            setLoading(false);
+        }, 8000);
+
         const q = query(
             collection(db, 'chats', chat.id, 'messages'),
             orderBy('createdAt', 'desc'),
             limit(messageLimit)
         );
         const unsub = onSnapshot(q, (snap) => {
+            clearTimeout(timeoutId);
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             // Snapshot is newest-first because of the desc order; reverse
             // so render order stays oldest-first / newest-at-bottom.
             list.reverse();
             setMessages(list);
+            setLoading(false);
+            setLoadError(null);
             // If we got fewer than we asked for, there's no older to load.
             if (snap.size < messageLimit) setHasMore(false);
-        }, (err) => console.warn('messages snapshot failed:', err));
-        return () => unsub();
-    }, [chat?.id, messageLimit]);
+        }, (err) => {
+            // Was just console.warn — silent failure mode. Now we
+            // surface the error in the UI so the user knows to retry
+            // (or knows something is wrong with their network/perms)
+            // instead of seeing a blank chat forever. Permission-denied
+            // is the most likely real cause (rules tightened a chat
+            // someone was previously in); network errors auto-recover
+            // when Firestore re-establishes its WebSocket so a Retry
+            // tap will usually succeed.
+            clearTimeout(timeoutId);
+            console.warn('messages snapshot failed:', err);
+            setLoadError(err?.code || err?.message || 'load-failed');
+            setLoading(false);
+        });
+        return () => {
+            clearTimeout(timeoutId);
+            unsub();
+        };
+    }, [chat?.id, messageLimit, subscriptionGen]);
+
+    // Retry handler — bumps subscriptionGen to force the message
+    // subscription effect to re-run with a fresh listener. Called by
+    // the error-state "Retry" button below.
+    const retryMessageLoad = useCallback(() => {
+        setLoadError(null);
+        setLoading(true);
+        setSubscriptionGen(g => g + 1);
+    }, []);
 
     // Load-older handler — bumps the limit by another 50. Re-runs the
     // subscription effect above against the new limit, which re-fetches
@@ -1555,7 +1627,49 @@ function ChatThreadInner({
                         })}
                     </div>
                 ))}
-                {messages.length === 0 && (
+                {/* 2026-05-27 — three distinct states instead of the
+                    previous "always show 'Be the first to say hi'":
+                      - loading  → spinner with explanatory text
+                      - loadError → red banner + Retry button
+                      - empty     → the original empty-chat message
+                    Order matters: loading wins over error wins over empty
+                    so a stalled first-load doesn't briefly flash the
+                    empty-state copy. */}
+                {messages.length === 0 && loading && (
+                    <div className="py-12 text-center text-sm text-dd-text-2">
+                        <div className="inline-block w-6 h-6 border-2 border-dd-line border-t-dd-green rounded-full animate-spin mb-3" />
+                        <div>{tx('Loading messages…', 'Cargando mensajes…')}</div>
+                    </div>
+                )}
+                {messages.length === 0 && !loading && loadError && (
+                    <div className="py-10 px-4 text-center">
+                        <div className="text-4xl mb-2">⚠️</div>
+                        <div className="text-sm font-bold text-dd-text mb-1">
+                            {tx("Couldn't load this chat", 'No se pudo cargar este chat')}
+                        </div>
+                        <div className="text-[12px] text-dd-text-2 mb-3 max-w-xs mx-auto">
+                            {loadError === 'timeout'
+                                ? tx(
+                                    'Network is slow — give it another try in a second.',
+                                    'La red está lenta — intenta de nuevo en un momento.',
+                                )
+                                : tx(
+                                    'Tap retry. If it keeps happening, check your Wi-Fi or tell Andrew.',
+                                    'Toca reintentar. Si sigue pasando, revisa tu Wi-Fi o avísale a Andrew.',
+                                )}
+                        </div>
+                        <button
+                            onClick={retryMessageLoad}
+                            className="px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm"
+                        >
+                            ↻ {tx('Retry', 'Reintentar')}
+                        </button>
+                        <div className="text-[10px] text-dd-text-2/70 mt-2 font-mono">
+                            {String(loadError).slice(0, 80)}
+                        </div>
+                    </div>
+                )}
+                {messages.length === 0 && !loading && !loadError && (
                     <div className="py-12 text-center text-sm text-dd-text-2">
                         {tx('Be the first to say hi 👋', '¡Sé el primero en saludar 👋!')}
                     </div>
