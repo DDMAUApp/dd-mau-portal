@@ -368,6 +368,33 @@ export default function ChatCenter({
         if (activeChatId) setMobileShowList(false);
     }, [activeChatId]);
 
+    // 2026-05-27 — Andrew: "when in a chat room the bottom navigation
+    // bar at the bottom can disappear." Toggle a body data attribute
+    // when a chat thread is active so the AppShellV2's MobileBottomNav
+    // hides itself (CSS rule in index.css). Reverts on chat-close OR
+    // unmount, so navigating away from Chat tab automatically restores
+    // the nav even without an explicit clean-up sequence.
+    //
+    // We gate on activeChatId only — desktop is fine showing both
+    // panes AND the chat thread, but desktop doesn't render the
+    // mobile bottom nav anyway (`md:hidden`), so the body class is
+    // effectively a no-op on desktop. Cheaper than computing isMobile.
+    useEffect(() => {
+        if (typeof document === 'undefined') return;
+        if (activeChatId) {
+            document.body.dataset.chatThreadOpen = 'true';
+        } else {
+            delete document.body.dataset.chatThreadOpen;
+        }
+        return () => {
+            // Defensive cleanup on Chat tab unmount: if the user
+            // navigates away (e.g. back to Home) while a chat was
+            // open, clear the flag so the next tab's bottom nav
+            // shows normally.
+            delete document.body.dataset.chatThreadOpen;
+        };
+    }, [activeChatId]);
+
     // ── Filtered list ─────────────────────────────────────────────
     const filteredChats = useMemo(() => {
         const term = deferredSearch.trim().toLowerCase();

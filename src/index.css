@@ -141,6 +141,26 @@ button, a, [role="button"], input, select, textarea, label {
 .task-flash-yellow { animation: flash-yellow 1.5s ease-in-out infinite; }
 .task-flash-red { animation: flash-red 1s ease-in-out infinite; }
 
+/* 2026-05-27 — animate-fade-in-up for the floating chat-attach
+   bubble popup. Subtle pop: starts 8px below the final position,
+   scales from 95% → 100%, fades in. 120ms feels native-app fast. */
+@keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(8px) scale(0.95); }
+    to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+.animate-fade-in-up {
+    animation: fade-in-up 120ms ease-out;
+    transform-origin: bottom left;
+}
+
+/* 2026-05-27 — hide the mobile bottom nav when the user has a chat
+   thread open. Toggled via document.body.dataset.chatThreadOpen
+   from ChatCenter (when activeChatId is set on mobile). Lets the
+   chat composer + keyboard claim the full screen real estate. */
+body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
+    display: none !important;
+}
+
 /* Screenshot protection for recipes */
 .recipe-protected {
     -webkit-user-select: none;

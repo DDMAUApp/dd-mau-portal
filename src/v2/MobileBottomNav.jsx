@@ -91,7 +91,7 @@ export default function MobileBottomNav({
 
     return (
         <nav
-            className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/85 backdrop-blur-xl border-t border-dd-line/60 shadow-[0_-8px_24px_-4px_rgba(15,23,42,0.08)] bottom-nav-safe"
+            className="ddmau-mobile-bottom-nav md:hidden fixed bottom-0 left-0 right-0 z-40 bg-white/85 backdrop-blur-xl border-t border-dd-line/60 shadow-[0_-8px_24px_-4px_rgba(15,23,42,0.08)] bottom-nav-safe"
             aria-label={isEs ? 'Navegación principal' : 'Primary navigation'}
         >
             {/* Hairline accent above the active tab — Toast-style indicator */}

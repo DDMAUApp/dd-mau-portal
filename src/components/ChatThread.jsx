@@ -2732,7 +2732,7 @@ function Composer({
         // forces a GPU layer so iOS scrollKit doesn't reflow it during
         // momentum scroll.
         <div
-            className="sticky bottom-0 z-10 px-2 py-2 border-t border-dd-line bg-white shrink-0"
+            className="sticky bottom-0 z-10 px-2 py-2 border-t border-dd-line bg-white shrink-0 relative"
             style={{ transform: 'translateZ(0)' }}
         >
             {/* 2026-05-24 — off-shift "Notify anyway" banner removed.
@@ -2797,82 +2797,97 @@ function Composer({
                 onChange={onPickVideo}
                 className="hidden"
             />
+            {/* 2026-05-27 — Andrew: rebuild + menu as a floating
+                translucent bubble popup (Zenzap / iMessage style)
+                instead of a horizontal bar that pushes the composer
+                up. Two layout wins:
+                  1. The popup is `absolute bottom-full` so it floats
+                     above the composer row WITHOUT pushing it. The
+                     composer stays put — no layout shift on open.
+                  2. Vertical list with icon + label, anchored to the
+                     bottom-left near the + button. Translucent dark
+                     bg + backdrop-blur = the bubble effect from the
+                     reference screenshots.
+                Transparent backdrop fills the viewport so tapping
+                outside the bubble dismisses it (handles iOS soft-
+                keyboard-with-no-blur edge case). z-30 on the bubble
+                + z-20 on the backdrop sit ABOVE the composer's z-10. */}
             {showAttachMenu && (
-                <div className="mb-2 p-2 rounded-xl bg-white shadow-lg border border-dd-line flex items-center gap-2 overflow-x-auto scrollbar-thin animate-slide-up">
+                <>
+                    {/* Click-outside-to-dismiss backdrop — invisible,
+                        full-viewport, just catches taps. Tapping
+                        inside the bubble doesn't bubble up because
+                        the bubble stops propagation via its onClick. */}
                     <button
-                        onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}
-                        disabled={sending}
-                        className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
-                        aria-label={isEs ? 'Foto' : 'Photo'}
-                        title={isEs ? 'Foto' : 'Photo'}
+                        type="button"
+                        aria-label={isEs ? 'Cerrar menú' : 'Close menu'}
+                        onClick={() => setShowAttachMenu(false)}
+                        className="fixed inset-0 z-20 bg-transparent cursor-default"
+                    />
+                    {/* The floating bubble itself. Anchored bottom-left
+                        (above the + button which is the leftmost
+                        composer element). max-w-[240px] keeps it
+                        narrow + bubble-shaped on tablet/desktop. */}
+                    <div
+                        role="menu"
+                        className="absolute bottom-full left-2 mb-3 z-30 min-w-[200px] max-w-[240px] py-1.5 rounded-2xl bg-zinc-900/95 backdrop-blur-2xl shadow-[0_10px_40px_-8px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden animate-fade-in-up"
                     >
-                        📷
-                    </button>
-                    <button
-                        onClick={() => { videoInputRef.current?.click(); setShowAttachMenu(false); }}
-                        disabled={sending}
-                        className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
-                        aria-label={isEs ? 'Video' : 'Video'}
-                        title={isEs ? 'Video' : 'Video'}
-                    >
-                        🎬
-                    </button>
-                    {onOpenPoll && (
-                        <button
-                            onClick={() => { onOpenPoll(); setShowAttachMenu(false); }}
+                        <AttachMenuItem
+                            icon="📷"
+                            label={isEs ? 'Foto' : 'Photo'}
+                            onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}
                             disabled={sending}
-                            className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
-                            aria-label={isEs ? 'Encuesta' : 'Poll'}
-                            title={isEs ? 'Encuesta' : 'Poll'}
-                        >
-                            📊
-                        </button>
-                    )}
-                    {onOpen86 && (
-                        <button
-                            onClick={() => { onOpen86(); setShowAttachMenu(false); }}
+                        />
+                        <AttachMenuItem
+                            icon="🎬"
+                            label={isEs ? 'Video' : 'Video'}
+                            onClick={() => { videoInputRef.current?.click(); setShowAttachMenu(false); }}
                             disabled={sending}
-                            className="w-11 h-11 rounded-full hover:bg-red-50 hover:text-red-700 flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition"
-                            aria-label={isEs ? 'Marcar 86' : 'Post 86'}
-                            title={isEs ? '86 — sin existencia' : '86 — out of stock'}
-                        >
-                            🚫
-                        </button>
-                    )}
-                    <button
-                        onClick={() => { setShowEmojiPicker(v => !v); setShowAttachMenu(false); }}
-                        disabled={sending}
-                        className={`w-11 h-11 rounded-full flex items-center justify-center text-2xl shrink-0 disabled:opacity-40 transition ${showEmojiPicker ? 'bg-dd-sage-50 text-dd-green-700' : 'hover:bg-dd-bg'}`}
-                        aria-label={isEs ? 'Emojis' : 'Emojis'}
-                        title={isEs ? 'Emojis' : 'Emojis'}
-                    >
-                        😀
-                    </button>
-                    {!empty && (
-                        <button
-                            onClick={() => { handleFixGrammar(); setShowAttachMenu(false); }}
-                            disabled={sending || fixing}
-                            className={`w-11 h-11 rounded-full flex items-center justify-center text-xl shrink-0 disabled:opacity-40 transition ${fixing ? 'bg-purple-100 text-purple-700' : 'text-purple-600 hover:bg-purple-50'}`}
-                            aria-label={isEs ? 'Corregir ortografía y gramática' : 'Fix spelling & grammar'}
-                            title={isEs ? '✨ Corregir ortografía y gramática (IA)' : '✨ Fix spelling & grammar (AI)'}
-                        >
-                            {fixing
-                                ? <span className="inline-block w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-                                : '✨'}
-                        </button>
-                    )}
-                    {!empty && onOpenSchedule && (
-                        <button
-                            onClick={() => { onOpenSchedule(); setShowAttachMenu(false); }}
+                        />
+                        {onOpenPoll && (
+                            <AttachMenuItem
+                                icon="📊"
+                                label={isEs ? 'Encuesta' : 'Poll'}
+                                onClick={() => { onOpenPoll(); setShowAttachMenu(false); }}
+                                disabled={sending}
+                            />
+                        )}
+                        {onOpen86 && (
+                            <AttachMenuItem
+                                icon="🚫"
+                                label={isEs ? 'Marcar 86' : 'Post 86'}
+                                onClick={() => { onOpen86(); setShowAttachMenu(false); }}
+                                disabled={sending}
+                                tone="danger"
+                            />
+                        )}
+                        <AttachMenuItem
+                            icon="😀"
+                            label={isEs ? 'Emoji' : 'Emoji'}
+                            onClick={() => { setShowEmojiPicker(v => !v); setShowAttachMenu(false); }}
                             disabled={sending}
-                            className="w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-xl shrink-0 disabled:opacity-40"
-                            aria-label={isEs ? 'Programar' : 'Schedule'}
-                            title={isEs ? 'Programar envío' : 'Schedule send'}
-                        >
-                            📅
-                        </button>
-                    )}
-                </div>
+                            active={showEmojiPicker}
+                        />
+                        {!empty && (
+                            <AttachMenuItem
+                                icon={fixing ? null : '✨'}
+                                label={isEs ? 'Corregir texto' : 'Fix spelling'}
+                                onClick={() => { handleFixGrammar(); setShowAttachMenu(false); }}
+                                disabled={sending || fixing}
+                                loading={fixing}
+                                tone="purple"
+                            />
+                        )}
+                        {!empty && onOpenSchedule && (
+                            <AttachMenuItem
+                                icon="📅"
+                                label={isEs ? 'Programar envío' : 'Schedule send'}
+                                onClick={() => { onOpenSchedule(); setShowAttachMenu(false); }}
+                                disabled={sending}
+                            />
+                        )}
+                    </div>
+                </>
             )}
             {/* Composer row — same layout EVERYWHERE now:
                   [ + ] [ textarea ] [ 🎤 voice OR ➤ send ]
@@ -3973,3 +3988,39 @@ function SeenBySheet({
 }
 
 // groupByDate moved to chatThreadHelpers.js (2026-05-23).
+
+// AttachMenuItem — one row in the floating bubble popup. Andrew
+// 2026-05-27: match the Zenzap / iMessage popup style — icon on the
+// left, label on the right, full-width tap target, subtle hover.
+// Three optional tones:
+//   • default — neutral light-on-dark
+//   • danger  — red (used for the 86/post-out-of-stock action)
+//   • purple  — used for the AI grammar-fix action
+// `active` highlights the row when the corresponding feature is
+// already toggled (emoji picker). `loading` shows a small spinner in
+// place of the icon (grammar-fix is the in-flight case).
+function AttachMenuItem({ icon, label, onClick, disabled, active, loading, tone }) {
+    const colorClasses = tone === 'danger'
+        ? 'text-red-300 hover:bg-red-500/15 active:bg-red-500/25'
+        : tone === 'purple'
+        ? 'text-purple-300 hover:bg-purple-500/15 active:bg-purple-500/25'
+        : active
+        ? 'text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15'
+        : 'text-zinc-100 hover:bg-white/10 active:bg-white/15';
+    return (
+        <button
+            type="button"
+            role="menuitem"
+            onClick={onClick}
+            disabled={disabled}
+            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-[15px] font-medium transition disabled:opacity-40 disabled:cursor-not-allowed ${colorClasses}`}
+        >
+            <span className="text-xl shrink-0 w-6 flex items-center justify-center">
+                {loading
+                    ? <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                    : icon}
+            </span>
+            <span className="flex-1 truncate">{label}</span>
+        </button>
+    );
+}
