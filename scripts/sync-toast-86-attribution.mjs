@@ -315,6 +315,17 @@ for (const r of RESTAURANTS) {
     //      guid sticks around in a sidecar field so future cross-refs
     //      still work.
     const GUID_RE_SYNC = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    // 2026-05-27 — `eightySixRef` used to be declared further down at the
+    // start of the "wipe stale Toast items" block. The newer GUID-name
+    // repair block above also needs it, so the second time we added a
+    // ref to eightySixRef (in the repair pass) we hit a temporal-dead-
+    // zone ReferenceError on every Railway cron run:
+    //   ReferenceError: Cannot access 'eightySixRef' before initialization
+    //     at scripts/sync-toast-86-attribution.mjs:331
+    // Hoisting the declaration to the top of the per-restaurant loop
+    // body makes every downstream block (repair, wipe-stale, transition
+    // detection, attribution write) use the same handle.
+    const eightySixRef = db.collection('ops').doc(`86_${r.location}`);
     {
         // (a) Persist the map.
         const mapObj = Object.fromEntries(itemNames);
@@ -419,7 +430,8 @@ for (const r of RESTAURANTS) {
     // This handles the "back in stock" half of transitions without
     // needing the cursor — same idempotent name-based dedup, no extra
     // notification storm (realtime86 trigger diffs by name only).
-    const eightySixRef = db.collection('ops').doc(`86_${r.location}`);
+    // `eightySixRef` is hoisted to the top of this restaurant loop —
+    // see the declaration above the GUID-name repair block.
     {
         const snap = await eightySixRef.get();
         const data = snap.exists ? (snap.data() || {}) : {};
