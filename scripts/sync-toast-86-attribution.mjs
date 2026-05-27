@@ -176,6 +176,67 @@ if (!serviceAccount) {
 initializeApp({ credential: cert(serviceAccount) });
 const db = getFirestore();
 
+// ── Crash reporter ─────────────────────────────────────────────────────
+// Surface this Railway cron's crashes inside the app's Error Report tab.
+// The browser-side logger (src/data/logger.js) only sees frontend errors
+// and the Cloud Functions Sentry hook only sees CF errors — Node scripts
+// running on Railway used to crash silently. The bell badge in Railway
+// would tick up but nothing piped the error into Firestore so the app
+// never knew the cron was failing.
+//
+// 2026-05-27 — born after a ReferenceError on line 331 took the cron
+// down every 5 minutes for ~a day. Andrew only noticed when 86 board
+// data went stale and asked "the bug finder in the app didn't catch
+// this." Now every uncaught crash here writes a row to /error_logs
+// with severity: 'critical' so it shows up in the Error Report tab
+// alongside browser + Cloud Function errors.
+async function reportRailwayCrash(error, feature = 'toast-86-cron') {
+    try {
+        const err = error instanceof Error ? error : new Error(String(error));
+        await db.collection('error_logs').add({
+            severity: 'critical',
+            source: 'railway-cron',
+            feature: String(feature).slice(0, 60),
+            errorName: (err.name || 'Error').slice(0, 80),
+            errorMessage: String(err.message || '').slice(0, 2000),
+            stack: String(err.stack || '').slice(0, 4000),
+            meta: { scriptName: 'sync-toast-86-attribution.mjs', node: process.version },
+            resolved: false,
+            // ErrorReportPage groups by errorName+message and filters
+            // recent-criticals by occurredAt (Date.now() millis), so we
+            // need BOTH fields — same as the browser-side logger.
+            ts: FieldValue.serverTimestamp(),
+            occurredAt: Date.now(),
+        });
+    } catch (e) {
+        // If we can't even write the report (Firestore offline, rules
+        // misconfigured, etc.) print to stderr so Railway's logs still
+        // capture the attempt — but never recurse / never throw.
+        console.error('reportRailwayCrash failed:', e?.message || e);
+    }
+}
+
+// Node will WAIT for these async handlers to settle before exiting,
+// which is exactly what we want: write the row first, then die. The
+// 4s timeout guards against a hung Firestore client preventing the
+// container from cycling.
+process.on('uncaughtException', async (err) => {
+    console.error('!! uncaughtException:', err);
+    await Promise.race([
+        reportRailwayCrash(err),
+        new Promise(resolve => setTimeout(resolve, 4000)),
+    ]);
+    process.exit(1);
+});
+process.on('unhandledRejection', async (err) => {
+    console.error('!! unhandledRejection:', err);
+    await Promise.race([
+        reportRailwayCrash(err),
+        new Promise(resolve => setTimeout(resolve, 4000)),
+    ]);
+    process.exit(1);
+});
+
 // ── Toast OAuth → bearer token ─────────────────────────────────────────
 console.log('→ Authenticating with Toast…');
 const authRes = await fetch(`${HOST}/authentication/v1/authentication/login`, {
