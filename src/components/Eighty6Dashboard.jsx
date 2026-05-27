@@ -18,18 +18,48 @@ import { useState, useEffect } from 'react';
 import { onSnapshot, doc, setDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from '../toast';
+// 2026-05-27 — first migration off the silent-console.warn pattern.
+// Main 86 doc subscription is the critical-path read for this page,
+// so it gets the loading/error/retry treatment. The other three
+// subscriptions on this page (alert settings, toast menu map,
+// other-location 86) are background data with silent-fallback
+// behavior — leaving them on the legacy pattern intentionally.
+// See docs/USEFIRESTORELIST_MIGRATION.md for the full pattern.
+import { useFirestoreDoc } from '../data/useFirestoreList';
 
 export default function Eighty6Dashboard({ language, storeLocation, staffName, staffList = [], isAdmin = false }) {
-    const [items, setItems] = useState([]);
-    const [count, setCount] = useState(0);
-    const [updatedAt, setUpdatedAt] = useState(null);
+    // 2026-05-27 — main 86 doc moved to useFirestoreDoc. Was a hand-
+    // rolled onSnapshot with no error handler beyond a silent
+    // setLoading(false) on err — meaning a permission-denied or
+    // network error would leave the page in a clean "All available!"
+    // state even though we couldn't actually read the doc. Now any
+    // subscription error surfaces a Retry banner; transient network
+    // errors are recoverable without a full app refresh.
+    const docKey = `86_${storeLocation === 'both' ? 'webster' : storeLocation}`;
+    const {
+        data: eightySixDoc,
+        loading,
+        error: eightySixError,
+        retry: retryEightySix,
+    } = useFirestoreDoc(
+        () => doc(db, 'ops', docKey),
+        [docKey],
+        { label: `86-${docKey}`, feature: '86' },
+    );
+    // Derive the legacy field shape from the doc so the rest of the
+    // component reads unchanged. When the doc doesn't exist or hasn't
+    // loaded, we fall back to empty defaults — the same behavior as
+    // the previous onSnapshot's else branch.
+    const items = eightySixDoc?.items || [];
+    const count = eightySixDoc?.count || 0;
+    const updatedAt = eightySixDoc?.updatedAt || null;
     // Attribution map written by scripts/sync-toast-86-attribution.mjs.
     // Shape: { [itemName]: { outBy: [staffName,...], outAt: Timestamp,
     //                        inBy: [...], inAt: Timestamp } }
     // Items that haven't been seen transition yet (legacy / from before
     // the sync script started running) won't have an entry — display
     // gracefully degrades to no name shown.
-    const [attribution, setAttribution] = useState({});
+    const attribution = eightySixDoc?.attribution || {};
     // Toast menu items map (guid → human name), written by
     // sync-toast-86-attribution.mjs. Used to resolve any row whose
     // items[].name is still a raw Toast GUID before the script has
@@ -38,7 +68,6 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
     // the id." With this map the dashboard can show the real name
     // even when the upstream scraper wrote the bare GUID.
     const [toastMenuMap, setToastMenuMap] = useState({});
-    const [loading, setLoading] = useState(true);
     // 2026-05-16 — alert settings: hours of day when scheduled reminders
     // fire + global on/off. Stored at /config/eighty_six_alerts. Read here
     // so the dashboard surfaces current config to admins (Edit button)
@@ -188,22 +217,12 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
         }
     };
 
-    useEffect(() => {
-        const docKey = `86_${storeLocation === 'both' ? 'webster' : storeLocation}`;
-        const unsubscribe = onSnapshot(doc(db, "ops", docKey), (docSnapshot) => {
-            if (docSnapshot.exists()) {
-                const data = docSnapshot.data();
-                setItems(data.items || []);
-                setCount(data.count || 0);
-                setUpdatedAt(data.updatedAt || null);
-                setAttribution(data.attribution || {});
-            } else {
-                setItems([]); setCount(0); setUpdatedAt(null); setAttribution({});
-            }
-            setLoading(false);
-        }, () => setLoading(false));
-        return () => unsubscribe();
-    }, [storeLocation]);
+    // 2026-05-27 — main 86 doc subscription replaced by the
+    // useFirestoreDoc hook above (see the top of the component).
+    // The hook handles loading + error + retry uniformly, and the
+    // items/count/updatedAt/attribution derivations live next to
+    // the hook call. This empty useEffect block is intentionally
+    // gone — kept the comment as a breadcrumb for future migrations.
 
     // 2026-05-26 — Andrew: "lets just make sure all the other info is
     // used when a item is put in 86." Subscribe to the OTHER location's
@@ -369,6 +388,39 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
                     </div>
                 </div>
             </div>
+
+            {/* 2026-05-27 — error banner. Renders when useFirestoreDoc
+                couldn't subscribe to /ops/86_{loc} (permission-denied,
+                rules deny, network timeout). Previously this was a
+                silent setLoading(false) and the page showed "All
+                items available!" even though we never actually heard
+                back from Firestore. */}
+            {eightySixError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3">
+                    <div className="text-2xl shrink-0">⚠️</div>
+                    <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-red-800">
+                            {tx("Couldn't load 86 board", 'No se pudo cargar el tablero 86')}
+                        </div>
+                        <div className="text-[12px] text-red-700/80 mt-0.5">
+                            {eightySixError === 'timeout'
+                                ? tx('Network is slow — try again in a moment.', 'Red lenta — intenta de nuevo.')
+                                : tx('Tap retry. If it keeps failing, tell Andrew.', 'Toca reintentar. Si sigue, avísale a Andrew.')}
+                        </div>
+                        <div className="mt-2 flex items-center gap-2">
+                            <button
+                                onClick={retryEightySix}
+                                className="px-3 py-1.5 rounded-lg bg-red-600 text-white text-xs font-bold hover:bg-red-700 active:scale-95 transition"
+                            >
+                                ↻ {tx('Retry', 'Reintentar')}
+                            </button>
+                            <code className="text-[10px] text-red-700/60 font-mono break-all">
+                                {String(eightySixError).slice(0, 60)}
+                            </code>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Body — empty state OR grouped lists */}
             {loading ? (
