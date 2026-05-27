@@ -28,6 +28,7 @@ import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
+import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
@@ -158,11 +159,18 @@ export default function MobileHome({
         : '';
 
     // Labor color thresholds match LaborDashboard / HomeV2.
-    const laborPct = labor?.laborPercent;
-    const laborTone = laborPct == null ? 'neutral'
+    // 2026-05-26 — route through getLaborStatus() so a busted scraper
+    // (laborCost: 0 with real netSales) shows "—" + a "Toast scraper
+    // offline" hint instead of a deceptive "0.0%" green KPI. Outage
+    // context: see src/data/labor.js.
+    const laborStatus = getLaborStatus(labor);
+    const laborPct = laborStatus.laborPercent;
+    const laborTone = laborStatus.isBroken ? 'danger'
+        : laborPct == null ? 'neutral'
         : laborPct <= 22 ? 'good'
         : laborPct <= 28 ? 'warn'
         : 'danger';
+    const laborHint = getLaborStatusHint(laborStatus, language);
 
     // KPI strip — at-most 4 stats. Filtered by role so staff don't see
     // manager metrics that aren't actionable for them.
@@ -173,10 +181,16 @@ export default function MobileHome({
             unit: 'h',
             tone: 'neutral',
         }] : []),
-        ...(canSeeLabor && laborPct != null ? [{
-            label: tx('Labor', 'Mano obra'),
-            value: laborPct.toFixed(1),
-            unit: '%',
+        // 2026-05-26 — Andrew: "labor percentage is broken." When the
+        // Toast scraper writes laborCost: 0 with real netSales (its
+        // labor endpoint failed), getLaborStatus().isBroken is true and
+        // we surface a "—" KPI with a danger tone + the hint label
+        // ("Toast scraper offline"). Hiding it entirely would let
+        // managers silently miss that they have no labor signal at all.
+        ...(canSeeLabor && (laborStatus.isBroken || laborPct != null) ? [{
+            label: laborHint || tx('Labor', 'Mano obra'),
+            value: laborPct != null ? laborPct.toFixed(1) : '—',
+            unit: laborPct != null ? '%' : '',
             tone: laborTone,
         }] : []),
         {

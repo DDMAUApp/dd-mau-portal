@@ -13,6 +13,7 @@ import { useState, useEffect, useMemo, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { canViewLabor, isAdmin as isAdminFn } from '../data/staff';
+import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
@@ -188,11 +189,17 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
     })();
 
     // Labor color by % vs target (same thresholds as LaborDashboard).
-    const laborPct = labor.data?.laborPercent;
+    // 2026-05-26 — route through getLaborStatus() so a "scraper broke"
+    // doc (laborCost: 0 with real netSales) renders "—" instead of a
+    // deceptively-green "0.0%". See src/data/labor.js for the outage
+    // context.
+    const laborStatus = getLaborStatus(labor.data);
+    const laborPct = laborStatus.laborPercent;
     const laborTone = laborPct == null ? 'text-dd-text'
         : laborPct <= 22 ? 'text-emerald-700'
         : laborPct <= 28 ? 'text-amber-700'
         : 'text-red-700';
+    const laborHint = getLaborStatusHint(laborStatus, language);
 
     const locName = queryLoc === 'maryland' ? 'Maryland Heights' : 'Webster Groves';
     const todayLong = new Date().toLocaleDateString(isEn ? 'en-US' : 'es-ES', {
@@ -257,9 +264,13 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         <StatCard
                             label={tx('Labor %', 'Mano de obra')}
                             value={fmtPct(laborPct)}
-                            tone={laborTone}
-                            sub={labor.data?.updatedAt ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`) : tx('Target 25%', 'Objetivo 25%')}
-                            icon="📊"
+                            tone={laborHint ? 'text-red-700' : laborTone}
+                            sub={laborHint
+                                ? laborHint
+                                : labor.data?.updatedAt
+                                    ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`)
+                                    : tx('Target 25%', 'Objetivo 25%')}
+                            icon={laborStatus.isBroken ? '⚠️' : '📊'}
                             loading={labor.loading} />
                     )}
                     <StatCard

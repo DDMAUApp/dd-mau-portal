@@ -4,6 +4,7 @@ import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, col
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
 import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
+import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
 import { useAiSearch } from '../data/aiSearch';
@@ -5196,29 +5197,42 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     <div className="flex items-center justify-between gap-3 mb-4">
                         <h2 className="text-2xl font-black text-dd-text tracking-tight shrink-0">📋 {t("dailyOps", language)}</h2>
                         {canViewLabor((staffList || []).find(s => s.name === staffName)) && laborData && laborData.laborPercent !== undefined && (() => {
-                            const pct = laborData.laborPercent;
-                            const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
-                            const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
-                            const isStale = minutesAgo !== null && minutesAgo > 10;
-                            const color = pct <= 22 ? { bg: "bg-emerald-50", border: "border-emerald-300", text: "text-emerald-700", emoji: "\u{2705}" }
-                                        : pct <= 27 ? { bg: "bg-amber-50",   border: "border-amber-300",   text: "text-amber-700",   emoji: "\u{26A0}\u{FE0F}" }
-                                        :             { bg: "bg-red-50",     border: "border-red-300",     text: "text-red-700",     emoji: "\u{1F534}" };
+                            // 2026-05-26 — route through getLaborStatus() so a
+                            // failed Toast scraper (laborCost: 0 with real
+                            // netSales) shows a red "—" pill with the
+                            // "Toast scraper offline" hint instead of a
+                            // deceptive green "0.0%". Outage context in
+                            // src/data/labor.js.
+                            const laborStatus = getLaborStatus(laborData);
+                            const pct = laborStatus.laborPercent;
+                            const updatedAt = laborStatus.updatedAt;
+                            const minutesAgo = laborStatus.minutesAgo;
+                            const isStale = laborStatus.isStale;
+                            const isBroken = laborStatus.isBroken;
+                            const color = isBroken
+                                ? { bg: "bg-red-50",     border: "border-red-300",     text: "text-red-700",     emoji: "\u{26A0}\u{FE0F}" }
+                                : pct <= 22 ? { bg: "bg-emerald-50", border: "border-emerald-300", text: "text-emerald-700", emoji: "\u{2705}" }
+                                : pct <= 27 ? { bg: "bg-amber-50",   border: "border-amber-300",   text: "text-amber-700",   emoji: "\u{26A0}\u{FE0F}" }
+                                :             { bg: "bg-red-50",     border: "border-red-300",     text: "text-red-700",     emoji: "\u{1F534}" };
                             const updatedLabel = updatedAt
                                 ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
                                 : "--";
                             const agoLabel = minutesAgo === null ? ""
                                 : minutesAgo === 0 ? (language === "es" ? "ahora" : "just now")
                                 : `${minutesAgo} min`;
+                            const titleHint = isBroken
+                                ? getLaborStatusHint(laborStatus, language)
+                                : `${t("laborPercent", language)} · ${updatedLabel}${agoLabel ? ` (${agoLabel})` : ""}`;
                             return (
                                 <button
                                     type="button"
                                     onClick={() => setShowLaborDetails(s => !s)}
-                                    title={`${t("laborPercent", language)} · ${updatedLabel}${agoLabel ? ` (${agoLabel})` : ""}`}
+                                    title={titleHint}
                                     className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-black tabular-nums shadow-sm transition active:scale-95 ${color.bg} ${color.border} ${color.text}`}
                                 >
                                     <span className="text-base leading-none">{color.emoji}</span>
-                                    <span>{pct.toFixed(1)}%</span>
-                                    {isStale && <span className="text-[10px] opacity-70">⏱</span>}
+                                    <span>{pct != null ? pct.toFixed(1) + "%" : "—"}</span>
+                                    {isStale && !isBroken && <span className="text-[10px] opacity-70">⏱</span>}
                                 </button>
                             );
                         })()}
@@ -5233,34 +5247,49 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         page load. Renders null when collapsed OR when the
                         viewer can't see labor at all. */}
                     {showLaborDetails && canViewLabor((staffList || []).find(s => s.name === staffName)) && laborData && laborData.laborPercent !== undefined && (() => {
-                        const pct = laborData.laborPercent;
-                        const updatedAt = laborData.updatedAt ? new Date(laborData.updatedAt) : null;
-                        const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
-                        const isStale = minutesAgo !== null && minutesAgo > 10;
+                        const laborStatus = getLaborStatus(laborData);
+                        const pct = laborStatus.laborPercent;
+                        const updatedAt = laborStatus.updatedAt;
+                        const minutesAgo = laborStatus.minutesAgo;
+                        const isStale = laborStatus.isStale;
+                        const isBroken = laborStatus.isBroken;
                         return (
                             <div className="bg-white border border-dd-line rounded-xl p-3 mb-4 shadow-sm">
                                 <div className="flex items-baseline justify-between text-xs mb-2">
                                     <span className="font-semibold text-gray-500 uppercase tracking-wider">{t("laborPercent", language)}</span>
-                                    <span className={isStale ? "text-red-500 font-bold" : "text-gray-400"}>
-                                        {isStale ? "⚠️ " : ""}
+                                    <span className={(isStale || isBroken) ? "text-red-500 font-bold" : "text-gray-400"}>
+                                        {(isStale || isBroken) ? "⚠️ " : ""}
                                         {updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}
                                         {minutesAgo !== null && (
                                             <> · {minutesAgo === 0 ? (language === "es" ? "ahora" : "just now") : `${minutesAgo} min`}</>
                                         )}
                                     </span>
                                 </div>
-                                <div className="relative">
-                                    <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
-                                        <div className="h-full rounded-full transition-all duration-500"
-                                            style={{
-                                                width: Math.min(pct / 37.5 * 100, 100) + "%",
-                                                backgroundColor: pct <= 22 ? "#10b981" : pct <= 27 ? "#f59e0b" : "#ef4444"
-                                            }} />
+                                {/* When the scraper is broken (laborCost: 0 with real
+                                    netSales), drop the progress bar — its 0%-width
+                                    rendering looks like "great labor cost!" which is
+                                    the opposite of what's happening. Show a copy
+                                    line pointing at the actual fix instead. */}
+                                {isBroken ? (
+                                    <p className="text-[11px] text-red-600 font-semibold">
+                                        {language === "es"
+                                            ? "Toast no devolvió costo de mano de obra — revisa el scraper en Railway."
+                                            : "Toast returned $0 labor cost — check the scraper on Railway."}
+                                    </p>
+                                ) : (
+                                    <div className="relative">
+                                        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                                            <div className="h-full rounded-full transition-all duration-500"
+                                                style={{
+                                                    width: Math.min(pct / 37.5 * 100, 100) + "%",
+                                                    backgroundColor: pct <= 22 ? "#10b981" : pct <= 27 ? "#f59e0b" : "#ef4444"
+                                                }} />
+                                        </div>
+                                        <div className="absolute top-0 h-2 border-r-2 border-gray-600" style={{ left: (25 / 37.5 * 100) + "%" }}>
+                                            <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-bold text-gray-500">25%</div>
+                                        </div>
                                     </div>
-                                    <div className="absolute top-0 h-2 border-r-2 border-gray-600" style={{ left: (25 / 37.5 * 100) + "%" }}>
-                                        <div className="absolute -top-4 -translate-x-1/2 text-[9px] font-bold text-gray-500">25%</div>
-                                    </div>
-                                </div>
+                                )}
                             </div>
                         );
                     })()}

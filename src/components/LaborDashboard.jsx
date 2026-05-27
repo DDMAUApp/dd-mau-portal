@@ -3,6 +3,7 @@ import { db } from '../firebase';
 import { doc, collection, query, where, onSnapshot, setDoc } from 'firebase/firestore';
 import { t } from '../data/translations';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, fmtUSD, splhTone } from '../data/splh';
+import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 
 // Note: Requires Chart.js or similar for charting
 
@@ -130,11 +131,23 @@ export default function LaborDashboard({ language, storeLocation }) {
         return RED_CIRCLE;
     };
 
-    const pct = laborData?.laborPercent;
-    const status = getStatusColor(pct);
-    const updatedAt = laborData?.updatedAt ? new Date(laborData.updatedAt) : null;
-    const minutesAgo = updatedAt ? Math.round((Date.now() - updatedAt.getTime()) / 60000) : null;
-    const isStale = minutesAgo !== null && minutesAgo > 10;
+    // 2026-05-26 — getLaborStatus() detects the "Toast scraper failed"
+    // state (laborCost: 0 with real netSales). When that's true we
+    // render "—" + a "Toast scraper offline" banner instead of a
+    // deceptive "0.0%" under-target green tile. Background: the labor
+    // scraper on Railway can lose its session/auth on the labor
+    // endpoint while the sales endpoint keeps returning data; the doc
+    // gets written with a zero cost but real netSales. See
+    // src/data/labor.js for the full outage note.
+    const laborStatus = getLaborStatus(laborData);
+    const laborHint = getLaborStatusHint(laborStatus, language);
+    const pct = laborStatus.laborPercent;
+    const status = laborStatus.isBroken
+        ? { bg: 'bg-red-50', text: 'text-red-700', ring: 'ring-red-400', glow: 'shadow-red-200' }
+        : getStatusColor(pct);
+    const updatedAt = laborStatus.updatedAt;
+    const minutesAgo = laborStatus.minutesAgo;
+    const isStale = laborStatus.isStale;
 
     return (
         <div className="pb-bottom-nav">
@@ -157,11 +170,20 @@ export default function LaborDashboard({ language, storeLocation }) {
                             <p className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">{t("currentLabor", language)}</p>
                             <div className="flex items-center justify-center gap-3">
                                 <span className="text-6xl font-black tabular-nums" style={{color: status.text.replace("text-", "").includes("emerald") ? "#047857" : status.text.includes("amber") ? "#b45309" : "#b91c1c"}}>
-                                    {pct !== null && pct !== undefined ? pct.toFixed(1) : "--"}%
+                                    {pct !== null && pct !== undefined ? pct.toFixed(1) + "%" : "—"}
                                 </span>
-                                <span className="text-3xl">{getStatusEmoji(pct)}</span>
+                                <span className="text-3xl">{laborStatus.isBroken ? "⚠️" : getStatusEmoji(pct)}</span>
                             </div>
-                            <p className={`text-sm font-bold mt-1 ${status.text}`}>{getStatusLabel(pct)}</p>
+                            <p className={`text-sm font-bold mt-1 ${status.text}`}>
+                                {laborStatus.isBroken ? laborHint : getStatusLabel(pct)}
+                            </p>
+                            {laborStatus.isBroken && (
+                                <p className="text-[11px] text-red-600 mt-1 font-semibold px-3">
+                                    {language === "es"
+                                        ? `Sin datos válidos de Toast desde las ${updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}. Revisa el scraper en Railway.`
+                                        : `No valid Toast labor data since ${updatedAt ? updatedAt.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "--"}. Check the scraper on Railway.`}
+                                </p>
+                            )}
 
                             {/* Target indicator */}
                             <div className="mt-4 flex items-center justify-center gap-2">
