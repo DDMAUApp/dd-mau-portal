@@ -3259,15 +3259,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     };
 
     // ── Date blocks (closed days / no-time-off days) ───────────────────────
-    const handleAddBlock = async (block) => {
+    // 2026-05-27 — Andrew: "blackout dates i want to be able to select
+    // more than one day at a time or choose more than one closure days
+    // at a time." Accept either a single block or an array of blocks
+    // from BlackoutsModal — the modal now collects a date range (From
+    // / To) and passes one block per day in the range. Promise.all
+    // writes them in parallel so a 14-day vacation submission completes
+    // in one round-trip rather than 14 sequential.
+    const handleAddBlock = async (blockOrBlocks) => {
         if (!staffIsAdmin) return; // admin-only — see staffIsAdmin comment
+        const list = Array.isArray(blockOrBlocks) ? blockOrBlocks : [blockOrBlocks];
+        if (list.length === 0) return;
         try {
-            await addDoc(collection(db, 'date_blocks'), {
+            await Promise.all(list.map(block => addDoc(collection(db, 'date_blocks'), {
                 ...block,
                 createdBy: staffName,
                 createdAt: serverTimestamp(),
-            });
+            })));
             setShowBlockModal(false);
+            if (list.length > 1) {
+                toast(tx(`✅ Added ${list.length} blackout days.`, `✅ Se agregaron ${list.length} días de cierre.`));
+            }
         } catch (e) {
             console.error('Add block failed:', e);
             toast(tx('Could not save: ', 'No se pudo guardar: ') + e.message);
@@ -8394,12 +8406,39 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn, closedWeekdays = {}, onToggleClosedWeekday, events = [], onAddEvent, onRemoveEvent }) {
     const tx = (en, es) => (isEn ? en : es);
     const today = toDateStr(new Date());
+    // 2026-05-27 — Andrew: "blackout dates i want to be able to select
+    // more than one day at a time." Replaced the single `date` field
+    // with a startDate / endDate pair so admins can stamp a vacation,
+    // a holiday weekend, or a full week of training in one submission.
+    // endDate defaults to startDate (single-day behavior preserved).
+    // The submit handler enumerates the inclusive range and passes the
+    // resulting array of blocks to handleAddBlock — which now does a
+    // batched Promise.all write.
     const [form, setForm] = useState({
-        date: today,
+        startDate: today,
+        endDate: today,
         type: 'closed',
         location: storeLocation && storeLocation !== 'both' ? storeLocation : 'both',
         reason: '',
     });
+    // Inclusive list of YYYY-MM-DD strings from startDate to endDate.
+    // Returns [] when the range is invalid (end < start) so the submit
+    // button can disable cleanly. Capped at 366 days to avoid an
+    // accidental "365-day closure" if someone fat-fingers a year.
+    const rangeDates = useMemo(() => {
+        if (!form.startDate || !form.endDate) return [];
+        const a = parseLocalDate(form.startDate);
+        const b = parseLocalDate(form.endDate);
+        if (!a || !b || a > b) return [];
+        const out = [];
+        let cur = new Date(a);
+        for (let i = 0; i < 366 && cur <= b; i++) {
+            out.push(toDateStr(cur));
+            cur = addDays(cur, 1);
+        }
+        return out;
+    }, [form.startDate, form.endDate]);
+    const rangeInvalid = form.startDate && form.endDate && rangeDates.length === 0;
     // Calendar event add-form state. Separate from closure form.
     const [evtForm, setEvtForm] = useState({
         date: today,
@@ -8418,8 +8457,18 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
     const upcoming = sorted.filter(b => b.date >= today);
     const past = sorted.filter(b => b.date < today);
 
-    const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    const canSubmit = form.date && form.type;
+    const update = (k, v) => setForm(f => {
+        const next = { ...f, [k]: v };
+        // Auto-bump endDate forward if it falls before a newly-moved
+        // startDate. Common case: user picks From=Christmas Eve then
+        // To=Christmas Day, then changes their mind and moves From
+        // back to Dec 23 — endDate should stay at Christmas Day, but
+        // if they'd moved From PAST endDate we snap endDate forward
+        // so the range isn't silently invalid.
+        if (k === 'startDate' && next.endDate && next.endDate < v) next.endDate = v;
+        return next;
+    });
+    const canSubmit = rangeDates.length > 0 && form.type;
 
     // Weekday day-pill data for the recurring section. 0=Sunday.
     const DAYS = [
@@ -8496,8 +8545,38 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
                                 🛑 {tx('No time off', 'Sin tiempo libre')}
                             </button>
                         </div>
-                        <input type="date" value={form.date} onChange={e => update('date', e.target.value)}
-                            className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                        {/* From / To range — left field is the start, right
+                            field is the inclusive end. For single-day
+                            closures the user just leaves them equal (or
+                            ignores To since it auto-matches From). */}
+                        <div className="grid grid-cols-2 gap-2">
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1">
+                                    {tx('From', 'Desde')}
+                                </span>
+                                <input type="date" value={form.startDate} onChange={e => update('startDate', e.target.value)}
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                            </label>
+                            <label className="block">
+                                <span className="block text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1">
+                                    {tx('To', 'Hasta')}
+                                </span>
+                                <input type="date" value={form.endDate} min={form.startDate}
+                                    onChange={e => update('endDate', e.target.value)}
+                                    className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
+                            </label>
+                        </div>
+                        {rangeInvalid && (
+                            <p className="text-[11px] text-red-700 font-bold">
+                                {tx('End date must be on or after the start date.', 'La fecha final debe ser igual o posterior a la inicial.')}
+                            </p>
+                        )}
+                        {rangeDates.length > 1 && (
+                            <p className="text-[11px] text-blue-700 font-semibold">
+                                {tx(`Will add ${rangeDates.length} consecutive days.`,
+                                    `Se agregarán ${rangeDates.length} días consecutivos.`)}
+                            </p>
+                        )}
                         <select value={form.location} onChange={e => update('location', e.target.value)}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition">
                             <option value="both">{LOCATION_LABELS.both}</option>
@@ -8507,9 +8586,25 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
                         <input type="text" value={form.reason} onChange={e => update('reason', e.target.value)}
                             placeholder={tx('Reason (e.g. Christmas Day)', 'Razón (ej. Navidad)')}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
-                        <button onClick={() => canSubmit && onAdd(form)} disabled={!canSubmit}
+                        <button
+                            onClick={() => {
+                                if (!canSubmit) return;
+                                // Build one block per day in the range; the
+                                // common fields (type, location, reason)
+                                // duplicate across every day.
+                                const blocks = rangeDates.map(d => ({
+                                    date: d,
+                                    type: form.type,
+                                    location: form.location,
+                                    reason: form.reason,
+                                }));
+                                onAdd(blocks);
+                            }}
+                            disabled={!canSubmit}
                             className={`w-full py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-dd-green hover:bg-dd-green-700' : 'bg-gray-300'}`}>
-                            {tx('Add Blackout', 'Agregar Bloqueo')}
+                            {rangeDates.length > 1
+                                ? tx(`Add ${rangeDates.length} Blackout Days`, `Agregar ${rangeDates.length} Días`)
+                                : tx('Add Blackout', 'Agregar Bloqueo')}
                         </button>
                     </div>
 
