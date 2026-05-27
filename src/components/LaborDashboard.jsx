@@ -14,6 +14,7 @@ const WARN_EMOJI = String.fromCodePoint(0x26A0, 0xFE0F); // warning
 const CHECK_EMOJI = String.fromCodePoint(0x2705);    // check mark
 const RED_CIRCLE = String.fromCodePoint(0x1F534);    // red circle
 const HOURGLASS = String.fromCodePoint(0x231B);      // hourglass
+const MONEY_EMOJI = String.fromCodePoint(0x1F4B0);   // money bag
 
 export default function LaborDashboard({ language, storeLocation }) {
     const [laborData, setLaborData] = useState(null);
@@ -280,7 +281,17 @@ export default function LaborDashboard({ language, storeLocation }) {
                     <div className="bg-white rounded-2xl p-4 ring-1 ring-gray-200 shadow-sm">
                         <div className="flex items-center justify-between mb-1">
                             <h3 className="text-sm font-bold text-gray-700">
-                                \uD83D\uDCB0 {language === "es" ? "SPLH hist\u00F3rico (Ventas / hora de trabajo)" : "Historical SPLH (Sales per Labor Hour)"}
+                                {/* The "\uD83D\uDCB0" emoji escape here used to live
+                                    as raw JSX text \u2014 JSX doesn't process Unicode
+                                    escapes outside string literals, so it
+                                    rendered as the literal eight characters
+                                    "\\uD83D\\uDCB0 Historical SPLH..." right
+                                    under the Today's Trend chart. Use the
+                                    MONEY_EMOJI constant declared at the top of
+                                    this file (same pattern as CHART_EMOJI etc).
+                                    2026-05-26 \u2014 Andrew flagged "wording is off
+                                    before historical." */}
+                                {MONEY_EMOJI} {language === "es" ? "SPLH hist\u00F3rico (Ventas / hora de trabajo)" : "Historical SPLH (Sales per Labor Hour)"}
                             </h3>
                             <span className="text-[10px] text-gray-400">
                                 {language === "es" ? `\u00DAltimos 28 d\u00EDas \u00B7 ${splhSampleCount} muestras` : `Last 28 days \u00B7 ${splhSampleCount} samples`}
