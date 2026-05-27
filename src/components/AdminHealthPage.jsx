@@ -29,9 +29,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { db } from '../firebase';
 import {
-    collection, doc, query, where, orderBy, limit, onSnapshot,
+    collection, doc, query, where, orderBy, limit, onSnapshot, updateDoc,
 } from 'firebase/firestore';
 import { subscribePrinterConfig, PRINTER_SLOTS } from '../data/labelPrinting';
+import { exportErrorToAI, exportBugToAI } from '../data/aiDebugReport';
 
 // Heartbeat thresholds — keep in sync with MenuScreensPage and the
 // checkTvHeartbeats Cloud Function so the dashboard agrees with
@@ -226,6 +227,170 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
         return unsub;
     }, []);
 
+    // ── Open bug reports ──────────────────────────────────────────
+    // /bug_reports is written by ReportProblemButton + by the
+    // PageErrorBoundary "Report this" affordance. Limit to 30 newest
+    // OPEN reports so we don't pull megabytes of resolved history into
+    // the admin browser; the Health dashboard isn't a triage UI yet —
+    // it's a daily glance at what's outstanding.
+    const [bugReports, setBugReports] = useState([]);
+    useEffect(() => {
+        const q = query(
+            collection(db, 'bug_reports'),
+            where('status', '==', 'open'),
+            orderBy('ts', 'desc'),
+            limit(30),
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const out = [];
+            snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+            setBugReports(out);
+        }, (err) => console.warn('AdminHealth: bug_reports error:', err));
+        return unsub;
+    }, []);
+
+    // ── Recent error logs ─────────────────────────────────────────
+    // Last 50 rows in /error_logs. We group by errorMessage signature
+    // in the render so the dashboard reads "FirebaseError × 8 in
+    // inventory" rather than 8 individual rows.
+    const [errorLogs, setErrorLogs] = useState([]);
+    useEffect(() => {
+        const q = query(
+            collection(db, 'error_logs'),
+            orderBy('ts', 'desc'),
+            limit(50),
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const out = [];
+            snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+            setErrorLogs(out);
+        }, (err) => console.warn('AdminHealth: error_logs error:', err));
+        return unsub;
+    }, []);
+
+    // Group error logs by errorName + first 80 chars of message. The
+    // signature is intentionally fuzzy — two FirebaseError rows with
+    // different doc paths in the message still cluster together so
+    // the dashboard surfaces the underlying class of bug.
+    const groupedErrors = useMemo(() => {
+        const map = new Map();
+        for (const e of errorLogs) {
+            const sig = `${e.errorName || 'Error'}::${(e.errorMessage || '').slice(0, 80)}`;
+            const existing = map.get(sig);
+            if (existing) {
+                existing.count++;
+                existing.featuresSet.add(e.feature || 'unknown');
+                existing.rolesSet.add(e.userRole || 'anonymous');
+                // Keep the newest occurrence as the representative
+                // row so "view" actions surface the freshest stack.
+                if (!existing.latest || (e.occurredAt || 0) > (existing.latest.occurredAt || 0)) {
+                    existing.latest = e;
+                }
+            } else {
+                map.set(sig, {
+                    sig,
+                    errorName: e.errorName || 'Error',
+                    errorMessage: e.errorMessage || '',
+                    severity: e.severity || 'error',
+                    featuresSet: new Set([e.feature || 'unknown']),
+                    rolesSet: new Set([e.userRole || 'anonymous']),
+                    count: 1,
+                    latest: e,
+                });
+            }
+        }
+        return [...map.values()]
+            .map(g => ({ ...g, features: [...g.featuresSet], roles: [...g.rolesSet] }))
+            .sort((a, b) => b.count - a.count)
+            .slice(0, 20);
+    }, [errorLogs]);
+
+    // ── AI failures ───────────────────────────────────────────────
+    // Last 20 rows from /ai_logs where ok=false. Surfaces Claude
+    // outages, safety blocks, and quota throttling so the owners
+    // know when AI-backed features (email triage, recipe extract,
+    // ai-search) are degraded.
+    const [aiFailures, setAiFailures] = useState([]);
+    useEffect(() => {
+        const q = query(
+            collection(db, 'ai_logs'),
+            where('ok', '==', false),
+            orderBy('ts', 'desc'),
+            limit(20),
+        );
+        const unsub = onSnapshot(q, (snap) => {
+            const out = [];
+            snap.forEach(d => out.push({ id: d.id, ...d.data() }));
+            setAiFailures(out);
+        }, (err) => console.warn('AdminHealth: ai_logs error:', err));
+        return unsub;
+    }, []);
+
+    // Top-line counters for the header strip.
+    const openBugCount = bugReports.length;
+    const critErr24hCount = useMemo(() => {
+        const cutoff = Date.now() - 24 * 3600_000;
+        return errorLogs.filter(e =>
+            e.severity === 'critical'
+            && (e.occurredAt || 0) >= cutoff,
+        ).length;
+    }, [errorLogs]);
+
+    // Mark a bug report resolved. Best-effort — the firestore.rules
+    // narrow the update shape so we only set the status + a who/when.
+    const resolveBug = async (id) => {
+        try {
+            await updateDoc(doc(db, 'bug_reports', id), {
+                status: 'resolved',
+                resolvedAt: Date.now(),
+                resolvedBy: staffName || null,
+            });
+        } catch (e) {
+            console.warn('resolveBug failed:', e);
+        }
+    };
+
+    // Copy AI Debug Report to clipboard + flash a toast-y status string
+    // inline (no toast lib here yet — the page already has its own
+    // micro-state convention for "just did something"). React state
+    // gives us a per-row spinner without pulling in another lib.
+    const [exportingId, setExportingId] = useState(null);
+    const [exportFlash, setExportFlash] = useState(null);
+    const flash = (msg) => {
+        setExportFlash(msg);
+        setTimeout(() => setExportFlash(null), 2000);
+    };
+
+    const handleExportError = async (errorDoc) => {
+        setExportingId(errorDoc.id);
+        try {
+            const { ok } = await exportErrorToAI(errorDoc);
+            flash(ok
+                ? (isEs ? '✓ Copiado al portapapeles' : '✓ Copied to clipboard')
+                : (isEs ? 'No se pudo copiar' : 'Could not copy'));
+        } finally {
+            setExportingId(null);
+        }
+    };
+
+    const handleExportBug = async (bugDoc) => {
+        setExportingId(bugDoc.id);
+        try {
+            // Attach the linked error_logs rows by id so Claude sees
+            // both the user's narrative and the stack traces in the
+            // exported payload.
+            const attached = Array.isArray(bugDoc.attachedErrorIds)
+                ? errorLogs.filter(e => bugDoc.attachedErrorIds.includes(e.id))
+                : [];
+            const { ok } = await exportBugToAI(bugDoc, { attachedErrors: attached });
+            flash(ok
+                ? (isEs ? '✓ Copiado al portapapeles' : '✓ Copied to clipboard')
+                : (isEs ? 'No se pudo copiar' : 'Could not copy'));
+        } finally {
+            setExportingId(null);
+        }
+    };
+
     // App version is set at build time via the __APP_VERSION__ define
     // in vite.config.js. Read once at module init (synchronous, no
     // network) so we can show admins the exact build they're on.
@@ -405,6 +570,181 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
                     </div>
                 )}
             </div>
+
+            {/* ── Open bug reports + recent errors ─────────────────
+                These two cards are the daily-glance for "what's
+                actually broken right now?". Each row carries an
+                "Export to AI" button that copies the AI Debug
+                Report JSON to the clipboard — paste into Claude
+                to get a structured fix attempt without secrets/PII
+                leaking out. */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {/* Open bugs ─────────────────────────────────────── */}
+                <div className="bg-white border border-dd-line rounded-2xl p-4">
+                    <div className="flex items-baseline justify-between mb-2">
+                        <h2 className="text-sm font-black text-dd-text">
+                            🪲 {tx('Open bug reports', 'Reportes abiertos')}
+                        </h2>
+                        <span className="text-[11px] font-bold text-dd-text-2 tabular-nums">
+                            {openBugCount}
+                        </span>
+                    </div>
+                    {bugReports.length === 0 ? (
+                        <p className="text-[12px] text-dd-text-2 italic">
+                            {tx('No open reports.', 'Sin reportes abiertos.')}
+                        </p>
+                    ) : (
+                        <div className="divide-y divide-dd-line/60 max-h-72 overflow-y-auto -mx-1">
+                            {bugReports.map(b => (
+                                <div key={b.id} className="px-1 py-2">
+                                    <div className="flex items-baseline gap-2 mb-1">
+                                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border tabular-nums ${
+                                            b.urgency === 'high'
+                                                ? 'bg-red-50 border-red-200 text-red-700'
+                                                : b.urgency === 'med'
+                                                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                                    : 'bg-dd-bg border-dd-line text-dd-text-2'
+                                        }`}>
+                                            {(b.urgency || 'med').toUpperCase()}
+                                        </span>
+                                        <span className="text-[11px] font-bold text-dd-text truncate">
+                                            {b.reporterName || tx('anonymous', 'anónimo')}
+                                        </span>
+                                        <span className="text-[10px] text-dd-text-2 shrink-0 tabular-nums">
+                                            {fmtRelative(b.ts, isEs)}
+                                        </span>
+                                    </div>
+                                    <div className="text-[12px] text-dd-text leading-snug line-clamp-2">
+                                        {b.description}
+                                    </div>
+                                    {b.whatWereYouDoing && (
+                                        <div className="text-[10.5px] text-dd-text-2 mt-0.5 italic line-clamp-1">
+                                            {tx('Doing:', 'Hacía:')} {b.whatWereYouDoing}
+                                        </div>
+                                    )}
+                                    <div className="text-[10px] text-dd-text-2 mt-0.5 truncate font-mono">
+                                        {b.page} · {(b.reporterLocation || '—')}
+                                    </div>
+                                    <div className="flex gap-1.5 mt-1.5">
+                                        <button
+                                            disabled={exportingId === b.id}
+                                            onClick={() => handleExportBug(b)}
+                                            className="text-[10px] font-bold px-2 py-1 rounded bg-dd-bg border border-dd-line text-dd-text hover:bg-white disabled:opacity-50"
+                                        >
+                                            {exportingId === b.id
+                                                ? '…'
+                                                : tx('Export to AI', 'Exportar a IA')}
+                                        </button>
+                                        <button
+                                            onClick={() => resolveBug(b.id)}
+                                            className="text-[10px] font-bold px-2 py-1 rounded bg-dd-green/90 text-white hover:bg-dd-green"
+                                        >
+                                            {tx('Resolve', 'Resolver')}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* Errors grouped by signature ──────────────────── */}
+                <div className="bg-white border border-dd-line rounded-2xl p-4">
+                    <div className="flex items-baseline justify-between mb-2">
+                        <h2 className="text-sm font-black text-dd-text">
+                            ⚠️ {tx('Recent errors', 'Errores recientes')}
+                        </h2>
+                        <span className="text-[11px] font-bold text-dd-text-2 tabular-nums">
+                            {critErr24hCount > 0 ? (
+                                <span className="text-red-700">{critErr24hCount} {tx('crit/24h', 'crít/24h')}</span>
+                            ) : (
+                                <span>{errorLogs.length}</span>
+                            )}
+                        </span>
+                    </div>
+                    {groupedErrors.length === 0 ? (
+                        <p className="text-[12px] text-dd-text-2 italic">
+                            {tx('No errors logged.', 'Sin errores registrados.')}
+                        </p>
+                    ) : (
+                        <div className="divide-y divide-dd-line/60 max-h-72 overflow-y-auto -mx-1">
+                            {groupedErrors.map((g) => (
+                                <div key={g.sig} className="px-1 py-2">
+                                    <div className="flex items-baseline gap-2 mb-0.5">
+                                        <span className={`text-[10px] font-black px-1.5 py-0.5 rounded-full border tabular-nums ${
+                                            g.severity === 'critical'
+                                                ? 'bg-red-50 border-red-200 text-red-700'
+                                                : g.severity === 'error'
+                                                    ? 'bg-amber-50 border-amber-200 text-amber-700'
+                                                    : 'bg-dd-bg border-dd-line text-dd-text-2'
+                                        }`}>
+                                            ×{g.count}
+                                        </span>
+                                        <span className="text-[11px] font-bold text-dd-text truncate">
+                                            {g.errorName}
+                                        </span>
+                                        <span className="text-[10px] text-dd-text-2 shrink-0 tabular-nums">
+                                            {fmtRelative(g.latest?.ts, isEs)}
+                                        </span>
+                                    </div>
+                                    <div className="text-[11.5px] text-dd-text leading-snug line-clamp-2">
+                                        {g.errorMessage || tx('(no message)', '(sin mensaje)')}
+                                    </div>
+                                    <div className="text-[10px] text-dd-text-2 mt-0.5 truncate">
+                                        {g.features.join(', ')} · {g.roles.join(', ')}
+                                    </div>
+                                    <button
+                                        disabled={exportingId === g.latest?.id}
+                                        onClick={() => handleExportError(g.latest)}
+                                        className="text-[10px] font-bold px-2 py-1 rounded bg-dd-bg border border-dd-line text-dd-text hover:bg-white mt-1.5 disabled:opacity-50"
+                                    >
+                                        {exportingId === g.latest?.id
+                                            ? '…'
+                                            : tx('Export to AI', 'Exportar a IA')}
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Toast strip — surfaces the "copied to clipboard" status
+                from the Export to AI buttons. Floating because the
+                user is reading the dashboard, not the buttons. */}
+            {exportFlash && (
+                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-dd-text text-white text-xs font-bold px-3 py-2 rounded-full shadow-lg z-50">
+                    {exportFlash}
+                </div>
+            )}
+
+            {/* AI failures — only renders when there ARE failures.
+                Most days this card is hidden, which is desirable —
+                a clean dashboard is the best signal of "AI features
+                working fine". */}
+            {aiFailures.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                    <h2 className="text-sm font-black text-amber-900 mb-2">
+                        🤖 {tx('AI failures', 'Fallos de IA')}
+                        <span className="text-[10px] font-bold text-amber-700 ml-2">
+                            {aiFailures.length} {tx('recent', 'recientes')}
+                        </span>
+                    </h2>
+                    <div className="divide-y divide-amber-200/70 max-h-48 overflow-y-auto">
+                        {aiFailures.map(a => (
+                            <div key={a.id} className="py-1.5 text-[11.5px] flex items-baseline gap-2">
+                                <span className="text-amber-800 shrink-0 tabular-nums w-10 text-right">
+                                    {fmtRelative(a.ts, isEs)}
+                                </span>
+                                <span className="font-bold text-amber-900 shrink-0">{a.feature || 'ai'}</span>
+                                <span className="text-amber-900/80 truncate">
+                                    {(a.errorMessage || a.errorCode || tx('(no message)', '(sin mensaje)'))}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* Security posture — quick recap card so admins remember
                 where the rules stand. Especially useful right now

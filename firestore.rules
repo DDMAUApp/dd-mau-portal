@@ -454,6 +454,13 @@ service cloud.firestore {
                         // 2026-05-26 — CF-only. pollGmail pings owners
                         // when the classifier returns low confidence.
                         "email_needs_classification",
+                        // 2026-05-26 — bug-logging critical-error alert.
+                        // Written exclusively by onCriticalError CF when
+                        // a row lands in /error_logs with severity ===
+                        // 'critical'. Blocking client mint prevents a
+                        // tampered client from forging a fake crit
+                        // page to spam the owners.
+                        "critical_error_alert",
                     ]);
       allow update: if request.resource.data is map;
       allow delete: if false;
@@ -503,6 +510,86 @@ service cloud.firestore {
     match /system/{docId} {
       allow read: if true;
       allow create, update, delete: if false;
+    }
+
+    // ── error_logs — frontend + Cloud Function crash dumps ─────────────
+    // Written by src/data/logger.js (logError) and by Cloud Functions
+    // when they hit an unhandled exception. Read by AdminHealthPage
+    // (owner-only client gate) to surface the recent-errors card and
+    // by the onCriticalError CF to dispatch SMS alerts.
+    //
+    // Append-only from clients. Cloud Functions use the admin SDK and
+    // bypass these rules, so server-side cleanup via pruneLogs() works.
+    // No updates from clients — if we ever need "marked resolved" we'll
+    // do it via a callable so the actor is auditable.
+    //
+    // Shape narrowing: errorMessage + severity + ts. We do NOT validate
+    // every field because the logger may add legitimate ones in future
+    // (sessionId, breadcrumbs, etc.) and rules-level validation is
+    // brittle. Keeps the bar at "this is a real log row, not garbage."
+    //
+    // Without Firebase Auth (Phase 2) we can't truly restrict READS to
+    // owners only. AdminHealthPage's tab gate (staffIsAdmin) is the
+    // current line of defense; Phase 2 will tighten via custom claims.
+    match /error_logs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.severity is string
+                    && request.resource.data.errorMessage is string;
+      allow update, delete: if false;
+    }
+
+    // ── security_logs — perm-denied, login retries, ownerOnly probes ───
+    // Same posture as error_logs (append-only from clients, CF cleanup
+    // via admin SDK). Phase 2 should restrict READS to owners only.
+    match /security_logs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.kind is string;
+      allow update, delete: if false;
+    }
+
+    // ── ai_logs — AI request/response telemetry ────────────────────────
+    // Written exclusively by Cloud Functions (aiSearch, pollGmail
+    // classifier, etc.). Clients can READ for the Health dashboard's
+    // "AI failures" card. CF-only writes prevent a tampered client from
+    // forging fake AI usage to spike Anthropic spend tracking.
+    match /ai_logs/{logId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // ── api_request_logs — outgoing-API call telemetry ────────────────
+    // Same posture as ai_logs. Cloud Functions write to track Toast,
+    // Sysco, USFoods, Sling, Gmail, Twilio call results. Clients read
+    // for the Health dashboard's API-health card.
+    match /api_request_logs/{logId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // ── bug_reports — staff-submitted bug reports ──────────────────────
+    // Written by ReportProblemButton (any signed-in staff can file).
+    // UPDATES are allowed because the Health dashboard's "Resolve"
+    // button writes status + resolvedAt + resolvedBy. We narrow update
+    // to require the status field be one of a fixed set so a buggy
+    // client can't junk-write the whole doc.
+    //
+    // Reads are open at the rules level today (Phase-2 Auth + claims
+    // would gate to owners + the reporter only). The Phase-1 mitigation
+    // is the AdminHealthPage tab gate; the data we capture is already
+    // redacted via src/data/redact.js so even if a curious staff
+    // member ran getDocs() they'd see no PII bodies.
+    match /bug_reports/{reportId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.description is string
+                    && request.resource.data.description.size() > 0
+                    && request.resource.data.description.size() <= 2500;
+      allow update: if request.resource.data is map
+                    && request.resource.data.status in
+                       ['open','investigating','resolved','duplicate','wontfix'];
+      allow delete: if false;
     }
 
     // ── TV displays + devices ──────────────────────────────────────────

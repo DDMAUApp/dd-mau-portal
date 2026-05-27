@@ -86,6 +86,21 @@ const LabelPrintingCenter = lazy(() => import('./components/LabelPrintingCenter'
 // stale-chunk handler. Eager import — class component is ~2KB and
 // always needed at render time, no point lazy-loading it.
 import PageErrorBoundary from './components/PageErrorBoundary';
+// Bug-logging system (Andrew 2026-05-26). Eager imports — the global
+// handlers install at module init, and the floating bug-report button
+// is mounted on every signed-in screen so it has to be available
+// without a lazy chunk fetch. Both are tiny.
+//   • installGlobalHandlers — wires window.onerror + unhandledrejection
+//     into /error_logs (non-chunk errors only; chunk errors keep the
+//     existing auto-reload path above).
+//   • setIdentity — pushes the signed-in staff's id/role/location to
+//     window globals so every log row carries who-was-it metadata.
+//   • logError — used directly here by the global ErrorBoundary on
+//     non-chunk crashes.
+//   • ReportProblemButton — floating "🪲 Report" button on every
+//     signed-in screen. Writes to /bug_reports.
+import { installGlobalHandlers, setIdentity, logError } from './data/logger';
+import ReportProblemButton from './components/ReportProblemButton';
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
@@ -173,6 +188,22 @@ class ErrorBoundary extends Component {
                 // can finish painting the fallback (in case reload is
                 // blocked, the user still sees the friendly message).
                 setTimeout(() => { window.location.reload(); }, 50);
+            } else if (!isChunkErr) {
+                // Non-chunk crash that fell all the way to the global
+                // boundary — almost always a top-level render bug (e.g.
+                // App.jsx itself threw, before any PageErrorBoundary could
+                // catch it). Drop a row in /error_logs at severity=critical
+                // so it pages the owners via the onCriticalError CF.
+                // Fire-and-forget; the boundary's render() still paints
+                // its friendly fallback below.
+                try {
+                    Promise.resolve(logError({
+                        error,
+                        severity: 'critical',
+                        feature: 'app-shell',
+                        meta: { componentStack: errorInfo?.componentStack?.slice(0, 4000) },
+                    })).catch(() => {});
+                } catch {}
             }
         } catch (_) { /* swallow — fallback UI still rendered */ }
     }
@@ -244,6 +275,13 @@ if (typeof window !== "undefined") {
         maybeReload(r?.message || String(r || ""), r?.name);
     });
 }
+
+// Bug-logging system — install the /error_logs handlers alongside the
+// chunk-reload listeners above. Both run; the chunk listener has its
+// own ChunkLoadError filter to dedupe. installGlobalHandlers() is
+// idempotent (self-guards via window.__ddmau_loggerInstalled) so HMR
+// double-mounting in dev won't double-bind.
+try { installGlobalHandlers(); } catch {}
 
 // Loading spinner for lazy-loaded components
 function TabLoading({ language }) {
@@ -811,6 +849,23 @@ export default function App() {
         () => (staffList || []).find(s => s.name === staffName) || null,
         [staffList, staffName],
     );
+    // Mirror staff identity to the logger globals so every /error_logs,
+    // /security_logs, and /bug_reports row carries who-was-it metadata.
+    // Runs whenever the staff record changes (PIN unlock, admin rename,
+    // logout). On logout (currentStaffRecord null + staffName null) we
+    // clear the globals so anonymous error rows don't leak the last
+    // signed-in person's name.
+    useEffect(() => {
+        try {
+            setIdentity({
+                staffId:   currentStaffRecord?.id ?? null,
+                staffName: staffName ?? null,
+                role:      currentStaffRecord?.role ?? (staffName ? 'staff' : 'anonymous'),
+                location:  currentStaffRecord?.location ?? null,
+            });
+        } catch {}
+    }, [staffName, currentStaffRecord]);
+
     // Recipes access — opt-OUT model. Default: every staff has access.
     // Admin can flip recipesAccess to FALSE to revoke a specific person.
     const hasRecipesAccess = useMemo(
@@ -1312,6 +1367,16 @@ export default function App() {
                     staffName={staffName}
                     viewer={currentStaffRecord}
                 />
+                {/* Bug-report launcher — floating button in the bottom-
+                    right, mounted globally on every signed-in screen.
+                    A staff member can tap it any time to file a report
+                    that auto-attaches device + recent errors + recent
+                    breadcrumbs. Also opens programmatically when the
+                    route-level error boundary's "Report this" button
+                    fires the ddmau:open-bug-report CustomEvent. Kept
+                    OUT of the lock-screen branch so anonymous PIN
+                    failures don't generate reports we can't attribute. */}
+                <ReportProblemButton language={language} />
             </Suspense>
         );
 }

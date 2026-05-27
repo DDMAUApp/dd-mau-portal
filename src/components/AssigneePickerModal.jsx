@@ -40,16 +40,37 @@ export default function AssigneePickerModal({
     const [search, setSearch] = useState('');
     const [saving, setSaving] = useState(false);
 
-    // Reset state on each open. Without this, opening picker A, picking
-    // names, canceling, opening picker B for a different task would
-    // leave A's selections pre-checked on B.
+    // Stable, content-based key for assignedNames. Callers pass a
+    // freshly-allocated array on most renders — e.g. Operations builds
+    // `Array.isArray(task.assignTo) ? task.assignTo : (task.assignTo ? [task.assignTo] : [])`,
+    // so an unassigned task yields a brand-new `[]` and a legacy
+    // single-string assignment a brand-new `[name]` EVERY render. If the
+    // reset effect below depended on the array's IDENTITY, any parent
+    // re-render (Operations has a 30s deadline interval + ~24 onSnapshot
+    // listeners) would re-fire it mid-pick and wipe the manager's
+    // in-progress selections. Keying on sorted CONTENT means the effect
+    // only re-syncs when the actual set of names changes — never on a
+    // no-op re-render. (assignedKey stays the same string across renders
+    // even though useMemo recomputes it, so Object.is dep-compare skips.)
+    const assignedKey = useMemo(
+        () => Array.from(assignedNames || []).map(String).sort().join(''),
+        [assignedNames]
+    );
+
+    // Reset state on each open AND whenever the committed assignee set
+    // actually changes. Without this, opening picker A, picking names,
+    // canceling, opening picker B for a different task would leave A's
+    // selections pre-checked on B.
     useEffect(() => {
         if (open) {
             setSelected(new Set(assignedNames));
             setSearch('');
             setSaving(false);
         }
-    }, [open, assignedNames]);
+    // Depend on assignedKey (stable content), NOT assignedNames
+    // (unstable identity) — see the note above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open, assignedKey]);
 
     const toggleName = (name) => {
         setSelected((prev) => {

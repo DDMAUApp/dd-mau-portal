@@ -17,21 +17,80 @@
 // patterns already in the codebase — same recovery UX (icon, title,
 // description, primary action) so users see one consistent error
 // state across the app instead of three different "oh no" screens.
+//
+// 2026-05-26 — added logError() call in componentDidCatch so every
+// route crash also writes a row to /error_logs with the full stack +
+// recent breadcrumbs. Plus a "Report this" button that opens the
+// global ReportProblemButton sheet pre-filled with the crash context,
+// so a staff member who hits a route crash can flag it in one tap
+// instead of needing to remember what they were doing.
 
 import { Component } from 'react';
+import { logError, breadcrumb } from '../data/logger';
 
 export default class PageErrorBoundary extends Component {
     constructor(props) {
         super(props);
-        this.state = { hasError: false, error: null };
+        this.state = { hasError: false, error: null, errorLogId: null };
     }
     static getDerivedStateFromError(error) {
         return { hasError: true, error };
     }
     componentDidCatch(error, info) {
         const tab = this.props.tabName || 'page';
+        // Keep the console line — it's load-bearing for live debugging
+        // in dev (the page chrome only shows the error name, the
+        // console has the full stack with HMR symbol mapping).
+        // eslint-disable-next-line no-console
         console.error(`[${tab}] render crashed:`, error, info);
+
+        // Drop a breadcrumb FIRST so the error_logs row's recentActions
+        // array captures the boundary trip itself (helps disambiguate
+        // "crashed on mount" vs "crashed after N actions").
+        try { breadcrumb('react.error', tab); } catch {}
+
+        // Best-effort write to /error_logs. Fire-and-forget — we don't
+        // want to await a Firestore round-trip during a render crash.
+        // Stash the resulting doc id (when it arrives) on state so the
+        // fallback UI can render a "Report this (ref: …)" link.
+        Promise.resolve(logError({
+            error,
+            severity: 'critical',
+            feature: this.props.feature || tab,
+            meta: {
+                tabName: tab,
+                componentStack: typeof info?.componentStack === 'string'
+                    ? info.componentStack.slice(0, 4000)
+                    : null,
+            },
+        })).then((id) => {
+            if (id) this.setState({ errorLogId: id });
+        }).catch(() => {
+            // logError already swallows its own write failures, but
+            // belt-and-suspenders so a thrown promise here doesn't
+            // unmount the boundary itself.
+        });
     }
+
+    // Open the global bug-report sheet pre-filled with crash context.
+    // The button only sends — staff still has to confirm.
+    handleReport = () => {
+        const tab = this.props.tabName || 'this page';
+        const errName = this.state.error?.name || 'Error';
+        const errMsg = String(this.state.error?.message || '').slice(0, 120);
+        try {
+            window.dispatchEvent(new CustomEvent('ddmau:open-bug-report', {
+                detail: {
+                    prefill: {
+                        whatWereYouDoing: tab,
+                        description: `Page crashed — ${errName}: ${errMsg}`,
+                        urgency: 'high',
+                    },
+                },
+            }));
+        } catch {}
+    };
+
     render() {
         if (!this.state.hasError) return this.props.children;
         const tab = this.props.tabName || 'This page';
@@ -45,21 +104,32 @@ export default class PageErrorBoundary extends Component {
                 </h3>
                 <p className="text-sm text-dd-text-2 max-w-md leading-relaxed">
                     {tx(
-                        "Something broke rendering this page. The rest of the app is fine — switch tabs and come back, or refresh. If it keeps happening, a manager can check the console for the error trace.",
-                        "Algo falló al cargar esta página. El resto de la app funciona — cambia de pestaña y vuelve, o recarga. Si sigue pasando, un gerente puede revisar la consola.",
+                        "Something broke rendering this page. The rest of the app is fine — switch tabs and come back, or refresh. If it keeps happening, send us a report and we'll fix it.",
+                        "Algo falló al cargar esta página. El resto de la app funciona — cambia de pestaña y vuelve, o recarga. Si sigue pasando, envíanos un reporte y lo arreglaremos.",
                     )}
                 </p>
-                <div className="flex gap-2 mt-2">
+                <div className="flex gap-2 mt-2 flex-wrap justify-center">
                     <button
-                        onClick={() => this.setState({ hasError: false, error: null })}
+                        onClick={() => this.setState({ hasError: false, error: null, errorLogId: null })}
                         className="px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
                         ↻ {tx('Try again', 'Reintentar')}
+                    </button>
+                    <button
+                        onClick={this.handleReport}
+                        className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text text-sm font-bold hover:bg-dd-bg active:scale-95 transition">
+                        🪲 {tx('Report this', 'Reportar')}
                     </button>
                     <button
                         onClick={() => { try { window.location.reload(); } catch {} }}
                         className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text text-sm font-bold hover:bg-dd-bg active:scale-95 transition">
                         {tx('Refresh app', 'Recargar app')}
                     </button>
+                </div>
+                {/* Surface the error_log ref so a manager handing it to
+                    Andrew has a stable id to reference. Falls back to
+                    "(pending)" until the Firestore write resolves. */}
+                <div className="text-[10.5px] text-dd-text-2 mt-2 font-mono">
+                    {tx('Ref:', 'Ref:')} {this.state.errorLogId || tx('(pending)', '(pendiente)')}
                 </div>
                 {this.state.error?.message && (
                     <details className="mt-3 text-[11px] text-dd-text-2 max-w-md">

@@ -164,6 +164,9 @@ exports.dispatchNotification = onDocumentCreated(
             "email_inquiry_catering",
             "email_inquiry_complaint",
             "email_needs_classification",
+            // 2026-05-26 — bug-logging system. Production-crit error
+            // pages are owner-only; the dashboard is owner-only too.
+            "critical_error_alert",
         ]);
         const OWNER_STAFF_IDS = new Set([40, 41]);
         if (OWNER_ONLY_TYPE_IDS.has(notif.type) && !OWNER_STAFF_IDS.has(me.id)) {
@@ -207,6 +210,13 @@ exports.dispatchNotification = onDocumentCreated(
             "task_handoff", "task_reminder", "task_comment",
             "task_message", "task_completed",
             "required_ack", "announcement",
+            // production critical-error alerts — locked on so the
+            // owners can't accidentally mute them via the per-staff
+            // matrix. The audience is already restricted to owners
+            // by OWNER_ONLY_TYPE_IDS, so the locked-on flag here
+            // doesn't broaden delivery — it just prevents accidental
+            // self-muting of critical pages.
+            "critical_error_alert",
         ]);
         const personalOptOuts = Array.isArray(me.pushOptOut) ? me.pushOptOut : [];
         if (notif.type && personalOptOuts.includes(notif.type) && !LOCKED_ON_TYPE_IDS.has(notif.type)) {
@@ -3983,5 +3993,283 @@ Body snippet: ${snippet}`;
         // so failed-run forensics survive: acquiredAt timestamps).
         await lockRef.set({ heldUntil: 0, releasedAt: FieldValue.serverTimestamp() }, { merge: true });
         logger.info(`pollGmail: classified ${classified} new + reclassified ${reclassified}.`);
+    },
+);
+
+// ── onCriticalError — page owners when /error_logs gets a crit row ──────
+//
+// Andrew 2026-05-26 — bug-logging system. The frontend logger
+// (src/data/logger.js) writes a row to /error_logs every time a crash
+// is observed. Most rows are severity=error/warn — we surface those in
+// the AdminHealthPage dashboard and let the owners catch them on their
+// next glance. severity='critical' is reserved for things that need
+// immediate attention (top-level shell crash, the global ErrorBoundary
+// catching a render failure, etc.).
+//
+// This function fans out an in-app FCM notification to the owners
+// (Andrew + Julie, ids 40/41) for every critical-severity row, with
+// per-signature dedup so a 200-row crit-error storm pages them once
+// per hour per error type rather than 200 times.
+//
+// SMS path: NOT enabled by default. To opt in, add 'critical_error_alert'
+// to ALWAYS_SMS_TYPES in functions/smsTemplates.js — the existing
+// dispatchSms CF will pick it up from the /notifications doc. We
+// hold off shipping SMS by default because crash storms could blow
+// Twilio spend and a 3am page on a fixable bug isn't worth the
+// startle. FCM push is enough for daytime-paged ops.
+//
+// Dedup: /system/error_alert_cooldown_{sigHash} doc carries the last
+// alert time. Two rows within 60 minutes of each other with the same
+// signature collapse — only the first triggers a notification.
+exports.onCriticalError = onDocumentCreated(
+    { document: "error_logs/{id}", region: "us-central1" },
+    async (event) => {
+        const snap = event.data;
+        if (!snap) return;
+        const data = snap.data() || {};
+        if (data.severity !== "critical") return;
+
+        // Signature = errorName + first 60 chars of message. Fuzzy
+        // enough to cluster "permission-denied at inventory/foo" with
+        // "permission-denied at inventory/bar" so storms hit a single
+        // cooldown bucket.
+        const sig = `${data.errorName || "Error"}::${(data.errorMessage || "").slice(0, 60)}`;
+        // Hash the sig into a doc-id-safe key. Firestore doc ids can be
+        // up to 1500 bytes, but we want short for readability. crc32 would
+        // be plenty; without an extra dep we fall back to a simple non-
+        // crypto hash. The point is dedup, not security.
+        let sigHash = 0;
+        for (let i = 0; i < sig.length; i++) {
+            sigHash = ((sigHash << 5) - sigHash) + sig.charCodeAt(i);
+            sigHash |= 0;
+        }
+        const cooldownId = `error_alert_cooldown_${(sigHash >>> 0).toString(36)}`;
+
+        // Cooldown check + write atomically via transaction so two
+        // concurrent crit rows don't both alert.
+        const cooldownRef = db.doc(`system/${cooldownId}`);
+        const COOLDOWN_MS = 60 * 60_000; // 1 hour per signature
+        let shouldAlert = false;
+        try {
+            await db.runTransaction(async (txn) => {
+                const cur = await txn.get(cooldownRef);
+                const lastMs = cur.exists ? (cur.data()?.lastAlertMs || 0) : 0;
+                if (Date.now() - lastMs >= COOLDOWN_MS) {
+                    shouldAlert = true;
+                    txn.set(cooldownRef, {
+                        lastAlertMs: Date.now(),
+                        lastSig: sig.slice(0, 200),
+                        lastErrorLogId: event.params.id,
+                    }, { merge: true });
+                }
+            });
+        } catch (e) {
+            logger.warn(`onCriticalError: cooldown txn failed for sig=${sig}:`, e?.message || e);
+            // Fall through to alert anyway — better to over-page than
+            // silently drop a real crit.
+            shouldAlert = true;
+        }
+        if (!shouldAlert) {
+            logger.info(`onCriticalError: cooldown active for sig="${sig}" — skipping fan-out.`);
+            return;
+        }
+
+        // Look up owners.
+        const staffDoc = await db.doc("config/staff").get();
+        const list = (staffDoc.data() || {}).list || [];
+        const owners = list.filter((s) => s && s.name && (s.id === 40 || s.id === 41));
+        if (owners.length === 0) {
+            logger.warn("onCriticalError: no owner staff found, skipping page.");
+            return;
+        }
+
+        // Compose a tight one-line page. Title fits a phone lock-screen
+        // preview; body has the short ref so the owner can find the
+        // exact row in the Health dashboard.
+        const feature = (data.feature || "unknown").slice(0, 40);
+        const errName = (data.errorName || "Error").slice(0, 40);
+        const errMsg = (data.errorMessage || "").slice(0, 120);
+        const ref = event.params.id.slice(0, 8);
+
+        const title = `🚨 ${errName} in ${feature}`;
+        const body = `${errMsg}\nref: ${ref} · v${data.appVersion || "?"}`;
+
+        // Fan out — one /notifications doc per owner. dispatchNotification
+        // CF picks these up via its onDocumentCreated trigger and routes
+        // to each owner's FCM tokens.
+        for (const o of owners) {
+            try {
+                await db.collection("notifications").add({
+                    forStaff: o.name,
+                    type: "critical_error_alert",
+                    title,
+                    body,
+                    deepLink: "health",
+                    link: "/?tab=health",
+                    tag: `critical_error_alert:${cooldownId}:${o.name}`,
+                    priority: "high",
+                    forceDeliver: true,
+                    createdAt: FieldValue.serverTimestamp(),
+                    read: false,
+                    createdBy: "onCriticalError",
+                    sourceErrorLogId: event.params.id,
+                });
+            } catch (e) {
+                logger.warn(`onCriticalError: notify ${o.name} failed:`, e?.message || e);
+            }
+        }
+        logger.info(`onCriticalError: paged ${owners.length} owner(s) — sig="${sig}" ref=${ref}.`);
+    },
+);
+
+// ── pruneSystemLogs — nightly retention for new log collections ────────
+//
+// Andrew 2026-05-26 — bug-logging system. Separate from the existing
+// pruneAuditLogs because:
+//   1. New collections (/error_logs, /security_logs, /ai_logs,
+//      /api_request_logs, /bug_reports) have different retention
+//      policies than the existing audit-style collections.
+//   2. Easier to deploy / roll back independently.
+//   3. The existing pruneAuditLogs has tested ordering + bulk-writer
+//      semantics; surgery risks regressing it.
+//
+// Per-collection retention (matches the design doc / firestore.rules
+// privacy comments):
+//   • error_logs       — 90 days   (warns are nice-to-keep but a quarter
+//                                   is plenty for trend lookups)
+//   • security_logs    — 365 days  (compliance + forensic value)
+//   • ai_logs          —  90 days  (cost tracking + outage forensics)
+//   • api_request_logs —  60 days  (mostly outage debugging — degrades fast)
+//   • bug_reports      — keep open forever; resolved → 365 days
+//
+// Same SCAN_LIMIT-per-run cap as pruneAuditLogs so a long-deferred
+// prune drains over weeks rather than spiking write costs in one shot.
+exports.pruneSystemLogs = onSchedule(
+    {
+        schedule: "30 4 * * *", // 4:30am Central daily (post pruneAuditLogs)
+        timeZone: "America/Chicago",
+        region: "us-central1",
+        timeoutSeconds: 540,
+        memory: "512MiB",
+    },
+    async () => {
+        const SCAN_LIMIT = 1500;
+        const RULES = [
+            { coll: "error_logs",         field: "ts", days: 90  },
+            { coll: "security_logs",      field: "ts", days: 365 },
+            { coll: "ai_logs",            field: "ts", days: 90  },
+            { coll: "api_request_logs",   field: "ts", days: 60  },
+        ];
+
+        const report = [];
+        let totalDeleted = 0;
+        let totalErrors = 0;
+
+        for (const rule of RULES) {
+            const cutoff = new Date(Date.now() - rule.days * 24 * 60 * 60_000);
+            let deleted = 0;
+            let errors = 0;
+            try {
+                const snap = await db.collection(rule.coll)
+                    .where(rule.field, "<", cutoff)
+                    .orderBy(rule.field, "asc")
+                    .limit(SCAN_LIMIT)
+                    .get();
+                if (snap.empty) {
+                    report.push(`${rule.coll}: 0`);
+                    continue;
+                }
+                const bw = db.bulkWriter();
+                bw.onWriteError((err) => {
+                    if (err.failedAttempts < 3) return true;
+                    errors++;
+                    logger.warn(`pruneSystemLogs ${rule.coll}: giving up on ${err.documentRef.path}`, err.message);
+                    return false;
+                });
+                snap.forEach((d) => {
+                    bw.delete(d.ref);
+                    deleted++;
+                });
+                await bw.close();
+                report.push(`${rule.coll}: ${deleted}${errors ? ` (${errors} err)` : ""}`);
+                totalDeleted += deleted;
+                totalErrors += errors;
+            } catch (err) {
+                logger.warn(`pruneSystemLogs ${rule.coll} failed:`, err.message);
+                report.push(`${rule.coll}: ERR`);
+                totalErrors++;
+            }
+        }
+
+        // bug_reports — only prune RESOLVED rows >365d. Open reports
+        // are kept forever (they're a worklist, not a log).
+        try {
+            const bugCutoff = new Date(Date.now() - 365 * 24 * 60 * 60_000);
+            const snap = await db.collection("bug_reports")
+                .where("status", "==", "resolved")
+                .where("resolvedAt", "<", bugCutoff.getTime())
+                .limit(SCAN_LIMIT)
+                .get();
+            let deleted = 0;
+            if (!snap.empty) {
+                const bw = db.bulkWriter();
+                snap.forEach((d) => { bw.delete(d.ref); deleted++; });
+                await bw.close();
+            }
+            report.push(`bug_reports(resolved>365d): ${deleted}`);
+            totalDeleted += deleted;
+        } catch (err) {
+            logger.warn("pruneSystemLogs bug_reports failed:", err.message);
+            report.push("bug_reports: ERR");
+            totalErrors++;
+        }
+
+        // Also clean up old error_alert_cooldown_* docs in /system so
+        // they don't accumulate forever. Anything older than 30 days
+        // is irrelevant (a returning sig will just write a new doc).
+        try {
+            const cooldownCutoff = Date.now() - 30 * 24 * 60 * 60_000;
+            const snap = await db.collection("system")
+                .where("lastAlertMs", "<", cooldownCutoff)
+                .limit(500)
+                .get();
+            let deleted = 0;
+            if (!snap.empty) {
+                const bw = db.bulkWriter();
+                snap.forEach((d) => {
+                    // Belt-and-suspenders: only delete error_alert_cooldown_*
+                    // docs — never touch other /system/* bookkeeping.
+                    if (d.id.startsWith("error_alert_cooldown_")) {
+                        bw.delete(d.ref);
+                        deleted++;
+                    }
+                });
+                await bw.close();
+            }
+            report.push(`error_alert_cooldowns: ${deleted}`);
+            totalDeleted += deleted;
+        } catch (err) {
+            logger.warn("pruneSystemLogs error_alert_cooldowns failed:", err.message);
+        }
+
+        logger.info(`pruneSystemLogs: deleted=${totalDeleted} errors=${totalErrors} | ${report.join(", ")}`);
+
+        // Stamp an audit row. Uses the same shape as pruneAuditLogs so
+        // the existing AdminHealth recent-activity feed renders these.
+        try {
+            await db.collection("audit").add({
+                action: "prune_system_logs",
+                actorName: "cloud_function",
+                actorId: null,
+                actorRole: null,
+                targetType: "logs",
+                targetId: null,
+                details: { deleted: totalDeleted, errors: totalErrors, report },
+                createdAt: FieldValue.serverTimestamp(),
+                userAgent: null,
+            });
+        } catch (e) {
+            logger.warn("pruneSystemLogs audit-row write failed:", e?.message || e);
+        }
     },
 );

@@ -105,6 +105,13 @@ export const NOTIFICATION_TYPES = [
     // other email_* types; opens the InboxTriage tab where a popup
     // walks the owner through each unsure email.
     { id: 'email_needs_classification', category: 'mgmt', en: 'Email needs classification', es: 'Email necesita clasificar', lockedOn: false, ownerOnly: true },
+    // 2026-05-26 — bug-logging system critical-error alert. Fires when
+    // onCriticalError CF observes a new /error_logs row with
+    // severity === 'critical'. Owner-only audience (Andrew + Julie);
+    // locked on so owners can't accidentally mute production crash
+    // pages via the per-staff matrix. Dedup is 1 hour per error
+    // signature; see functions/index.js → onCriticalError.
+    { id: 'critical_error_alert', category: 'mgmt', en: 'Critical error in production', es: 'Error crítico en producción', lockedOn: true, ownerOnly: true },
     // 2026-05-26 — staff-facing forward of a triaged email. Andrew or
     // Julie either manually forwards via the Inbox UI or an
     // auto-routing rule fires. Locked-on for the recipient (no
