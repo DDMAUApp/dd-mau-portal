@@ -33,6 +33,32 @@ jobs:
 
       - name: Build
         run: npm run build
+        # 2026-05-27 — Sentry source-map upload env vars. All four
+        # must be set as GitHub Actions Repository Secrets for the
+        # source maps to upload to Sentry on each deploy. Without
+        # them, sentry.io stack traces show minified names like
+        // 'Ll' / '$' / 'ge' instead of real function names.
+        #
+        # To configure:
+        # https://github.com/DDMAUApp/dd-mau-portal/settings/secrets/actions
+        #   • SENTRY_AUTH_TOKEN  — sntrys_… (create at sentry.io →
+        #                          Settings → Auth Tokens, scopes:
+        #                          project:write + project:releases)
+        #   • SENTRY_ORG         — dd-mau
+        #   • SENTRY_PROJECT     — dd-mau-portal
+        #   • VITE_SENTRY_DSN    — already hardcoded as fallback in
+        #                          src/data/sentryClient.js, but
+        #                          passing it explicitly is cleaner.
+        #
+        # If these secrets aren't set, the build still succeeds —
+        # vite.config.js gates the Sentry plugin on their presence
+        # and falls back to no-source-maps (per the conditional
+        # sourcemap setting in build options).
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+          VITE_SENTRY_DSN: ${{ secrets.VITE_SENTRY_DSN }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
