@@ -94,6 +94,11 @@ export default function AppShellV2({
                     /* Prefer the local drawer; fall back to parent's
                        onBellClick (Schedule jump) only if no drawer wanted. */
                     onBellClick={() => setNotifOpen(true)}
+                    /* activeTab + onNavigate let Header swap the mobile
+                       location-toggle for a back arrow when the user
+                       is on the chat tab (2026-05-27). */
+                    activeTab={activeTab}
+                    onNavigate={onNavigate}
                 />
                 {/* Mobile gets pb-bottom-nav so the bottom tab bar doesn't cover
                     the last row of content. Desktop has no bottom bar so the

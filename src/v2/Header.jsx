@@ -25,6 +25,11 @@ export default function Header({
     language, staffName, storeLocation = 'webster',
     staffList = [], setStaffList,
     onMenuClick, onLanguageToggle, onLogout, onLocationChange, onBellClick,
+    // 2026-05-27 — Andrew: "as soon as you go in [chat] i want you to put
+    // a back arrow where the locations toggle was. in chat we dont need
+    // that." When the chat tab is active on mobile, we swap the location
+    // pill for a back-to-home arrow. Both props passed from AppShellV2.
+    activeTab = 'home', onNavigate,
 }) {
     const isEs = language === 'es';
     const initials = (staffName || 'U')
@@ -54,23 +59,38 @@ export default function Header({
 
                 {/* MOBILE LEFT — refined location pill. Smaller, ghost-style,
                     so it doesn't feel like a primary button. Just enough
-                    chrome to read as tappable. */}
-                <button
-                    onClick={() => onLocationChange?.()}
-                    className="md:hidden flex items-center gap-1.5 min-h-[44px] px-2 -mx-1 rounded-lg active:bg-dd-bg transition group"
-                    aria-label={isEs ? 'Cambiar ubicación' : 'Switch location'}
-                    title={isEs ? 'Cambiar ubicación' : 'Switch location'}
-                >
-                    <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
-                    </span>
-                    <span className="text-sm font-bold text-dd-text leading-none">
-                        <span className="sm:hidden">{shortLabel}</span>
-                        <span className="hidden sm:inline">{fullLabel}</span>
-                    </span>
-                    <span className="text-dd-text-2/50 text-[10px] leading-none group-active:text-dd-text-2">▾</span>
-                </button>
+                    chrome to read as tappable.
+                    On the chat tab the location pill is replaced with a
+                    back-to-home arrow (see comment on activeTab prop). */}
+                {activeTab === 'chat' ? (
+                    <button
+                        onClick={() => onNavigate?.('home')}
+                        className="ddmau-header-back-puck md:hidden w-10 h-10 rounded-full flex items-center justify-center shrink-0 active:scale-95 transition"
+                        aria-label={isEs ? 'Volver al inicio' : 'Back to home'}
+                        title={isEs ? 'Volver al inicio' : 'Back to home'}
+                    >
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                    </button>
+                ) : (
+                    <button
+                        onClick={() => onLocationChange?.()}
+                        className="md:hidden flex items-center gap-1.5 min-h-[44px] px-2 -mx-1 rounded-lg active:bg-dd-bg transition group"
+                        aria-label={isEs ? 'Cambiar ubicación' : 'Switch location'}
+                        title={isEs ? 'Cambiar ubicación' : 'Switch location'}
+                    >
+                        <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-dd-green opacity-30"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-dd-green"></span>
+                        </span>
+                        <span className="text-sm font-bold text-dd-text leading-none">
+                            <span className="sm:hidden">{shortLabel}</span>
+                            <span className="hidden sm:inline">{fullLabel}</span>
+                        </span>
+                        <span className="text-dd-text-2/50 text-[10px] leading-none group-active:text-dd-text-2">▾</span>
+                    </button>
+                )}
 
                 {/* DESKTOP LEFT — breadcrumb */}
                 <div className="hidden md:flex items-center gap-2 text-sm">

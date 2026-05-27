@@ -161,6 +161,66 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     display: none !important;
 }
 
+/* 2026-05-27 — full-tab chat home polish.
+   Andrew: "lets make that top bar all black too" / "the very bottom
+   nav bar can be deleted for this page only". data-chat-page-open
+   fires the moment the Chat tab mounts (whether or not a specific
+   thread is open) and stays true for the lifetime of the tab. With
+   it we:
+     - hide the mobile bottom nav across the entire tab (the back
+       arrow in the v2 header is the way home; no need for a 5-tab
+       row down there too)
+     - flip the v2 app header to #0a0a0a with white text so the
+       sticky top of the page matches the chat surface
+     - propagate #0a0a0a to html / body / #root / .bg-dd-sage so
+       the iPhone notch + home indicator strips read as black,
+       same as the chat-thread-open rules
+*/
+@media (max-width: 767px) {
+    body[data-chat-page-open="true"] .ddmau-mobile-bottom-nav {
+        display: none !important;
+    }
+    body[data-chat-page-open="true"] main {
+        padding-top: 0 !important;
+        padding-bottom: 0 !important;
+    }
+    /* v2 header: black bar with white text on chat tab */
+    body[data-chat-page-open="true"] .ddmau-app-header {
+        background-color: #0a0a0a !important;
+        border-bottom-color: transparent !important;
+    }
+    body[data-chat-page-open="true"] .ddmau-app-header .text-dd-text,
+    body[data-chat-page-open="true"] .ddmau-app-header .text-dd-text-2 {
+        color: rgba(255, 255, 255, 0.85) !important;
+    }
+    body[data-chat-page-open="true"] .ddmau-app-header button:hover {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+    }
+    body[data-chat-page-open="true"] .ddmau-app-header button.active\:bg-dd-bg:active {
+        background-color: rgba(255, 255, 255, 0.12) !important;
+    }
+    /* Bell badge ring was ring-white — kills contrast on black. Match
+       the chat-page background so the badge sits cleanly on the bar. */
+    body[data-chat-page-open="true"] .ddmau-app-header .ring-white {
+        --tw-ring-color: #0a0a0a !important;
+    }
+    /* Logout button hover was hover:bg-red-50 (light) — keep red as the
+       danger signal but make it readable against black. */
+    body[data-chat-page-open="true"] .ddmau-app-header .hover\:bg-red-50:hover {
+        background-color: rgba(239, 68, 68, 0.18) !important;
+    }
+    /* Propagate #0a0a0a to every wrapper above the chat shell so the
+       safe-area strips around the notch / home indicator render as
+       the same near-black, not sage green. */
+    html:has(body[data-chat-page-open="true"]),
+    body[data-chat-page-open="true"],
+    body[data-chat-page-open="true"] .bg-dd-sage,
+    body[data-chat-page-open="true"] #root,
+    body[data-chat-page-open="true"] #root > div {
+        background-color: #0a0a0a !important;
+    }
+}
+
 /* 2026-05-27 — companion rules to the bottom-nav-hide above. When a
    chat thread is open ON MOBILE, also drop the v2 app shell header
    AND the main element's vertical padding so the chat surface fills

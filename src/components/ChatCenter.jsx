@@ -395,6 +395,23 @@ export default function ChatCenter({
         };
     }, [activeChatId]);
 
+    // 2026-05-27 — Andrew: "the very bottom nav bar can be deleted for
+    // this page only its redundent since you press back and takes back
+    // to home screen." `data-chat-page-open` is the ChatCenter-mounted
+    // sibling to data-chat-thread-open: it's true the moment the user
+    // enters the Chat tab and stays true regardless of whether a thread
+    // is open. CSS uses it to:
+    //   - hide the mobile bottom nav across the whole tab
+    //   - black-out the v2 app header so the chat tab feels like one
+    //     coherent surface from the iPhone notch down
+    //   - propagate #0a0a0a to body / #root / .bg-dd-sage so safe-area
+    //     strips inherit the chat background rather than sage
+    useEffect(() => {
+        if (typeof document === 'undefined') return;
+        document.body.dataset.chatPageOpen = 'true';
+        return () => { delete document.body.dataset.chatPageOpen; };
+    }, []);
+
     // ── Filtered list ─────────────────────────────────────────────
     const filteredChats = useMemo(() => {
         const term = deferredSearch.trim().toLowerCase();
@@ -445,12 +462,22 @@ export default function ChatCenter({
         <div className="ddmau-chat-shell flex h-[calc(100vh-220px)] h-[calc(100dvh_-_146px_-_env(safe-area-inset-top)_-_env(safe-area-inset-bottom))] md:h-[calc(100vh-130px)] md:h-[calc(100dvh-130px)] -mx-4 sm:-mx-6 lg:-mx-8 -mt-3 md:-my-6 bg-white md:rounded-xl overflow-hidden">
             {/* ── LEFT PANE: chat list ──────────────────────────── */}
             <aside className={`${mobileShowList ? 'flex' : 'hidden'} md:flex flex-col w-full md:w-[340px] md:border-r border-dd-line bg-white shrink-0`}>
-                {/* Header */}
-                <div className="px-4 py-3 border-b border-dd-line flex items-center justify-between bg-white shrink-0 gap-2">
-                    <h1 className="text-[18px] font-black text-dd-text tracking-tight">
+                {/* Header — mobile chat home gets a stripped-down version
+                    (Andrew 2026-05-27: "under the new back button there is
+                    a chat sign. take that off. remove the bell thats under
+                    the main bell"). On mobile we keep only the search
+                    affordance; the "+ new chat" button moves to a floating
+                    FAB at the bottom (see end of file). Desktop keeps the
+                    full three-action layout because there's no separate
+                    bottom FAB on the two-pane web layout. */}
+                <div className="px-4 py-3 md:border-b border-dd-line flex items-center justify-between bg-white shrink-0 gap-2">
+                    {/* Title only renders on desktop — mobile uses the v2
+                        header's back arrow + the chat list itself reads as
+                        the page header. */}
+                    <h1 className="hidden md:block text-[18px] font-black text-dd-text tracking-tight">
                         💬 {tx('Chat', 'Chat')}
                     </h1>
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 md:ml-auto">
                         <button
                             onClick={() => setShowSearchPanel(true)}
                             className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg"
@@ -459,9 +486,11 @@ export default function ChatCenter({
                         >
                             🔍
                         </button>
+                        {/* Bell + new-chat button are desktop-only. On
+                            mobile, the FAB at the bottom handles new chats. */}
                         <button
                             onClick={() => setShowNotifSettings(true)}
-                            className="w-9 h-9 rounded-full hover:bg-dd-bg flex items-center justify-center text-lg"
+                            className="hidden md:flex w-9 h-9 rounded-full hover:bg-dd-bg items-center justify-center text-lg"
                             aria-label={tx('Notifications', 'Notificaciones')}
                             title={tx('Notifications', 'Notificaciones')}
                         >
@@ -469,7 +498,7 @@ export default function ChatCenter({
                         </button>
                         <button
                             onClick={() => setShowActionMenu(true)}
-                            className="w-9 h-9 rounded-full bg-dd-green text-white text-lg font-black flex items-center justify-center shadow-sm hover:bg-dd-green-700 active:scale-95 transition"
+                            className="hidden md:flex w-9 h-9 rounded-full bg-dd-green text-white text-lg font-black items-center justify-center shadow-sm hover:bg-dd-green-700 active:scale-95 transition"
                             aria-label={tx('New', 'Nuevo')}
                         >
                             +
@@ -585,6 +614,29 @@ export default function ChatCenter({
                     <EmptyState isEs={isEs} onStart={() => setShowNewChat(true)} />
                 )}
             </section>
+
+            {/* ── Floating "+" FAB (mobile chat-list only) ────────────
+                2026-05-27 — Andrew: "put the + at the very bottom
+                instead of more button at the very bottom." The mobile
+                bottom nav is hidden on the chat tab (data-chat-page-
+                open CSS rule), and the old top-right "+" was removed
+                in the same pass — so this FAB is the sole new-chat
+                affordance on mobile. Positioned with bottom-nav-safe
+                so it sits above the iPhone home indicator.
+                Hidden when the user is inside a thread (the composer
+                is the new-content entry point there) and on desktop
+                (the two-pane layout keeps its inline + button). */}
+            {mobileShowList && !activeChatId && (
+                <button
+                    onClick={() => setShowActionMenu(true)}
+                    aria-label={tx('New chat', 'Nuevo chat')}
+                    title={tx('New chat', 'Nuevo chat')}
+                    className="md:hidden ddmau-chat-fab fixed right-5 z-40 w-14 h-14 rounded-full bg-dd-green text-white flex items-center justify-center text-3xl font-black shadow-[0_8px_24px_-4px_rgba(0,0,0,0.6)] active:scale-95 hover:bg-dd-green-700 transition"
+                    style={{ bottom: 'calc(env(safe-area-inset-bottom) + 1.25rem)' }}
+                >
+                    +
+                </button>
+            )}
 
             {/* ── New chat modal ─────────────────────────────── */}
             {showNewChat && (
