@@ -117,24 +117,10 @@ export default class PageErrorBoundary extends Component {
         });
     }
 
-    // Open the global bug-report sheet pre-filled with crash context.
-    // The button only sends — staff still has to confirm.
-    handleReport = () => {
-        const tab = this.props.tabName || 'this page';
-        const errName = this.state.error?.name || 'Error';
-        const errMsg = String(this.state.error?.message || '').slice(0, 120);
-        try {
-            window.dispatchEvent(new CustomEvent('ddmau:open-bug-report', {
-                detail: {
-                    prefill: {
-                        whatWereYouDoing: tab,
-                        description: `Page crashed — ${errName}: ${errMsg}`,
-                        urgency: 'high',
-                    },
-                },
-            }));
-        } catch {}
-    };
+    // 2026-05-27 — handleReport (dispatched ddmau:open-bug-report
+    // for ReportProblemButton to pick up) is gone along with the
+    // staff bug-report feature. Errors still log to /error_logs +
+    // Sentry; only the staff-initiated report path is removed.
 
     render() {
         if (!this.state.hasError) return this.props.children;
@@ -159,11 +145,11 @@ export default class PageErrorBoundary extends Component {
                         className="px-4 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
                         ↻ {tx('Try again', 'Reintentar')}
                     </button>
-                    <button
-                        onClick={this.handleReport}
-                        className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text text-sm font-bold hover:bg-dd-bg active:scale-95 transition">
-                        🪲 {tx('Report this', 'Reportar')}
-                    </button>
+                    {/* 2026-05-27 — "🪲 Report this" button removed.
+                        It dispatched ddmau:open-bug-report which only
+                        the now-deleted ReportProblemButton listened to,
+                        so the button would have been a no-op. Errors
+                        still auto-log to /error_logs + Sentry. */}
                     <button
                         onClick={() => { try { window.location.reload(); } catch {} }}
                         className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text text-sm font-bold hover:bg-dd-bg active:scale-95 transition">

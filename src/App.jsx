@@ -104,10 +104,11 @@ import PageErrorBoundary from './components/PageErrorBoundary';
 //     window globals so every log row carries who-was-it metadata.
 //   • logError — used directly here by the global ErrorBoundary on
 //     non-chunk crashes.
-//   • ReportProblemButton — floating "🪲 Report" button on every
-//     signed-in screen. Writes to /bug_reports.
+// 2026-05-27 — ReportProblemButton + import removed (Andrew: "lets
+// delete the staff enter bug program"). Cloud Function +
+// /bug_reports rules left intact for historical data; staff just
+// can't file new reports through the UI anymore.
 import { installGlobalHandlers, setIdentity, logError } from './data/logger';
-import ReportProblemButton from './components/ReportProblemButton';
 const OnboardingPortal = lazy(() => import('./components/OnboardingPortal'));
 const OnboardingApply = lazy(() => import('./components/OnboardingApply'));
 const InstallSplash = lazy(() => import('./components/InstallSplash'));
@@ -1425,16 +1426,16 @@ export default function App() {
                     staffName={staffName}
                     viewer={currentStaffRecord}
                 />
-                {/* Bug-report launcher — floating button in the bottom-
-                    right, mounted globally on every signed-in screen.
-                    A staff member can tap it any time to file a report
-                    that auto-attaches device + recent errors + recent
-                    breadcrumbs. Also opens programmatically when the
-                    route-level error boundary's "Report this" button
-                    fires the ddmau:open-bug-report CustomEvent. Kept
-                    OUT of the lock-screen branch so anonymous PIN
-                    failures don't generate reports we can't attribute. */}
-                <ReportProblemButton language={language} />
+                {/* 2026-05-27 — Andrew: "the bug report at the bottom
+                    right of the home page need to be deleted. lets
+                    delete the staff enter bug program." The
+                    <ReportProblemButton> FAB + its component file are
+                    gone. PageErrorBoundary's "Report this" button is
+                    also removed (it dispatched ddmau:open-bug-report
+                    which only this listener picked up). The admin-side
+                    ErrorReportPage that views historical reports is
+                    kept — old /bug_reports docs are still readable
+                    from there, just no new ones can be written. */}
             </Suspense>
         );
 }
