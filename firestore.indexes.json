@@ -59,6 +59,15 @@
         { "fieldPath": "location",    "order": "ASCENDING"  },
         { "fieldPath": "createdDate", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "assigned_tasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "side",       "order": "ASCENDING"  },
+        { "fieldPath": "done",       "order": "ASCENDING"  },
+        { "fieldPath": "assignedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
