@@ -142,6 +142,16 @@ const TEMPLATES = {
         en: "DD Mau: ⚠️ Customer complaint from {from}: {subject}. Reply STOP to opt out.",
         es: "DD Mau: ⚠️ Queja de cliente de {from}: {subject}. Responde STOP para no recibir.",
     },
+    // 2026-05-27 — Andrew: "lets get the sms fully set up so if the
+    // staff hasnt set everything up we can sent them a text to
+    // remind them." Admin-triggered nudge to staff who haven't
+    // finished installing the PWA + enabling push. Stays under
+    // 160 chars (single segment). {firstName} is greeting; URL is
+    // the app URL the staffer should open. Generic — no PII.
+    setup_reminder: {
+        en: "DD Mau: Hi {firstName}, please open the DD Mau app and turn on notifications so you don't miss schedule alerts. {url} Reply STOP to opt out.",
+        es: "DD Mau: Hola {firstName}, abre la app DD Mau y activa notificaciones para no perder turnos. {url} Responde STOP para no recibir.",
+    },
 };
 
 // The set of notification types eligible for SMS. dispatchSms checks

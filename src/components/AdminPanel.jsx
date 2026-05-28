@@ -1901,7 +1901,12 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         (fcmTokens, pwaInstalled, fcmTokens[].lastSeen)
                         — no new Firestore writes were added to surface
                         this audit. Collapsed by default. */}
-                    <StaffUsageAudit staffList={staffList} language={language} />
+                    <StaffUsageAudit
+                        staffList={staffList}
+                        language={language}
+                        currentManagerName={staffName}
+                        currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
+                    />
 
                     {/* ── ONBOARDING LAUNCHER ──
                         Onboarding lives behind the admin page (not in the main

@@ -18,7 +18,7 @@
 // underlying action (creating a hire, submitting a doc, etc.).
 
 import { db } from '../firebase';
-import { collection, addDoc, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 // Resolve a title/body that may be a string OR { en, es } into the
 // recipient's preferred language.
@@ -262,5 +262,100 @@ export async function notifyStaff({
     } catch (e) {
         console.warn(`notifyStaff write failed for ${forStaff}:`, e);
         return null;
+    }
+}
+
+// ── Setup-reminder SMS (admin-triggered) ───────────────────────────────
+// 2026-05-27 — Andrew: "lets get the sms fully set up so if the staff
+// hasnt set everything up we can sent them a text to remind them."
+// Writes a /notifications doc with type='setup_reminder', which the
+// existing dispatchSms Cloud Function will pick up automatically (the
+// type was added to functions/smsTemplates.js → ALWAYS_SMS_TYPES).
+//
+// Pre-flight checks (all client-side; the Cloud Function does its own
+// authoritative gate too):
+//   • staff has phoneE164 (can't SMS without one)
+//   • staff has smsOptIn === true (CTIA compliance)
+//   • staff isn't smsStopped (replied STOP at some point)
+//   • last setup_reminder was > REMINDER_COOLDOWN_DAYS ago (don't spam)
+//
+// Side-effects on success:
+//   • One /notifications doc written
+//   • staff.setupReminderSentAt stamped (used for the cooldown)
+//
+// Returns { ok, reason, notificationId } so the caller can show the
+// admin what happened (e.g. "Skipped — phone missing for 2 staff").
+const REMINDER_COOLDOWN_DAYS = 7;
+export async function sendSetupReminderSms(staff, manager, opts = {}) {
+    if (!staff?.name || !staff?.phoneE164) {
+        return { ok: false, reason: 'no_phone' };
+    }
+    if (!staff.smsOptIn) {
+        return { ok: false, reason: 'not_opted_in' };
+    }
+    if (staff.smsStopped === true) {
+        return { ok: false, reason: 'replied_stop' };
+    }
+    // Cooldown — keeps an over-eager admin from spamming the same
+    // staffer day after day.
+    const lastMs = (() => {
+        const t = staff.setupReminderSentAt;
+        if (!t) return 0;
+        if (typeof t === 'number') return t;
+        if (typeof t === 'string') return Date.parse(t) || 0;
+        if (typeof t?.toMillis === 'function') return t.toMillis();
+        return 0;
+    })();
+    if (!opts.force && lastMs && Date.now() - lastMs < REMINDER_COOLDOWN_DAYS * 86400000) {
+        return { ok: false, reason: 'cooldown', lastSentMs: lastMs };
+    }
+
+    // First name only — SMS templates render {firstName}.
+    const firstName = (staff.name || '').split(/\s+/)[0] || 'there';
+    // App URL — staff taps this to open the PWA. Hardcoded prod URL
+    // since this SMS goes to phones, not browsers under our control.
+    const url = 'https://app.ddmaustl.com/';
+
+    try {
+        // Write the /notifications doc. dispatchSms will fan it out
+        // via Twilio; dispatchNotification will also try push, which
+        // is a no-op for users with no FCM tokens (the typical
+        // setup-reminder target).
+        const ref = await addDoc(collection(db, 'notifications'), {
+            forStaff: staff.name,
+            type: 'setup_reminder',
+            title: 'Finish setting up DD Mau',
+            body: `Hi ${firstName}, open the app and turn on notifications so you don't miss messages.`,
+            link: '/',
+            // smsVars: the dispatchSms renderer reads notif.smsVars to
+            // fill {firstName} / {url} placeholders in the template.
+            smsVars: { firstName, url },
+            // Bypass off-shift quiet hours — setup reminders are not
+            // time-sensitive, but skipping them defeats the purpose.
+            forceDeliver: true,
+            tag: `setup_reminder:${staff.name}:${Date.now()}`,
+            createdAt: serverTimestamp(),
+            read: false,
+            createdBy: manager?.name || 'admin',
+            createdById: manager?.id ?? null,
+        });
+
+        // Stamp the cooldown marker on the staff doc.
+        try {
+            const stRef = doc(db, 'config', 'staff');
+            const snap = await getDoc(stRef);
+            const list = (snap.exists() ? snap.data().list : []) || [];
+            const next = list.map((s) => s && s.name === staff.name
+                ? { ...s, setupReminderSentAt: Date.now() }
+                : s
+            );
+            await setDoc(stRef, { list: next });
+        } catch (e) {
+            console.warn('setupReminderSentAt stamp failed (non-fatal):', e);
+        }
+        return { ok: true, notificationId: ref.id };
+    } catch (e) {
+        console.warn(`sendSetupReminderSms write failed for ${staff.name}:`, e);
+        return { ok: false, reason: 'write_failed' };
     }
 }
