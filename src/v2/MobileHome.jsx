@@ -26,7 +26,7 @@
 
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
@@ -153,10 +153,22 @@ export default function MobileHome({
 
     // Onboarding tile. This one stays as a local subscription because
     // /onboarding_applications isn't shared by any other v2 consumer.
+    //
+    // 2026-05-28 Audit #9 — bounded query. Was an unscoped full-
+    // collection subscription; now capped at the 500 most recent
+    // entries. Same rationale as AdminPanel's launcher counters —
+    // the tile only needs the active-applications COUNT for the
+    // badge, and 500 is well beyond the restaurant's actual volume
+    // (<50/year). PII payloads, so the read-tax matters.
     const [pendingApplications, setPendingApplications] = useState(0);
     useEffect(() => {
         if (!hasOnboardingAccess) return;
-        const unsub = onSnapshot(collection(db, 'onboarding_applications'), (snap) => {
+        const q = query(
+            collection(db, 'onboarding_applications'),
+            orderBy('createdAt', 'desc'),
+            limit(500),
+        );
+        const unsub = onSnapshot(q, (snap) => {
             setPendingApplications(snap.size);
         }, () => setPendingApplications(0));
         return () => unsub();

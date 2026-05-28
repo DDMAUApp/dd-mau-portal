@@ -955,14 +955,37 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
             // Live counts for the Onboarding launcher card. Only subscribe when
             // the current admin actually has PII access — defaults to off for
             // everyone except owners (Julie + Andrew).
+            //
+            // 2026-05-28 Audit #9 — bounded queries. Previously this
+            // subscribed to the entire onboarding_applications and
+            // onboarding_hires collections with no orderBy/limit. Both
+            // hold PII docs that include uploaded photos/scans, so per-
+            // device payloads grow indefinitely as the restaurant hires
+            // more people. Capped at limit(500) ordered by createdAt
+            // desc — we get the 500 most recent rows, which is more
+            // than enough for an active counter (the restaurant
+            // averages <50 hires/year). If we ever genuinely exceed
+            // 500 active, the counter shows ≥500 but the per-row
+            // detail screens (which do their own paginated queries)
+            // still work — this is just the launcher badge.
             const [onboardingPendingApps, setOnboardingPendingApps] = useState(0);
             const [onboardingActiveHires, setOnboardingActiveHires] = useState(0);
             useEffect(() => {
                 if (!hasOnboardingAccess) return;
-                const unsubA = onSnapshot(collection(db, 'onboarding_applications'),
+                const appsQ = query(
+                    collection(db, 'onboarding_applications'),
+                    orderBy('createdAt', 'desc'),
+                    limit(500),
+                );
+                const unsubA = onSnapshot(appsQ,
                     (snap) => setOnboardingPendingApps(snap.size),
                     () => setOnboardingPendingApps(0));
-                const unsubH = onSnapshot(collection(db, 'onboarding_hires'),
+                const hiresQ = query(
+                    collection(db, 'onboarding_hires'),
+                    orderBy('createdAt', 'desc'),
+                    limit(500),
+                );
+                const unsubH = onSnapshot(hiresQ,
                     (snap) => {
                         let active = 0;
                         snap.forEach(d => {
