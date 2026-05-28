@@ -26,7 +26,13 @@ import { Component, memo, useState, useEffect, useRef, useMemo, useCallback, laz
 // that vendor-react already pulls in (see vite.config.js manualChunks
 // — lucide-react is co-located with React after the 2026-05-27 outage
 // fix), so this is a zero-byte-add at the bundle level.
-import { Mic } from 'lucide-react';
+// 2026-05-27 — Andrew: "in chat the + button we need to make the
+// photo, video, poll etc all look more professional and apple. fix
+// the emopjis. make that window glass." Adding Lucide glyphs for
+// the attach menu items + a Sparkles for the AI fix-grammar pill.
+import {
+    Mic, Camera, Video, BarChart3, Ban, Smile, Sparkles, Calendar,
+} from 'lucide-react';
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
@@ -3096,29 +3102,42 @@ function Composer({
                         onClick={() => setShowAttachMenu(false)}
                         className="fixed inset-0 z-20 bg-transparent cursor-default"
                     />
-                    {/* The floating bubble itself. Anchored bottom-left
-                        (above the + button which is the leftmost
-                        composer element). max-w-[240px] keeps it
-                        narrow + bubble-shaped on tablet/desktop. */}
+                    {/* 2026-05-27 — Andrew: "in chat the + button we need
+                        to make the photo, video, poll etc all look more
+                        professional and apple. fix the emopjis. make
+                        that window glass." Bubble redesigned from a
+                        dark zinc-900 frosted panel + emoji icons to a
+                        light Apple-glass surface (rgba white + heavy
+                        backdrop-blur + hairline border + layered
+                        shadow) with Lucide glyphs in sage-tinted icon
+                        discs. Each row reads like the home-tile family
+                        — same icon disc treatment + body text scale. */}
                     <div
                         role="menu"
-                        className="absolute bottom-full left-2 mb-3 z-30 min-w-[200px] max-w-[240px] py-1.5 rounded-2xl bg-zinc-900/95 backdrop-blur-2xl shadow-[0_10px_40px_-8px_rgba(0,0,0,0.6)] border border-white/10 overflow-hidden animate-fade-in-up"
+                        className="absolute bottom-full left-2 mb-3 z-30 min-w-[220px] max-w-[260px] p-1.5 rounded-glass-xl overflow-hidden animate-fade-in-up"
+                        style={{
+                            backgroundColor: 'rgba(255, 255, 255, 0.85)',
+                            backdropFilter: 'blur(28px) saturate(180%)',
+                            WebkitBackdropFilter: 'blur(28px) saturate(180%)',
+                            border: '1px solid rgba(15, 23, 42, 0.08)',
+                            boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 12px 36px -8px rgba(15, 23, 42, 0.22), 0 4px 10px rgba(15, 23, 42, 0.10)',
+                        }}
                     >
                         <AttachMenuItem
-                            icon="📷"
+                            Icon={Camera}
                             label={isEs ? 'Foto' : 'Photo'}
                             onClick={() => { imageInputRef.current?.click(); setShowAttachMenu(false); }}
                             disabled={sending}
                         />
                         <AttachMenuItem
-                            icon="🎬"
+                            Icon={Video}
                             label={isEs ? 'Video' : 'Video'}
                             onClick={() => { videoInputRef.current?.click(); setShowAttachMenu(false); }}
                             disabled={sending}
                         />
                         {onOpenPoll && (
                             <AttachMenuItem
-                                icon="📊"
+                                Icon={BarChart3}
                                 label={isEs ? 'Encuesta' : 'Poll'}
                                 onClick={() => { onOpenPoll(); setShowAttachMenu(false); }}
                                 disabled={sending}
@@ -3126,7 +3145,7 @@ function Composer({
                         )}
                         {onOpen86 && (
                             <AttachMenuItem
-                                icon="🚫"
+                                Icon={Ban}
                                 label={isEs ? 'Marcar 86' : 'Post 86'}
                                 onClick={() => { onOpen86(); setShowAttachMenu(false); }}
                                 disabled={sending}
@@ -3134,7 +3153,7 @@ function Composer({
                             />
                         )}
                         <AttachMenuItem
-                            icon="😀"
+                            Icon={Smile}
                             label={isEs ? 'Emoji' : 'Emoji'}
                             onClick={() => { setShowEmojiPicker(v => !v); setShowAttachMenu(false); }}
                             disabled={sending}
@@ -3142,7 +3161,7 @@ function Composer({
                         />
                         {!empty && (
                             <AttachMenuItem
-                                icon={fixing ? null : '✨'}
+                                Icon={Sparkles}
                                 label={isEs ? 'Corregir texto' : 'Fix spelling'}
                                 onClick={() => { handleFixGrammar(); setShowAttachMenu(false); }}
                                 disabled={sending || fixing}
@@ -3152,7 +3171,7 @@ function Composer({
                         )}
                         {!empty && onOpenSchedule && (
                             <AttachMenuItem
-                                icon="📅"
+                                Icon={Calendar}
                                 label={isEs ? 'Programar envío' : 'Schedule send'}
                                 onClick={() => { onOpenSchedule(); setShowAttachMenu(false); }}
                                 disabled={sending}
@@ -4300,26 +4319,36 @@ function SeenBySheet({
 // `active` highlights the row when the corresponding feature is
 // already toggled (emoji picker). `loading` shows a small spinner in
 // place of the icon (grammar-fix is the in-flight case).
-function AttachMenuItem({ icon, label, onClick, disabled, active, loading, tone }) {
-    const colorClasses = tone === 'danger'
-        ? 'text-red-300 hover:bg-red-500/15 active:bg-red-500/25'
+// 2026-05-27 — redesigned for the Apple-glass attach menu.
+// Each item: icon disc on left (sage/danger/purple-tinted by `tone`),
+// label on right with HIG body-md type. Selected state (`active`)
+// fills the row with a sage wash. Loading swaps the glyph for a
+// small spinner inside the same disc.
+function AttachMenuItem({ Icon, label, onClick, disabled, active, loading, tone }) {
+    // Icon-disc tint per tone — matches the page-header iconTint
+    // palette so the family reads as cohesive across the app.
+    const discClasses = tone === 'danger'
+        ? 'bg-red-50 text-red-700'
         : tone === 'purple'
-        ? 'text-purple-300 hover:bg-purple-500/15 active:bg-purple-500/25'
-        : active
-        ? 'text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/15'
-        : 'text-zinc-100 hover:bg-white/10 active:bg-white/15';
+        ? 'bg-purple-50 text-purple-700'
+        : 'bg-dd-sage-50 text-dd-green-700';
+    // Row chrome — active state gets a soft sage wash so the user
+    // sees which option is currently engaged (e.g. emoji picker on).
+    const rowClasses = active
+        ? 'bg-dd-sage-50/70 text-dd-text'
+        : 'text-dd-text hover:bg-white/70 active:bg-white/85';
     return (
         <button
             type="button"
             role="menuitem"
             onClick={onClick}
             disabled={disabled}
-            className={`w-full flex items-center gap-3 px-4 py-2.5 text-left text-[15px] font-medium transition disabled:opacity-40 disabled:cursor-not-allowed ${colorClasses}`}
+            className={`w-full flex items-center gap-3 px-2 py-2 rounded-glass-md text-left text-body-md font-medium transition-colors duration-glass-fast ease-glass-out disabled:opacity-40 disabled:cursor-not-allowed ${rowClasses}`}
         >
-            <span className="text-xl shrink-0 w-6 flex items-center justify-center">
+            <span className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center ${discClasses}`}>
                 {loading
                     ? <span className="inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-                    : icon}
+                    : (Icon ? <Icon size={18} strokeWidth={2.25} aria-hidden="true" /> : null)}
             </span>
             <span className="flex-1 truncate">{label}</span>
         </button>
