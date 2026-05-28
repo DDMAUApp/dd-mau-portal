@@ -18,6 +18,10 @@ import InventoryHistory from './InventoryHistory';
 import ImportStaffModal from './ImportStaffModal';
 import OffsiteClockSection from './OffsiteClockSection';
 import StaffTodosAdmin from './StaffTodosAdmin';
+// 2026-05-27 — Andrew: "i also want to add another audit to the admin
+// page. i want to know which staff has used the app?" Self-contained
+// read-only card; reads staffList in-place, no new Firestore writes.
+import StaffUsageAudit from './StaffUsageAudit';
 import { toast, undoToast } from '../toast';
 import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
@@ -1887,6 +1891,17 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             ✅ {t("saved", language)}
                         </div>
                     )}
+
+                    {/* ── STAFF USAGE AUDIT ──
+                        Read-only rollup: which staff have notifications
+                        enabled, have installed the PWA, and when they
+                        were last seen. Helps admins confirm "everyone is
+                        actually receiving my chat messages." All signals
+                        come from existing /config/staff fields
+                        (fcmTokens, pwaInstalled, fcmTokens[].lastSeen)
+                        — no new Firestore writes were added to surface
+                        this audit. Collapsed by default. */}
+                    <StaffUsageAudit staffList={staffList} language={language} />
 
                     {/* ── ONBOARDING LAUNCHER ──
                         Onboarding lives behind the admin page (not in the main
