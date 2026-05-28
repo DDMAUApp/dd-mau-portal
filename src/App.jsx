@@ -1439,6 +1439,14 @@ export default function App() {
                     // FCM token to the right staff record.
                     staffList={staffList}
                     setStaffList={setStaffList}
+                    // 2026-05-28 Audit #2 — plumb staffListReady through so
+                    // AppDataProvider can gate its staff-identity-dependent
+                    // subscriptions (notifications, 86 auto-post) until the
+                    // live /config/staff snapshot lands. Without this, those
+                    // subscriptions fire with whatever staffName was
+                    // restored from sessionStorage and can return wrong
+                    // results during the 1-3s gap before staffList arrives.
+                    staffListReady={staffListReady}
                     // Logout returns the app to the lock screen by clearing
                     // the active staffName. The render branches at the top
                     // of App() route to <HomePage /> when staffName is null.

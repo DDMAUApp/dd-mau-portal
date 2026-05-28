@@ -39,6 +39,7 @@ export default function AppShellV2({
     hiddenPages = [],
     staffList = [],
     setStaffList,
+    staffListReady = false,
     onLogout,
     onForceRefresh,
     onLanguageToggle,
@@ -50,7 +51,7 @@ export default function AppShellV2({
     const [notifOpen, setNotifOpen] = useState(false);     // cross-app notifications drawer
 
     return (
-        <AppDataProvider staffName={staffName} storeLocation={storeLocation}>
+        <AppDataProvider staffName={staffName} storeLocation={storeLocation} staffListReady={staffListReady}>
         {/* 2026-05-27 — Phase 2 redesign. The flat bg-dd-sage backdrop
             became a soft sage-to-bone gradient — the canvas that the
             Liquid-Glass surfaces (Header, Sidebar, page cards) sit on

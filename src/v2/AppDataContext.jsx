@@ -38,7 +38,7 @@ import { postEightySixToChat } from '../data/eightySixChat';
 
 const AppDataContext = createContext(null);
 
-export function AppDataProvider({ staffName, storeLocation, children }) {
+export function AppDataProvider({ staffName, storeLocation, staffListReady = false, children }) {
     const [notifications, setNotifications] = useState([]);
     const [shifts14, setShifts14] = useState([]);
     const [timeOff, setTimeOff] = useState([]);
@@ -46,8 +46,17 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
     const [labor, setLabor] = useState({ webster: null, maryland: null });
 
     // notifications — per user. Skipped if no staffName signed in.
+    //
+    // 2026-05-28 Audit #2 — gated on staffListReady. Before this, the
+    // query could fire with a staffName restored from sessionStorage
+    // before the live /config/staff snapshot landed. If the user was
+    // renamed/deactivated since their last session, the where() clause
+    // matched nothing, the badge count showed 0, and the user thought
+    // notifications were broken. Waiting on staffListReady eliminates
+    // the wrong-identity window.
     useEffect(() => {
         if (!staffName) return;
+        if (!staffListReady) return;
         const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
@@ -61,7 +70,7 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
             setNotifications(list);
         }, (err) => console.warn('notifications snapshot failed:', err));
         return () => unsub();
-    }, [staffName]);
+    }, [staffName, staffListReady]);
 
     // shifts — next 14 days, date-bounded query (Firestore-side, not
     // client-side filtering).
@@ -172,7 +181,11 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
     useEffect(() => {
         // Skip until we have a staff record (cold launches shouldn't
         // post 86 history they're seeing for the first time).
+        // 2026-05-28 Audit #2 — also gate on staffListReady so we
+        // don't post 86 alerts attributed to a stale-from-sessionStorage
+        // identity that may no longer be valid.
         if (!staffName) return;
+        if (!staffListReady) return;
         for (const loc of ['webster', 'maryland']) {
             const cur = eightySix[loc];
             const prev = prev86Ref.current[loc];
@@ -208,7 +221,7 @@ export function AppDataProvider({ staffName, storeLocation, children }) {
             }
             prev86Ref.current[loc] = cur;
         }
-    }, [eightySix, staffName]);
+    }, [eightySix, staffName, staffListReady]);
 
     // ops/labor_{loc} — same pattern.
     useEffect(() => {
