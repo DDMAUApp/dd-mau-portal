@@ -170,8 +170,25 @@ export default defineConfig({
             return 'translatable-text';
           }
           if (!id.includes('node_modules')) return;
-          // React + scheduler — app-wide, stable.
-          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+          // React + scheduler + lucide-react — app-wide, stable.
+          // 2026-05-27 OUTAGE — lucide-react ended up in vendor-misc
+          // because the previous regex check was `/react/` which doesn't
+          // match `lucide-react/` (the slash is wrong — it's
+          // `-react/`, not `/react/`). vendor-misc then tried to call
+          // React.createContext at the top of the lucide module before
+          // vendor-react had bound React in scope, producing:
+          //   TypeError: Cannot read properties of undefined
+          //   (reading 'createContext')
+          // and the app refused to mount. Pinning lucide-react to the
+          // SAME chunk as React removes the cross-chunk dependency
+          // entirely. Cost: vendor-react gets a few KB bigger; benefit:
+          // app loads at all.
+          if (
+              id.includes('/react/') ||
+              id.includes('/react-dom/') ||
+              id.includes('/scheduler/') ||
+              id.includes('/lucide-react/')
+          ) {
             return 'vendor-react';
           }
           // ALL of firebase in one chunk. Do NOT split into sub-chunks.
