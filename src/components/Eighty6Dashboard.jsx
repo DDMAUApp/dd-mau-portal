@@ -408,11 +408,11 @@ export default function Eighty6Dashboard({ language, storeLocation, staffName, s
             {loading ? (
                 <div className="space-y-2">
                     {[1,2,3].map(i => (
-                        <div key={i} className="h-14 bg-white rounded-xl border border-dd-line animate-pulse" />
+                        <div key={i} className="h-14 glass-skeleton" />
                     ))}
                 </div>
             ) : items.length === 0 ? (
-                <div className="text-center py-12 bg-white rounded-2xl border border-dd-line shadow-card">
+                <div className="glass-card text-center py-12">
                     <div className="text-5xl mb-2">✅</div>
                     <p className="text-base font-bold text-dd-green-700">
                         {tx('All items available!', '¡Todo disponible!')}
@@ -677,7 +677,7 @@ function Section({
         );
     };
     return (
-        <div className="bg-white rounded-2xl border border-dd-line shadow-card overflow-hidden">
+        <div className="glass-card overflow-hidden">
             <div className="flex items-center gap-2 px-4 py-2.5 border-b border-dd-line bg-dd-bg/40">
                 <span className={`w-1 h-5 rounded-full ${accent}`} />
                 <h3 className="text-sm font-bold text-dd-text flex-1">{title}</h3>

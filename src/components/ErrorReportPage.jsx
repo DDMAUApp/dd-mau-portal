@@ -268,7 +268,7 @@ export default function ErrorReportPage({ language = 'en', staffName }) {
             {/* Open bug reports — full-width card. Higher priority than
                 error groups because these are direct staff signals
                 ("the screen does X weird") and only humans triage them. */}
-            <div className="bg-white border border-dd-line rounded-2xl p-4">
+            <div className="glass-card p-4">
                 <div className="flex items-baseline justify-between mb-2">
                     <h2 className="text-sm font-black text-dd-text">
                         🪲 {tx('Open bug reports', 'Reportes abiertos')}
@@ -344,7 +344,7 @@ export default function ErrorReportPage({ language = 'en', staffName }) {
             {/* Recent errors grouped by signature. Tighter format than
                 bug reports because they're machine-generated and the
                 key info is the signature + count, not narrative. */}
-            <div className="bg-white border border-dd-line rounded-2xl p-4">
+            <div className="glass-card p-4">
                 <div className="flex items-baseline justify-between mb-2">
                     <h2 className="text-sm font-black text-dd-text">
                         ⚠️ {tx('Recent errors', 'Errores recientes')}
@@ -438,7 +438,7 @@ export default function ErrorReportPage({ language = 'en', staffName }) {
             {/* Helper card: tells the owners what each card means + how
                 to escalate. Especially useful for Julie if she ends up
                 opening this without Andrew walking her through it. */}
-            <div className="bg-dd-bg border border-dd-line rounded-2xl p-4">
+            <div className="glass-card p-4">
                 <h2 className="text-sm font-black text-dd-text mb-2">
                     📖 {tx('How to use this page', 'Cómo usar esta página')}
                 </h2>

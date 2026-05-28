@@ -320,6 +320,47 @@
         padding-left:   env(safe-area-inset-left, 0px);
         padding-right:  env(safe-area-inset-right, 0px);
     }
+
+    /* ── Legacy card auto-port (2026-05-27) ─────────────────────────
+       Operations.jsx (~80) and Schedule.jsx (~140) each use the same
+       opaque card pattern (`bg-white border border-dd-line rounded-{xl,
+       2xl} shadow-card`) hundreds of times. Touching every occurrence
+       would be a massive risky diff. Instead, this compound selector
+       hijacks the existing pattern and gives it the same chrome as
+       .glass-card — translucent surface, hairline border, layered
+       shadow, backdrop-blur. Pages that adopt .glass-card directly
+       get the same look; pages that haven't been ported get it for
+       free. Components that NEED the original opaque white card (e.g.
+       PDF previews, screenshot tools where translucency would bleed
+       weird content through) can opt out by adding .force-opaque.
+       Specificity is 5-0-0 (5 classes in the compound) so it beats
+       any single Tailwind atomic — no !important hammers needed. */
+    .bg-white.border.border-dd-line.rounded-xl.shadow-card:not(.force-opaque),
+    .bg-white.border.border-dd-line.rounded-2xl.shadow-card:not(.force-opaque),
+    .bg-dd-surface.border.border-dd-line.rounded-xl.shadow-card:not(.force-opaque),
+    .bg-dd-surface.border.border-dd-line.rounded-2xl.shadow-card:not(.force-opaque) {
+        background-color: rgba(255, 255, 255, 0.72);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border-color: rgba(15, 23, 42, 0.08);
+        box-shadow:
+            0 4px 12px rgba(15, 23, 42, 0.06),
+            0 1px 3px rgba(15, 23, 42, 0.04);
+        background-clip: padding-box;
+    }
+    /* Hover variant — match shadow-glass-lg when the card opts into
+       hover:shadow-card-hov (very common pattern on tappable cards). */
+    .bg-white.border.border-dd-line.rounded-xl.shadow-card.hover\:shadow-card-hov:not(.force-opaque):hover,
+    .bg-white.border.border-dd-line.rounded-2xl.shadow-card.hover\:shadow-card-hov:not(.force-opaque):hover {
+        box-shadow:
+            0 8px 24px rgba(15, 23, 42, 0.08),
+            0 2px 6px rgba(15, 23, 42, 0.06);
+    }
+    /* The @supports fallback at the bottom of this file already covers
+       the no-backdrop-filter case for .glass-* classes — but this
+       compound selector lives outside that ruleset so it needs its own
+       fallback. Bump to a near-opaque white when the browser can't
+       blur (preserves readability on legacy Android WebView). */
 }
 
 /* ── Auto-dark mode (prefers-color-scheme) — REMOVED 2026-05-27 ───
@@ -352,7 +393,13 @@
     .glass-input,
     .glass-modal-content,
     .glass-tabs,
-    .glass-empty-state {
+    .glass-empty-state,
+    /* Legacy compound — same fallback so Operations / Schedule
+       still read correctly on legacy Android WebView. */
+    .bg-white.border.border-dd-line.rounded-xl.shadow-card,
+    .bg-white.border.border-dd-line.rounded-2xl.shadow-card,
+    .bg-dd-surface.border.border-dd-line.rounded-xl.shadow-card,
+    .bg-dd-surface.border.border-dd-line.rounded-2xl.shadow-card {
         background-color: rgba(255, 255, 255, 0.96) !important;
     }
     .glass-card.is-dark,
