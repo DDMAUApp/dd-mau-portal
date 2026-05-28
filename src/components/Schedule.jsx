@@ -4547,7 +4547,7 @@ ${dayBlocks}
                     <button onClick={() => setShowNotifDrawer(true)}
                         title="Schedule notifications"
                         className="relative p-2 rounded-lg glass-sheet hover:bg-dd-bg transition shadow-card">
-                        <Bell size={18} strokeWidth={2.25} aria-hidden="true" className="text-dd-text" />
+                        <Bell size={18} strokeWidth={2.25} aria-hidden="true" className="text-dd-green-700" />
                         <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                             {unreadCount > 9 ? '9+' : unreadCount}
                         </span>
@@ -4566,12 +4566,14 @@ ${dayBlocks}
                 <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
                     <button onClick={() => setSide('foh')}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'foh' ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                        <Sofa size={16} strokeWidth={2.25} aria-hidden="true" />
+                        <Sofa size={16} strokeWidth={2.25} aria-hidden="true"
+                            className={side === 'foh' ? 'text-white' : 'text-dd-green-700'} />
                         {tx('Front of House', 'Front of House')}
                     </button>
                     <button onClick={() => setSide('boh')}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'boh' ? 'bg-orange-600/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                        <Utensils size={16} strokeWidth={2.25} aria-hidden="true" />
+                        <Utensils size={16} strokeWidth={2.25} aria-hidden="true"
+                            className={side === 'boh' ? 'text-white' : 'text-dd-green-700'} />
                         {tx('Back of House', 'Back of House')}
                     </button>
                 </div>
@@ -4589,10 +4591,12 @@ ${dayBlocks}
                     { key: 'pto',  labelEn: 'Time Off', labelEs: 'Tiempo libre', Icon: Palmtree },
                 ].map(v => {
                     const Icon = v.Icon;
+                    const isActive = viewMode === v.key;
                     return (
                         <button key={v.key} onClick={() => setViewMode(v.key)}
-                            className={`flex-1 py-1.5 rounded-md text-xs font-bold transition inline-flex items-center justify-center gap-1 ${viewMode === v.key ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                            <Icon size={14} strokeWidth={2.25} aria-hidden="true" />
+                            className={`flex-1 py-1.5 rounded-md text-xs font-bold transition inline-flex items-center justify-center gap-1 ${isActive ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                            <Icon size={14} strokeWidth={2.25} aria-hidden="true"
+                                className={isActive ? 'text-white' : 'text-dd-green-700'} />
                             {tx(v.labelEn, v.labelEs)}
                         </button>
                     );
@@ -4612,7 +4616,8 @@ ${dayBlocks}
                             ? 'bg-dd-green/90 text-white border-dd-green backdrop-blur-sm'
                             : 'glass-sheet text-dd-text-2 hover:bg-dd-bg'
                     }`}>
-                    <Search size={14} strokeWidth={2.25} aria-hidden="true" />
+                    <Search size={14} strokeWidth={2.25} aria-hidden="true"
+                        className={gridFitToScreen ? 'text-white' : 'text-dd-green-700'} />
                     {gridFitToScreen
                         ? tx('Exit overview — tap to edit shifts', 'Salir vista general — toca para editar')
                         : tx('Overview: fit week to screen', 'Vista general: ajustar semana a pantalla')}
@@ -4641,7 +4646,8 @@ ${dayBlocks}
                             ? tx('Tap to see everyone', 'Toca para ver a todos')
                             : tx('Tap to see only your shifts', 'Toca para ver solo tus turnos')}
                     >
-                        <User size={16} strokeWidth={2.25} aria-hidden="true" />
+                        <User size={16} strokeWidth={2.25} aria-hidden="true"
+                            className={personFilter === staffName ? 'text-white' : 'text-dd-green-700'} />
                         <span>
                             {personFilter === staffName
                                 ? tx('Showing my shifts · tap to clear', 'Mostrando mis turnos · toca para quitar')
@@ -4689,7 +4695,8 @@ ${dayBlocks}
                         <button onClick={handlePublishDrafts}
                             title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores')}
                             className={`relative inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm ${draftCount > 0 ? 'bg-dd-green/90 text-white hover:bg-dd-green-700 animate-pulse backdrop-blur-sm' : 'glass-sheet text-dd-text-2'}`}>
-                            <Megaphone size={14} strokeWidth={2.25} aria-hidden="true" />
+                            <Megaphone size={14} strokeWidth={2.25} aria-hidden="true"
+                                className={draftCount > 0 ? 'text-white' : 'text-dd-green-700'} />
                             {tx('Publish', 'Publicar')}
                             {draftCount > 0 && (
                                 <span className="bg-amber-400 text-amber-950 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
@@ -4713,10 +4720,11 @@ ${dayBlocks}
                 <div className="relative">
                     <button ref={moreBtnRef} onClick={() => setShowMoreActions(s => !s)}
                         className="px-4 py-2 rounded-lg glass-sheet text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-semibold flex items-center gap-1.5 transition">
-                        <MoreHorizontal size={14} strokeWidth={2.25} aria-hidden="true" />
+                        <MoreHorizontal size={14} strokeWidth={2.25} aria-hidden="true"
+                            className="text-dd-green-700" />
                         {tx('More', 'Más')}
                         <ChevronDown size={10} strokeWidth={2.5} aria-hidden="true"
-                            className={`text-dd-text-2 transition-transform ${showMoreActions ? 'rotate-180' : ''}`} />
+                            className={`text-dd-green-700 transition-transform ${showMoreActions ? 'rotate-180' : ''}`} />
                     </button>
                     {showMoreActions && createPortal((
                         <>
