@@ -181,7 +181,14 @@ export default function Header({
                     {/* AVATAR — clean disc, no subtitle on mobile (was noise).
                         Desktop gets the name + role label. */}
                     <div className="flex items-center gap-2 md:pl-2 md:border-l md:border-dd-line">
-                        <div className="w-8 h-8 md:w-9 md:h-9 rounded-full bg-dd-green text-white flex items-center justify-center text-[13px] md:text-sm font-bold shrink-0 shadow-sm">
+                        {/* 2026-05-27 — initials avatar swapped from loud
+                            solid bg-dd-green / white text to the new
+                            .glass-avatar-green chrome: frosted sage-to-
+                            green gradient + green-700 initials + hairline
+                            brand ring. Reads as part of the same brand
+                            family as the home-tile icon discs without
+                            shouting "OWNER" at the user. */}
+                        <div className="glass-avatar-green w-8 h-8 md:w-9 md:h-9 rounded-full flex items-center justify-center text-[13px] md:text-sm font-bold shrink-0">
                             {initials}
                         </div>
                         <div className="hidden lg:block min-w-0 max-w-[140px]">

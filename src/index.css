@@ -302,6 +302,34 @@
     .glass-button-apple:focus-visible {
         @apply outline-none ring-2 ring-dd-green/30 ring-offset-2 ring-offset-glass-bg-light;
     }
+
+    /* glass-avatar-green — Apple-style frosted initials disc, brand
+       tint. 2026-05-27 — Andrew: "any dark green bubble for the
+       top right that has our name and the bubble had our initials
+       in a green bubble or the green bubbles in the side bar. make
+       those more glass and more modern."
+       Replaces the previous loud solid bg-dd-green + white initials
+       with a soft sage-to-green gradient + green-700 initials, a
+       hairline brand ring, top inner highlight, and a green-tinted
+       drop shadow. Reads as "from the same brand family" without
+       shouting. Used by Header avatar + Sidebar avatar; could be
+       reused for any future "initials disc" surface. */
+    .glass-avatar-green {
+        background: linear-gradient(135deg, rgba(238, 245, 239, 0.95) 0%, rgba(201, 219, 201, 0.70) 100%);
+        backdrop-filter: blur(12px) saturate(180%);
+        -webkit-backdrop-filter: blur(12px) saturate(180%);
+        border: 1px solid rgba(31, 122, 77, 0.20);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.80),
+            0 2px 6px -2px rgba(31, 122, 77, 0.22),
+            0 1px 2px rgba(15, 23, 42, 0.06);
+        color: #185E3A;  /* dd-green-700 */
+    }
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-avatar-green {
+            background: #EEF5EF;
+        }
+    }
     .glass-button-apple.is-dark {
         background-color: rgba(40, 44, 52, 0.55);
         border-color: rgba(255, 255, 255, 0.06);

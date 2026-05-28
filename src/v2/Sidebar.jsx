@@ -358,7 +358,12 @@ export default function Sidebar({
             >
                 {!collapsed && staffName && (
                     <div className="flex items-center gap-2 mb-2 px-2">
-                        <div className="w-7 h-7 rounded-full bg-dd-green text-white flex items-center justify-center text-[11px] font-bold shrink-0">
+                        {/* 2026-05-27 — initials avatar swapped from solid
+                            bg-dd-green / white text to .glass-avatar-green.
+                            Reads as frosted sage-to-green over the dark
+                            sidebar background, matching the Header
+                            avatar's chrome for cross-shell consistency. */}
+                        <div className="glass-avatar-green w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0">
                             {staffName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
                         <div className="min-w-0 flex-1">
