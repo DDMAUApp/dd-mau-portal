@@ -398,15 +398,19 @@ export default function MobileHome({
 
 // KPI pill — compact label-on-top stat. Color reflects state but stays
 // muted so the strip doesn't visually dominate the page.
+// 2026-05-27 — Phase 3: ported to .glass-card. Tone classes only set
+// COLOR now (text + accent border); the chrome (translucent surface,
+// shadow, rounded corners) comes from .glass-card so every stat pill
+// matches every other glass surface across the app.
 function Kpi({ label, value, unit, tone = 'neutral' }) {
     const toneClasses = {
-        neutral: 'text-dd-text border-dd-line',
-        good:    'text-dd-green-700 border-dd-green/30 bg-dd-green-50/40',
-        warn:    'text-amber-700 border-amber-200 bg-amber-50/50',
-        danger:  'text-red-700 border-red-200 bg-red-50/50',
-    }[tone] || 'text-dd-text border-dd-line';
+        neutral: 'text-dd-text',
+        good:    'text-dd-green-700',
+        warn:    'text-amber-700',
+        danger:  'text-red-700',
+    }[tone] || 'text-dd-text';
     return (
-        <div className={`flex-shrink-0 min-w-[88px] flex flex-col items-start px-3 py-2 rounded-xl bg-white border shadow-card ${toneClasses}`}>
+        <div className={`glass-card flex-shrink-0 min-w-[88px] flex flex-col items-start px-3 py-2 ${toneClasses}`}>
             <span className="text-[9px] font-bold uppercase tracking-widest text-dd-text-2 leading-none">
                 {label}
             </span>
@@ -439,10 +443,14 @@ function Tile({ tab, icon, en, es, isEs, primary = false, badge, badgeTone, onTa
     return (
         <button
             onClick={onTap}
-            className={`relative flex items-center gap-3 rounded-xl bg-white border border-dd-line shadow-card hover:shadow-card-hov active:shadow-card-hov active:scale-[0.97] transition px-3 py-3 overflow-hidden min-h-[64px]`}
+            // 2026-05-27 — Phase 3: tile chrome ported to .glass-card so
+            // the launcher grid matches the new design system. Touch-
+            // target floor (48px on pointer:coarse) covered by min-h-[64px]
+            // here, well above both iOS 44pt and Material 48dp minimums.
+            className={`glass-card relative flex items-center gap-3 hover:shadow-glass-lg active:scale-[0.97] transition-all duration-glass-fast ease-glass-out px-3 py-3 overflow-hidden min-h-[64px]`}
         >
             {primary && (
-                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-xl" />
+                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-glass-lg" />
             )}
             {/* Icon disc — square chip on the left so the icon has a
                 visible "container" and doesn't compete with the label.

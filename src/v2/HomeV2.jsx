@@ -22,26 +22,32 @@ import StaffTodoCard from '../components/StaffTodoCard';
 const PrintCenter = lazy(() => import('../components/PrintCenter'));
 
 // ── Primitives ─────────────────────────────────────────────────────────
+// 2026-05-27 — Phase 3: ported the local Card / Button primitives to
+// the Liquid-Glass design system. One change here cascades through
+// every StatCard, every dashboard tile, every section wrapper on the
+// desktop home — the rest of the JSX is untouched.
 function Card({ className = '', children, hover = false, ...rest }) {
     return (
         <div {...rest}
-            className={`bg-dd-surface border border-dd-line rounded-xl shadow-card ${hover ? 'hover:shadow-card-hov transition-shadow' : ''} ${className}`}>
+            className={`glass-card ${hover ? 'hover:shadow-glass-lg transition-shadow duration-glass-normal ease-glass-out' : ''} ${className}`}>
             {children}
         </div>
     );
 }
 
 function Button({ variant = 'primary', size = 'md', className = '', children, ...props }) {
+    // Size still drives the padding (the glass-* classes pick the
+    // touch-target floor on mobile via pointer:coarse media query).
     const sizes = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-sm' };
     const variants = {
-        primary:   'bg-dd-green text-white hover:bg-dd-green-700 shadow-sm',
-        secondary: 'bg-dd-surface text-dd-text border border-dd-line hover:bg-dd-bg',
-        ghost:     'bg-transparent text-dd-text-2 hover:text-dd-text hover:bg-dd-bg',
-        danger:    'bg-red-600 text-white hover:bg-red-700 shadow-sm',
+        primary:   'glass-button-primary',
+        secondary: 'glass-button',
+        ghost:     'bg-transparent text-dd-text-2 hover:text-dd-text hover:bg-dd-bg rounded-glass-md',
+        danger:    'bg-red-600 text-white hover:bg-red-700 shadow-glass-sm border border-red-600 rounded-glass-md',
     };
     return (
         <button {...props}
-            className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition ${sizes[size]} ${variants[variant]} ${className}`}>
+            className={`${sizes[size]} ${variants[variant]} ${className}`}>
             {children}
         </button>
     );
@@ -63,7 +69,7 @@ function Badge({ tone = 'info', children }) {
 }
 
 function Skeleton({ className = '' }) {
-    return <div className={`bg-gray-100 animate-pulse rounded ${className}`} />;
+    return <div className={`glass-skeleton ${className}`} />;
 }
 
 function StatCard({ label, value, sub, tone, icon, loading }) {
