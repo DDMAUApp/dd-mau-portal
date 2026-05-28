@@ -8824,7 +8824,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
                 </div>
 
                 <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
-                    <button onClick={onClose} className="w-full py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Done', 'Listo')}</button>
+                    <button onClick={onClose} className="w-full py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Done', 'Listo')}</button>
                 </div>
             </div>
         </div>
@@ -9030,7 +9030,7 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                 </div>
                 <div className="border-t border-gray-200 p-4 flex gap-2 shrink-0">
                     <button onClick={onClose}
-                        className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                        className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={() => canSubmit && onSubmit(form)} disabled={!canSubmit}
                         className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-amber-600 hover:bg-amber-700' : 'bg-gray-300'}`}>
                         {tx('Submit Request', 'Enviar Solicitud')}
@@ -9309,7 +9309,7 @@ function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
                         </button>
                     )}
                     <button onClick={onClose}
-                        className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold text-sm">
+                        className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold text-sm">
                         {lt('Cancel', 'Cancelar')}
                     </button>
                     <button onClick={handleSave}
@@ -9397,7 +9397,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                     })}
                 </div>
                 <div className="border-t border-gray-200 p-3 flex gap-2">
-                    <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                    <button onClick={onClose} className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={handleSave} className="flex-1 py-2 rounded-lg bg-purple-700 text-white font-bold">{tx('Save', 'Guardar')}</button>
                 </div>
             </div>
@@ -9884,7 +9884,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                     <h3 className="text-lg font-bold text-blue-700">
                         👥 {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
                     </h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="p-4 space-y-3">
                     <div className="text-xs text-gray-600 bg-blue-50 rounded-lg p-2 border border-blue-200">
@@ -10029,7 +10029,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                         </div>
                     )}
                     <div className="flex gap-2">
-                        <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
+                        <button onClick={onClose} className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx('Cancel', 'Cancelar')}</button>
                         <button onClick={handleSave} disabled={!canSubmit}
                             title={canSubmit ? '' : submitBlockedReason}
                             className={`flex-1 py-2 rounded-lg font-bold text-white ${canSubmit ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-300 cursor-not-allowed'}`}>
@@ -10170,7 +10170,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
                 {/* Footer */}
                 <div className="border-t border-gray-200 p-4 flex items-center gap-2">
                     <button onClick={onCancel}
-                        className="flex-1 sm:flex-initial px-4 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm font-bold hover:bg-gray-300">
+                        className="flex-1 sm:flex-initial px-4 py-2 rounded-lg glass-button-apple text-dd-text-2 text-sm font-bold hover:bg-gray-300">
                         {tx('Cancel', 'Cancelar')}
                     </button>
                     <button onClick={onConfirm}
@@ -10199,7 +10199,7 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
                         </h3>
                         <p className="text-xs text-gray-600">{staff.name} · {dayLabel} {dateStr}</p>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-2">
                     <p className="text-xs text-gray-600 bg-blue-50 rounded-lg p-2 border border-blue-200">
@@ -10393,7 +10393,7 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, we
             <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-indigo-700">📋 {initial ? tx("Edit Template", "Editar Plantilla") : tx("New Template", "Nueva Plantilla")}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     {/* Name + Side + Location */}
@@ -10604,7 +10604,7 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, we
                         </div>
                     )}
                     <div className="flex gap-2">
-                        <button onClick={onClose} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Cancel", "Cancelar")}</button>
+                        <button onClick={onClose} className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx("Cancel", "Cancelar")}</button>
                         {applyDates.size === 0 ? (
                             <button onClick={() => canSave && onSave(tpl)} disabled={!canSave}
                                 title={canSave ? '' : saveBlockedReason}
@@ -10733,7 +10733,7 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                         <h3 className="text-lg font-bold text-indigo-700">📋 {tx("Day Templates", "Plantillas del Día")}</h3>
                         <p className="text-xs text-gray-500">{side === "foh" ? "FOH" : "BOH"}</p>
                     </div>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     <button onClick={onCreate}
@@ -10963,7 +10963,7 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
             <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-cyan-700">🔁 {tx("Recurring Shifts", "Turnos Recurrentes")}</h3>
-                    <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
+                    <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
                 </div>
                 <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     <div className="text-xs text-gray-600 bg-cyan-50 rounded-lg p-2 border border-cyan-200">
@@ -11091,7 +11091,7 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                                 </select>
                             </div>
                             <div className="flex gap-2">
-                                <button onClick={() => setEditing(null)} className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold text-sm">{tx("Cancel", "Cancelar")}</button>
+                                <button onClick={() => setEditing(null)} className="flex-1 py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold text-sm">{tx("Cancel", "Cancelar")}</button>
                                 <button onClick={() => canSave && onSave(editing).then(() => setEditing(null))} disabled={!canSave}
                                     className={`flex-1 py-2 rounded-lg font-bold text-white text-sm ${canSave ? "bg-cyan-600" : "bg-gray-300"}`}>
                                     {tx("Save", "Guardar")}
@@ -11130,7 +11130,7 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                     )}
                 </div>
                 <div className="border-t border-gray-200 p-3">
-                    <button onClick={onClose} className="w-full py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx("Done", "Listo")}</button>
+                    <button onClick={onClose} className="w-full py-2 rounded-lg glass-button-apple text-dd-text-2 font-bold">{tx("Done", "Listo")}</button>
                 </div>
             </div>
         </div>
