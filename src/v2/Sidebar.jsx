@@ -12,6 +12,32 @@
 // reflects current state without prop-drilling counts from App.jsx.
 
 import { useMemo } from 'react';
+import {
+    Home,
+    Calendar,
+    CheckSquare,
+    MessageSquare,
+    ClipboardList,
+    Tag,
+    BookOpen,
+    UtensilsCrossed,
+    Ban,
+    GraduationCap,
+    Clock,
+    Handshake,
+    BarChart3,
+    Monitor,
+    HeartPulse,
+    Bug,
+    Printer,
+    ChefHat,
+    Bot,
+    Wrench,
+    FileText,
+    Settings as SettingsIcon,
+    Bell,
+    Mail,
+} from 'lucide-react';
 import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 
@@ -24,20 +50,28 @@ import AppVersion from '../components/AppVersion';
 //   - 'invoices' → had no render handler in App.jsx (broken link)
 // Items added back to match legacy parity:
 //   - 'ai' AI Assistant — surfaced in legacy as a pinned purple block
+// 2026-05-27 — every tab's `icon` field is now a Lucide SVG component
+// reference (capital-letter property `Icon`) instead of an emoji
+// string. The render code in this file uses `<item.Icon size={...} />`
+// so the icons inherit currentColor and stroke width consistently
+// across iOS / Android / desktop. Emoji icons were rendering as four
+// different visual styles depending on the OS (Apple Color, Noto Color,
+// Segoe UI Emoji, and a few mid-shift Linux variants on Chromebook
+// kiosks) — switching to Lucide closes that gap.
 const NAV_GROUPS = [
     {
         labelEn: 'WORKSPACE', labelEs: 'TRABAJO',
         items: [
-            { tab: 'home',       icon: '🏠', en: 'Home',       es: 'Inicio' },
-            { tab: 'schedule',   icon: '📅', en: 'Schedule',   es: 'Horario' },
+            { tab: 'home',         Icon: Home,           en: 'Home',       es: 'Inicio' },
+            { tab: 'schedule',     Icon: Calendar,       en: 'Schedule',   es: 'Horario' },
             // 2026-05-21 — Andrew: managers assign tasks from Operations →
             // Assign Tasks; staff see their list here. Sits right under
             // Schedule because both answer "what do I have to do today?".
-            { tab: 'mytasks',    icon: '✅', en: 'My Tasks',   es: 'Mis Tareas' },
+            { tab: 'mytasks',      Icon: CheckSquare,    en: 'My Tasks',   es: 'Mis Tareas' },
             // Chat is available to ALL staff — no role gate. Team messaging,
             // FOH/BOH channels, DMs, groups. See ChatCenter.jsx.
-            { tab: 'chat',       icon: '💬', en: 'Chat',       es: 'Chat' },
-            { tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', requires: 'opsAccess' },
+            { tab: 'chat',         Icon: MessageSquare,  en: 'Chat',       es: 'Chat' },
+            { tab: 'operations',   Icon: ClipboardList,  en: 'Operations', es: 'Operaciones', requires: 'opsAccess' },
             // 2026-05-20 — Andrew: "add a print tab to the home page
             // in the workspace list under the operations tab." Sits
             // right below Operations because date-coding labels is a
@@ -46,76 +80,51 @@ const NAV_GROUPS = [
             // Distinct from the home-tile 🖨 Print (free-form text);
             // this one is structured: pick a menu item → drill into
             // its build → print sticker for any component.
-            { tab: 'datestickers', icon: '🏷', en: 'Stickers',  es: 'Etiquetas' },
+            { tab: 'datestickers', Icon: Tag,            en: 'Stickers',   es: 'Etiquetas' },
         ],
     },
     {
         labelEn: 'KITCHEN', labelEs: 'COCINA',
         items: [
-            // Recipes icon mirrors MobileBottomNav (📖) so the icon doesn't
-            // flip when the user switches between sidebar and bottom nav.
-            // The previous 🧑‍🍳 was a ZWJ composite emoji (man + cooking) —
-            // multi-codepoint, prone to rendering as two separate glyphs on
-            // older Android + some Linux/Windows browsers, and visually
-            // heavier than the other single-codepoint icons in this nav.
-            { tab: 'recipes', icon: '📖', en: 'Recipes',    es: 'Recetas',     requires: 'recipesAccess' },
-            { tab: 'menu',    icon: '🍜',   en: 'Menu',       es: 'Menú' },
-            { tab: 'eighty6', icon: '🚫',   en: '86 Board',   es: 'Tablero 86' },
+            { tab: 'recipes', Icon: BookOpen,         en: 'Recipes',  es: 'Recetas',   requires: 'recipesAccess' },
+            { tab: 'menu',    Icon: UtensilsCrossed,  en: 'Menu',     es: 'Menú' },
+            { tab: 'eighty6', Icon: Ban,              en: '86 Board', es: 'Tablero 86' },
         ],
     },
     {
         labelEn: 'PEOPLE', labelEs: 'PERSONAL',
         items: [
-            { tab: 'training', icon: '📚', en: 'Training',  es: 'Capacitación' },
-            { tab: 'tardies',  icon: '⏰', en: 'Tardies',   es: 'Tardanzas',  requires: 'manager' },
-            { tab: 'handoff',  icon: '🤝', en: 'Handoff',   es: 'Entrega',    requires: 'manager' },
+            { tab: 'training', Icon: GraduationCap, en: 'Training', es: 'Capacitación' },
+            { tab: 'tardies',  Icon: Clock,         en: 'Tardies',  es: 'Tardanzas',  requires: 'manager' },
+            { tab: 'handoff',  Icon: Handshake,     en: 'Handoff',  es: 'Entrega',    requires: 'manager' },
         ],
     },
     {
         labelEn: 'BUSINESS', labelEs: 'NEGOCIO',
         items: [
-            { tab: 'labor',     icon: '📊', en: 'Labor',         es: 'Mano Obra',   requires: 'admin' },
-            // Menu Screens — admin-only TV signage dashboard. Owners
-            // manage every TV menu board from one page (compare:
-            // Yodeck / OptiSigns / Raydiant). Lives in BUSINESS
-            // because it's an operator-facing surface, not a
-            // settings tweak.
-            { tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas',   requires: 'admin' },
-            // System Health — read-only status dashboard for admins.
-            // Lives in BUSINESS because it's "is the platform up?"
-            // observability, not a Settings tweak.
-            { tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado',      requires: 'admin' },
+            { tab: 'labor',       Icon: BarChart3,  en: 'Labor',          es: 'Mano Obra',  requires: 'admin' },
+            { tab: 'menuscreens', Icon: Monitor,    en: 'Menu Screens',   es: 'Pantallas',  requires: 'admin' },
+            { tab: 'health',      Icon: HeartPulse, en: 'System Health',  es: 'Estado',     requires: 'admin' },
             // Error Report — owner-only triage view for bug reports,
-            // crashes, and AI failures. Andrew 2026-05-27: "make a
-            // spot where i can say look at the error report and we
-            // both can see all the errors." Sits next to System
-            // Health because they're the two "what's broken right
-            // now?" surfaces.
-            { tab: 'errorreport', icon: '🐛',  en: 'Error Report', es: 'Errores',     requires: 'admin' },
-            // Label Printing — per-printer status + recent jobs feed
-            // + test print. Admin-only same as Health.
-            { tab: 'labels',      icon: '🏷', en: 'Label Printing',es: 'Etiquetas',  requires: 'admin' },
-            { tab: 'catering',  icon: '🥘', en: 'Orders',        es: 'Pedidos' },
-            { tab: 'ai',        icon: '🤖', en: 'AI Assistant',  es: 'Asistente AI' },
+            // crashes, and AI failures (Andrew 2026-05-27).
+            { tab: 'errorreport', Icon: Bug,        en: 'Error Report',   es: 'Errores',    requires: 'admin' },
+            { tab: 'labels',      Icon: Printer,    en: 'Label Printing', es: 'Etiquetas',  requires: 'admin' },
+            { tab: 'catering',    Icon: ChefHat,    en: 'Orders',         es: 'Pedidos' },
+            { tab: 'ai',          Icon: Bot,        en: 'AI Assistant',   es: 'Asistente AI' },
         ],
     },
     {
         labelEn: 'SETTINGS', labelEs: 'AJUSTES',
         items: [
-            { tab: 'maintenance', icon: '🔧', en: 'Maintenance', es: 'Mantenimiento' },
-            { tab: 'insurance',   icon: '📑', en: 'Insurance',   es: 'Seguro' },
-            { tab: 'admin',         icon: '⚙️', en: 'Admin',         es: 'Admin',           requires: 'admin' },
-            // 2026-05-24 — Andrew: "i want to add a notification page in
-            // admin where i can add who get what notifications because
-            // some people get notifications they shouldnt." Promotes the
-            // per-staff push-opt-out matrix into its own page so the
-            // AdminPanel doesn't keep growing.
-            { tab: 'notifications', icon: '🔔', en: 'Notifications', es: 'Notificaciones',  requires: 'admin' },
+            { tab: 'maintenance',   Icon: Wrench,       en: 'Maintenance',   es: 'Mantenimiento' },
+            { tab: 'insurance',     Icon: FileText,     en: 'Insurance',     es: 'Seguro' },
+            { tab: 'admin',         Icon: SettingsIcon, en: 'Admin',         es: 'Admin',          requires: 'admin' },
+            { tab: 'notifications', Icon: Bell,         en: 'Notifications', es: 'Notificaciones', requires: 'admin' },
             // 2026-05-26 — Andrew: "i want to make sure the notifications
             // only got to julie and andrew the owners". Owner-only inbox
             // triage tab. The 'requires: admin' gate matches owners (ids
             // 40/41) per the existing isAdmin definition in staff.js.
-            { tab: 'inbox',         icon: '📧', en: 'Inbox',         es: 'Bandeja',         requires: 'admin' },
+            { tab: 'inbox',         Icon: Mail,         en: 'Inbox',         es: 'Bandeja',        requires: 'admin' },
             // Onboarding is intentionally NOT in the main nav. It lives behind
             // the Admin page (owners-only PII) — admins enter it via the
             // launcher card at the top of AdminPanel.jsx.
@@ -294,8 +303,18 @@ export default function Sidebar({
                                         {active && (
                                             <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-6 bg-dd-green rounded-r" />
                                         )}
-                                        <span className="relative text-base shrink-0">
-                                            {item.icon}
+                                        <span className="relative shrink-0">
+                                            {/* Lucide SVG icon. Inherits currentColor
+                                                from the parent button (white/70 → white
+                                                on active). Stroke 2.0 keeps lines
+                                                readable at 20px in collapsed mode. */}
+                                            {item.Icon && (
+                                                <item.Icon
+                                                    size={20}
+                                                    strokeWidth={2}
+                                                    aria-hidden="true"
+                                                />
+                                            )}
                                             {/* Collapsed mode: small dot in the corner of the icon */}
                                             {collapsed && showBadge && (
                                                 <span className={`absolute -top-1 -right-1 min-w-[14px] h-[14px] px-1 rounded-full flex items-center justify-center text-[8px] font-bold ${badgeTone(item.tab)}`}>

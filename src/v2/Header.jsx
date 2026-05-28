@@ -1,3 +1,4 @@
+import { LogOut, Bell, ChevronLeft } from 'lucide-react';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsHeaderButton from './EnableNotificationsHeaderButton';
 
@@ -134,15 +135,17 @@ export default function Header({
                         {language === 'es' ? 'ES' : 'EN'}
                     </button>
                     {onLogout && (
-                        // 2026-05-20 — Andrew asked for an explicit word
-                        // next to the 🔒 because staff don't recognize
-                        // the lock icon as "log out". Compact pill: icon
-                        // + word, still tap-friendly (44×44 min target).
+                        // Lock-out / Sign-out button. 2026-05-27 — the
+                        // emoji 🔒 was replaced with Lucide's LogOut
+                        // glyph because the lock looked too dramatic
+                        // ("system-locked-out") and rendered as four
+                        // different things across iOS / Android / Linux.
+                        // LogOut reads unambiguously as "exit/sign out".
                         <button onClick={onLogout}
                             className="min-h-[44px] md:h-9 px-2 md:px-2.5 rounded-lg flex items-center gap-1 text-dd-text-2 hover:bg-red-50 hover:text-red-700 active:bg-red-100 active:scale-95 transition"
                             title={isEs ? 'Bloquear / Salir' : 'Lock / Log out'}
                             aria-label={isEs ? 'Bloquear / Salir' : 'Lock / Log out'}>
-                            <span className="text-[15px] md:text-base">🔒</span>
+                            <LogOut size={16} strokeWidth={2.25} aria-hidden="true" />
                             <span className="text-[11px] md:text-xs font-bold">
                                 {isEs ? 'Salir' : 'Log out'}
                             </span>
@@ -165,7 +168,10 @@ export default function Header({
                         className="relative min-w-[44px] min-h-[44px] md:w-9 md:h-9 rounded-lg flex items-center justify-center text-dd-text-2 hover:bg-dd-bg active:bg-dd-bg active:scale-95 transition"
                         title={isEs ? `Notificaciones${unreadCount > 0 ? ` (${unreadCount})` : ''}` : `Notifications${unreadCount > 0 ? ` (${unreadCount})` : ''}`}
                         aria-label={isEs ? 'Notificaciones' : 'Notifications'}>
-                        <span className="text-base">🔔</span>
+                        {/* Lucide Bell — inherits text-dd-text-2 → solid
+                            gray. Unread badge sits absolutely positioned
+                            with a white ring so it pops on busy headers. */}
+                        <Bell size={18} strokeWidth={2.25} aria-hidden="true" />
                         {unreadCount > 0 && (
                             <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] px-1 rounded-full bg-red-500 text-white text-[9px] font-black flex items-center justify-center ring-2 ring-white">
                                 {unreadCount > 9 ? '9+' : unreadCount}

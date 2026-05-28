@@ -31,6 +31,16 @@
 // equal but the drawer scrim covers the nav too while it's open.
 
 import { useMemo } from 'react';
+import {
+    Home,
+    Calendar,
+    ClipboardList,
+    BookOpen,
+    UtensilsCrossed,
+    GraduationCap,
+    Ban,
+    MoreHorizontal,
+} from 'lucide-react';
 import { useAppData } from './AppDataContext';
 
 export default function MobileBottomNav({
@@ -62,31 +72,27 @@ export default function MobileBottomNav({
         return eightySixByLoc[loc]?.count || 0;
     }, [eightySixByLoc, storeLocation]);
 
-    // Slot 3 is dynamic — Operations for staff with ops access (pre-shift
-    // checklists, inventory), Recipes for those who only have recipes
-    // access, Menu as a fallback.
-    // Slot 3 — pick the most relevant tab the user can access. Skip anything
-    // in their hiddenPages list so we don't surface a tab the admin hid.
+    // Slot 3 — dynamic destination based on what the staffer can access.
+    // 2026-05-27 — emoji icons (📋 / 📖 / 🍜 / 📚) replaced with Lucide
+    // SVG components so the bar reads consistently across iOS / Android /
+    // desktop. Lucide icons inherit currentColor + stroke width and
+    // tree-shake cleanly with Vite.
     const slot3 = hasOpsAccess && !hiddenPages.includes('operations')
-        ? { tab: 'operations', icon: '📋', en: 'Ops', es: 'Ops' }
+        ? { tab: 'operations', Icon: ClipboardList,    en: 'Ops',     es: 'Ops' }
         : hasRecipesAccess && !hiddenPages.includes('recipes')
-        ? { tab: 'recipes', icon: '📖', en: 'Recipes', es: 'Recetas' }
+        ? { tab: 'recipes',    Icon: BookOpen,         en: 'Recipes', es: 'Recetas' }
         : !hiddenPages.includes('menu')
-        ? { tab: 'menu', icon: '🍜', en: 'Menu', es: 'Menú' }
-        : { tab: 'training', icon: '📚', en: 'Train', es: 'Capac.' };
+        ? { tab: 'menu',       Icon: UtensilsCrossed,  en: 'Menu',    es: 'Menú' }
+        : { tab: 'training',   Icon: GraduationCap,    en: 'Train',   es: 'Capac.' };
 
-    // More icon: ⋯ is rendered as a Unicode "midline horizontal ellipsis"
-    // glyph (U+22EF) — always a real character on every platform, no emoji
-    // variant selector, no fallback to a tofu box. The previous ☰ rendered
-    // as a thin trigram glyph on iOS (text-style) but as an emoji on some
-    // Android builds — visually inconsistent across the kitchen's mixed
-    // device fleet.
+    // Five-slot tab bar with Lucide icon components for each tab.
+    // Capital `Icon` so JSX renders it as a component, not a string.
     const tabs = [
-        { tab: 'home',     icon: '🏠', en: 'Home',     es: 'Inicio',  badge: unreadNotifs, badgeTone: 'bg-dd-green' },
-        { tab: 'schedule', icon: '📅', en: 'Schedule', es: 'Horario', badge: draftCount,    badgeTone: 'bg-amber-500' },
+        { tab: 'home',     Icon: Home,             en: 'Home',     es: 'Inicio',  badge: unreadNotifs, badgeTone: 'bg-dd-green' },
+        { tab: 'schedule', Icon: Calendar,         en: 'Schedule', es: 'Horario', badge: draftCount,   badgeTone: 'bg-amber-500' },
         slot3,
-        { tab: 'eighty6',  icon: '🚫', en: '86',       es: '86',      badge: eighty6Count,  badgeTone: 'bg-red-500' },
-        { tab: '__more',   icon: '⋯',  en: 'More',     es: 'Más' },
+        { tab: 'eighty6',  Icon: Ban,              en: '86',       es: '86',      badge: eighty6Count, badgeTone: 'bg-red-500' },
+        { tab: '__more',   Icon: MoreHorizontal,   en: 'More',     es: 'Más' },
     ];
 
     return (
@@ -100,6 +106,7 @@ export default function MobileBottomNav({
                     const active = activeTab === t.tab;
                     const isMore = t.tab === '__more';
                     const showBadge = !isMore && t.badge > 0;
+                    const Icon = t.Icon;
                     return (
                         <button
                             key={t.tab}
@@ -121,10 +128,18 @@ export default function MobileBottomNav({
                                     ? 'bg-dd-sage-50'
                                     : 'scale-95 group-active:bg-dd-bg'
                             }`}>
-                                {/* More tab uses a thin Unicode ellipsis — bump
-                                    its weight & size so it matches the visual
-                                    mass of the emoji icons in the other slots. */}
-                                <span className={`leading-none transition-transform ${active ? 'scale-110' : ''} ${isMore ? 'text-[26px] font-black text-dd-text-2 tracking-tighter -mt-1' : 'text-[20px]'}`}>{t.icon}</span>
+                                {/* Lucide SVG icon — inherits currentColor from
+                                    the wrapping text-* class. Stroke width tuned
+                                    to match the visual weight of the previous
+                                    emoji glyphs (2.25 reads as "iconic but not
+                                    chunky"). Slight scale on active so the
+                                    selected tab subtly grows. */}
+                                <Icon
+                                    size={22}
+                                    strokeWidth={2.25}
+                                    className={`transition-transform duration-glass-fast ease-glass-out ${active ? 'scale-110 text-dd-green-700' : 'text-dd-text-2'}`}
+                                    aria-hidden="true"
+                                />
                                 {showBadge && (
                                     <span className={`absolute -top-1 -right-1 min-w-[16px] h-[16px] px-1 rounded-full flex items-center justify-center text-[9px] font-black text-white ${t.badgeTone} ring-2 ring-white tabular-nums`}>
                                         {t.badge > 9 ? '9+' : t.badge}
