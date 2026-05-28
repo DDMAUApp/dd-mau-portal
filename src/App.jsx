@@ -685,6 +685,27 @@ export default function App() {
         // Anchor lastActive on first render so an immediate visibility
         // event doesn't immediately log out a user who just signed in.
         try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch {}
+
+        // 2026-05-28 Audit #3 — interaction-based activity bump.
+        // Before this, the idle timer was ONLY refreshed on
+        // visibilitychange — meaning a manager who stayed focused
+        // on a long form (Onboarding, Schedule editor, Maintenance
+        // request, Operations checklist) for >5 minutes without
+        // tabbing away would be force-logged-out mid-entry. Unsaved
+        // form data was lost.
+        //
+        // resetActive bumps lastActive on every keydown/touch/click,
+        // but throttled to ≤1 localStorage write per 5 seconds. Without
+        // the throttle, fast typing would trigger hundreds of sync
+        // writes per minute, jamming the main thread.
+        let lastInteractionBump = Date.now();
+        const resetActive = () => {
+            const now = Date.now();
+            if (now - lastInteractionBump < 5000) return; // 5s throttle
+            lastInteractionBump = now;
+            try { localStorage.setItem('ddmau:lastActive', String(now)); } catch {}
+        };
+
         const onVisibility = () => {
             if (typeof document === 'undefined') return;
             if (document.visibilityState === 'hidden') {
@@ -704,10 +725,22 @@ export default function App() {
                 setActiveTab('home');
             } else {
                 try { localStorage.setItem('ddmau:lastActive', String(Date.now())); } catch {}
+                lastInteractionBump = Date.now();
             }
         };
         document.addEventListener('visibilitychange', onVisibility);
-        return () => document.removeEventListener('visibilitychange', onVisibility);
+        // Passive listeners — never call preventDefault; this is just
+        // a heartbeat. Passive = browser knows scrolling/input is safe
+        // to commit immediately and doesn't wait for our handler.
+        document.addEventListener('keydown',    resetActive, { passive: true });
+        document.addEventListener('touchstart', resetActive, { passive: true });
+        document.addEventListener('mousedown',  resetActive, { passive: true });
+        return () => {
+            document.removeEventListener('visibilitychange', onVisibility);
+            document.removeEventListener('keydown',    resetActive);
+            document.removeEventListener('touchstart', resetActive);
+            document.removeEventListener('mousedown',  resetActive);
+        };
     }, [staffName]);
 
     const { isAtDDMau, checking: geoChecking, error: geoError, retry: geoRetry, permState: geoPermState } = useGeofence();
