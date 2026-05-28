@@ -2345,6 +2345,15 @@ function MessageBubbleInner({
                         onTouchStart={startLongPress}
                         onTouchEnd={endLongPress}
                         onTouchCancel={endLongPress}
+                        // 2026-05-28 — Andrew requested iMessage-style
+                        // double-click on a bubble to open the reactions +
+                        // reply menu. Long-press handled this on mobile;
+                        // right-click handled it on desktop; now double-
+                        // click does too. preventDefault stops the
+                        // browser's text-selection from triggering on the
+                        // bubble body — the user is asking for an action,
+                        // not a copy. Right-click + long-press still work.
+                        onDoubleClick={(e) => { e.preventDefault(); setShowActions(true); }}
                         className={`relative rounded-2xl px-3 py-2 break-words ${isMine
                             ? 'bg-dd-green text-white rounded-br-md'
                             : (mentioned
@@ -2443,14 +2452,21 @@ function MessageBubbleInner({
                             })}
                         </div>
                     )}
-                    {/* Action menu — reactions + pin + task + delete */}
+                    {/* Action menu — reactions + reply + pin + task + delete.
+                        2026-05-28 fix: this catch-all menu (rendered when
+                        the bubble type wasn't one of the type-specific
+                        cases above) was missing onReply + onStartEdit, so
+                        replying via the menu silently did nothing for
+                        bubble types that landed here. Now matches the
+                        type-specific menus' prop set. */}
                     {showActions && (
                         <MessageActionMenu
                             message={message} chat={chat} isMine={isMine} viewer={viewer}
                             isAdmin={isAdmin} isManager={isManager} isEs={isEs}
                             onClose={() => setShowActions(false)}
-                            onReact={onReact} onTogglePin={onTogglePin}
+                            onReact={onReact} onReply={onReply} onTogglePin={onTogglePin}
                             onMakeTask={onMakeTask} onDelete={onDelete} onCopy={onCopy}
+                            onStartEdit={onStartEdit}
                         />
                     )}
                     {/* Pin chip overlay */}
