@@ -50,19 +50,26 @@ function fmtWhen(ts) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-// MyTasksPanel — ALWAYS renders the kanban now. Earlier versions
-// gated the kanban behind `isAdmin || isManager`, which failed for
-// Andrew in production (staffList timing race or staff-record ID
-// mismatch — couldn't reproduce locally without live data). The
-// user's spec was unambiguous: "i need that in the task page" — the
-// kanban should be on the task tab regardless of role.
+// MyTasksPanel — role-based router.
 //
-// AssignTasksPanel receives `isManager` so it can hide modify-state
-// controls (+ Add, delete, assign picker) for non-managers, leaving
-// them with a read-only view of the master list + per-staff columns.
-// PersonalTaskList is kept around at the bottom of this file for now
-// as dead code in case we need to revert; it can be removed once the
-// kanban-for-everyone behavior is confirmed in the wild.
+// Access matches the Operations page (admin + managers + shift leads):
+//   • admin / manager / shift lead → KANBAN (master list + per-staff
+//     columns + full edit access — add tasks, assign, unassign, mark
+//     done from any column)
+//   • everyone else → PERSONAL list (their own assignments only,
+//     Apple-Reminders-style)
+//
+// Shift Lead is a boolean flag on the staff record (`isShiftLead`),
+// not a role title — same pattern as chatPermissions.js's
+// isShiftLeadOrAbove. Computed inline here so we don't have to plumb
+// another prop down from App.jsx.
+//
+// Earlier iterations only checked isAdmin || isManager, which (a)
+// excluded shift leads and (b) silently routed Andrew to the
+// personal list during the brief window when staffList hadn't loaded
+// yet. This version waits on staffList — if we can't find the
+// current staff record, we render the kanban skeleton instead of
+// committing to a view that might be wrong.
 export default function MyTasksPanel({
     language = 'en',
     staffName = '',
@@ -70,20 +77,51 @@ export default function MyTasksPanel({
     isAdmin = false,
     isManager = false,
 }) {
-    return (
-        <Suspense fallback={
+    const currentStaff = (staffList || []).find((s) => s.name === staffName) || null;
+    const isShiftLead = !!currentStaff?.isShiftLead;
+    const canViewKanban = isAdmin || isManager || isShiftLead;
+
+    // While staffList is still loading and we don't yet know the
+    // viewer's role, show a skeleton instead of falling through to
+    // the personal-list view. Without this, the page flickers from
+    // personal-list → kanban once the role resolves, and an
+    // owner/manager momentarily sees the wrong UI.
+    const staffListReady = Array.isArray(staffList) && staffList.length > 0;
+    const meResolved = !staffName || currentStaff != null;
+    if (!staffListReady || !meResolved) {
+        return (
             <div className="max-w-2xl mx-auto p-4">
                 <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
             </div>
-        }>
-            <AssignTasksPanel
-                language={language}
-                staffName={staffName}
-                staffList={staffList}
-                isAdmin={isAdmin}
-                isManager={isManager}
-            />
-        </Suspense>
+        );
+    }
+
+    if (canViewKanban) {
+        return (
+            <Suspense fallback={
+                <div className="max-w-2xl mx-auto p-4">
+                    <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
+                </div>
+            }>
+                <AssignTasksPanel
+                    language={language}
+                    staffName={staffName}
+                    staffList={staffList}
+                    isAdmin={isAdmin}
+                    isManager={isManager}
+                    isShiftLead={isShiftLead}
+                />
+            </Suspense>
+        );
+    }
+
+    // Regular staff → personal list (own assignments only).
+    return (
+        <PersonalTaskList
+            language={language}
+            staffName={staffName}
+            staffList={staffList}
+        />
     );
 }
 

@@ -86,15 +86,16 @@ export default function AssignTasksPanel({
     staffList = [],
     isAdmin = false,
     isManager = false,
+    isShiftLead = false,
 }) {
     const isEs = language === 'es';
-    // canModify gates the "edit-state" controls (+ Add, delete master row,
-    // assign picker, unassign X). Admins + managers can do all of it;
-    // anyone else gets a read-only view of the same kanban so they can at
-    // least SEE who's been assigned what. The mark-done circular check
-    // stays open to everyone — staff need to be able to close out their
-    // own tasks.
-    const canModify = isAdmin || isManager;
+    // canModify gates the edit-state controls (+ Add new task, delete a
+    // master row, open the assign picker, X-unassign a column row).
+    // Mirrors the Operations page's access list: admin + managers +
+    // shift leads. Everyone else (regular staff) gets a read-only view
+    // of the same kanban — they can still tap the circular check to
+    // mark their own tasks done, but they can't reshape the board.
+    const canModify = isAdmin || isManager || isShiftLead;
 
     // ── Manager identity + side scoping ─────────────────────────────
     const managerRecord = useMemo(
