@@ -51,7 +51,17 @@ export default function AppShellV2({
 
     return (
         <AppDataProvider staffName={staffName} storeLocation={storeLocation}>
-        <div className="min-h-screen bg-dd-sage text-dd-text font-sans">
+        {/* 2026-05-27 — Phase 2 redesign. The flat bg-dd-sage backdrop
+            became a soft sage-to-bone gradient — the canvas that the
+            Liquid-Glass surfaces (Header, Sidebar, page cards) sit on
+            top of. Subtle enough not to distract during a rush, but
+            enough texture that the frosted glass surfaces have
+            something to refract against.
+            On dark mode (prefers-color-scheme: dark) the body bg in
+            index.css overrides to #0a0a0a so this gradient is hidden
+            and the whole app reads as the chat-style near-black. */}
+        <div className="ddmau-app-backdrop min-h-screen text-dd-text font-sans"
+             style={{ background: 'linear-gradient(180deg, #EEF5EF 0%, #F3F5F1 50%, #F7F8FA 100%)' }}>
             {/* Mobile drawer scrim — only opens when "More" is tapped */}
             {sidebarOpen && (
                 <div

@@ -52,7 +52,16 @@ export default function Header({
             // open (body[data-chat-thread-open="true"]). See index.css.
             // The chat thread provides its own back-arrow + title header
             // and takes the full screen, Zenzap / iMessage style.
-            className="ddmau-app-header sticky top-0 z-20 bg-white/90 backdrop-blur-xl border-b border-dd-line/80"
+            //
+            // Phase 2 redesign (2026-05-27): swapped the old
+            // `bg-white/90 backdrop-blur-xl border-b border-dd-line/80`
+            // for `.glass-nav` — a centralized Liquid-Glass-inspired
+            // frosted bar that auto-switches to a dark frost when the
+            // user's system is in dark mode. Same translucency, same
+            // hairline divider, but consistent with the rest of the
+            // app's new glass surfaces. See index.css @layer
+            // components for the underlying styles.
+            className="ddmau-app-header glass-nav sticky top-0 z-20"
             style={{ paddingTop: 'env(safe-area-inset-top)' }}
         >
             <div className="h-14 md:h-16 px-3 sm:px-6 flex items-center gap-2 md:gap-3">

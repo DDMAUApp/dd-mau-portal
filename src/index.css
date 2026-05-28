@@ -240,6 +240,146 @@
     }
 }
 
+/* ── Auto-dark mode (prefers-color-scheme) ────────────────────────
+   Andrew chose "Auto (system preference)" for the non-chat default.
+   The glass-* primitives above ship with `.is-dark` modifier classes,
+   but we ALSO want any unmodified glass-* element to render dark
+   when the OS is in dark mode. This block re-applies the dark
+   values to the unmodified selectors under the media query.
+   Components that need to STAY light regardless (rare — usually for
+   print or screenshot contexts) can opt out by adding `.force-light`. */
+@media (prefers-color-scheme: dark) {
+    /* Page background fallback — match the chat shell so the whole
+       app feels like one coherent dark surface. The ddmau-app-backdrop
+       div carries an inline-style gradient on light mode, which beats
+       Tailwind classes. Override it here with a flat near-black. */
+    body:not(.force-light) {
+        background-color: #0a0a0a;
+    }
+    .ddmau-app-backdrop:not(.force-light) {
+        background: #0a0a0a !important;
+    }
+
+    .glass-card:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        box-shadow: none;
+    }
+    .glass-panel:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        box-shadow: none;
+    }
+    .glass-nav:not(.force-light) {
+        background-color: rgba(10, 10, 10, 0.78);
+        border-bottom-color: rgba(255, 255, 255, 0.08);
+    }
+    .glass-button:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .glass-button:not(.force-light):hover {
+        background-color: #2a2a2c;
+    }
+    .glass-input:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        color: #fff;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .glass-input:not(.force-light)::placeholder {
+        color: rgba(255, 255, 255, 0.4);
+    }
+    .glass-modal-content:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .glass-tabs:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .glass-tabs:not(.force-light) > button {
+        color: rgba(255, 255, 255, 0.6);
+    }
+    .glass-tabs:not(.force-light) > button[aria-selected="true"],
+    .glass-tabs:not(.force-light) > button.is-active {
+        background-color: #2a2a2c;
+        color: #fff;
+        box-shadow: none;
+    }
+    .glass-empty-state:not(.force-light) {
+        background-color: #1c1c1e;
+        border-color: rgba(255, 255, 255, 0.08);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+    .glass-empty-state:not(.force-light) .title { color: #fff; }
+    .glass-empty-state:not(.force-light) .hint  { color: rgba(255, 255, 255, 0.6); }
+
+    .glass-skeleton:not(.force-light) {
+        background-color: rgba(255, 255, 255, 0.04);
+        background-image: linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.08) 50%,
+            rgba(255, 255, 255, 0) 100%
+        );
+    }
+    .glass-error-state:not(.force-light) {
+        background-color: rgba(127, 29, 29, 0.25);
+        border-color: rgba(220, 38, 38, 0.4);
+    }
+    .glass-error-state:not(.force-light) .title   { color: #fecaca; }
+    .glass-error-state:not(.force-light) .message { color: #fda4af; }
+
+    /* Mobile bottom nav — translucent white in light mode. Override
+       to translucent near-black so it reads consistently with the
+       glass-nav header above it in system dark mode. (Existing chat-
+       thread-open behavior still hides the nav entirely; this only
+       affects the visible-nav case.) */
+    .ddmau-mobile-bottom-nav {
+        background-color: rgba(10, 10, 10, 0.78) !important;
+        border-top-color: rgba(255, 255, 255, 0.08) !important;
+    }
+    /* The active-tab text inside MobileBottomNav uses `text-dd-green-700`
+       which is hard to read on the new dark bar — bump to plain white
+       so the selected tab still pops. */
+    .ddmau-mobile-bottom-nav .text-dd-green-700 {
+        color: #fff !important;
+    }
+    .ddmau-mobile-bottom-nav .text-dd-text-2 {
+        color: rgba(255, 255, 255, 0.55) !important;
+    }
+
+    /* Safety net for pages that haven't been ported to the Liquid Glass
+       design system yet. Phase 2 only restyled the app shell; in dark
+       mode the underlying page body is #0a0a0a and any bg-white card
+       in an un-ported page would otherwise have dd-text (#0F172A —
+       near-black) text on a white card sitting on a black backdrop:
+       the card content is fine, just the surroundings feel disjointed.
+       This forces only the BACKGROUND of common-page wrappers to dark
+       while leaving the inner card contents alone. Components that
+       want to keep their light look unconditionally can add
+       .force-light. Future phases (3a-3d) will replace bg-white with
+       glass-card on these pages, at which point the cards become dark
+       too and this whole rule becomes a no-op. */
+    main {
+        color-scheme: dark;
+    }
+}
+
 /* ── Compatibility fallbacks ───────────────────────────────────────
    Old Android WebView / legacy Safari without backdrop-filter render
    the translucent surfaces as nearly-transparent → unreadable. Bump
