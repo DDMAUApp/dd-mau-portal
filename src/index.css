@@ -55,12 +55,31 @@
 
     /* glass-nav — sticky top bar / sidebar / bottom nav. Heavier
        blur so the surface reads as "frosted" against content
-       scrolling underneath. */
+       scrolling underneath.
+       Bakes in iOS notch + Android status-bar safe-area-inset-top so
+       the bar always clears the notch / camera cutout / status bar
+       on its own. env() falls back to 0 on devices without insets
+       (Android Chrome on phones with no notch, desktop browsers). */
     .glass-nav {
         @apply bg-glass-surface-strong backdrop-blur-glass-heavy
                border-b border-glass-border-light;
+        padding-top: env(safe-area-inset-top, 0px);
     }
     .glass-nav.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark;
+        backdrop-filter: none;
+    }
+    /* glass-nav-bottom — same chrome as glass-nav but mirrored for
+       a sticky BOTTOM nav (iPhone home indicator, Android gesture
+       bar). Border on top instead of bottom, safe-area padding on
+       bottom instead of top. Used by the mobile bottom nav and any
+       sticky action bars. */
+    .glass-nav-bottom {
+        @apply bg-glass-surface-strong backdrop-blur-glass-heavy
+               border-t border-glass-border-light;
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .glass-nav-bottom.is-dark {
         @apply bg-glass-surface-dark border-glass-border-dark;
         backdrop-filter: none;
     }
@@ -68,7 +87,14 @@
     /* ── Buttons ────────────────────────────────────────────────── */
 
     /* glass-button — neutral translucent button. Default for
-       secondary / tertiary actions. */
+       secondary / tertiary actions.
+       Touch-target sizing: Apple HIG demands ≥44pt and Android
+       Material wants ≥48dp for primary tap targets. Desktop mouse
+       UI conventionally uses 36-40px, so we conditionally bump
+       min-height on pointer:coarse devices via the global rule
+       below (see "Touch-target compliance" block). The natural
+       py-2 + text leaves ~36-40px on desktop; the rule lifts to
+       48px on touch. */
     .glass-button {
         @apply inline-flex items-center justify-center gap-1.5
                px-3.5 py-2 rounded-glass-md font-semibold text-sm
@@ -83,6 +109,9 @@
     }
     .glass-button:active {
         @apply scale-[0.97];
+    }
+    .glass-button:focus-visible {
+        @apply outline-none ring-2 ring-dd-green/40 ring-offset-2 ring-offset-glass-bg-light;
     }
     .glass-button.is-dark {
         @apply bg-glass-surface-dark border-glass-border-dark text-white;
@@ -107,6 +136,9 @@
     }
     .glass-button-primary:active {
         @apply scale-[0.97];
+    }
+    .glass-button-primary:focus-visible {
+        @apply outline-none ring-2 ring-dd-green/40 ring-offset-2 ring-offset-glass-bg-light;
     }
 
     /* ── Inputs ─────────────────────────────────────────────────── */
@@ -143,6 +175,11 @@
                rounded-t-glass-2xl sm:rounded-glass-2xl
                shadow-glass-floating;
         background-clip: padding-box;
+        /* Bake the iPhone home-indicator (and Android gesture bar)
+           inset into the bottom of every modal so action buttons /
+           form footers never get clipped on phones in landscape or
+           PWA install mode. On desktop / iPads this collapses to 0. */
+        padding-bottom: env(safe-area-inset-bottom, 0px);
     }
     .glass-modal-content.is-dark {
         @apply bg-glass-surface-dark border-glass-border-dark;
@@ -237,6 +274,51 @@
     }
     .glass-error-state .message {
         @apply text-xs text-red-700 mb-3 max-w-xs;
+    }
+
+    /* ── Touch-target compliance ────────────────────────────────────
+       Apple HIG: minimum 44pt (44 CSS px) for any tap target.
+       Material Design (Android): minimum 48dp (~48 CSS px).
+       Desktop mouse UI conventionally goes smaller (36–40px) — so
+       we ONLY bump the glass-* buttons on pointer:coarse devices
+       (phones, tablets) and leave desktop alone.
+       Catches both system-set glass buttons AND any custom-styled
+       buttons that just need the touch-area boost via .touch-target. */
+    @media (pointer: coarse) {
+        .glass-button,
+        .glass-button-primary,
+        .touch-target {
+            min-height: 48px;
+            min-width: 48px;
+        }
+        /* Inputs already covered by the existing pointer:coarse rule
+           below in this file (44px) — but we want a glass-aware
+           version too so the height matches buttons on the same row. */
+        .glass-input {
+            min-height: 48px;
+            font-size: 16px;  /* prevents iOS Safari auto-zoom on focus */
+        }
+    }
+
+    /* ── Safe-area helpers (glass-aware) ────────────────────────────
+       Drop-in classes for any page that takes over the full screen
+       and needs to clear the iPhone notch / home indicator AND the
+       Android status bar / gesture nav. Pair them with each other on
+       page wrappers so content sits inside the visible rectangle in
+       portrait, landscape, and PWA install modes. */
+    .glass-safe-top    { padding-top:    env(safe-area-inset-top, 0px); }
+    .glass-safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .glass-safe-x {
+        padding-left:  env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+    }
+    /* Common combo — full safe-area inset, for full-screen sheets,
+       chat threads, etc. that need to respect every edge. */
+    .glass-safe-area {
+        padding-top:    env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+        padding-left:   env(safe-area-inset-left, 0px);
+        padding-right:  env(safe-area-inset-right, 0px);
     }
 }
 
