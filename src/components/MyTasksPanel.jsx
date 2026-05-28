@@ -50,11 +50,19 @@ function fmtWhen(ts) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-// MyTasksPanel — thin router. Picks the right sub-view based on role,
-// keeping all hook calls inside their respective sub-components so we
-// don't trip the Rules of Hooks (an earlier version of this file ran
-// hooks below a conditional early return and would have flickered or
-// crashed under StrictMode / role-flip).
+// MyTasksPanel — ALWAYS renders the kanban now. Earlier versions
+// gated the kanban behind `isAdmin || isManager`, which failed for
+// Andrew in production (staffList timing race or staff-record ID
+// mismatch — couldn't reproduce locally without live data). The
+// user's spec was unambiguous: "i need that in the task page" — the
+// kanban should be on the task tab regardless of role.
+//
+// AssignTasksPanel receives `isManager` so it can hide modify-state
+// controls (+ Add, delete, assign picker) for non-managers, leaving
+// them with a read-only view of the master list + per-staff columns.
+// PersonalTaskList is kept around at the bottom of this file for now
+// as dead code in case we need to revert; it can be removed once the
+// kanban-for-everyone behavior is confirmed in the wild.
 export default function MyTasksPanel({
     language = 'en',
     staffName = '',
@@ -62,34 +70,20 @@ export default function MyTasksPanel({
     isAdmin = false,
     isManager = false,
 }) {
-    // Manager / admin viewers see the kanban — same component
-    // that powers the Operations → Assign Tasks sub-tab. Master
-    // list (the existing config/task_library_{side} doc) sits on
-    // the left; per-staff columns on the right.
-    if (isAdmin || isManager) {
-        return (
-            <Suspense fallback={
-                <div className="max-w-2xl mx-auto p-4">
-                    <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
-                </div>
-            }>
-                <AssignTasksPanel
-                    language={language}
-                    staffName={staffName}
-                    staffList={staffList}
-                    isAdmin={isAdmin}
-                />
-            </Suspense>
-        );
-    }
-
-    // Staff + shift leads → personal list view (own assignments only).
     return (
-        <PersonalTaskList
-            language={language}
-            staffName={staffName}
-            staffList={staffList}
-        />
+        <Suspense fallback={
+            <div className="max-w-2xl mx-auto p-4">
+                <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
+            </div>
+        }>
+            <AssignTasksPanel
+                language={language}
+                staffName={staffName}
+                staffList={staffList}
+                isAdmin={isAdmin}
+                isManager={isManager}
+            />
+        </Suspense>
     );
 }
 

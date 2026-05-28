@@ -85,8 +85,16 @@ export default function AssignTasksPanel({
     staffName = '',
     staffList = [],
     isAdmin = false,
+    isManager = false,
 }) {
     const isEs = language === 'es';
+    // canModify gates the "edit-state" controls (+ Add, delete master row,
+    // assign picker, unassign X). Admins + managers can do all of it;
+    // anyone else gets a read-only view of the same kanban so they can at
+    // least SEE who's been assigned what. The mark-done circular check
+    // stays open to everyone — staff need to be able to close out their
+    // own tasks.
+    const canModify = isAdmin || isManager;
 
     // ── Manager identity + side scoping ─────────────────────────────
     const managerRecord = useMemo(
@@ -309,20 +317,22 @@ export default function AssignTasksPanel({
                         </div>
                     </div>
 
-                    {/* + Add new task — keystroke-friendly */}
-                    <form onSubmit={handleAddToMaster} className="flex gap-2 mb-2">
-                        <input type="text"
-                            value={newTaskInput}
-                            onChange={(e) => setNewTaskInput(e.target.value)}
-                            placeholder={tx('Add a new task…', 'Añadir una tarea…', isEs)}
-                            className="glass-input flex-1" />
-                        <button type="submit"
-                            disabled={!newTaskInput.trim() || adding}
-                            className="glass-button-primary inline-flex items-center justify-center w-10"
-                            aria-label={tx('Add', 'Añadir', isEs)}>
-                            <Plus size={16} strokeWidth={2.5} aria-hidden="true" />
-                        </button>
-                    </form>
+                    {/* + Add new task — manager/admin only */}
+                    {canModify && (
+                        <form onSubmit={handleAddToMaster} className="flex gap-2 mb-2">
+                            <input type="text"
+                                value={newTaskInput}
+                                onChange={(e) => setNewTaskInput(e.target.value)}
+                                placeholder={tx('Add a new task…', 'Añadir una tarea…', isEs)}
+                                className="glass-input flex-1" />
+                            <button type="submit"
+                                disabled={!newTaskInput.trim() || adding}
+                                className="glass-button-primary inline-flex items-center justify-center w-10"
+                                aria-label={tx('Add', 'Añadir', isEs)}>
+                                <Plus size={16} strokeWidth={2.5} aria-hidden="true" />
+                            </button>
+                        </form>
+                    )}
 
                     {/* Search bar */}
                     <div className="relative mb-2">
@@ -349,11 +359,14 @@ export default function AssignTasksPanel({
                             return (
                                 <div key={it.id} className="relative">
                                     <button
-                                        onClick={() => setAssignTarget(isPicking ? null : { id: it.id, task: it.task, category: it.category })}
+                                        onClick={() => canModify && setAssignTarget(isPicking ? null : { id: it.id, task: it.task, category: it.category })}
+                                        disabled={!canModify}
                                         className={`w-full text-left rounded-glass-md border px-3 py-2 transition-all duration-glass-fast ease-glass-out ${
-                                            isPicking
-                                                ? 'bg-dd-sage-50 border-dd-green/40 shadow-glass-sm'
-                                                : 'bg-white/60 border-glass-border-light hover:bg-white hover:border-dd-green/20 hover:shadow-glass-sm'
+                                            !canModify
+                                                ? 'bg-white/40 border-glass-border-light cursor-default'
+                                                : isPicking
+                                                    ? 'bg-dd-sage-50 border-dd-green/40 shadow-glass-sm'
+                                                    : 'bg-white/60 border-glass-border-light hover:bg-white hover:border-dd-green/20 hover:shadow-glass-sm'
                                         }`}>
                                         <div className="flex items-center gap-2">
                                             <span className="flex-1 text-body-md text-dd-text">{it.task}</span>
@@ -495,11 +508,13 @@ export default function AssignTasksPanel({
                                                             )}
                                                         </div>
                                                     </div>
-                                                    <button onClick={() => handleUnassign(a)}
-                                                        className="w-6 h-6 rounded-full text-dd-text-2/60 hover:text-red-600 hover:bg-red-50 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
-                                                        aria-label={tx('Remove', 'Quitar', isEs)}>
-                                                        <X size={14} strokeWidth={2.5} aria-hidden="true" />
-                                                    </button>
+                                                    {canModify && (
+                                                        <button onClick={() => handleUnassign(a)}
+                                                            className="w-6 h-6 rounded-full text-dd-text-2/60 hover:text-red-600 hover:bg-red-50 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
+                                                            aria-label={tx('Remove', 'Quitar', isEs)}>
+                                                            <X size={14} strokeWidth={2.5} aria-hidden="true" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             ))}
                                         </div>
