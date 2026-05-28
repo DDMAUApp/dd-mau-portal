@@ -492,13 +492,16 @@ function Tile({ tab, Icon, en, es, isEs, primary = false, badge, badgeTone, onTa
                   : badgeTone === 'amber'  ? 'bg-amber-500'
                   :                          'bg-dd-green';
     return (
+        // 2026-05-27 — Andrew: "the schedule, chat, operations,
+        // stickers, recipes, and print buttons have a green line on
+        // the left side of the buttons fix it." Removed the
+        // primary-tile left accent stripe. Primary tiles now
+        // differentiate ONLY via the sage-tinted icon disc — no
+        // colored stripe.
         <button
             onClick={onTap}
             className={`glass-button-apple relative flex items-center justify-start gap-3 px-3 py-3 overflow-hidden min-h-[64px] w-full`}
         >
-            {primary && (
-                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-glass-md" />
-            )}
             {/* Icon disc — square chip on the left so the Lucide
                 glyph has a visible "container" and doesn't compete
                 with the label. Subtle sage tint for primary tiles,
