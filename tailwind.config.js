@@ -74,6 +74,27 @@ export default {
         // browser has it. No external font fetch (keeps PWA install snappy).
         sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'sans-serif'],
       },
+      // ── Typography scale (Batch A, 2026-05-27) ─────────────────────
+      // Apple HIG-aligned scale for the redesign. Tailwind's default
+      // `text-*` utilities stay intact; these add a *semantic* layer
+      // (`text-display`, `text-title-1`, etc.) so pages can read from
+      // one named scale instead of scattering pixel sizes.
+      // Each entry is [size, { lineHeight, letterSpacing, fontWeight }]
+      // so a single class sets all four. Letter-spacing follows HIG:
+      // big sizes get tighter tracking (negative em), small sizes get
+      // slightly looser tracking for legibility on tiny phone text.
+      fontSize: {
+        'display':   ['34px', { lineHeight: '40px', letterSpacing: '-0.02em', fontWeight: '800' }],
+        'title-1':   ['28px', { lineHeight: '34px', letterSpacing: '-0.02em', fontWeight: '800' }],
+        'title-2':   ['22px', { lineHeight: '28px', letterSpacing: '-0.015em', fontWeight: '700' }],
+        'title-3':   ['20px', { lineHeight: '25px', letterSpacing: '-0.01em', fontWeight: '700' }],
+        'headline':  ['17px', { lineHeight: '22px', letterSpacing: '-0.005em', fontWeight: '600' }],
+        'body':      ['15px', { lineHeight: '20px', letterSpacing: '0',       fontWeight: '500' }],
+        'callout':   ['14px', { lineHeight: '19px', letterSpacing: '0',       fontWeight: '500' }],
+        'footnote':  ['13px', { lineHeight: '18px', letterSpacing: '0.005em', fontWeight: '500' }],
+        'caption':   ['12px', { lineHeight: '16px', letterSpacing: '0.01em',  fontWeight: '500' }],
+        'overline':  ['11px', { lineHeight: '14px', letterSpacing: '0.06em',  fontWeight: '800' }],
+      },
       borderRadius: {
         'xl2': '14px',
         // Glass radius scale — matches iOS / iPadOS conventions.
@@ -112,12 +133,19 @@ export default {
       transitionTimingFunction: {
         // iOS-style spring-out. Use for press states and panel
         // transitions; falls back to ease-out elsewhere.
-        'glass-out': 'cubic-bezier(0.16, 1, 0.3, 1)',
+        'glass-out':     'cubic-bezier(0.16, 1, 0.3, 1)',
+        // Batch A (2026-05-27) — subtle overshoot for entrance
+        // animations (modal pop-ins, drawer reveals). 5% overshoot
+        // past the target before settling — feels alive without
+        // being bouncy.
+        'glass-springy': 'cubic-bezier(0.34, 1.56, 0.64, 1)',
       },
       transitionDuration: {
-        'glass-fast':   '120ms',
-        'glass-normal': '200ms',
-        'glass-slow':   '360ms',
+        'glass-instant': '60ms',
+        'glass-fast':    '120ms',
+        'glass-normal':  '200ms',
+        'glass-slow':    '360ms',
+        'glass-springy': '480ms',
       },
       // 2026-05-24 — slide-up entry for the chat composer attach drawer.
       // Subtle 6px translate so the drawer feels like it rises from the

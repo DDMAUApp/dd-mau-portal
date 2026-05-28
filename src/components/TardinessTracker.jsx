@@ -23,6 +23,9 @@ import { db } from '../firebase';
 import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
 import { toast } from '../toast';
+// 2026-05-27 Batch B — Apple-HIG page header. Visual only.
+import { Clock } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 import {
     TARDY_TIERS, TARDY_REASONS, TARDY_REASON_BY_ID, TARDY_MINUTES_PRESETS,
     ROLLING_WINDOW_DAYS,
@@ -227,19 +230,20 @@ export default function TardinessTracker({ language, staffName, staffList, store
 
     return (
         <div className="p-4 pb-bottom-nav md:p-5 max-w-4xl mx-auto">
-            <div className="flex items-center justify-between mb-3">
-                <div>
-                    <h2 className="text-2xl font-bold text-mint-700">⏰ {tx('Tardiness', 'Tardanzas')}</h2>
-                    <p className="text-xs text-gray-500">
-                        {tx(`Rolling ${ROLLING_WINDOW_DAYS}-day window · ${LOCATION_LABELS[storeLocation] || storeLocation}`,
-                            `Ventana de ${ROLLING_WINDOW_DAYS} días · ${LOCATION_LABELS[storeLocation] || storeLocation}`)}
-                    </p>
-                </div>
-                <button onClick={() => setShowLogModal(true)}
-                    className="px-3 py-2 rounded-lg bg-dd-green text-white text-sm font-bold hover:bg-dd-green-700 active:scale-95 transition shadow-sm">
-                    + {tx('Log tardy', 'Registrar')}
-                </button>
-            </div>
+            <PageHeader
+                icon={Clock}
+                title={tx('Tardiness', 'Tardanzas')}
+                subtitle={tx(
+                    `Rolling ${ROLLING_WINDOW_DAYS}-day window · ${LOCATION_LABELS[storeLocation] || storeLocation}`,
+                    `Ventana de ${ROLLING_WINDOW_DAYS} días · ${LOCATION_LABELS[storeLocation] || storeLocation}`,
+                )}
+                actions={
+                    <button onClick={() => setShowLogModal(true)}
+                        className="glass-button-primary">
+                        + {tx('Log tardy', 'Registrar')}
+                    </button>
+                }
+            />
 
             {/* Tier filter chips */}
             <div className="flex flex-wrap gap-1 mb-3">

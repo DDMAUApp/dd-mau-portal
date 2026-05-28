@@ -161,10 +161,11 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
         // Background switched from mint-50→white to the same soft sage
         // gradient AppShellV2 uses, so the lock screen feels like the
         // entry-point to the same product — not a separate splash.
-        <div
-            className="flex flex-col items-center justify-center min-h-screen p-4"
-            style={{ background: 'linear-gradient(180deg, #EEF5EF 0%, #F3F5F1 50%, #F7F8FA 100%)' }}
-        >
+        // 2026-05-27 Batch G — inline gradient swapped for the shared
+        // .ddmau-app-backdrop class so the lock screen matches the rest
+        // of the app's backdrop (refined 3-stop gradient + soft radial
+        // top-light from Batch A). One source of truth for the canvas.
+        <div className="ddmau-app-backdrop flex flex-col items-center justify-center min-h-screen p-4">
             <div className="text-center mb-8">
                 {/* DD Mau logo — the actual brand mark (scooter + lotus
                     over the DD MAU wordmark + VIETNAMESE EATERY tagline).
@@ -177,7 +178,7 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     className="mx-auto h-28 w-auto object-contain mb-3 select-none pointer-events-none"
                     draggable={false}
                 />
-                <p className="text-gray-600 text-lg">{t("staffPortal", language)}</p>
+                <p className="text-headline text-dd-text-2">{t("staffPortal", language)}</p>
             </div>
 
             {collisionMatches.length > 1 ? (
@@ -207,7 +208,7 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                 </div>
             ) : (
                 <>
-                    <p className="text-gray-600 text-sm mb-4">{isEs ? "Ingresa tu PIN" : "Enter your PIN"}</p>
+                    <p className="text-callout-md text-dd-text-2 mb-4">{isEs ? "Ingresa tu PIN" : "Enter your PIN"}</p>
                     {/* PIN dot display — filled green when entered, empty
                         glass circle when waiting. Matches the keypad's
                         circular glass aesthetic. */}

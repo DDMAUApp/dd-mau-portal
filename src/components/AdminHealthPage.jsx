@@ -32,6 +32,9 @@ import {
     collection, doc, query, orderBy, limit, onSnapshot,
 } from 'firebase/firestore';
 import { subscribePrinterConfig, PRINTER_SLOTS } from '../data/labelPrinting';
+// 2026-05-27 Batch B — Apple-HIG page header. Visual only.
+import { HeartPulse } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 
 // 2026-05-27 — error_logs / bug_reports / ai_logs subscriptions and
 // their UI moved OUT of this file to src/components/ErrorReportPage.jsx
@@ -244,23 +247,23 @@ export default function AdminHealthPage({ language = 'en', staffName }) {
 
     return (
         <section className="w-full max-w-6xl mx-auto px-3 md:px-6 py-4 md:py-6 space-y-5">
-            {/* Header */}
-            <header className="flex items-baseline justify-between gap-3 flex-wrap">
-                <div className="min-w-0">
-                    <h1 className="text-2xl md:text-3xl font-black text-dd-text tracking-tight">
-                        ❤️ {tx('System Health', 'Estado del sistema')}
-                    </h1>
-                    <p className="text-[12px] text-dd-text-2 mt-0.5">
-                        {tx(
-                            'Live status of Firestore, TVs, backups, and recent activity. Read-only.',
-                            'Estado en vivo de Firestore, TVs, respaldos y actividad reciente. Solo lectura.',
-                        )}
-                    </p>
-                </div>
-                <span className="text-[11px] font-bold text-dd-text-2 shrink-0">
-                    {tx('Build', 'Versión')}: <span className="text-dd-text">{appVersion}</span>
-                </span>
-            </header>
+            {/* 2026-05-27 Batch B — bespoke <header> with the heart emoji
+                replaced by the standard PageHeader (Lucide HeartPulse +
+                Apple-HIG type scale). Build version moves into the
+                actions slot. */}
+            <PageHeader
+                icon={HeartPulse}
+                title={tx('System Health', 'Estado del sistema')}
+                subtitle={tx(
+                    'Live status of Firestore, TVs, backups, and recent activity. Read-only.',
+                    'Estado en vivo de Firestore, TVs, respaldos y actividad reciente. Solo lectura.',
+                )}
+                actions={
+                    <span className="text-caption-md font-bold text-dd-text-2 shrink-0">
+                        {tx('Build', 'Versión')}: <span className="text-dd-text">{appVersion}</span>
+                    </span>
+                }
+            />
 
             {/* Top status row — Firestore + Backup + TVs grid. Each
                 card is a single chunk of "is this system healthy

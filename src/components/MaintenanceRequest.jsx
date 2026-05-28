@@ -4,6 +4,10 @@ import { doc, collection, query, where, orderBy, limit, onSnapshot, setDoc, dele
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { t } from '../data/translations';
 import { toast } from '../toast';
+// 2026-05-27 Batch B — Apple-HIG page header. Visual only;
+// no logic / state / data flow touched.
+import { Wrench } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 
 export default function MaintenanceRequest({ language, staffName, storeLocation }) {
             const [description, setDescription] = useState("");
@@ -122,8 +126,11 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
 
             return (
                 <div className="p-4 pb-bottom-nav">
-                    <h2 className="text-2xl font-bold text-mint-700 mb-2">🔧 {language === "es" ? "Solicitud de Mantenimiento" : "Maintenance Request"}</h2>
-                    <p className="text-xs text-gray-500 mb-4">{language === "es" ? "Reporta cualquier problema o reparación necesaria" : "Report any issue or repair needed"}</p>
+                    <PageHeader
+                        icon={Wrench}
+                        title={language === "es" ? "Solicitud de Mantenimiento" : "Maintenance Request"}
+                        subtitle={language === "es" ? "Reporta cualquier problema o reparación necesaria" : "Report any issue or repair needed"}
+                    />
 
                     {submitted && (
                         <div className="mb-4 p-3 bg-green-100 border border-green-300 rounded-lg text-center text-green-700 font-bold text-sm">

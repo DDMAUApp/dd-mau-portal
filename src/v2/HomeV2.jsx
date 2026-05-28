@@ -17,6 +17,24 @@ import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { useAppData } from './AppDataContext';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
+// 2026-05-27 — Andrew: "the home screen button emojis need a
+// professional look too." Swapping every emoji icon on the desktop
+// home dashboard for Lucide SVG glyphs (same set Sidebar.jsx +
+// MobileBottomNav.jsx already use, so no new chunk weight — they
+// all land in vendor-react alongside lucide-react itself).
+import {
+    Printer,
+    BarChart3,
+    Clock,
+    Ban,
+    FilePen,
+    Calendar,
+    Mail,
+    Megaphone,
+    CheckCircle2,
+    AlertTriangle,
+    ArrowRight,
+} from 'lucide-react';
 // 2026-05-20 — Print Center on the home screen. Lazy so the chunk
 // only loads when admin/staff actually taps Print.
 const PrintCenter = lazy(() => import('../components/PrintCenter'));
@@ -39,10 +57,18 @@ function Button({ variant = 'primary', size = 'md', className = '', children, ..
     // Size still drives the padding (the glass-* classes pick the
     // touch-target floor on mobile via pointer:coarse media query).
     const sizes = { sm: 'px-3 py-1.5 text-xs', md: 'px-4 py-2 text-sm', lg: 'px-5 py-2.5 text-sm' };
+    // 2026-05-27 — Andrew: "change all buttons to a light gray glass."
+    // Both `primary` and `secondary` now point to .glass-button-apple
+    // (the new Apple-Liquid-Glass-style neutral chip). Buttons that
+    // previously read as "primary" (green fill) become the same calm
+    // gray glass as everything else on the home page — uniform feel,
+    // and the destination is conveyed by the label, not the chrome.
+    // `ghost` and `danger` keep their semantic chrome since they
+    // carry destructive / link-style meaning beyond "tap me."
     const variants = {
-        primary:   'glass-button-primary',
-        secondary: 'glass-button',
-        ghost:     'bg-transparent text-dd-text-2 hover:text-dd-text hover:bg-dd-bg rounded-glass-md',
+        primary:   'glass-button-apple',
+        secondary: 'glass-button-apple',
+        ghost:     'inline-flex items-center gap-1 bg-transparent text-dd-text-2 hover:text-dd-text hover:bg-dd-bg rounded-glass-md transition-colors',
         danger:    'bg-red-600 text-white hover:bg-red-700 shadow-glass-sm border border-red-600 rounded-glass-md',
     };
     return (
@@ -72,12 +98,21 @@ function Skeleton({ className = '' }) {
     return <div className={`glass-skeleton ${className}`} />;
 }
 
-function StatCard({ label, value, sub, tone, icon, loading }) {
+// 2026-05-27 — `icon` was a string emoji; now it's a Lucide component
+// (rendered as `<Icon size={18} ... />`). All callers updated.
+function StatCard({ label, value, sub, tone, icon: Icon, loading }) {
     return (
         <Card hover className="p-5">
             <div className="flex items-start justify-between mb-1">
                 <div className="text-[11px] font-bold uppercase tracking-wider text-dd-text-2">{label}</div>
-                {icon && <div className="text-base opacity-70">{icon}</div>}
+                {Icon && (
+                    <Icon
+                        size={18}
+                        strokeWidth={2.25}
+                        className="text-dd-text-2/70"
+                        aria-hidden="true"
+                    />
+                )}
             </div>
             {loading ? (
                 <Skeleton className="h-9 w-24 mt-2" />
@@ -229,9 +264,17 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         <span className="text-dd-text font-semibold normal-case">DD Mau {locName}</span>
                     </p>
                 </div>
+                {/* 2026-05-27 — Andrew: "change all buttons to a
+                    light gray glass." The old loud purple pill is
+                    swapped for the new .glass-button-apple chrome
+                    (neutral translucent gray with a Lucide Printer
+                    glyph in front of the label). Sits as a quiet
+                    companion to the greeting now instead of shouting
+                    over it. */}
                 <button onClick={() => setShowPrintCenter(true)}
-                    className="flex-shrink-0 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-600 text-white text-sm font-bold hover:bg-purple-700 active:scale-95 transition shadow-sm">
-                    🖨 {tx('Print', 'Imprimir')}
+                    className="glass-button-apple flex-shrink-0 px-4 py-2 rounded-full">
+                    <Printer size={16} strokeWidth={2.25} aria-hidden="true" />
+                    <span>{tx('Print', 'Imprimir')}</span>
                 </button>
             </div>
 
@@ -263,7 +306,12 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                 <SectionHeader
                     title={tx("Today's overview", "Resumen de hoy")}
                     subtitle={tx('Live from Toast POS', 'En vivo desde Toast POS')}
-                    action={<Button variant="ghost" size="sm" onClick={() => onNavigate?.('labor')}>{tx('Labor dashboard', 'Mano de obra')} →</Button>}
+                    action={
+                        <Button variant="ghost" size="sm" onClick={() => onNavigate?.('labor')}>
+                            <span>{tx('Labor dashboard', 'Mano de obra')}</span>
+                            <ArrowRight size={14} strokeWidth={2.25} aria-hidden="true" />
+                        </Button>
+                    }
                 />
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     {canViewLabor((staffList || []).find(s => s.name === staffName)) && (
@@ -276,28 +324,28 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                                 : labor.data?.updatedAt
                                     ? tx(`Updated ${minutesAgo(labor.data.updatedAt)} min ago`, `Actualizado hace ${minutesAgo(labor.data.updatedAt)} min`)
                                     : tx('Target 25%', 'Objetivo 25%')}
-                            icon={laborStatus.isBroken ? '⚠️' : '📊'}
+                            icon={laborStatus.isBroken ? AlertTriangle : BarChart3}
                             loading={labor.loading} />
                     )}
                     <StatCard
                         label={tx('Total hours', 'Horas')}
                         value={labor.data?.totalHours != null ? labor.data.totalHours.toFixed(1) : '—'}
                         sub={tx('Clocked-in today', 'Marcadas hoy')}
-                        icon="⏱"
+                        icon={Clock}
                         loading={labor.loading} />
                     <StatCard
                         label={tx('86 items', 'Artículos en 86')}
                         value={eighty6.count}
                         tone={eighty6.count > 0 ? 'text-red-700' : 'text-dd-text'}
                         sub={eighty6.count > 0 ? tx('Tap to view', 'Toca para ver') : tx('All in stock ✓', 'Todo en stock ✓')}
-                        icon="🚫"
+                        icon={Ban}
                         loading={eighty6.loading} />
                     <StatCard
                         label={tx('Drafts', 'Borradores')}
                         value={draftCount}
                         tone={draftCount > 0 ? 'text-amber-700' : 'text-dd-text'}
                         sub={draftCount > 0 ? tx('Awaiting publish', 'Esperando publicar') : tx('Schedule released ✓', 'Horario liberado ✓')}
-                        icon="📝"
+                        icon={FilePen}
                         loading={shifts.loading} />
                 </div>
             </section>
@@ -310,7 +358,10 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                             <h3 className="text-base font-bold text-dd-text">{tx('Upcoming shifts', 'Turnos próximos')}</h3>
                             <p className="text-xs text-dd-text-2">{tx('Today and tomorrow', 'Hoy y mañana')}</p>
                         </div>
-                        <Button variant="ghost" size="sm" onClick={() => onNavigate?.('schedule')}>{tx('Open schedule', 'Abrir horario')} →</Button>
+                        <Button variant="ghost" size="sm" onClick={() => onNavigate?.('schedule')}>
+                            <span>{tx('Open schedule', 'Abrir horario')}</span>
+                            <ArrowRight size={14} strokeWidth={2.25} aria-hidden="true" />
+                        </Button>
                     </div>
                     {shifts.loading ? (
                         <div className="space-y-2">
@@ -318,8 +369,8 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         </div>
                     ) : upcomingShifts.length === 0 ? (
                         <div className="text-center py-8">
-                            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-dd-bg flex items-center justify-center text-xl text-dd-text-2/60">
-                                📅
+                            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-dd-bg flex items-center justify-center text-dd-text-2/60">
+                                <Calendar size={22} strokeWidth={2.25} aria-hidden="true" />
                             </div>
                             <p className="text-sm font-semibold text-dd-text">{tx('No published shifts', 'Sin turnos publicados')}</p>
                             <p className="text-xs text-dd-text-2 mt-0.5">{tx('Today and tomorrow look clear.', 'Hoy y mañana están libres.')}</p>
@@ -356,8 +407,10 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                     megaphone emoji at small size rendered as a smudge —
                     using a clean checkmark / megaphone disc instead. */}
                 <Card className={`p-5 ${draftCount > 0 ? 'bg-gradient-to-br from-amber-50 to-dd-surface border-amber-200' : 'bg-gradient-to-br from-dd-sage-50 to-dd-surface border-dd-sage/40'}`}>
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-xl mb-3 ${draftCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-dd-green-50 text-dd-green-700'}`}>
-                        {draftCount > 0 ? '📢' : '✓'}
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${draftCount > 0 ? 'bg-amber-100 text-amber-700' : 'bg-dd-green-50 text-dd-green-700'}`}>
+                        {draftCount > 0
+                            ? <Megaphone size={20} strokeWidth={2.25} aria-hidden="true" />
+                            : <CheckCircle2 size={20} strokeWidth={2.25} aria-hidden="true" />}
                     </div>
                     <h3 className="text-base font-bold text-dd-text mb-1">
                         {draftCount > 0
@@ -389,7 +442,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                     subtitle={tx('Live alerts across the operation', 'Alertas en vivo')} />
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <AlertCard
-                        icon="🚫"
+                        icon={Ban}
                         tone="danger"
                         loading={eighty6.loading}
                         title={eighty6.count > 0
@@ -402,7 +455,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         badgeTone={eighty6.count > 0 ? 'danger' : 'success'}
                         onClick={() => onNavigate?.('eighty6')} />
                     <AlertCard
-                        icon="📅"
+                        icon={Calendar}
                         tone="warn"
                         loading={shifts.loading}
                         title={draftCount > 0
@@ -415,7 +468,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
                         badgeTone={draftCount > 0 ? 'warn' : 'success'}
                         onClick={() => onNavigate?.('schedule')} />
                     <AlertCard
-                        icon="📨"
+                        icon={Mail}
                         tone="info"
                         loading={false}
                         title={pendingPto.length > 0
@@ -447,13 +500,17 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
     );
 }
 
-function AlertCard({ icon, tone, loading, title, body, badgeText, badgeTone, onClick }) {
+// 2026-05-27 — `icon` upgraded from emoji string to Lucide component.
+// Rendered as `<Icon size={18} ... />` inside the colored disc.
+function AlertCard({ icon: Icon, tone, loading, title, body, badgeText, badgeTone, onClick }) {
     const iconBg = tone === 'danger' ? 'bg-red-50 text-red-700'
         : tone === 'warn' ? 'bg-amber-100 text-amber-800'
         : 'bg-blue-50 text-blue-700';
     return (
         <Card hover onClick={onClick} className="p-4 flex items-start gap-3 cursor-pointer">
-            <div className={`w-9 h-9 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>{icon}</div>
+            <div className={`w-9 h-9 rounded-lg ${iconBg} flex items-center justify-center shrink-0`}>
+                {Icon && <Icon size={18} strokeWidth={2.25} aria-hidden="true" />}
+            </div>
             <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
                     {loading

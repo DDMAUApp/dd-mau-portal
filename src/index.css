@@ -3,6 +3,116 @@
 @tailwind utilities;
 
 /* ╔══════════════════════════════════════════════════════════════════╗
+   ║  Batch A foundation — global polish (2026-05-27)                 ║
+   ║  Apple-HIG-aligned baseline that cascades to every page. Pure    ║
+   ║  CSS — no JSX touched. Three pieces:                             ║
+   ║    1. Refined app backdrop (calm 3-stop gradient, replaces the   ║
+   ║       previous inline gradient in AppShellV2.jsx)                ║
+   ║    2. Semantic typography utility classes (.text-display etc.)   ║
+   ║       so pages can read from one named scale rather than         ║
+   ║       scattering pixel sizes                                     ║
+   ║    3. Global focus-ring + selection refinement                   ║
+   ╚══════════════════════════════════════════════════════════════════╝ */
+@layer base {
+    /* App backdrop — the canvas every page sits on top of. Apple-style
+       calm three-stop gradient from a soft sage at the top to a warm
+       bone at the bottom. Subtle enough not to distract during a rush,
+       enough texture that translucent glass surfaces have something to
+       refract against. Dark mode hides this via the chat-thread-open
+       body attribute (or any future dark-mode wrapper) — see Phase 3d. */
+    .ddmau-app-backdrop {
+        background:
+            radial-gradient(ellipse 80% 60% at 50% 0%, rgba(201, 219, 201, 0.45) 0%, transparent 70%),
+            linear-gradient(180deg, #EEF5EF 0%, #F3F5F1 45%, #F7F8FA 100%);
+        background-attachment: fixed;
+    }
+
+    /* Text selection — Apple-style brand-tinted highlight rather than
+       the browser default blue. Subtle, doesn't distract. */
+    ::selection {
+        background-color: rgba(31, 122, 77, 0.18);
+        color: #0F172A;
+    }
+
+    /* Global focus ring — uniform across every interactive element.
+       Buttons + inputs + links get the same 2px dd-green ring with a
+       2px offset on focus-visible (keyboard focus only — won't fire on
+       mouse clicks, so the UI doesn't flash rings during click-heavy
+       restaurant workflows). */
+    :focus-visible {
+        outline: none;
+    }
+}
+
+@layer components {
+    /* ── Typography utility classes — Apple HIG-aligned scale ──────
+       These mirror the fontSize tokens in tailwind.config.js but also
+       bundle the font-weight + font-feature-settings so pages can
+       single-class their headings without remembering to also add
+       `font-bold` and `tracking-tight` every time.
+       Inter (our display face) has stylistic alternates for tabular
+       figures + slashed zero — enabled here on the title/display
+       sizes so big numbers in the dashboard read crisply (`1` vs `7`,
+       `0` vs `O`). Body and below use the natural proportional figures. */
+    .text-display {
+        font-size: 34px; line-height: 40px; letter-spacing: -0.02em; font-weight: 800;
+        font-feature-settings: 'cv11', 'ss01', 'ss03';
+    }
+    .text-title-1 {
+        font-size: 28px; line-height: 34px; letter-spacing: -0.02em; font-weight: 800;
+        font-feature-settings: 'cv11', 'ss01';
+    }
+    .text-title-2 {
+        font-size: 22px; line-height: 28px; letter-spacing: -0.015em; font-weight: 700;
+    }
+    .text-title-3 {
+        font-size: 20px; line-height: 25px; letter-spacing: -0.01em; font-weight: 700;
+    }
+    .text-headline {
+        font-size: 17px; line-height: 22px; letter-spacing: -0.005em; font-weight: 600;
+    }
+    .text-body-md {
+        font-size: 15px; line-height: 20px; letter-spacing: 0; font-weight: 500;
+    }
+    .text-callout-md {
+        font-size: 14px; line-height: 19px; letter-spacing: 0; font-weight: 500;
+    }
+    .text-footnote-md {
+        font-size: 13px; line-height: 18px; letter-spacing: 0.005em; font-weight: 500;
+    }
+    .text-caption-md {
+        font-size: 12px; line-height: 16px; letter-spacing: 0.01em; font-weight: 500;
+    }
+    .text-overline {
+        font-size: 11px; line-height: 14px; letter-spacing: 0.06em; font-weight: 800;
+        text-transform: uppercase;
+    }
+
+    /* Page header strip — Batch A primitive. Pages adopt by wrapping
+       their title + subtitle + actions in a <header class="glass-page-header">.
+       Three rules:
+         • Title sits on the left, actions on the right, both
+           baseline-aligned for a settled look (per Apple Settings app).
+         • Bottom margin matches the spacing scale (5 = 20px) so the
+           main content always sits at the same distance from headers.
+         • Wraps cleanly on phone widths — title above, actions below
+           — instead of crushing into a single overflow-x row. */
+    .glass-page-header {
+        @apply flex flex-wrap items-end justify-between gap-3 mb-5;
+    }
+    .glass-page-header__title {
+        @apply text-title-1 text-dd-text;
+        min-width: 0;
+    }
+    .glass-page-header__subtitle {
+        @apply text-footnote-md text-dd-text-2 mt-1;
+    }
+    .glass-page-header__actions {
+        @apply flex flex-wrap items-center gap-2;
+    }
+}
+
+/* ╔══════════════════════════════════════════════════════════════════╗
    ║  Liquid Glass design system — Phase 1 utility classes (additive) ║
    ║  Inspired by Apple's Liquid Glass / iOS materials. Each class is ║
    ║  OPT-IN — existing components keep their look until a future     ║
@@ -139,6 +249,72 @@
     }
     .glass-button-primary:focus-visible {
         @apply outline-none ring-2 ring-dd-green/40 ring-offset-2 ring-offset-glass-bg-light;
+    }
+
+    /* glass-button-apple — Apple Liquid-Glass-style neutral button.
+       Andrew 2026-05-27 — for the home page restyle: "lets use the
+       apple glass button look. change all buttons to a light gray
+       glass."
+       Differences from .glass-button (the older neutral variant):
+         • Stronger backdrop blur + saturate → more "frosted glass"
+           and less "flat translucent panel."
+         • Cooler, slightly gray-tinted surface (not pure white)
+           so the chip reads as neutral on the home gradient.
+         • Layered shadow: top inner highlight (above) + soft
+           drop (below) so the button feels elevated like an
+           iOS Settings row chip — not floating, not flat.
+         • Slightly less aggressive scale on press (0.97) so the
+           feedback feels weightier — matches iOS button physics. */
+    .glass-button-apple {
+        @apply inline-flex items-center justify-center gap-1.5
+               px-3.5 py-2 rounded-glass-md font-semibold text-sm
+               text-dd-text
+               transition-all duration-glass-fast ease-glass-out;
+        background-color: rgba(245, 247, 250, 0.55);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        border: 1px solid rgba(15, 23, 42, 0.06);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.65),
+            0 1px 2px rgba(15, 23, 42, 0.04),
+            0 8px 24px -10px rgba(15, 23, 42, 0.10);
+        background-clip: padding-box;
+    }
+    .glass-button-apple:hover {
+        background-color: rgba(255, 255, 255, 0.75);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.75),
+            0 2px 4px rgba(15, 23, 42, 0.06),
+            0 12px 32px -10px rgba(15, 23, 42, 0.14);
+    }
+    .glass-button-apple:active {
+        @apply scale-[0.97];
+    }
+    .glass-button-apple:focus-visible {
+        @apply outline-none ring-2 ring-dd-green/30 ring-offset-2 ring-offset-glass-bg-light;
+    }
+    .glass-button-apple.is-dark {
+        background-color: rgba(40, 44, 52, 0.55);
+        border-color: rgba(255, 255, 255, 0.06);
+        color: white;
+        backdrop-filter: blur(24px) saturate(160%);
+        -webkit-backdrop-filter: blur(24px) saturate(160%);
+    }
+    .glass-button-apple.is-dark:hover {
+        background-color: rgba(56, 60, 68, 0.65);
+    }
+    /* Browsers without backdrop-filter (older Firefox, some embedded
+       webviews) fall back to a near-opaque light-gray that still
+       reads as a button. Without this fallback the 55%-opacity layer
+       would render as a faded translucent box without any apparent
+       chrome. */
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-button-apple {
+            background-color: rgba(240, 243, 247, 0.95);
+        }
+        .glass-button-apple.is-dark {
+            background-color: rgba(40, 44, 52, 0.92);
+        }
     }
 
     /* ── Inputs ─────────────────────────────────────────────────── */
@@ -361,6 +537,137 @@
        compound selector lives outside that ruleset so it needs its own
        fallback. Bump to a near-opaque white when the browser can't
        blur (preserves readability on legacy Android WebView). */
+
+    /* ── Batch C: Modal scrim auto-port (2026-05-27) ────────────────
+       The codebase has 4 scrim patterns in active use:
+         • .fixed.inset-0.bg-black.bg-opacity-50   (cart modal etc.)
+         • .fixed.inset-0.bg-black\/40             (drawers, light scrims)
+         • .fixed.inset-0.bg-black\/50             (standard modals)
+         • .fixed.inset-0.bg-black\/60             (heavier overlays)
+       Each renders a flat black 40-60% wash. Replace with a slightly
+       cooler scrim (slate-950 at 42%) + 8px backdrop-blur so the page
+       underneath visually recedes the way iOS sheets do. Tap behavior
+       (close-on-scrim-click) is preserved — same element, same handler.
+       Opt-out: add .no-glass to the scrim div.
+       Specificity is 3-0-0 (three classes in the compound) so any
+       single Tailwind atomic could override — we WANT explicit
+       bg-* classes on the scrim to keep working as overrides. */
+    .fixed.inset-0.bg-black.bg-opacity-50:not(.no-glass),
+    .fixed.inset-0.bg-black\/40:not(.no-glass),
+    .fixed.inset-0.bg-black\/50:not(.no-glass),
+    .fixed.inset-0.bg-black\/60:not(.no-glass) {
+        background-color: rgba(15, 23, 42, 0.42);
+        backdrop-filter: blur(8px) saturate(140%);
+        -webkit-backdrop-filter: blur(8px) saturate(140%);
+    }
+    /* Heavier overlays (60%) get a touch more scrim weight to match
+       their original intent (think confirmation dialogs, fullscreen
+       takeovers — they SHOULD feel weighty). */
+    .fixed.inset-0.bg-black\/60:not(.no-glass) {
+        background-color: rgba(15, 23, 42, 0.52);
+    }
+
+    /* ── Batch D: Form primitives — .glass-select + .glass-textarea ──
+       Match .glass-input chrome (rounded-glass-md, translucent surface,
+       hairline border, dd-green focus ring). Opt-in: pages adopt by
+       adding the class.
+         • .glass-select uses appearance:none + a custom inline SVG
+           chevron so the chevron color matches the dd-text-2 token
+           regardless of browser (default native chevrons look wildly
+           inconsistent across iOS Safari / Chrome / Firefox).
+         • .glass-textarea matches glass-input but with min-height +
+           resize:vertical so multi-line inputs feel deliberate. */
+    .glass-select {
+        @apply w-full px-3.5 py-2.5 pr-9 rounded-glass-md text-sm
+               bg-glass-surface-strong backdrop-blur-glass-subtle
+               border border-glass-border-light
+               text-dd-text
+               transition-colors duration-glass-fast ease-glass-out
+               appearance-none cursor-pointer;
+        background-clip: padding-box;
+        background-image:
+            url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%2364748B" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>');
+        background-repeat: no-repeat;
+        background-position: right 12px center;
+    }
+    .glass-select:focus {
+        @apply outline-none border-dd-green ring-2 ring-dd-green/20;
+    }
+    .glass-select.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark text-white;
+        backdrop-filter: none;
+        background-image:
+            url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>');
+    }
+
+    .glass-textarea {
+        @apply w-full px-3.5 py-2.5 rounded-glass-md text-sm
+               bg-glass-surface-strong backdrop-blur-glass-subtle
+               border border-glass-border-light
+               text-dd-text placeholder:text-dd-text-2
+               transition-colors duration-glass-fast ease-glass-out;
+        background-clip: padding-box;
+        min-height: 80px;
+        resize: vertical;
+        line-height: 1.5;
+    }
+    .glass-textarea:focus {
+        @apply outline-none border-dd-green ring-2 ring-dd-green/20;
+    }
+    .glass-textarea.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark text-white placeholder:text-white/40;
+        backdrop-filter: none;
+    }
+
+    /* ── Batch E: Tables — .glass-table + thead auto-port ───────────
+       Apple-style desktop table chrome: header row uses an overline-
+       case label set in dd-text-2 with a thin hairline below; body
+       rows separated by hairline dividers with a subtle hover wash.
+       Two ways to invoke:
+         1. <table class="glass-table"> — explicit opt-in (preferred
+            for new tables).
+         2. Auto-port: any <table class="w-full"> whose <thead> does
+            NOT already declare a background gets the same overline +
+            sage-tinted treatment automatically. The :not([class*="bg-"])
+            check protects already-styled theads (cart modal's
+            <thead class="sticky top-0 bg-gray-100">, ChatAckDashboard,
+            etc.) from being overridden. */
+    .glass-table {
+        @apply w-full text-sm border-collapse;
+    }
+    .glass-table thead {
+        @apply backdrop-blur-glass-subtle;
+        background-color: rgba(243, 245, 241, 0.55);
+    }
+    .glass-table thead th {
+        @apply px-3 py-2.5 text-left text-dd-text-2;
+        font-size: 11px; line-height: 14px; letter-spacing: 0.06em;
+        font-weight: 800; text-transform: uppercase;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+        background-clip: padding-box;
+    }
+    .glass-table tbody tr {
+        @apply transition-colors duration-glass-fast ease-glass-out;
+    }
+    .glass-table tbody tr:hover {
+        background-color: rgba(255, 255, 255, 0.5);
+    }
+    .glass-table tbody td {
+        @apply px-3 py-2.5 text-dd-text;
+        font-size: 14px; line-height: 19px;
+        border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+    }
+    .glass-table tbody tr:last-child td {
+        border-bottom: 0;
+    }
+
+    /* NOTE: deliberately NO global thead auto-port. A compound selector
+       on `table.w-full > thead > th` would override explicit
+       `text-center`, `text-sm`, `font-medium`, `px-*` etc. classes on
+       existing <th> elements (specificity 5-4 beats any single-class
+       atomic). That's a high-risk regression surface — better to opt
+       pages in via `.glass-table` per-page in a later polish batch
+       than to silently mis-align existing tables. */
 }
 
 /* ── Auto-dark mode (prefers-color-scheme) — REMOVED 2026-05-27 ───
@@ -391,6 +698,9 @@
     .glass-nav,
     .glass-button,
     .glass-input,
+    /* Batch D additions (2026-05-27) — same fallback chrome */
+    .glass-select,
+    .glass-textarea,
     .glass-modal-content,
     .glass-tabs,
     .glass-empty-state,
@@ -402,11 +712,30 @@
     .bg-dd-surface.border.border-dd-line.rounded-2xl.shadow-card {
         background-color: rgba(255, 255, 255, 0.96) !important;
     }
+    /* Batch E (2026-05-27) — table thead picks up a slightly heavier
+       sage when backdrop-blur isn't available, so the header row is
+       still visually distinct from the body rows. */
+    .glass-table thead {
+        background-color: rgba(238, 245, 239, 0.95) !important;
+    }
+    /* Batch C (2026-05-27) — modal scrim falls back to a heavier
+       opaque slate without backdrop-blur so the page underneath
+       still recedes visually. */
+    .fixed.inset-0.bg-black.bg-opacity-50:not(.no-glass),
+    .fixed.inset-0.bg-black\/40:not(.no-glass),
+    .fixed.inset-0.bg-black\/50:not(.no-glass) {
+        background-color: rgba(15, 23, 42, 0.62) !important;
+    }
+    .fixed.inset-0.bg-black\/60:not(.no-glass) {
+        background-color: rgba(15, 23, 42, 0.72) !important;
+    }
     .glass-card.is-dark,
     .glass-panel.is-dark,
     .glass-nav.is-dark,
     .glass-button.is-dark,
     .glass-input.is-dark,
+    .glass-select.is-dark,
+    .glass-textarea.is-dark,
     .glass-modal-content.is-dark,
     .glass-tabs.is-dark {
         background-color: #1c1c1e !important;
@@ -422,7 +751,11 @@
 @media (prefers-reduced-motion: reduce) {
     .glass-button,
     .glass-button-primary,
+    .glass-button-apple,
     .glass-input,
+    .glass-select,
+    .glass-textarea,
+    .glass-table tbody tr,
     .glass-tabs > button,
     .glass-skeleton {
         transition-duration: 1ms !important;

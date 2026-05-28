@@ -4,6 +4,9 @@ import { doc, collection, query, where, onSnapshot, setDoc } from 'firebase/fire
 import { t } from '../data/translations';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, fmtUSD, splhTone } from '../data/splh';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
+// 2026-05-27 Batch B — Apple-HIG page header. Visual only.
+import { BarChart3 } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 
 // Note: Requires Chart.js or similar for charting
 
@@ -152,18 +155,18 @@ export default function LaborDashboard({ language, storeLocation }) {
 
     return (
         <div className="pb-bottom-nav">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-indigo-600 to-indigo-500 text-white p-4">
-                <div className="flex justify-between items-center">
-                    <div>
-                        <h2 className="text-xl font-bold">{t("laborDashboard", language)}</h2>
-                        <p className="text-sm text-indigo-200">{t("dataFromToast", language)}</p>
-                    </div>
-                    <div className="text-3xl">{CHART_EMOJI}</div>
-                </div>
-            </div>
-
+            {/* 2026-05-27 Batch B — header gradient bar replaced with the
+                Apple-HIG PageHeader. Old indigo-gradient strip pushed
+                this page out-of-sync with every other page; PageHeader
+                gives the same calm typographic anchor used everywhere
+                else. The CHART_EMOJI is now a Lucide BarChart3 glyph
+                inside the standard icon disc. */}
             <div className="p-4 space-y-4">
+                <PageHeader
+                    icon={BarChart3}
+                    title={t("laborDashboard", language)}
+                    subtitle={t("dataFromToast", language)}
+                />
                 {/* Main Labor % Card */}
                 {laborData ? (
                     <div className={`${status.bg} rounded-2xl p-6 ring-2 ${status.ring} shadow-lg ${status.glow || ""}`}>

@@ -34,6 +34,9 @@ import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, updateDoc, deleteField, addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { isAdmin } from '../data/staff';
 import { DEFAULT_SAUCES, SAUCE_URGENCY, SAUCE_URGENCY_BY_ID } from '../data/sauces';
+// 2026-05-27 Batch F — Apple-HIG page header. Visual only.
+import { Soup, Settings as SettingsIcon } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 
 const SAUCELOG_VERSION = 1;
 const BUSINESS_TZ = "America/Chicago";
@@ -338,26 +341,21 @@ export default function SauceLog({ language, staffName, staffList, storeLocation
 
     return (
         <div className="space-y-3">
-            {/* Header */}
-            <div className="flex items-center justify-between">
-                <div>
-                    <h3 className="text-lg font-bold text-mint-700 flex items-center gap-2">
-                        🥢 {tx('Sauce Log', 'Registro de Salsas')}
-                    </h3>
-                    <p className="text-xs text-gray-500">
-                        {tx(`${pending.length} pending · ${made.length} made today`,
-                           `${pending.length} pendientes · ${made.length} hechas hoy`)}
-                        {' · '}
-                        <span className="font-semibold">{mySide.toUpperCase()}</span>
-                    </p>
-                </div>
-                {adminUser && (
+            <PageHeader
+                icon={Soup}
+                title={tx('Sauce Log', 'Registro de Salsas')}
+                subtitle={tx(
+                    `${pending.length} pending · ${made.length} made today · ${mySide.toUpperCase()}`,
+                    `${pending.length} pendientes · ${made.length} hechas hoy · ${mySide.toUpperCase()}`,
+                )}
+                actions={adminUser && (
                     <button onClick={() => setEditList(!editList)}
-                        className="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-bold hover:bg-gray-200">
-                        {editList ? tx('Done', 'Listo') : tx('⚙ Edit list', '⚙ Editar')}
+                        className="glass-button-apple inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
+                        <SettingsIcon size={14} strokeWidth={2.25} aria-hidden="true" />
+                        {editList ? tx('Done', 'Listo') : tx('Edit list', 'Editar')}
                     </button>
                 )}
-            </div>
+            />
 
             {/* Admin: edit sauce list */}
             {editList && adminUser && (

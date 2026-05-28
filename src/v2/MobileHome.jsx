@@ -33,6 +33,35 @@ import { useAppData } from './AppDataContext';
 import AppVersion from '../components/AppVersion';
 import EnableNotificationsBanner from '../components/EnableNotificationsBanner';
 import StaffTodoCard from '../components/StaffTodoCard';
+// 2026-05-27 — Andrew: "the home screen button emojis need a
+// professional look too." Tile icons now come from Lucide instead of
+// the emoji set. Same chunk vendor-react already pulls in (see
+// vite.config.js manualChunks — `/lucide-react/` matches into
+// vendor-react after the 2026-05-27 outage fix), so this adds zero
+// new chunk weight beyond the icons referenced.
+import {
+    Calendar,
+    MessageSquare,
+    ClipboardList,
+    Tag,
+    Tags,
+    BookOpen,
+    Ban,
+    Printer,
+    UtensilsCrossed,
+    GraduationCap,
+    ChefHat,
+    Clock,
+    Handshake,
+    BarChart3,
+    Monitor,
+    HeartPulse,
+    Bot,
+    Wrench,
+    FileText,
+    Settings as SettingsIcon,
+    ChevronRight,
+} from 'lucide-react';
 // 2026-05-20 — Print Center tile on the home screen. Andrew: "lets
 // make a printer button on the home screen and also has all the
 // same features." Lazy so the chunk only downloads when a staffer
@@ -216,43 +245,53 @@ export default function MobileHome({
     // Tile catalog — every destination, role-filtered, ordered by
     // typical-usage frequency. PRIMARY tiles get a subtle accent; the
     // rest stay neutral so the page reads as one calm surface.
+    //
+    // 2026-05-27 — Andrew: "the home screen button emojis need a
+    // professional look too." Each tile now carries a Lucide React
+    // component (`Icon` — capitalized so JSX renders it as a
+    // component, not a string) instead of an emoji glyph. The Tile
+    // component below renders `<Icon size={22} ... />` inside the
+    // icon disc. Visual hierarchy (primary stripe, badges) is
+    // unchanged.
     const allTiles = [
-        { tab: 'schedule',   icon: '📅', en: 'Schedule',     es: 'Horario',        primary: true,  badge: draftCount,   badgeTone: 'amber' },
+        { tab: 'schedule',   Icon: Calendar,        en: 'Schedule',     es: 'Horario',        primary: true,  badge: draftCount,   badgeTone: 'amber' },
         // Chat is a PRIMARY tile because team communication runs through it
         // constantly. Badge shows total unread chat-message notifications
         // (drawn from the same /notifications feed as the bell — type
         // 'chat_message' or 'chat_mention').
-        { tab: 'chat',       icon: '💬', en: 'Chat',         es: 'Chat',           primary: true,  badge: unreadChat, badgeTone: 'amber' },
-        ...(hasOpsAccess     ? [{ tab: 'operations', icon: '📋', en: 'Operations', es: 'Operaciones', primary: true }] : []),
+        { tab: 'chat',       Icon: MessageSquare,   en: 'Chat',         es: 'Chat',           primary: true,  badge: unreadChat, badgeTone: 'amber' },
+        ...(hasOpsAccess     ? [{ tab: 'operations',  Icon: ClipboardList, en: 'Operations', es: 'Operaciones', primary: true }] : []),
         // 2026-05-20 — Sticker printer for menu-item / component
         // date labels. Sits next to Operations (kitchen surface).
-        { tab: 'datestickers', icon: '🏷', en: 'Stickers',   es: 'Etiquetas',   primary: true },
-        ...(hasRecipesAccess ? [{ tab: 'recipes',    icon: '📖', en: 'Recipes',    es: 'Recetas',     primary: true }] : []),
-        { tab: 'eighty6',    icon: '🚫', en: '86 Board',     es: 'Tablero 86',    badge: eighty6Count, badgeTone: 'danger' },
+        { tab: 'datestickers', Icon: Tag,           en: 'Stickers',   es: 'Etiquetas',   primary: true },
+        ...(hasRecipesAccess ? [{ tab: 'recipes',     Icon: BookOpen,      en: 'Recipes',    es: 'Recetas',     primary: true }] : []),
+        { tab: 'eighty6',    Icon: Ban,             en: '86 Board',     es: 'Tablero 86',    badge: eighty6Count, badgeTone: 'danger' },
         // 2026-05-20 — Print Center tile. tab='print' is a virtual id
         // (not a real route); the onTap below is what fires when the
         // tile is tapped, opening the PrintCenter modal in place. All
         // staff get this — labeling is a kitchen responsibility, not
         // an admin one.
-        { tab: 'print',      icon: '🖨', en: 'Print',        es: 'Imprimir',       primary: true,  onTap: () => setShowPrintCenter(true) },
-        { tab: 'menu',       icon: '🍜', en: 'Menu',         es: 'Menú' },
-        { tab: 'training',   icon: '📚', en: 'Training',     es: 'Capacitación' },
-        { tab: 'catering',   icon: '🥘', en: 'Orders',       es: 'Pedidos' },
-        ...(isManager ? [{ tab: 'tardies', icon: '⏰', en: 'Tardies', es: 'Tardanzas' }] : []),
-        ...(isManager ? [{ tab: 'handoff', icon: '🤝', en: 'Handoff', es: 'Entrega' }] : []),
-        ...(isAdmin   ? [{ tab: 'labor',   icon: '📊', en: 'Labor',   es: 'Mano Obra' }] : []),
+        { tab: 'print',      Icon: Printer,         en: 'Print',        es: 'Imprimir',       primary: true,  onTap: () => setShowPrintCenter(true) },
+        { tab: 'menu',       Icon: UtensilsCrossed, en: 'Menu',         es: 'Menú' },
+        { tab: 'training',   Icon: GraduationCap,   en: 'Training',     es: 'Capacitación' },
+        { tab: 'catering',   Icon: ChefHat,         en: 'Orders',       es: 'Pedidos' },
+        ...(isManager ? [{ tab: 'tardies', Icon: Clock,     en: 'Tardies', es: 'Tardanzas' }] : []),
+        ...(isManager ? [{ tab: 'handoff', Icon: Handshake, en: 'Handoff', es: 'Entrega' }] : []),
+        ...(isAdmin   ? [{ tab: 'labor',   Icon: BarChart3, en: 'Labor',   es: 'Mano Obra' }] : []),
         // Menu Screens — admin tile for the new TV signage dashboard.
-        ...(isAdmin   ? [{ tab: 'menuscreens', icon: '📺', en: 'Menu Screens', es: 'Pantallas' }] : []),
+        ...(isAdmin   ? [{ tab: 'menuscreens', Icon: Monitor,    en: 'Menu Screens', es: 'Pantallas' }] : []),
         // System Health — admin status dashboard.
-        ...(isAdmin   ? [{ tab: 'health',      icon: '❤️',  en: 'System Health',es: 'Estado' }] : []),
-        ...(isAdmin   ? [{ tab: 'labels',      icon: '🏷', en: 'Label Printing',es: 'Etiquetas' }] : []),
-        { tab: 'ai',         icon: '🤖', en: 'AI Assist',    es: 'Asistente AI' },
-        { tab: 'maintenance',icon: '🔧', en: 'Maintenance',  es: 'Mantenimiento' },
-        { tab: 'insurance',  icon: '📑', en: 'Insurance',    es: 'Seguro' },
+        ...(isAdmin   ? [{ tab: 'health',      Icon: HeartPulse, en: 'System Health',es: 'Estado' }] : []),
+        // Label Printing uses the plural `Tags` so it's distinguishable
+        // from the singular date-sticker tile (`Tag`).
+        ...(isAdmin   ? [{ tab: 'labels',      Icon: Tags,       en: 'Label Printing',es: 'Etiquetas' }] : []),
+        { tab: 'ai',         Icon: Bot,             en: 'AI Assist',    es: 'Asistente AI' },
+        { tab: 'maintenance',Icon: Wrench,          en: 'Maintenance',  es: 'Mantenimiento' },
+        { tab: 'insurance',  Icon: FileText,        en: 'Insurance',    es: 'Seguro' },
         // Onboarding is intentionally NOT a top-level tile — it lives behind
         // the Admin page (owners-only PII). The Admin tile's badge reflects
         // both PTO and onboarding applications so it still surfaces here.
-        ...(isAdmin ? [{ tab: 'admin', icon: '⚙️', en: 'Admin', es: 'Admin', badge: pendingPto + pendingApplications, badgeTone: 'amber' }] : []),
+        ...(isAdmin ? [{ tab: 'admin', Icon: SettingsIcon, en: 'Admin', es: 'Admin', badge: pendingPto + pendingApplications, badgeTone: 'amber' }] : []),
     ];
 
     return (
@@ -330,7 +369,7 @@ export default function MobileHome({
                                 )}
                             </div>
                         </div>
-                        <div className="text-2xl opacity-60">→</div>
+                        <ChevronRight size={24} strokeWidth={2.25} className="opacity-60" aria-hidden="true" />
                     </div>
                 </button>
             )}
@@ -435,7 +474,19 @@ function Kpi({ label, value, unit, tone = 'neutral' }) {
 //   │ [icon]  Schedule       3 │
 //   └──────────────────────────┘
 // Icon is visually anchored but no longer the headline; the LABEL is.
-function Tile({ tab, icon, en, es, isEs, primary = false, badge, badgeTone, onTap }) {
+// 2026-05-27 — Andrew: "change all buttons to a light gray glass" +
+// "the home screen button emojis need a professional look too." Two
+// changes here:
+//   1. `icon` prop renamed to `Icon` — it's now a Lucide React
+//      component, not an emoji string. Rendered with size + stroke
+//      that matches Sidebar.jsx / MobileBottomNav.jsx.
+//   2. Tile chrome ported from .glass-card to .glass-button-apple
+//      (the new Apple-Liquid-Glass-style chip). Same rounded surface
+//      + hairline border but cooler/grayer + stronger backdrop blur,
+//      so the tile grid reads as one frosted sheet over the home
+//      gradient. Touch-target floor unchanged (min-h-[64px] is well
+//      above both iOS 44pt + Material 48dp).
+function Tile({ tab, Icon, en, es, isEs, primary = false, badge, badgeTone, onTap }) {
     const showBadge = badge > 0;
     const badgeBg = badgeTone === 'danger' ? 'bg-red-500'
                   : badgeTone === 'amber'  ? 'bg-amber-500'
@@ -443,20 +494,17 @@ function Tile({ tab, icon, en, es, isEs, primary = false, badge, badgeTone, onTa
     return (
         <button
             onClick={onTap}
-            // 2026-05-27 — Phase 3: tile chrome ported to .glass-card so
-            // the launcher grid matches the new design system. Touch-
-            // target floor (48px on pointer:coarse) covered by min-h-[64px]
-            // here, well above both iOS 44pt and Material 48dp minimums.
-            className={`glass-card relative flex items-center gap-3 hover:shadow-glass-lg active:scale-[0.97] transition-all duration-glass-fast ease-glass-out px-3 py-3 overflow-hidden min-h-[64px]`}
+            className={`glass-button-apple relative flex items-center justify-start gap-3 px-3 py-3 overflow-hidden min-h-[64px] w-full`}
         >
             {primary && (
-                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-glass-lg" />
+                <span className="absolute top-0 left-0 w-1 h-full bg-dd-green rounded-l-glass-md" />
             )}
-            {/* Icon disc — square chip on the left so the icon has a
-                visible "container" and doesn't compete with the label.
-                Subtle sage tint for primary tiles. */}
-            <span className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center text-[22px] leading-none ${primary ? 'bg-dd-sage-50' : 'bg-dd-bg'}`}>
-                {icon}
+            {/* Icon disc — square chip on the left so the Lucide
+                glyph has a visible "container" and doesn't compete
+                with the label. Subtle sage tint for primary tiles,
+                neutral bg for the rest. */}
+            <span className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${primary ? 'bg-dd-sage-50 text-dd-green-700' : 'bg-white/70 text-dd-text-2'}`}>
+                {Icon && <Icon size={22} strokeWidth={2.25} aria-hidden="true" />}
             </span>
             <span className="flex-1 text-[15px] font-bold text-dd-text leading-tight text-left">
                 {isEs ? es : en}

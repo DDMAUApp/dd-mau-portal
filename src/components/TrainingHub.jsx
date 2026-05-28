@@ -4,6 +4,9 @@ import { doc, setDoc, getDoc, collection, getDocs, updateDoc, deleteField, onSna
 import { t } from "../data/translations";
 import { isAdmin } from "../data/staff";
 import { MODULES } from "../data/training";
+// 2026-05-27 Batch F — Apple-HIG page header. Visual only.
+import { GraduationCap, BarChart3 } from "lucide-react";
+import { PageHeader } from "../v2/PageShell";
 
 // Lesson-content overrides — admins can edit lesson titles + bullets in
 // the app, written to /config/training_overrides. The doc shape is one
@@ -784,18 +787,21 @@ export default function TrainingHub({ staffName, language, staffList }) {
 
     return (
         <Shell><div className="p-4 pb-bottom-nav md:p-5">
-            <div className="flex items-center justify-between mb-3">
-                <h2 className="text-2xl font-bold text-mint-700">📚 {t("trainingHub", language) || tx("Training Hub", "Centro de Capacitación")}</h2>
-                {adminUser && (
+            <PageHeader
+                icon={GraduationCap}
+                title={t("trainingHub", language) || tx("Training Hub", "Centro de Capacitación")}
+                subtitle={tx(
+                    "Read each lesson, then pass the quiz to clear the module. 80% to pass; safety modules require 85%.",
+                    "Lee cada lección, luego aprueba el examen para completar el módulo. 80% para aprobar; los módulos de seguridad requieren 85%.",
+                )}
+                actions={adminUser && (
                     <button onClick={() => { loadTracker(); setView("tracker"); }}
-                        className="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs font-bold">
-                        📊 {tx("Tracker", "Progreso")}
+                        className="glass-button-apple inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
+                        <BarChart3 size={14} strokeWidth={2.25} aria-hidden="true" />
+                        {tx("Tracker", "Progreso")}
                     </button>
                 )}
-            </div>
-            <p className="text-sm text-gray-600 mb-5">
-                {tx("Read each lesson, then pass the quiz to clear the module. 80% to pass; safety modules require 85%. Two failed quizzes in a row will lock a module — your manager unlocks it.", "Lee cada lección, luego aprueba el examen para completar el módulo. 80% para aprobar; los módulos de seguridad requieren 85%. Dos exámenes fallidos seguidos bloquean el módulo — tu gerente lo desbloquea.")}
-            </p>
+            />
 
             {grouped.map(g => (
                 <div key={g.track} className="mb-5">

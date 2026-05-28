@@ -26,6 +26,9 @@ import { useState, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, runTransaction } from 'firebase/firestore';
 import { toast } from '../toast';
+// 2026-05-27 Batch F — Apple-HIG page header. Visual only.
+import { Bell } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 import {
     NOTIFICATION_CATEGORIES,
     NOTIFICATION_TYPES,
@@ -68,24 +71,21 @@ export default function NotificationsAdmin({
 
     return (
         <section className="w-full max-w-3xl mx-auto px-3 md:px-6 py-4 md:py-6 space-y-4">
-            <header>
-                <h1 className="text-2xl md:text-3xl font-black text-dd-text tracking-tight">
-                    🔔 {tx('Notification preferences', 'Preferencias de notificaciones')}
-                </h1>
-                <p className="text-[12.5px] text-dd-text-2 mt-1 max-w-2xl">
-                    {tx(
-                        'Pick who receives each push notification type. Tap a type to expand. Chat + personal schedule changes are always pushed (locked).',
-                        'Elige quién recibe cada tipo de notificación. Toca un tipo para expandir. Chat y cambios personales de horario siempre se envían (bloqueado).',
-                    )}
-                </p>
-            </header>
+            <PageHeader
+                icon={Bell}
+                title={tx('Notification preferences', 'Preferencias de notificaciones')}
+                subtitle={tx(
+                    'Pick who receives each push notification type. Tap a type to expand. Chat + personal schedule changes are always pushed (locked).',
+                    'Elige quién recibe cada tipo de notificación. Toca un tipo para expandir. Chat y cambios personales de horario siempre se envían (bloqueado).',
+                )}
+            />
 
             <input
                 type="search"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
                 placeholder={tx('Search notification type…', 'Buscar tipo…')}
-                className="w-full px-4 py-2.5 rounded-xl bg-white border border-dd-line text-base focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
+                className="glass-input"
             />
 
             <div className="space-y-3">

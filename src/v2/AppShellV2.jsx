@@ -60,8 +60,13 @@ export default function AppShellV2({
             On dark mode (prefers-color-scheme: dark) the body bg in
             index.css overrides to #0a0a0a so this gradient is hidden
             and the whole app reads as the chat-style near-black. */}
-        <div className="ddmau-app-backdrop min-h-screen text-dd-text font-sans"
-             style={{ background: 'linear-gradient(180deg, #EEF5EF 0%, #F3F5F1 50%, #F7F8FA 100%)' }}>
+        {/* 2026-05-27 Batch A — the inline `style={background: ...}`
+            gradient moved into `.ddmau-app-backdrop` in index.css.
+            The new rule is a refined Apple-style three-stop gradient
+            with a soft radial top-light. JSX stays clean and the
+            backdrop can be tuned in CSS without touching this file
+            again. */}
+        <div className="ddmau-app-backdrop min-h-screen text-dd-text font-sans">
             {/* Mobile drawer scrim — only opens when "More" is tapped */}
             {sidebarOpen && (
                 <div

@@ -8,6 +8,9 @@ import { notifyManagement } from '../data/notify';
 import ToastInvoices from './ToastInvoices';
 import ToastOrders from './ToastOrders';
 import { toast } from '../toast';
+// 2026-05-27 Batch F — Apple-HIG page header. Visual only.
+import { ChefHat, ClipboardList } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 // CateringMenuItem sub-component
 function CateringMenuItem({ item, language, onAdd, editData, onSaveEdit, onCancelEdit }) {
             // editData = { cartItem } when editing an existing cart item
@@ -1006,12 +1009,17 @@ export default function CateringOrder({ language, staffName }) {
                     {/* ── Catering Tab ── */}
                     {pageTab === "catering" && (
                     <>
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-2xl font-bold text-mint-700">🍜 {t("cateringOrders", language)}</h2>
-                        <button onClick={() => setShowHistory(true)} className="text-xs bg-amber-100 text-amber-700 px-3 py-1.5 rounded-full font-bold border border-amber-300">
-                            📋 {language === "es" ? "Historial" : "History"}
-                        </button>
-                    </div>
+                    <PageHeader
+                        icon={ChefHat}
+                        title={t("cateringOrders", language)}
+                        actions={
+                            <button onClick={() => setShowHistory(true)}
+                                className="glass-button-apple inline-flex items-center gap-1.5 px-3 py-1.5 text-xs">
+                                <ClipboardList size={14} strokeWidth={2.25} aria-hidden="true" />
+                                {language === "es" ? "Historial" : "History"}
+                            </button>
+                        }
+                    />
                     {editingOrderId && (
                         <div className="bg-amber-50 border border-amber-300 rounded-lg p-2 mb-4 text-xs text-amber-800 font-bold text-center">
                             ✏️ {language === "es" ? "Editando pedido existente" : "Editing existing order"} — #{editingOrderId.slice(-6).toUpperCase()}
