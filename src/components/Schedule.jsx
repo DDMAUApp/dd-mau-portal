@@ -598,6 +598,17 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Each filled slot becomes a real shift.
     const [staffingNeeds, setStaffingNeeds] = useState([]);
     const [showNeedModal, setShowNeedModal] = useState(false);
+    // 2026-05-27 — Andrew: "the open slots window make it hidden until
+    // clicked." The Open Slots banner stays collapsed by default; tapping
+    // the header strip toggles visibility. Preference persists per device
+    // so managers who always want it open don't have to re-open every
+    // page load.
+    const [openSlotsExpanded, setOpenSlotsExpanded] = useState(() => {
+        try { return localStorage.getItem('ddmau:openSlotsExpanded') === '1'; } catch { return false; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('ddmau:openSlotsExpanded', openSlotsExpanded ? '1' : '0'); } catch {}
+    }, [openSlotsExpanded]);
     // Optional date prefill for the StaffingNeedModal. Set when the manager
     // clicks the "+ slot" button on a specific day cell in the unassigned
     // row — pre-populates the date field so they don't have to set it
@@ -4822,14 +4833,39 @@ ${dayBlocks}
                     const h12 = ((h + 11) % 12) + 1;
                     return m === 0 ? `${h12}${period}` : `${h12}:${String(m).padStart(2, '0')}${period}`;
                 };
+                // 2026-05-27 — header strip is now a tappable toggle.
+                // Collapsed by default (saves a bunch of mobile real
+                // estate); expanded state persists in localStorage. When
+                // collapsed, only the row count + a chevron show; tapping
+                // anywhere on the strip flips the state. When expanded,
+                // the slot list renders underneath.
+                const openCount = weekNeeds.reduce((acc, n) => {
+                    const filled = (n.filledStaff || []).length;
+                    return acc + Math.max(0, (n.count || 0) - filled);
+                }, 0);
                 return (
-                    <div className="mb-3 rounded-xl p-2 bg-white border border-dd-line shadow-card">
-                        <div className="flex items-center gap-2 mb-1.5">
-                            <span className="w-1 h-4 bg-blue-500 rounded-full" />
+                    <div className="mb-3 rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={() => setOpenSlotsExpanded(v => !v)}
+                            className="w-full flex items-center gap-2 p-2 hover:bg-dd-bg/40 active:bg-dd-bg/60 transition-colors text-left"
+                            aria-expanded={openSlotsExpanded}
+                            aria-controls="open-slots-list"
+                        >
+                            <span className="w-1 h-4 bg-blue-500 rounded-full shrink-0" />
                             <h3 className="text-xs font-bold text-dd-text">👥 {tx('Open slots', 'Abiertos')}</h3>
                             <span className="text-[10px] font-bold text-dd-text-2">{side === 'foh' ? 'FOH' : 'BOH'} · {weekNeeds.length}</span>
-                        </div>
-                        <div className="space-y-1">
+                            {openCount > 0 && (
+                                <span className="text-[10px] font-bold text-amber-700 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded-full">
+                                    {openCount} {tx('unfilled', 'sin llenar')}
+                                </span>
+                            )}
+                            <span className={`ml-auto text-dd-text-2/60 text-xs shrink-0 transition-transform duration-glass-fast ease-glass-out ${openSlotsExpanded ? 'rotate-180' : ''}`} aria-hidden="true">
+                                ▾
+                            </span>
+                        </button>
+                        {openSlotsExpanded && (
+                        <div id="open-slots-list" className="space-y-1 px-2 pb-2">
                             {weekNeeds.map(n => {
                                 const filled = (n.filledStaff || []).length;
                                 const open = Math.max(0, (n.count || 0) - filled);
@@ -4945,6 +4981,7 @@ ${dayBlocks}
                                 );
                             })}
                         </div>
+                        )}
                     </div>
                 );
             })()}
@@ -7778,6 +7815,31 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
     const renderPtoLine = (t) => t.startDate + (t.endDate && t.endDate !== t.startDate ? ` → ${t.endDate}` : '') + (t.reason ? ` · ${t.reason}` : '');
 
+    // 2026-05-27 — Andrew: "lets put a time stamp on when the time off
+    // request was put in." The PTO doc has a submittedAt serverTimestamp
+    // (set at request creation in handleSubmitPtoRequest). Format:
+    //   • today      → "Today at 3:42 PM"
+    //   • yesterday  → "Yesterday at 3:42 PM"
+    //   • older      → "Mar 15 at 3:42 PM"
+    // Locale flips with isEn. Returns '' for missing/invalid timestamps
+    // so older requests (created before submittedAt was added) just don't
+    // render a timestamp instead of showing "Invalid Date."
+    const fmtSubmittedAt = (ts) => {
+        if (!ts) return '';
+        const d = ts?.toDate ? ts.toDate() : (ts instanceof Date ? ts : new Date(ts));
+        if (!d || isNaN(d.getTime())) return '';
+        const locale = isEn ? 'en-US' : 'es';
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const ymd = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const diffDays = Math.round((today - ymd) / 86400000);
+        const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+        if (diffDays === 0) return tx(`Submitted today at ${time}`, `Enviado hoy a las ${time}`);
+        if (diffDays === 1) return tx(`Submitted yesterday at ${time}`, `Enviado ayer a las ${time}`);
+        const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
+        return tx(`Submitted ${date} at ${time}`, `Enviado ${date} a las ${time}`);
+    };
+
     // Reusable card chrome — clean white card with semantic accent stripe.
     const Panel = ({ accent, icon, title, count, children }) => (
         <div className="rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
@@ -7863,9 +7925,15 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                         const btnTone = status === 'approved'
                             ? 'bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200'
                             : 'bg-white border-dd-line text-dd-text-2 hover:bg-dd-bg';
+                        const submittedLabel = fmtSubmittedAt(t.submittedAt);
                         return (
                             <div key={t.id} className="flex items-center justify-between gap-2 bg-amber-50 rounded-lg p-2 border border-amber-200 text-xs">
-                                <div className="min-w-0 text-dd-text flex-1">{renderPtoLine(t)}</div>
+                                <div className="min-w-0 text-dd-text flex-1">
+                                    <div>{renderPtoLine(t)}</div>
+                                    {submittedLabel && (
+                                        <div className="text-[10px] text-dd-text-2 mt-0.5">{submittedLabel}</div>
+                                    )}
+                                </div>
                                 <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap text-[10px] border ${
                                     status === 'approved' ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30' :
                                     status === 'denied'   ? 'bg-red-50 text-red-700 border-red-200' :
@@ -7890,10 +7958,15 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
             {/* Manager / admin pending PTO queue */}
             {canEdit && pendingPto.length > 0 && (
                 <Panel accent="bg-amber-500" icon="🌴" title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}>
-                    {pendingPto.map(t => (
+                    {pendingPto.map(t => {
+                        const submittedLabel = fmtSubmittedAt(t.submittedAt);
+                        return (
                         <div key={t.id} className="bg-amber-50 rounded-lg p-2 border border-amber-200 text-xs">
                             <div className="font-bold text-dd-text">{t.staffName}</div>
                             <div className="text-dd-text-2 text-[11px]">{renderPtoLine(t)}</div>
+                            {submittedLabel && (
+                                <div className="text-[10px] text-dd-text-2/80 mt-0.5">{submittedLabel}</div>
+                            )}
                             <div className="flex gap-1.5 mt-2">
                                 <button onClick={() => onApprovePto(t)}
                                     className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve', 'Aprobar')}</button>
@@ -7901,7 +7974,8 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                                     className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                 </Panel>
             )}
 
