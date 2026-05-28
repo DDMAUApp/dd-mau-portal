@@ -409,6 +409,12 @@ const SS = {
 // Manual logout still works via setStaffName(null) which clears the
 // localStorage key directly — no special handling needed.
 const IDLE_LOCK_MS = 5 * 60 * 1000;   // 5 minutes of being hidden = relock
+// Module-scope stable empty array used as a default for the
+// hiddenPages memo (Audit #13). Defined once at module load so
+// every render returns the SAME reference — lets memo-wrapped
+// child components skip re-rendering when nothing meaningful
+// changed. Don't push into this; treat as frozen.
+const EMPTY_ARRAY = Object.freeze([]);
 try {
     if (typeof window !== 'undefined') {
         const alive = sessionStorage.getItem('ddmau:sessionAlive');
@@ -983,6 +989,19 @@ export default function App() {
         () => canViewOnboarding(currentStaffRecord),
         [currentStaffRecord],
     );
+    // 2026-05-28 Audit #13 — memoize hiddenPages so memo-wrapped lazy
+    // routes can actually skip re-renders. Before, this was computed
+    // inline twice in renderV2Body() (MobileHome + AppShellV2 calls)
+    // — `(currentStaffRecord && Array.isArray(...)) ? ... : []` —
+    // which produced a fresh `[]` reference on every render when the
+    // staff had no hidden pages. React.memo's shallow compare saw a
+    // changed prop and re-rendered the whole route subtree.
+    const hiddenPages = useMemo(
+        () => (currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages))
+            ? currentStaffRecord.hiddenPages
+            : EMPTY_ARRAY,
+        [currentStaffRecord],
+    );
     // Guard: if a non-admin restored a session that landed on admin/labor,
     // bounce them back to Home. Otherwise the tab gate hides the content
     // and they see a blank screen + a sidebar item highlighted that they
@@ -1378,7 +1397,7 @@ export default function App() {
                         hasOnboardingAccess={hasOnboardingAccess}
                         isAdmin={staffIsAdmin}
                         isManager={isManager}
-                        hiddenPages={(currentStaffRecord && Array.isArray(currentStaffRecord.hiddenPages)) ? currentStaffRecord.hiddenPages : []}
+                        hiddenPages={hiddenPages}
                     />
                 ) : (
                     <HomeV2
