@@ -4,60 +4,83 @@
 //
 // 2026-05-27 — Andrew: "i also want to add another audit to the
 // admin page. i want to know which staff has used the app? logged
-// in, installed to home screen, is getting notification, so this
-// way i can make sure all staff is seeing all the messages."
+// in, installed to home screen, is getting notification."
 //
-// Signals (derived from existing /config/staff fields — NO new
-// writes added):
+// 2026-05-27 (round 2) — Andrew: "i know some of the staff like
+// brandon as logged in today but it says 5 days ago." Root cause:
+// the previous version read fcmTokens[].lastSeen as the "last
+// seen" signal, but that field only ticks when enableFcmPush()
+// SUCCEEDS at acquiring a token — so a staffer who signed in on
+// desktop, declined push, opened an iOS Safari tab instead of
+// the installed PWA, etc. would show a stale (or missing)
+// timestamp.
 //
-//   • Notifications enabled — staff.fcmTokens.length > 0
-//       fcmTokens is the array enableFcmPush() writes on every
-//       sign-in. Non-empty == at least one device has gone through
-//       the permission grant + token registration, so pushes can
-//       reach the staffer on at least one device.
+// Fix: App.jsx now writes a true lastSignInAt on every session
+// start (debounced to ~once per 30min). This panel prefers that
+// signal and falls back to fcmTokens.lastSeen for staff who
+// haven't signed in since the new code shipped.
 //
-//   • PWA installed — staff.pwaInstalled === true
-//       Stamped automatically by App.jsx when the staffer opens
-//       the app in display-mode: standalone (i.e. from a home-
-//       screen icon). The flag never unsets — once true, it
-//       persists across sessions even if they uninstall on a
-//       different device.
+// Signals (all derived from existing /config/staff fields — NO
+// new Firestore writes added by THIS file):
 //
-//   • Last activity — max(staff.fcmTokens.map(t => t.lastSeen))
-//       Each fcmToken row is { token, lastSeen, deviceId }.
-//       lastSeen ticks on every successful push setup, which
-//       happens on every sign-in. Used as a proxy for "last
-//       time the staffer opened the app." Staff with no
-//       fcmTokens => no lastSeen signal (shown as "—").
+//   • Last sign-in           — staff.lastSignInAt (Date.now() ms)
+//   • Last push refresh      — max(fcmTokens[].lastSeen)
+//   • Notifications enabled  — staff.fcmTokens.length > 0
+//   • PWA installed          — staff.pwaInstalled === true
+//   • Devices                — count of unique deviceIds in fcmTokens
+//   • Platform               — staff.lastSignInPlatform (iOS/Android/Mac/...)
+//   • Standalone-mode flag   — staff.lastSignInStandalone (PWA install vs tab)
 //
 // What the rollup shows:
-//   1. Top stats: counts of each signal (X/Y staff)
-//   2. Per-staff rows sorted by ready→not-ready, then by
-//      last activity recency. Each row carries pills for the
-//      two binary signals + a "last seen Xd ago" line.
-//   3. Filter toggle: All | Needs attention (rows where any
-//      of the three signals is missing).
+//   1. Top stats: Active today / This week / Notifications on /
+//      Fully set up / Need attention.
+//   2. Per-staff rows sorted by needs-attention first, then by
+//      most recent activity. Each row carries:
+//        - last sign-in relative time + platform pill
+//        - last push refresh (only when it diverges from sign-in)
+//        - device count
+//        - Notif + PWA status pills
+//   3. Filter: All | Needs attention | Inactive 7+ days.
 //
 // Read-only — no buttons that change state. Admins use the
-// existing per-staff edit flow to act on missing signals
-// (e.g. ask the staffer to install the PWA).
+// existing per-staff edit flow to act on missing signals.
 
 import { useMemo, useState } from 'react';
 import {
     Users, Bell, BellOff, Smartphone, MonitorOff,
-    Check, AlertTriangle, Clock, ChevronDown,
+    Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi,
 } from 'lucide-react';
 
-// Relative-time formatter for the per-staff "last seen" line.
-// Tight buckets: today / yesterday / Nd / Nw / Nmo / Ny. Returns
-// "—" for falsy timestamps so staff with no signal don't render
-// a meaningless "55 years ago" (Date(0) → 1970).
+// Coerce any timestamp shape to a millisecond number (or 0 for
+// nothing). Handles Firestore Timestamp objects, JS Dates, ISO
+// strings, and plain numbers — staff docs have all four flavors
+// historically.
+function tsToMs(t) {
+    if (!t) return 0;
+    if (typeof t === 'number') return t;
+    if (typeof t === 'string') {
+        const ms = Date.parse(t);
+        return Number.isFinite(ms) ? ms : 0;
+    }
+    if (typeof t?.toMillis === 'function') return t.toMillis();
+    if (typeof t?.toDate === 'function') return t.toDate().getTime();
+    if (t instanceof Date) return t.getTime();
+    return 0;
+}
+
+// Relative-time formatter — tight buckets, locale-aware-ish.
 function fmtRelative(ms, isEs) {
     if (!ms) return '—';
     const diff = Date.now() - ms;
     if (diff < 0) return '—';
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) {
+        if (mins < 1) return isEs ? 'ahora' : 'just now';
+        return `${mins}${isEs ? 'm' : 'm ago'}`;
+    }
+    const hours = Math.floor(diff / 3600000);
+    if (hours < 24) return `${hours}${isEs ? 'h' : 'h ago'}`;
     const days = Math.floor(diff / 86400000);
-    if (days === 0) return isEs ? 'hoy' : 'today';
     if (days === 1) return isEs ? 'ayer' : 'yesterday';
     if (days < 7) return `${days}${isEs ? 'd' : 'd ago'}`;
     if (days < 30) return `${Math.floor(days / 7)}${isEs ? 'sem' : 'w ago'}`;
@@ -69,20 +92,34 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [expanded, setExpanded] = useState(false);
-    const [filter, setFilter] = useState('all'); // 'all' | 'missing'
+    const [filter, setFilter] = useState('all'); // 'all' | 'missing' | 'inactive'
 
     // Build the per-staff rows. Skip inactive staff (active === false)
     // — they're not expected to use the app. Sort: needs-attention
-    // first (so the actionable rows are immediately visible), then
-    // by last-activity recency.
+    // first (so actionable rows are visible without scrolling), then
+    // by most-recent activity.
     const rows = useMemo(() => {
         const active = (staffList || []).filter((s) => s && s.name && s.active !== false);
         return active.map((s) => {
             const tokens = Array.isArray(s.fcmTokens) ? s.fcmTokens : [];
-            const lastSeen = tokens.reduce(
-                (max, t) => Math.max(max, Number(t?.lastSeen) || 0),
+            // Unique devices (some legacy entries pre-deviceId don't
+            // carry one; count those as separate-anonymous-1).
+            const deviceIds = new Set();
+            let anonCount = 0;
+            for (const t of tokens) {
+                if (t?.deviceId) deviceIds.add(t.deviceId);
+                else anonCount += 1;
+            }
+            const deviceCount = deviceIds.size + (anonCount > 0 ? 1 : 0);
+            const pushMs = tokens.reduce(
+                (max, t) => Math.max(max, tsToMs(t?.lastSeen)),
                 0
             );
+            const signInMs = tsToMs(s.lastSignInAt);
+            // Prefer lastSignInAt (the canonical session-start stamp);
+            // fall back to push lastSeen for staff who haven't been
+            // seen since the new write shipped.
+            const lastSeenMs = signInMs || pushMs;
             const notif = tokens.length > 0;
             const installed = s.pwaInstalled === true;
             const ready = notif && installed;
@@ -92,31 +129,41 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
                 role: s.role || '',
                 location: s.location || '',
                 tokenCount: tokens.length,
-                lastSeen,
+                deviceCount,
+                pushMs,
+                signInMs,
+                lastSeenMs,
+                platform: s.lastSignInPlatform || '',
+                standalone: s.lastSignInStandalone === true,
                 notif,
                 installed,
                 ready,
             };
         }).sort((a, b) => {
             if (a.ready !== b.ready) return a.ready ? 1 : -1;
-            return (b.lastSeen || 0) - (a.lastSeen || 0);
+            return (b.lastSeenMs || 0) - (a.lastSeenMs || 0);
         });
     }, [staffList]);
 
     const stats = useMemo(() => {
+        const now = Date.now();
         const total = rows.length;
         const notif = rows.filter((r) => r.notif).length;
         const installed = rows.filter((r) => r.installed).length;
         const ready = rows.filter((r) => r.ready).length;
-        return { total, notif, installed, ready };
+        const activeToday = rows.filter((r) => r.lastSeenMs && (now - r.lastSeenMs) < 24 * 60 * 60 * 1000).length;
+        const activeWeek = rows.filter((r) => r.lastSeenMs && (now - r.lastSeenMs) < 7 * 24 * 60 * 60 * 1000).length;
+        const inactive7d = rows.filter((r) => !r.lastSeenMs || (now - r.lastSeenMs) > 7 * 24 * 60 * 60 * 1000).length;
+        return { total, notif, installed, ready, activeToday, activeWeek, inactive7d };
     }, [rows]);
 
     const filtered = useMemo(() => {
-        return filter === 'missing' ? rows.filter((r) => !r.ready) : rows;
+        const now = Date.now();
+        if (filter === 'missing') return rows.filter((r) => !r.ready);
+        if (filter === 'inactive') return rows.filter((r) => !r.lastSeenMs || (now - r.lastSeenMs) > 7 * 24 * 60 * 60 * 1000);
+        return rows;
     }, [rows, filter]);
 
-    // Empty staff list edge case — should never happen on /config/staff
-    // doc reads, but guard anyway.
     if (rows.length === 0) {
         return (
             <div className="glass-card p-4 mb-4">
@@ -129,8 +176,7 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
 
     return (
         <div className="glass-card p-4 mb-4">
-            {/* Collapsible header — same chevron pattern the other
-                audit panels use, dressed in the new icon-disc family. */}
+            {/* Collapsible header */}
             <button
                 type="button"
                 onClick={() => setExpanded((v) => !v)}
@@ -147,8 +193,8 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
                         </h3>
                         <p className="text-caption-md text-dd-text-2">
                             {tx(
-                                `${stats.ready}/${stats.total} fully set up · ${stats.total - stats.ready} need attention`,
-                                `${stats.ready}/${stats.total} listos · ${stats.total - stats.ready} faltan`
+                                `${stats.activeToday} active today · ${stats.ready}/${stats.total} fully set up · ${stats.inactive7d} inactive 7d+`,
+                                `${stats.activeToday} hoy · ${stats.ready}/${stats.total} listos · ${stats.inactive7d} inactivos 7d+`
                             )}
                         </p>
                     </div>
@@ -163,95 +209,116 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
 
             {expanded && (
                 <>
-                    {/* Aggregate stats — at-a-glance health */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-4">
+                    {/* Aggregate stats — 6 chips covering the at-a-glance
+                        health of the team's app engagement. */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 mt-4">
                         <StatChip
-                            label={tx('Notifications', 'Notificaciones')}
+                            label={tx('Active today', 'Hoy')}
+                            value={`${stats.activeToday}/${stats.total}`}
+                            tone={stats.activeToday >= Math.ceil(stats.total * 0.6) ? 'green' : 'amber'}
+                            Icon={Wifi}
+                        />
+                        <StatChip
+                            label={tx('This week', 'Esta sem.')}
+                            value={`${stats.activeWeek}/${stats.total}`}
+                            tone={stats.activeWeek >= stats.total ? 'green' : 'amber'}
+                            Icon={Clock}
+                        />
+                        <StatChip
+                            label={tx('Notifications', 'Notif.')}
                             value={`${stats.notif}/${stats.total}`}
                             tone={stats.notif === stats.total ? 'green' : 'amber'}
                             Icon={Bell}
                         />
                         <StatChip
-                            label={tx('Installed', 'Instalado')}
+                            label={tx('PWA installed', 'PWA inst.')}
                             value={`${stats.installed}/${stats.total}`}
                             tone={stats.installed === stats.total ? 'green' : 'amber'}
                             Icon={Smartphone}
                         />
                         <StatChip
-                            label={tx('Fully set up', 'Listo')}
+                            label={tx('Fully set up', 'Listos')}
                             value={`${stats.ready}/${stats.total}`}
                             tone={stats.ready === stats.total ? 'green' : 'amber'}
                             Icon={Check}
                         />
                         <StatChip
-                            label={tx('Need attention', 'Falta')}
-                            value={`${stats.total - stats.ready}`}
-                            tone={stats.total - stats.ready === 0 ? 'green' : 'amber'}
+                            label={tx('Inactive 7d+', 'Inact. 7d+')}
+                            value={`${stats.inactive7d}`}
+                            tone={stats.inactive7d === 0 ? 'green' : 'amber'}
                             Icon={AlertTriangle}
                         />
                     </div>
 
-                    {/* All / Needs attention filter */}
-                    <div className="inline-flex gap-1 bg-dd-bg/60 border border-dd-line rounded-glass-sm p-1 mt-4">
-                        <button
-                            type="button"
-                            onClick={() => setFilter('all')}
-                            className={`px-3 py-1 rounded-sm text-xs font-bold transition ${
-                                filter === 'all'
-                                    ? 'bg-dd-green text-white'
-                                    : 'text-dd-text-2'
-                            }`}
-                        >
+                    {/* Filter — All / Needs attention / Inactive 7d+ */}
+                    <div className="inline-flex gap-1 bg-dd-bg/60 border border-dd-line rounded-glass-sm p-1 mt-4 flex-wrap">
+                        <FilterChip on={filter === 'all'} onClick={() => setFilter('all')} tone="green">
                             {tx('All', 'Todos')} ({stats.total})
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setFilter('missing')}
-                            className={`px-3 py-1 rounded-sm text-xs font-bold transition ${
-                                filter === 'missing'
-                                    ? 'bg-amber-500 text-white'
-                                    : 'text-dd-text-2'
-                            }`}
-                        >
-                            {tx('Needs attention', 'Falta')} ({stats.total - stats.ready})
-                        </button>
+                        </FilterChip>
+                        <FilterChip on={filter === 'missing'} onClick={() => setFilter('missing')} tone="amber">
+                            {tx('Needs setup', 'Falta config')} ({stats.total - stats.ready})
+                        </FilterChip>
+                        <FilterChip on={filter === 'inactive'} onClick={() => setFilter('inactive')} tone="amber">
+                            {tx('Inactive 7d+', 'Inactivos 7d+')} ({stats.inactive7d})
+                        </FilterChip>
                     </div>
 
                     {/* Per-staff rows */}
                     <div className="space-y-1.5 mt-3">
                         {filtered.length === 0 ? (
                             <p className="text-footnote-md text-dd-text-2 text-center py-6">
-                                {tx(
-                                    'Everyone here is fully set up.',
-                                    'Todos están listos.'
-                                )}
+                                {filter === 'inactive'
+                                    ? tx('Everyone has been active in the last week.', 'Todos activos esta semana.')
+                                    : filter === 'missing'
+                                    ? tx('Everyone is fully set up.', 'Todos configurados.')
+                                    : tx('No staff to show.', 'Sin personal.')}
                             </p>
                         ) : (
                             filtered.map((s) => (
                                 <div
                                     key={s.id}
-                                    className="flex items-center gap-2 p-2.5 rounded-glass-md bg-white/60 border border-glass-border-light"
+                                    className="flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-glass-md bg-white/60 border border-glass-border-light"
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <div className="text-body-md text-dd-text font-semibold truncate">
+                                        <div className="text-body-md text-dd-text font-semibold truncate flex items-center gap-1.5">
                                             {s.name}
                                             {s.role && (
-                                                <span className="text-caption-md text-dd-text-2 font-normal ml-1.5">
+                                                <span className="text-caption-md text-dd-text-2 font-normal">
                                                     · {s.role}
                                                 </span>
                                             )}
+                                            {s.platform && (
+                                                <span className="ml-1 inline-flex items-center gap-0.5 text-[10px] font-bold text-dd-text-2 bg-dd-bg/80 border border-dd-line px-1.5 py-0.5 rounded-full">
+                                                    <MonitorSmartphone size={9} strokeWidth={2.5} aria-hidden="true" />
+                                                    {s.platform}
+                                                    {s.standalone && <span className="ml-0.5 text-dd-green-700">·PWA</span>}
+                                                </span>
+                                            )}
                                         </div>
-                                        <div className="text-caption-md text-dd-text-2 flex items-center gap-1.5 mt-0.5">
+                                        <div className="text-caption-md text-dd-text-2 flex items-center gap-1.5 mt-0.5 flex-wrap">
                                             <Clock size={11} strokeWidth={2.25} aria-hidden="true" />
-                                            {tx('Last seen', 'Vista')}: {fmtRelative(s.lastSeen, isEs)}
-                                            {s.tokenCount > 1 && (
-                                                <span className="ml-1.5 text-[10px] font-bold text-dd-text-2/80">
-                                                    · {s.tokenCount} {tx('devices', 'dispositivos')}
+                                            <span>
+                                                {tx('Last sign-in', 'Última conexión')}:{' '}
+                                                <span className={s.signInMs && (Date.now() - s.signInMs) < 24 * 60 * 60 * 1000 ? 'font-bold text-dd-green-700' : ''}>
+                                                    {fmtRelative(s.signInMs, isEs)}
+                                                </span>
+                                            </span>
+                                            {/* Only show push-refresh separately when it diverges
+                                                significantly from sign-in (>= 1 day delta) — usually
+                                                they tick together, only worth surfacing when they don't. */}
+                                            {s.pushMs > 0 && Math.abs((s.signInMs || 0) - s.pushMs) > 24 * 60 * 60 * 1000 && (
+                                                <span className="text-dd-text-2/70">
+                                                    · {tx('push', 'push')} {fmtRelative(s.pushMs, isEs)}
+                                                </span>
+                                            )}
+                                            {s.deviceCount > 0 && (
+                                                <span className="text-dd-text-2/70">
+                                                    · {s.deviceCount} {s.deviceCount === 1 ? tx('device', 'dispositivo') : tx('devices', 'dispositivos')}
                                                 </span>
                                             )}
                                         </div>
                                     </div>
-                                    <div className="flex flex-col items-end gap-1 shrink-0">
+                                    <div className="flex flex-row sm:flex-col items-start gap-1 shrink-0">
                                         <PillStatus
                                             on={s.notif}
                                             Icon={s.notif ? Bell : BellOff}
@@ -270,8 +337,8 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
 
                     <p className="text-caption-md text-dd-text-2/70 mt-3 italic leading-relaxed">
                         {tx(
-                            'Notif = has registered at least one device for push. PWA = has opened the app from a home-screen install. Last seen = most recent FCM token refresh (≈ last sign-in).',
-                            'Notif = al menos un dispositivo registrado para push. PWA = ha abierto la app desde la pantalla de inicio. Vista = renovación de token más reciente (≈ último inicio de sesión).'
+                            'Last sign-in = true session-start stamp (writes once per ~30min). Push = most recent FCM token refresh; only shown when it diverges from sign-in (means push setup failed even though they signed in). Notif = at least one device registered for push. PWA = opened from a home-screen install.',
+                            'Última conexión = sello de inicio real (~1/30min). Push = renovación de token; solo se muestra si difiere (significa que push falló aunque entraron). Notif = al menos un dispositivo registrado. PWA = abrió desde icono.'
                         )}
                     </p>
                 </>
@@ -280,7 +347,6 @@ export default function StaffUsageAudit({ staffList = [], language = 'en' }) {
     );
 }
 
-// Aggregate-stats chip used in the top row.
 function StatChip({ label, value, tone, Icon }) {
     const toneClasses = tone === 'amber'
         ? 'bg-amber-50 text-amber-700 border-amber-200'
@@ -296,7 +362,6 @@ function StatChip({ label, value, tone, Icon }) {
     );
 }
 
-// Per-row binary status pill — sage when on, amber when off.
 function PillStatus({ on, Icon, label }) {
     return (
         <span
@@ -309,5 +374,18 @@ function PillStatus({ on, Icon, label }) {
             <Icon size={10} strokeWidth={2.5} aria-hidden="true" />
             {label}
         </span>
+    );
+}
+
+function FilterChip({ on, onClick, tone, children }) {
+    const onClasses = tone === 'amber' ? 'bg-amber-500 text-white' : 'bg-dd-green text-white';
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`px-3 py-1 rounded-sm text-xs font-bold transition ${on ? onClasses : 'text-dd-text-2'}`}
+        >
+            {children}
+        </button>
     );
 }

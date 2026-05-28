@@ -1128,6 +1128,67 @@ export default function App() {
         return () => { cancelled = true; };
     }, [staffName, currentStaffRecord?.pwaInstalled]);
 
+    // ── Last-sign-in stamp (Andrew 2026-05-27) ─────────────────────────
+    // The StaffUsageAudit panel was reading fcmTokens[].lastSeen as a
+    // "last seen" signal, but that field only ticks when enableFcmPush()
+    // SUCCEEDS at acquiring a token — so a staffer who signs in on
+    // desktop, declines push, opens an iOS Safari tab instead of the
+    // installed PWA, etc. ends up showing a stale timestamp (or none
+    // at all). Symptom: "Brandon logged in today but it says 5 days
+    // ago" — exactly that case.
+    //
+    // Fix: stamp a true lastSignInAt on the staff doc whenever a
+    // staffName binds in this session, independent of push state. This
+    // is the canonical "we saw this person open the app" timestamp.
+    // Debounced via an in-doc check (skip if < 30 min old) so multiple
+    // mounts inside a single session don't cause repeat writes.
+    // Also stamps lastSignInPlatform / lastSignInStandalone so admins
+    // can tell at a glance whether the staffer is opening the PWA or a
+    // browser tab.
+    useEffect(() => {
+        if (!staffName || !currentStaffRecord) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                // Skip if we've stamped within the last 30 min — keeps
+                // writes to roughly one per real session.
+                const prev = currentStaffRecord.lastSignInAt;
+                if (prev) {
+                    const ms = typeof prev === 'number' ? prev : Date.parse(prev);
+                    if (Number.isFinite(ms) && Date.now() - ms < 30 * 60 * 1000) return;
+                }
+                const standalone = (
+                    (window.matchMedia?.('(display-mode: standalone)')?.matches === true)
+                    || (window.navigator?.standalone === true)
+                );
+                const ua = window.navigator?.userAgent || '';
+                // Coarse platform tag — keeps the admin audit's
+                // "where did they sign in from?" column readable.
+                const platform = /iPhone|iPad|iPod/i.test(ua) ? 'iOS'
+                    : /Android/i.test(ua) ? 'Android'
+                    : /Mac OS X|Macintosh/i.test(ua) ? 'Mac'
+                    : /Windows/i.test(ua) ? 'Windows'
+                    : 'other';
+                const ref = doc(db, 'config', 'staff');
+                const snap = await getDoc(ref);
+                if (cancelled) return;
+                const list = (snap.exists() ? snap.data().list : []) || [];
+                const next = list.map(s => s && s.name === staffName
+                    ? {
+                        ...s,
+                        lastSignInAt: Date.now(),
+                        lastSignInPlatform: platform,
+                        lastSignInStandalone: standalone,
+                    }
+                    : s);
+                await setDoc(ref, { list: next });
+            } catch (e) {
+                console.warn('lastSignInAt write failed (non-fatal):', e);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [staffName, currentStaffRecord?.id]);
+
     // TV / kiosk deep link (handled before auth):
     //   /?tv=webster   → Webster menu board (digital signage)
     //   /?tv=maryland  → MD Heights menu board
