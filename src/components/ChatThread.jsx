@@ -1798,13 +1798,39 @@ function ChatThreadInner({
                     <div className="py-10 px-4 text-center">
                         <div className="text-4xl mb-2">⚠️</div>
                         <div className="text-sm font-bold text-dd-text mb-1">
-                            {tx("Couldn't load this chat", 'No se pudo cargar este chat')}
+                            {loadError === 'failed-precondition'
+                                ? tx('Updating chat indexes', 'Actualizando índices')
+                                : loadError === 'unavailable'
+                                ? tx('Offline', 'Sin conexión')
+                                : loadError === 'permission-denied'
+                                ? tx('Access denied', 'Acceso denegado')
+                                : tx("Couldn't load this chat", 'No se pudo cargar este chat')}
                         </div>
+                        {/* 2026-05-28 Audit #4 — same error-code split as
+                            ChatCenter so the user gets specific guidance
+                            for the most common failure modes (index
+                            building after deploy, transient offline,
+                            permission rule change). */}
                         <div className="text-[12px] text-dd-text-2 mb-3 max-w-xs mx-auto">
                             {loadError === 'timeout'
                                 ? tx(
                                     'Network is slow — give it another try in a second.',
                                     'La red está lenta — intenta de nuevo en un momento.',
+                                )
+                                : loadError === 'failed-precondition'
+                                ? tx(
+                                    'Just deployed — try again in about a minute.',
+                                    'Recién actualizado — intenta en un minuto.',
+                                )
+                                : loadError === 'unavailable'
+                                ? tx(
+                                    'Reconnecting to Firestore…',
+                                    'Reconectando a Firestore…',
+                                )
+                                : loadError === 'permission-denied'
+                                ? tx(
+                                    'Your access to this chat changed. Tell Andrew.',
+                                    'Tu acceso a este chat cambió. Avísale a Andrew.',
                                 )
                                 : tx(
                                     'Tap retry. If it keeps happening, check your Wi-Fi or tell Andrew.',

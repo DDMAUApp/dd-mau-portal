@@ -564,13 +564,40 @@ export default function ChatCenter({
                         <div className="p-6 text-center">
                             <div className="text-3xl mb-2">⚠️</div>
                             <div className="text-sm font-bold text-dd-text mb-1">
-                                {tx("Couldn't load chats", 'No se pudo cargar')}
+                                {chatsError === 'failed-precondition'
+                                    ? tx('Updating chat indexes', 'Actualizando índices del chat')
+                                    : chatsError === 'unavailable'
+                                    ? tx('Offline', 'Sin conexión')
+                                    : chatsError === 'permission-denied'
+                                    ? tx('Access denied', 'Acceso denegado')
+                                    : tx("Couldn't load chats", 'No se pudo cargar')}
                             </div>
+                            {/* 2026-05-28 Audit #4 — distinguish Firestore
+                                error codes so the user sees actionable
+                                guidance instead of "tap retry" for every
+                                failure mode. failed-precondition almost
+                                always means a composite index is still
+                                building after a deploy (~1 min). */}
                             <div className="text-[12px] text-dd-text-2 mb-3 max-w-xs mx-auto">
                                 {chatsError === 'timeout'
                                     ? tx(
                                         'Network is slow — try again in a moment.',
                                         'Red lenta — intenta de nuevo.',
+                                    )
+                                    : chatsError === 'failed-precondition'
+                                    ? tx(
+                                        'Just deployed — try again in about a minute.',
+                                        'Recién actualizado — intenta en un minuto.',
+                                    )
+                                    : chatsError === 'unavailable'
+                                    ? tx(
+                                        'Reconnecting to Firestore…',
+                                        'Reconectando a Firestore…',
+                                    )
+                                    : chatsError === 'permission-denied'
+                                    ? tx(
+                                        'Your access to this chat changed. Tell Andrew.',
+                                        'Tu acceso a este chat cambió. Avísale a Andrew.',
                                     )
                                     : tx(
                                         'Tap retry. If it keeps happening, check Wi-Fi or tell Andrew.',
