@@ -8871,15 +8871,26 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
         reason: '',
     });
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    const canSubmit = form.startDate && form.endDate && form.startDate <= form.endDate;
+    // 2026-05-27 — Andrew: "make the reason for the time off required."
+    // The reason field is now required to submit. Trim so a blank
+    // space alone doesn't count. The placeholder + label both flag
+    // it as required.
+    const canSubmit = form.startDate && form.endDate && form.startDate <= form.endDate && form.reason.trim().length > 0;
     return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
-                <div className="border-b border-gray-200 p-4 flex items-center justify-between">
+        // 2026-05-27 — Andrew: "the request time off pops up at the very
+        // bottom of page. bring it up the the top." Anchored to the TOP
+        // of the viewport instead of bottom-on-mobile / centered-on-desktop.
+        // pt-16 (mobile) / pt-20 (sm+) clears the global app header so
+        // the modal sits just below it, not behind it. Inner card uses
+        // rounded-2xl on all sides (no more bottom-sheet flush-to-edge
+        // styling since the modal isn't at the edge anymore).
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-2 sm:p-4 pt-16 sm:pt-20">
+            <div className="bg-white w-full sm:max-w-md rounded-2xl max-h-[calc(100vh-90px)] sm:max-h-[calc(100vh-120px)] overflow-hidden flex flex-col shadow-2xl">
+                <div className="border-b border-gray-200 p-4 flex items-center justify-between shrink-0">
                     <h3 className="text-lg font-bold text-amber-700">🌴 {tx('Request Time Off', 'Pedir Tiempo Libre')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
                 </div>
-                <div className="p-4 space-y-3">
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
                     <div className="text-xs text-gray-600 bg-amber-50 rounded-lg p-2 border border-amber-200">
                         {tx('Submitting as:', 'Enviando como:')} <b>{staffName}</b>. {tx('Your manager will approve or deny.', 'Tu gerente aprobará o negará.')}
                     </div>
@@ -8898,13 +8909,21 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                         </div>
                     </div>
                     <div>
-                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">{tx('Reason', 'Razón')}</label>
+                        {/* 2026-05-27 — reason is now required. * indicator
+                            on the label + the "required" hint in the
+                            placeholder so the user knows before they
+                            tap into the field. Submit button stays
+                            disabled until reason.trim() is non-empty. */}
+                        <label className="text-[11px] font-bold text-dd-text-2 uppercase tracking-wider block mb-1.5">
+                            {tx('Reason', 'Razón')} <span className="text-red-600">*</span>
+                        </label>
                         <input type="text" value={form.reason} onChange={e => update('reason', e.target.value)}
-                            placeholder={tx('e.g. vacation, family, doctor', 'p.ej. vacaciones, familia, doctor')}
+                            required
+                            placeholder={tx('Required — e.g. vacation, family, doctor', 'Obligatorio — p.ej. vacaciones, familia, doctor')}
                             className="w-full border border-dd-line rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50 transition" />
                     </div>
                 </div>
-                <div className="border-t border-gray-200 p-4 flex gap-2">
+                <div className="border-t border-gray-200 p-4 flex gap-2 shrink-0">
                     <button onClick={onClose}
                         className="flex-1 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={() => canSubmit && onSubmit(form)} disabled={!canSubmit}
