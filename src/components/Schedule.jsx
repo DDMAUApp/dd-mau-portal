@@ -36,6 +36,13 @@ import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { enableFcmPush } from '../messaging';
 import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
+// 2026-05-27 — Andrew: forecast bar redesigned to a weather-channel-
+// style row of day cards. Lucide weather glyphs picked per NWS
+// shortForecast keyword (sunny/cloudy/rain/etc.).
+import {
+    Sun, Cloud, CloudSun, CloudRain, CloudDrizzle, CloudLightning,
+    CloudSnow, CloudFog, Wind, ChevronDown,
+} from 'lucide-react';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -5196,7 +5203,15 @@ ${dayBlocks}
                                 owners regardless of who has scheduling rights. */}
                             {isManagerOrAdmin && (
                                 <>
-                                    <HoursScoreboard scoreboard={hoursScoreboard} side={side} isEn={isEn} />
+                                    {/* 2026-05-27 — Andrew: "lets get rid
+                                        of the bar above the forcast. dont
+                                        need it." HoursScoreboard removed
+                                        from the render. The function
+                                        definition is left in place (dead
+                                        code) so any future revert is a
+                                        one-line restore; it's not
+                                        exported so leaving it costs
+                                        nothing at runtime. */}
                                     <SplhAdvisor
                                         splhForecast={splhForecast}
                                         advisory={splhAdvisory}
@@ -5995,163 +6010,125 @@ function HoursScoreboard({ scoreboard, side, isEn }) {
 // per (day-of-week, daypart) against historical typical hours from Toast.
 // Surfaces under-/over-staffed slots with a one-line "+1 / -1" hint plus
 // any weather warnings from NWS forecast for the next several days.
+// 2026-05-27 — Andrew: "in the schedule page the forcast bar lets
+// let it open to a actual whether channel type report with days of
+// the week and that weather in separate day weather flags. get rid
+// of everything else in that bar."
+//
+// Component name kept (SplhAdvisor) to minimize churn at call sites,
+// but the SPLH grid + variance advisory copy are GONE. The bar now
+// shows ONLY the NWS weather forecast as a row of day cards
+// (weather-channel pattern: day label, glyph, temp, condition,
+// precipitation chance). On mobile the row scrolls horizontally; on
+// desktop it lays out as a 7-column grid.
+//
+// Args still accepted (splhForecast, advisory, weatherTips, side)
+// but only `weather`, `open`, `onToggle`, and `isEn` are used. Kept
+// the prop signature so the call site doesn't have to change.
+
+// Map an NWS shortForecast string to a Lucide weather glyph.
+// Conservative keyword matching — order matters (thunderstorm
+// before "rain", drizzle before "rain", etc.).
+function pickWeatherIcon(forecast) {
+    const f = (forecast || '').toLowerCase();
+    if (f.includes('thunder') || f.includes('lightning')) return CloudLightning;
+    if (f.includes('snow') || f.includes('flurr') || f.includes('sleet')) return CloudSnow;
+    if (f.includes('drizzle')) return CloudDrizzle;
+    if (f.includes('rain') || f.includes('shower')) return CloudRain;
+    if (f.includes('fog') || f.includes('mist') || f.includes('haze')) return CloudFog;
+    if (f.includes('wind')) return Wind;
+    if (f.includes('partly') || f.includes('mostly sunny') || f.includes('mostly clear')) return CloudSun;
+    if (f.includes('cloudy') || f.includes('overcast')) return Cloud;
+    if (f.includes('sunny') || f.includes('clear') || f.includes('fair')) return Sun;
+    return CloudSun;
+}
+
 function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onToggle, isEn, side }) {
     const tx = (en, es) => (isEn ? en : es);
-    const hasData = advisory.haveData;
-    // Headline chip (always visible). Compact summary so the advisor adds
-    // signal even when collapsed.
-    const headline = (() => {
-        if (!hasData) return tx('Forecast: no historical data yet.', 'Pronóstico: sin datos históricos.');
-        if (advisory.under === 0 && advisory.over === 0) return tx('Forecast: schedule looks balanced ✓', 'Pronóstico: horario balanceado ✓');
-        const bits = [];
-        if (advisory.under > 0) bits.push(tx(`${advisory.under} under-staffed`, `${advisory.under} con poco personal`));
-        if (advisory.over > 0)  bits.push(tx(`${advisory.over} over-staffed`, `${advisory.over} con exceso`));
-        return tx(`Forecast: ${bits.join(', ')}`, `Pronóstico: ${bits.join(', ')}`);
-    })();
-    const headlineTone = !hasData ? 'bg-white text-dd-text-2 border-dd-line'
-        : (advisory.under > 0 || advisory.over > 0) ? 'bg-amber-50 text-amber-800 border-amber-200'
-        : 'bg-dd-green-50 text-dd-green-700 border-dd-green/30';
-    // Today's weather summary for the collapsed header chip. Pulls the
-    // first daytime period so the user sees the current forecast at a
-    // glance without having to expand the advisor. Per Andrew (2026-05-14):
-    // "above the schedule there used to be a weather" — this restores
-    // the at-a-glance visibility while keeping the full forecast inside
-    // the expanded advisor.
-    const todayWeather = weather?.periods?.find(p => p.isDaytime);
+    // Daytime periods only — that's "Mon / Tue / Wed / …" or
+    // "Today / Tonight / Tomorrow …". NWS returns up to 14 periods
+    // (7 days × day+night); slicing daytime gets us the 7-ish forward
+    // days that managers care about for staffing decisions.
+    const days = (weather?.periods || []).filter(p => p.isDaytime).slice(0, 7);
+    const todayWeather = days[0] || null;
+    const TodayIcon = todayWeather ? pickWeatherIcon(todayWeather.shortForecast) : CloudSun;
+
     return (
         <div className="mb-3">
+            {/* Collapsed header — today's weather chip + tap-to-expand.
+                Same glass-card chrome as the rest of the app; no more
+                amber/green tonal flips (we no longer carry the SPLH
+                advisory state). */}
             <button onClick={onToggle}
-                className={`w-full text-left flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border shadow-card hover:shadow-card-hov transition ${headlineTone}`}>
-                <span className="text-xs font-bold flex items-center gap-2 flex-wrap">
-                    <span className="w-7 h-7 rounded-lg bg-white/70 flex items-center justify-center text-sm shadow-sm">📊</span>
-                    {headline}
-                    {todayWeather && (
-                        <span className="px-1.5 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 text-[10px] font-bold whitespace-nowrap">
-                            🌤 {todayWeather.temperature}°{todayWeather.temperatureUnit || 'F'} · {todayWeather.shortForecast}
+                className="w-full text-left flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-white border border-dd-line shadow-card hover:shadow-card-hov transition">
+                <span className="flex items-center gap-2 min-w-0">
+                    <span className="w-9 h-9 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                        <TodayIcon size={20} strokeWidth={2.25} aria-hidden="true" />
+                    </span>
+                    <span className="min-w-0">
+                        <span className="block text-[10px] font-black uppercase tracking-widest text-dd-text-2 leading-none">
+                            {tx('Weather forecast', 'Pronóstico del clima')}
                         </span>
-                    )}
-                    {(weatherTips?.length || 0) > 0 && <span className="ml-1 px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-300 text-[10px] font-bold">⚠️ {weatherTips.length} {tx('weather tip', 'aviso clima')}{weatherTips.length === 1 ? '' : 's'}</span>}
+                        <span className="block text-sm font-bold text-dd-text leading-tight mt-0.5 truncate">
+                            {todayWeather
+                                ? `${todayWeather.temperature}°${todayWeather.temperatureUnit || 'F'} · ${todayWeather.shortForecast}`
+                                : tx('Loading forecast…', 'Cargando pronóstico…')}
+                        </span>
+                    </span>
                 </span>
-                <span className="text-xs font-bold opacity-60">{open ? '▼' : '▶'}</span>
+                <ChevronDown
+                    size={18}
+                    strokeWidth={2.25}
+                    aria-hidden="true"
+                    className={`shrink-0 text-dd-text-2 transition-transform duration-glass-fast ease-glass-out ${open ? 'rotate-180' : ''}`}
+                />
             </button>
+
+            {/* Expanded body — row of day cards (weather-channel style).
+                Mobile scrolls horizontally so 7 days don't crush; sm+
+                lays out as a flex row that wraps on narrow desktop
+                widths. Each card = one "weather flag" per day. */}
             {open && (
-                <div className="mt-2 bg-white border border-dd-line rounded-xl p-4 space-y-3 shadow-card">
-                    {!hasData && (
-                        <p className="text-xs text-dd-text-2">
-                            {tx('No labor history yet — once the Toast scraper has 7+ days of hourly data, forecasts will populate.',
-                                'Sin historial — una vez que el scraper de Toast tenga 7+ días, el pronóstico aparecerá.')}
+                <div className="mt-2 bg-white border border-dd-line rounded-xl p-3 shadow-card">
+                    {days.length === 0 ? (
+                        <p className="text-xs text-dd-text-2 text-center py-4">
+                            {tx('Loading forecast…', 'Cargando pronóstico…')}
                         </p>
-                    )}
-                    {hasData && (
-                        <div className="overflow-x-auto -mx-2 px-2">
-                            <table className="w-full text-[11px] border-collapse">
-                                <thead>
-                                    <tr className="text-dd-text-2">
-                                        <th className="text-left p-1 font-bold uppercase tracking-wider text-[10px]">{tx('Day', 'Día')}</th>
-                                        {DAYPARTS.map(p => (
-                                            <th key={p.id} className="text-center p-1 font-bold uppercase tracking-wider text-[10px] whitespace-nowrap">
-                                                {isEn ? p.enLabel : p.esLabel}<br />
-                                                <span className="text-[9px] font-normal normal-case text-dd-text-2/60 tracking-normal">{p.startHr}-{p.endHr}</span>
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {[0,1,2,3,4,5,6].map(i => {
-                                        const dayCells = splhForecast.filter(f => f.dow === i || (() => {
-                                            // splhForecast is built per-day-of-week-of-the-current-week.
-                                            // Each entry's dateStr is unique per row index. We render in
-                                            // calendar-week order — re-bucket properly:
-                                            return false;
-                                        })());
-                                        // Re-bucket: take the entries whose displayed row should be `i`.
-                                        const rowEntries = splhForecast.slice(i * DAYPARTS.length, (i + 1) * DAYPARTS.length);
-                                        if (rowEntries.length === 0) return null;
-                                        const dow = rowEntries[0]?.dow;
-                                        const labels = isEn ? DOW_EN : DOW_ES;
-                                        return (
-                                            <tr key={i} className="border-t border-dd-line/50">
-                                                <td className="p-1 font-bold text-dd-text">
-                                                    {labels[dow]}
-                                                    <span className="text-[9px] text-dd-text-2/70 block tabular-nums">{rowEntries[0]?.dateStr?.slice(5)}</span>
-                                                </td>
-                                                {rowEntries.map(f => {
-                                                    const v = f.variance;
-                                                    const tone = v.status === 'over' ? 'bg-red-50 text-red-700 border-red-200'
-                                                              : v.status === 'under' ? 'bg-amber-50 text-amber-800 border-amber-300'
-                                                              : v.status === 'on' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                                                              : 'bg-gray-50 text-gray-400 border-gray-200';
-                                                    const icon = v.status === 'over' ? '⬇' : v.status === 'under' ? '⬆' : v.status === 'on' ? '✓' : '—';
-                                                    const deltaHrs = v.recommendedDelta;
-                                                    const recommend = (v.status !== 'unknown' && Math.abs(deltaHrs) >= 1)
-                                                        ? `${deltaHrs > 0 ? '+' : ''}${deltaHrs.toFixed(1)}h`
-                                                        : '';
-                                                    return (
-                                                        <td key={f.part.id} className="p-1">
-                                                            <div className={`text-center rounded border ${tone} px-1 py-1`}
-                                                                title={f.hist
-                                                                    ? `Scheduled ${f.scheduled.toFixed(1)}h vs typical ${f.hist.avgHours.toFixed(1)}h · typical sales ${fmtUSD(f.hist.avgSales)} (n=${f.hist.n})`
-                                                                    : 'no historical data for this slot'}>
-                                                                <div className="font-bold text-[11px] leading-tight">
-                                                                    {icon} {f.scheduled.toFixed(0)}h
-                                                                </div>
-                                                                {f.hist?.avgHours > 0 && (
-                                                                    <div className="text-[8px] text-gray-500 leading-none mt-0.5">
-                                                                        {tx('typ', 'típ')} {f.hist.avgHours.toFixed(0)}h
-                                                                    </div>
-                                                                )}
-                                                                {recommend && (
-                                                                    <div className="text-[8px] font-bold leading-none mt-0.5">{recommend}</div>
-                                                                )}
-                                                            </div>
-                                                        </td>
-                                                    );
-                                                })}
-                                            </tr>
-                                        );
-                                    })}
-                                </tbody>
-                            </table>
-                            <p className="text-[10px] text-dd-text-2/70 mt-2 italic">
-                                {tx(`Scheduled ${side.toUpperCase()} hours per slot vs typical from last 28 days. ⬆ = under-staffed, ⬇ = over-staffed, ✓ = on target. Tooltip shows raw numbers.`,
-                                    `Horas programadas ${side.toUpperCase()} vs típicas (28 días). ⬆ = poco, ⬇ = exceso, ✓ = bien. Pasa el cursor para detalles.`)}
-                            </p>
-                        </div>
-                    )}
-                    {/* Weather forecast — always renders when we have data,
-                        not just when there's a notable tip. Andrew (2026-05-14):
-                        previously this section was gated on weatherTips.length>0,
-                        which meant mild St. Louis weeks hid the forecast
-                        entirely. Restored to "always show the next few days
-                        when forecast data is loaded; layer tip warnings on
-                        top when present." */}
-                    {weather?.periods?.length > 0 && (
-                        <div className="border-t border-dd-line pt-3">
-                            <h4 className="text-[11px] font-bold text-blue-700 mb-1.5 uppercase tracking-wider">
-                                🌤 {tx(`Weather: ${weather?.location || ''}`, `Clima: ${weather?.location || ''}`)}
-                            </h4>
-                            <ul className="text-[11px] text-dd-text space-y-1.5">
-                                {weather.periods.filter(p => p.isDaytime).slice(0, 4).map((p, idx) => {
-                                    // Find the matching tip for this day (if any) so warnings
-                                    // ride alongside the regular forecast row instead of
-                                    // appearing as a separate "tips only" section.
-                                    const tip = (weatherTips || []).find(t => t.name === p.name);
+                    ) : (
+                        <>
+                            {weather?.location && (
+                                <div className="text-[10px] font-black uppercase tracking-widest text-dd-text-2 mb-2 px-1">
+                                    {weather.location}
+                                </div>
+                            )}
+                            <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
+                                {days.map((p, idx) => {
+                                    const Icon = pickWeatherIcon(p.shortForecast);
                                     const rain = p.probabilityOfPrecipitation?.value || 0;
                                     const tF = Number(p.temperature) || null;
                                     return (
-                                        <li key={idx} className="flex items-start gap-2">
-                                            <span className="font-bold whitespace-nowrap text-dd-text">{p.name}:</span>
-                                            <span>
-                                                <span className="text-dd-text-2">{p.shortForecast}{tF != null && ` · ${tF}°F`}{rain > 0 && ` · ${rain}% rain`}</span>
-                                                {tip?.parts?.map((part, j) => (
-                                                    <div key={j} className="text-[11px] text-amber-800 mt-0.5">⚠️ {isEn ? part.text : part.esText}</div>
-                                                ))}
-                                            </span>
-                                        </li>
+                                        <div key={idx}
+                                            className="shrink-0 w-[112px] rounded-xl bg-dd-sage-50/40 border border-dd-line p-2.5 flex flex-col items-center text-center">
+                                            <div className="text-[10px] font-black uppercase tracking-widest text-dd-text-2 truncate w-full">
+                                                {p.name}
+                                            </div>
+                                            <Icon size={32} strokeWidth={1.75} aria-hidden="true" className="my-2 text-dd-green-700" />
+                                            <div className="text-2xl font-black tabular-nums text-dd-text leading-none">
+                                                {tF != null ? `${tF}°` : '—'}
+                                            </div>
+                                            <div className="text-[10px] text-dd-text-2 mt-1.5 line-clamp-2 leading-tight">
+                                                {p.shortForecast}
+                                            </div>
+                                            {rain > 0 && (
+                                                <div className="mt-1.5 text-[10px] font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-1.5 py-0.5">
+                                                    💧 {rain}%
+                                                </div>
+                                            )}
+                                        </div>
                                     );
                                 })}
-                            </ul>
-                        </div>
+                            </div>
+                        </>
                     )}
                 </div>
             )}
@@ -7840,19 +7817,61 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
         return tx(`Submitted ${date} at ${time}`, `Enviado ${date} a las ${time}`);
     };
 
+    // 2026-05-27 — Andrew: "the time off request lets make that bar
+    // collapsible." PTO panels (myPto + pendingPto) opt into a
+    // collapse toggle by passing `collapsible` + `open` + `onToggle`.
+    // Other panels (open offers, swap requests) keep their always-
+    // rendered behavior by omitting those props. Default state for
+    // the PTO panels is collapsed (saves vertical real estate on the
+    // schedule page); preference persists per device via
+    // localStorage('ddmau:schedulePto:*Open').
+    const [myPtoOpen, setMyPtoOpen] = useState(() => {
+        try { return localStorage.getItem('ddmau:schedulePto:myOpen') === '1'; } catch { return false; }
+    });
+    const [pendingPtoOpen, setPendingPtoOpen] = useState(() => {
+        try { return localStorage.getItem('ddmau:schedulePto:pendingOpen') === '1'; } catch { return false; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('ddmau:schedulePto:myOpen', myPtoOpen ? '1' : '0'); } catch {}
+    }, [myPtoOpen]);
+    useEffect(() => {
+        try { localStorage.setItem('ddmau:schedulePto:pendingOpen', pendingPtoOpen ? '1' : '0'); } catch {}
+    }, [pendingPtoOpen]);
+
     // Reusable card chrome — clean white card with semantic accent stripe.
-    const Panel = ({ accent, icon, title, count, children }) => (
-        <div className="rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
-            <div className="flex items-center gap-2 px-3 py-2 border-b border-dd-line bg-dd-bg/40">
-                <span className={`w-1 h-5 rounded-full ${accent}`} />
-                <span className="text-sm font-bold text-dd-text flex items-center gap-1.5">
-                    <span>{icon}</span> {title}
-                </span>
-                {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
+    // When `collapsible` + `open` + `onToggle` are provided, the header
+    // becomes a tappable button + chevron and the children render only
+    // when open. Without those props, behavior is unchanged.
+    const Panel = ({ accent, icon, title, count, children, collapsible = false, open = true, onToggle }) => {
+        const HeaderTag = collapsible ? 'button' : 'div';
+        return (
+            <div className="rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
+                <HeaderTag
+                    type={collapsible ? 'button' : undefined}
+                    onClick={collapsible ? onToggle : undefined}
+                    className={`w-full flex items-center gap-2 px-3 py-2 border-b border-dd-line bg-dd-bg/40 text-left ${collapsible ? 'hover:bg-dd-bg/70 active:bg-dd-bg/90 transition-colors' : ''}`}
+                    aria-expanded={collapsible ? open : undefined}
+                >
+                    <span className={`w-1 h-5 rounded-full ${accent}`} />
+                    <span className="text-sm font-bold text-dd-text flex items-center gap-1.5">
+                        <span>{icon}</span> {title}
+                    </span>
+                    {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
+                    {collapsible && (
+                        <ChevronDown
+                            size={16}
+                            strokeWidth={2.25}
+                            aria-hidden="true"
+                            className={`shrink-0 text-dd-text-2 transition-transform duration-glass-fast ease-glass-out ${open ? 'rotate-180' : ''} ${count == null ? 'ml-auto' : ''}`}
+                        />
+                    )}
+                </HeaderTag>
+                {(!collapsible || open) && (
+                    <div className="p-2.5 space-y-1.5">{children}</div>
+                )}
             </div>
-            <div className="p-2.5 space-y-1.5">{children}</div>
-        </div>
-    );
+        );
+    };
     return (
         <div className="mb-3 space-y-2 print:hidden">
             {/* My own open offers — gentle reminder this is still mine */}
@@ -7910,7 +7929,8 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                 without flagging down a manager. See handleCancelOwnPto for
                 the per-status rationale (silent vs notify). */}
             {myPto.length > 0 && (
-                <Panel accent="bg-amber-500" icon="🌴" title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}>
+                <Panel accent="bg-amber-500" icon="🌴" title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}
+                    collapsible open={myPtoOpen} onToggle={() => setMyPtoOpen(v => !v)}>
                     {myPto.map(t => {
                         const status = t.status || 'pending';
                         // Per-status button label + tone:
@@ -7957,7 +7977,8 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* Manager / admin pending PTO queue */}
             {canEdit && pendingPto.length > 0 && (
-                <Panel accent="bg-amber-500" icon="🌴" title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}>
+                <Panel accent="bg-amber-500" icon="🌴" title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}
+                    collapsible open={pendingPtoOpen} onToggle={() => setPendingPtoOpen(v => !v)}>
                     {pendingPto.map(t => {
                         const submittedLabel = fmtSubmittedAt(t.submittedAt);
                         return (
