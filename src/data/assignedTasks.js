@@ -86,6 +86,34 @@ export function subscribeTaskLibrary(side, callback) {
     });
 }
 
+// 2026-05-27 — Andrew (kanban tasks redesign): subscribe to ALL open
+// assignments for one side. The kanban manager view shows per-staff
+// columns of open work; rather than spinning up N
+// subscribeAssignmentsForStaff listeners (one per staff member), a
+// single side-scoped query is cheaper.
+// Returns assignments sorted assignedAt desc; client groups by staffId.
+export function subscribeOpenAssignments(side, callback) {
+    if (!side || typeof callback !== 'function') return () => {};
+    const q = query(
+        collection(db, 'assigned_tasks'),
+        where('side', '==', side),
+        where('done', '==', false),
+    );
+    return onSnapshot(q, (snap) => {
+        const out = [];
+        snap.forEach((d) => out.push({ id: d.id, ...(d.data() || {}) }));
+        out.sort((a, b) => {
+            const at = a.assignedAt?.toMillis?.() || 0;
+            const bt = b.assignedAt?.toMillis?.() || 0;
+            return bt - at;
+        });
+        callback(out);
+    }, (err) => {
+        console.warn('subscribeOpenAssignments failed:', err);
+        callback([]);
+    });
+}
+
 // ── HELPERS ────────────────────────────────────────────────────────────
 
 // Case-insensitive find by task text (trims + lowercases both sides so
@@ -200,6 +228,52 @@ export async function assignTasksToStaff({ tasks, staff, manager, side }) {
 
     await batch.commit();
     return { writes: deduped.length };
+}
+
+// 2026-05-27 — Andrew (kanban tasks redesign): add a task text to the
+// side's master library WITHOUT creating an assignment. Used by the
+// new "+ Add task" input on the kanban master list — staff don't get
+// assigned yet, the row just lives in the library waiting to be
+// tapped + assigned. Same upsert semantics as assignTasksToStaff's
+// library half (case-insensitive de-dupe; bump useCount if the task
+// already exists). Returns { added: true|false } so the caller can
+// flash a toast if the row was a duplicate.
+export async function addLibraryEntry(side, taskText, category = 'other') {
+    const norm = (taskText || '').trim();
+    if (!norm || !side) return { added: false };
+    const libRef = doc(db, 'config', `task_library_${side}`);
+    const libSnap = await getDoc(libRef);
+    const libData = libSnap.exists() ? libSnap.data() : null;
+    const libItems = Array.isArray(libData?.items) ? [...libData.items] : [];
+    const idx = findLibraryItemIdx(libItems, norm);
+    const nowMs = Date.now();
+    if (idx >= 0) {
+        // Already in the library — leave the row alone (don't bump
+        // useCount; that counter is for assignment frequency, not
+        // "added to library" frequency). Signal duplicate to caller.
+        return { added: false };
+    }
+    libItems.push({
+        id: makeLibraryId(norm),
+        task: norm,
+        category: (category || 'other').trim() || 'other',
+        useCount: 0,  // hasn't been assigned yet
+        lastUsedAt: nowMs,
+    });
+    await updateDoc(libRef, {
+        items: libItems,
+        side,
+        updatedAt: serverTimestamp(),
+    }).catch(async () => {
+        // Doc may not exist yet (first time the side gets any task).
+        // Fall back to setDoc-merge via the writeBatch path.
+        const batch = writeBatch(db);
+        batch.set(libRef, {
+            items: libItems, side, updatedAt: serverTimestamp(),
+        }, { merge: true });
+        await batch.commit();
+    });
+    return { added: true };
 }
 
 // Toggle done on an assignment (staff action). Writes done + doneAt + doneBy.
