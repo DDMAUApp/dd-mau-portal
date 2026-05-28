@@ -2,6 +2,289 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ╔══════════════════════════════════════════════════════════════════╗
+   ║  Liquid Glass design system — Phase 1 utility classes (additive) ║
+   ║  Inspired by Apple's Liquid Glass / iOS materials. Each class is ║
+   ║  OPT-IN — existing components keep their look until a future     ║
+   ║  phase swaps them in. Light + dark variants share the same       ║
+   ║  layout / spacing / radii; only the surface fill differs.        ║
+   ║                                                                  ║
+   ║  Two ways to invoke:                                             ║
+   ║    1. Add `glass-card` etc. directly on an element               ║
+   ║    2. Add `is-dark` next to it for the dark variant              ║
+   ║       e.g. <div class="glass-card is-dark">                      ║
+   ║                                                                  ║
+   ║  Browser support:                                                ║
+   ║    - backdrop-filter: 96%+ global (Safari 9+, Chrome 76+,        ║
+   ║      Firefox 103+, Android Chrome). Older Android WebView gets   ║
+   ║      a fallback solid surface via @supports below.               ║
+   ║    - prefers-reduced-motion: every transition wrapped to respect ║
+   ║      it (no jarring animations for users with vestibular issues).║
+   ╚══════════════════════════════════════════════════════════════════╝ */
+@layer components {
+    /* ── Card / panel / nav ─────────────────────────────────────── */
+
+    /* glass-card — the workhorse. Most "card on a page" surfaces use
+       this. Pair with `is-dark` for the chat-style dark variant. */
+    .glass-card {
+        @apply bg-glass-surface-light backdrop-blur-glass-medium
+               border border-glass-border-light
+               rounded-glass-lg shadow-glass-md;
+        background-clip: padding-box;
+    }
+    .glass-card.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark shadow-none;
+        /* No backdrop-blur on dark: the solid #1c1c1e fill is the
+           material; blurring would only show the same dark color
+           behind. Saves a compositor layer on every dark card. */
+        backdrop-filter: none;
+    }
+
+    /* glass-panel — same chrome as card but wider radius and more
+       padding for whole-page or whole-section containers. */
+    .glass-panel {
+        @apply bg-glass-surface-light backdrop-blur-glass-medium
+               border border-glass-border-light
+               rounded-glass-xl shadow-glass-lg p-4 sm:p-6;
+        background-clip: padding-box;
+    }
+    .glass-panel.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark shadow-none;
+        backdrop-filter: none;
+    }
+
+    /* glass-nav — sticky top bar / sidebar / bottom nav. Heavier
+       blur so the surface reads as "frosted" against content
+       scrolling underneath. */
+    .glass-nav {
+        @apply bg-glass-surface-strong backdrop-blur-glass-heavy
+               border-b border-glass-border-light;
+    }
+    .glass-nav.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark;
+        backdrop-filter: none;
+    }
+
+    /* ── Buttons ────────────────────────────────────────────────── */
+
+    /* glass-button — neutral translucent button. Default for
+       secondary / tertiary actions. */
+    .glass-button {
+        @apply inline-flex items-center justify-center gap-1.5
+               px-3.5 py-2 rounded-glass-md font-semibold text-sm
+               bg-glass-surface-light backdrop-blur-glass-subtle
+               border border-glass-border-light
+               text-dd-text
+               transition-all duration-glass-fast ease-glass-out;
+        background-clip: padding-box;
+    }
+    .glass-button:hover {
+        @apply bg-glass-surface-strong shadow-glass-sm;
+    }
+    .glass-button:active {
+        @apply scale-[0.97];
+    }
+    .glass-button.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark text-white;
+        backdrop-filter: none;
+    }
+    .glass-button.is-dark:hover {
+        @apply bg-glass-surface-dark-2;
+    }
+
+    /* glass-button-primary — dd-green brand button. Use for the
+       primary action on each surface (one per screen). */
+    .glass-button-primary {
+        @apply inline-flex items-center justify-center gap-1.5
+               px-3.5 py-2 rounded-glass-md font-bold text-sm
+               bg-dd-green text-white
+               border border-dd-green
+               shadow-glass-sm
+               transition-all duration-glass-fast ease-glass-out;
+    }
+    .glass-button-primary:hover {
+        @apply bg-dd-green-700 shadow-glass-md;
+    }
+    .glass-button-primary:active {
+        @apply scale-[0.97];
+    }
+
+    /* ── Inputs ─────────────────────────────────────────────────── */
+
+    .glass-input {
+        @apply w-full px-3.5 py-2.5 rounded-glass-md text-sm
+               bg-glass-surface-strong backdrop-blur-glass-subtle
+               border border-glass-border-light
+               text-dd-text placeholder:text-dd-text-2
+               transition-colors duration-glass-fast ease-glass-out;
+        background-clip: padding-box;
+    }
+    .glass-input:focus {
+        @apply outline-none border-dd-green ring-2 ring-dd-green/20;
+    }
+    .glass-input.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark text-white placeholder:text-white/40;
+        backdrop-filter: none;
+    }
+    .glass-input.is-dark:focus {
+        @apply border-dd-green ring-dd-green/30;
+    }
+
+    /* ── Modals ─────────────────────────────────────────────────── */
+
+    .glass-modal-backdrop {
+        @apply fixed inset-0 z-40 bg-glass-scrim backdrop-blur-glass-subtle
+               flex items-end sm:items-center justify-center p-0 sm:p-4;
+    }
+    .glass-modal-content {
+        @apply relative z-50 w-full sm:max-w-md max-h-[92vh] overflow-y-auto
+               bg-glass-surface-strong backdrop-blur-glass-heavy
+               border border-glass-border-light
+               rounded-t-glass-2xl sm:rounded-glass-2xl
+               shadow-glass-floating;
+        background-clip: padding-box;
+    }
+    .glass-modal-content.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark;
+        backdrop-filter: none;
+    }
+
+    /* ── Tabs (segmented pill) ──────────────────────────────────── */
+
+    .glass-tabs {
+        @apply inline-flex p-1 rounded-glass-lg
+               bg-glass-surface-light backdrop-blur-glass-subtle
+               border border-glass-border-light;
+    }
+    .glass-tabs > button {
+        @apply px-3.5 py-1.5 rounded-glass-md text-sm font-semibold
+               text-dd-text-2
+               transition-all duration-glass-fast ease-glass-out;
+    }
+    .glass-tabs > button[aria-selected="true"],
+    .glass-tabs > button.is-active {
+        @apply bg-white text-dd-text shadow-glass-sm;
+    }
+    .glass-tabs.is-dark {
+        @apply bg-glass-surface-dark border-glass-border-dark;
+        backdrop-filter: none;
+    }
+    .glass-tabs.is-dark > button {
+        @apply text-white/60;
+    }
+    .glass-tabs.is-dark > button[aria-selected="true"],
+    .glass-tabs.is-dark > button.is-active {
+        @apply bg-glass-surface-dark-2 text-white shadow-none;
+    }
+
+    /* ── Section header ─────────────────────────────────────────── */
+
+    .glass-section-header {
+        @apply flex items-baseline justify-between gap-3 mb-3;
+    }
+    .glass-section-header h2 {
+        @apply text-base sm:text-lg font-black text-dd-text tracking-tight;
+    }
+    .glass-section-header .subtitle {
+        @apply text-xs text-dd-text-2;
+    }
+
+    /* ── Empty / loading / error states ─────────────────────────── */
+
+    .glass-empty-state {
+        @apply flex flex-col items-center justify-center text-center
+               py-12 px-6 rounded-glass-lg
+               bg-glass-surface-light backdrop-blur-glass-subtle
+               border border-glass-border-light;
+    }
+    .glass-empty-state .icon {
+        @apply text-4xl mb-2 opacity-70;
+    }
+    .glass-empty-state .title {
+        @apply text-sm font-bold text-dd-text mb-1;
+    }
+    .glass-empty-state .hint {
+        @apply text-xs text-dd-text-2 max-w-xs;
+    }
+
+    .glass-skeleton {
+        @apply rounded-glass-md bg-glass-surface-light;
+        background-image: linear-gradient(
+            90deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0.5) 50%,
+            rgba(255, 255, 255, 0) 100%
+        );
+        background-size: 200% 100%;
+        background-repeat: no-repeat;
+        animation: glass-shimmer 1400ms ease-in-out infinite;
+    }
+    @keyframes glass-shimmer {
+        0%   { background-position: -100% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    .glass-error-state {
+        @apply flex flex-col items-center justify-center text-center
+               py-10 px-6 rounded-glass-lg
+               border border-red-200 bg-red-50/70 backdrop-blur-glass-subtle;
+    }
+    .glass-error-state .icon {
+        @apply text-3xl mb-2;
+    }
+    .glass-error-state .title {
+        @apply text-sm font-bold text-red-800 mb-1;
+    }
+    .glass-error-state .message {
+        @apply text-xs text-red-700 mb-3 max-w-xs;
+    }
+}
+
+/* ── Compatibility fallbacks ───────────────────────────────────────
+   Old Android WebView / legacy Safari without backdrop-filter render
+   the translucent surfaces as nearly-transparent → unreadable. Bump
+   the surfaces to a near-opaque white so content stays readable.
+   Modern browsers ignore this block. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-card,
+    .glass-panel,
+    .glass-nav,
+    .glass-button,
+    .glass-input,
+    .glass-modal-content,
+    .glass-tabs,
+    .glass-empty-state {
+        background-color: rgba(255, 255, 255, 0.96) !important;
+    }
+    .glass-card.is-dark,
+    .glass-panel.is-dark,
+    .glass-nav.is-dark,
+    .glass-button.is-dark,
+    .glass-input.is-dark,
+    .glass-modal-content.is-dark,
+    .glass-tabs.is-dark {
+        background-color: #1c1c1e !important;
+    }
+}
+
+/* ── Reduced motion ────────────────────────────────────────────────
+   Users with vestibular sensitivity opt-out of UI motion via OS
+   settings. Honor it across every glass transition + the shimmer
+   animation. We don't disable transitions entirely (a 1ms duration
+   keeps state changes ARIA-detectable and avoids janky "snap" feel
+   in some browsers) — we just remove the perceived motion. */
+@media (prefers-reduced-motion: reduce) {
+    .glass-button,
+    .glass-button-primary,
+    .glass-input,
+    .glass-tabs > button,
+    .glass-skeleton {
+        transition-duration: 1ms !important;
+        animation-duration: 1ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}
+
 body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
