@@ -24,6 +24,7 @@
  *     (see canEditSchedule() in src/data/staff.js)
  */
 import { useState, useEffect, useMemo, useRef, memo } from 'react';
+import { createPortal } from 'react-dom';
 import { db } from '../firebase';
 import { toast, undoToast } from '../toast';
 import {
@@ -42,6 +43,10 @@ import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUS
 import {
     Sun, Cloud, CloudSun, CloudRain, CloudDrizzle, CloudLightning,
     CloudSnow, CloudFog, Wind, ChevronDown,
+    // Schedule top-of-page chrome icons — replace bare emoji glyphs
+    // for a more polished, OS-consistent look across iOS + Android.
+    Sofa, Utensils, LayoutGrid, LayoutList, List, Palmtree,
+    Search, User, Megaphone, Plus, MoreHorizontal, Bell,
 } from 'lucide-react';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -4542,7 +4547,7 @@ ${dayBlocks}
                     <button onClick={() => setShowNotifDrawer(true)}
                         title="Schedule notifications"
                         className="relative p-2 rounded-lg glass-sheet hover:bg-dd-bg transition shadow-card">
-                        <span className="text-base">🔔</span>
+                        <Bell size={18} strokeWidth={2.25} aria-hidden="true" className="text-dd-text" />
                         <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                             {unreadCount > 9 ? '9+' : unreadCount}
                         </span>
@@ -4560,12 +4565,14 @@ ${dayBlocks}
             {(staffIsAdmin || _viewerIsBothSide) && (
                 <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
                     <button onClick={() => setSide('foh')}
-                        className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'foh' ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                        🪑 {tx('Front of House', 'Front of House')}
+                        className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'foh' ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                        <Sofa size={16} strokeWidth={2.25} aria-hidden="true" />
+                        {tx('Front of House', 'Front of House')}
                     </button>
                     <button onClick={() => setSide('boh')}
-                        className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'boh' ? 'bg-orange-600 text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                        🍳 {tx('Back of House', 'Back of House')}
+                        className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'boh' ? 'bg-orange-600/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                        <Utensils size={16} strokeWidth={2.25} aria-hidden="true" />
+                        {tx('Back of House', 'Back of House')}
                     </button>
                 </div>
             )}
@@ -4576,16 +4583,20 @@ ${dayBlocks}
             {/* View mode segmented control */}
             <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
                 {[
-                    { key: 'grid', labelEn: 'Week', labelEs: 'Semana', icon: '⊞' },
-                    { key: 'day', labelEn: 'Day', labelEs: 'Día', icon: '☰' },
-                    { key: 'list', labelEn: 'List', labelEs: 'Lista', icon: '≡' },
-                    { key: 'pto', labelEn: 'Time Off', labelEs: 'Tiempo libre', icon: '🌴' },
-                ].map(v => (
-                    <button key={v.key} onClick={() => setViewMode(v.key)}
-                        className={`flex-1 py-1.5 rounded-md text-xs font-bold transition ${viewMode === v.key ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
-                        <span className="mr-1">{v.icon}</span>{tx(v.labelEn, v.labelEs)}
-                    </button>
-                ))}
+                    { key: 'grid', labelEn: 'Week', labelEs: 'Semana', Icon: LayoutGrid },
+                    { key: 'day',  labelEn: 'Day',  labelEs: 'Día',    Icon: LayoutList },
+                    { key: 'list', labelEn: 'List', labelEs: 'Lista',  Icon: List },
+                    { key: 'pto',  labelEn: 'Time Off', labelEs: 'Tiempo libre', Icon: Palmtree },
+                ].map(v => {
+                    const Icon = v.Icon;
+                    return (
+                        <button key={v.key} onClick={() => setViewMode(v.key)}
+                            className={`flex-1 py-1.5 rounded-md text-xs font-bold transition inline-flex items-center justify-center gap-1 ${viewMode === v.key ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
+                            <Icon size={14} strokeWidth={2.25} aria-hidden="true" />
+                            {tx(v.labelEn, v.labelEs)}
+                        </button>
+                    );
+                })}
             </div>
 
             {/* Mobile "fit to screen" zoom toggle — only relevant for
@@ -4598,12 +4609,13 @@ ${dayBlocks}
                 <button onClick={() => setGridFitToScreen(v => !v)}
                     className={`md:hidden w-full flex items-center justify-center gap-2 py-1.5 mb-3 rounded-lg border text-xs font-bold transition print:hidden ${
                         gridFitToScreen
-                            ? 'bg-dd-green text-white border-dd-green'
-                            : 'bg-white text-dd-text-2 border-dd-line hover:bg-dd-bg'
+                            ? 'bg-dd-green/90 text-white border-dd-green backdrop-blur-sm'
+                            : 'glass-sheet text-dd-text-2 hover:bg-dd-bg'
                     }`}>
+                    <Search size={14} strokeWidth={2.25} aria-hidden="true" />
                     {gridFitToScreen
-                        ? <>🔍 {tx('Exit overview — tap to edit shifts', 'Salir vista general — toca para editar')}</>
-                        : <>🔎 {tx('Overview: fit week to screen', 'Vista general: ajustar semana a pantalla')}</>}
+                        ? tx('Exit overview — tap to edit shifts', 'Salir vista general — toca para editar')
+                        : tx('Overview: fit week to screen', 'Vista general: ajustar semana a pantalla')}
                 </button>
             )}
 
@@ -4622,14 +4634,14 @@ ${dayBlocks}
                         onClick={() => setPersonFilter(personFilter === staffName ? null : staffName)}
                         className={`w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg text-sm font-black transition shadow-sm active:scale-[0.99] ${
                             personFilter === staffName
-                                ? 'bg-dd-green text-white hover:bg-dd-green-700'
-                                : 'bg-white border-2 border-dd-green/40 text-dd-green hover:bg-dd-sage-50'
+                                ? 'bg-dd-green/90 text-white hover:bg-dd-green-700 backdrop-blur-sm'
+                                : 'glass-sheet border-2 !border-dd-green/40 text-dd-green hover:bg-dd-sage-50'
                         }`}
                         title={personFilter === staffName
                             ? tx('Tap to see everyone', 'Toca para ver a todos')
                             : tx('Tap to see only your shifts', 'Toca para ver solo tus turnos')}
                     >
-                        <span className="text-base">👤</span>
+                        <User size={16} strokeWidth={2.25} aria-hidden="true" />
                         <span>
                             {personFilter === staffName
                                 ? tx('Showing my shifts · tap to clear', 'Mostrando mis turnos · toca para quitar')
@@ -4676,8 +4688,9 @@ ${dayBlocks}
                     <>
                         <button onClick={handlePublishDrafts}
                             title={tx('Publish all draft shifts in current week + side', 'Publicar todos los borradores')}
-                            className={`relative inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm ${draftCount > 0 ? 'bg-dd-green text-white hover:bg-dd-green-700 animate-pulse' : 'bg-dd-bg text-dd-text-2 border border-dd-line'}`}>
-                            📢 {tx('Publish', 'Publicar')}
+                            className={`relative inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm ${draftCount > 0 ? 'bg-dd-green/90 text-white hover:bg-dd-green-700 animate-pulse backdrop-blur-sm' : 'glass-sheet text-dd-text-2'}`}>
+                            <Megaphone size={14} strokeWidth={2.25} aria-hidden="true" />
+                            {tx('Publish', 'Publicar')}
                             {draftCount > 0 && (
                                 <span className="bg-amber-400 text-amber-950 text-[10px] font-bold rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center">
                                     {draftCount}
@@ -4685,8 +4698,9 @@ ${dayBlocks}
                             )}
                         </button>
                         <button onClick={() => openAddModal()}
-                            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-dd-green text-white text-xs font-bold hover:bg-dd-green-700 shadow-sm active:scale-95 transition">
-                            + {tx('Shift', 'Turno')}
+                            className="inline-flex items-center gap-1 px-4 py-2 rounded-lg bg-dd-green/90 text-white text-xs font-bold hover:bg-dd-green-700 shadow-sm backdrop-blur-sm active:scale-95 transition">
+                            <Plus size={14} strokeWidth={2.5} aria-hidden="true" />
+                            {tx('Shift', 'Turno')}
                         </button>
                     </>
                     );
@@ -4699,10 +4713,12 @@ ${dayBlocks}
                 <div className="relative">
                     <button ref={moreBtnRef} onClick={() => setShowMoreActions(s => !s)}
                         className="px-4 py-2 rounded-lg glass-sheet text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-semibold flex items-center gap-1.5 transition">
-                        ⋯ {tx('More', 'Más')}
-                        <span className="text-dd-text-2 text-[10px]">{showMoreActions ? '▲' : '▼'}</span>
+                        <MoreHorizontal size={14} strokeWidth={2.25} aria-hidden="true" />
+                        {tx('More', 'Más')}
+                        <ChevronDown size={10} strokeWidth={2.5} aria-hidden="true"
+                            className={`text-dd-text-2 transition-transform ${showMoreActions ? 'rotate-180' : ''}`} />
                     </button>
-                    {showMoreActions && (
+                    {showMoreActions && createPortal((
                         <>
                             {/* Click-outside backdrop */}
                             <div className="fixed inset-0 z-30" onClick={() => setShowMoreActions(false)} />
@@ -4714,7 +4730,21 @@ ${dayBlocks}
                                 when the More button was anywhere except the
                                 far right edge. Max-height is JS-driven so
                                 the menu always fits below the button;
-                                internal scroll picks up the rest. */}
+                                internal scroll picks up the rest.
+
+                                2026-05-28 — Portal-mount via createPortal()
+                                to document.body. Without this, an ancestor
+                                up the chain (the WeekNav wrapper has
+                                .bg-dd-surface.border.border-dd-line.rounded-xl.shadow-card
+                                which the index.css auto-port rule decorates
+                                with `backdrop-filter: blur(20px)`) becomes
+                                the containing block for our `position:
+                                fixed` per CSS spec, and the menu drifts
+                                ~70px below where its inline `top` says it
+                                should be — pushing the menu off-screen on
+                                mobile. Portal'd into <body> the popover's
+                                containing block is the viewport again and
+                                getBoundingClientRect coords land exactly. */}
                             <div
                                 style={{
                                     position: 'fixed',
@@ -4805,7 +4835,7 @@ ${dayBlocks}
                                 )}
                             </div>
                         </>
-                    )}
+                    ), document.body)}
                 </div>
             </div>
             {personFilter && (
