@@ -25,6 +25,7 @@ const MobileHome = lazy(() => import('./v2/MobileHome'));
 import useIsMobile from './v2/useIsMobile';
 import useGeofence from './components/hooks/useGeofence';
 import usePullToRefresh, { forceRefresh } from './components/hooks/usePullToRefresh';
+import { RefreshCw } from 'lucide-react';
 // Components — lazy loaded (only when tab is active)
 const TrainingHub = lazy(() => import('./components/TrainingHub').then(m => ({ default: memo(m.default) })));
 // memo-wrap the heaviest routes — Andrew 2026-05-21: "the site is
@@ -409,6 +410,68 @@ const SS = {
 // Manual logout still works via setStaffName(null) which clears the
 // localStorage key directly — no special handling needed.
 const IDLE_LOCK_MS = 5 * 60 * 1000;   // 5 minutes of being hidden = relock
+
+// PullToRefreshIndicator — visible feedback during the pull-down
+// gesture. The hook (usePullToRefresh) was already wired and force-
+// reloading correctly, but its return values were going nowhere on
+// screen — so the user pulled and saw no feedback until the page
+// reloaded itself. Andrew 2026-05-28 asked for "that refresh button
+// spinning" while pulling.
+//
+// Behavior matches native iOS Mail / Twitter:
+//   • Hidden when idle (no pull, no refresh in flight).
+//   • Visible bubble translates DOWN with the finger as the user
+//     pulls; rotation tracks pull-progress 0..360deg so the icon
+//     winds up like a tension spring.
+//   • When the user has held past threshold long enough (armed=true,
+//     500ms dwell) the bubble pulses scale + turns brand-green to
+//     telegraph "let go and I'll refresh."
+//   • Once refresh fires (refreshing=true) the bubble snaps to a
+//     fixed top offset and switches to a continuous spin animation
+//     for the brief moment before the page reload.
+//
+// Mobile only (md:hidden); desktop has its own refresh affordances
+// (Cmd-R, sidebar refresh button) and doesn't need this overlay.
+function PullToRefreshIndicator({ pullDistance, progress, refreshing, armed }) {
+    if (pullDistance === 0 && !refreshing) return null;
+    // Dampen the visual translation so the bubble settles around 60-80px
+    // even on aggressive pulls — the hook already rubber-bands the raw
+    // distance past 200, this scales that for the indicator separately.
+    const translateY = refreshing
+        ? 28
+        : Math.min(pullDistance * 0.45, 80);
+    const rotationDeg = refreshing ? 0 : Math.round(progress * 360);
+    return (
+        <div
+            aria-hidden="true"
+            className="md:hidden fixed top-0 left-1/2 z-50 pointer-events-none"
+            style={{
+                transform: `translate(-50%, ${translateY}px)`,
+                transition: refreshing ? 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none',
+            }}
+        >
+            <div
+                className={`w-11 h-11 rounded-full bg-white/90 backdrop-blur-sm shadow-lg border border-dd-line/40 flex items-center justify-center transition-transform duration-200 ease-out ${
+                    armed && !refreshing ? 'scale-110' : 'scale-100'
+                }`}
+            >
+                <RefreshCw
+                    size={20}
+                    strokeWidth={2.5}
+                    className={
+                        refreshing
+                            ? 'animate-spin text-dd-green'
+                            : armed
+                                ? 'text-dd-green'
+                                : 'text-dd-text-2'
+                    }
+                    style={refreshing ? undefined : { transform: `rotate(${rotationDeg}deg)` }}
+                    aria-hidden="true"
+                />
+            </div>
+        </div>
+    );
+}
 // Module-scope stable empty array used as a default for the
 // hiddenPages memo (Audit #13). Defined once at module load so
 // every render returns the SAME reference — lets memo-wrapped
@@ -1474,6 +1537,17 @@ export default function App() {
             // chunks once the shell is mounted.)
             <Suspense fallback={<TabLoading language={language} />}>
                 <ChunkReloadFlagReset />
+                {/* 2026-05-28 — Pull-to-refresh visual indicator. The
+                    usePullToRefresh hook returns pullDistance/progress/
+                    armed/refreshing; rendering them here is what makes
+                    the gesture FEEL connected (was working silently
+                    until the page reloaded). Mobile only. */}
+                <PullToRefreshIndicator
+                    pullDistance={pullRefresh.pullDistance}
+                    progress={pullRefresh.progress}
+                    refreshing={pullRefresh.refreshing}
+                    armed={pullRefresh.armed}
+                />
                 <AppShellV2
                     language={language}
                     staffName={staffName}
