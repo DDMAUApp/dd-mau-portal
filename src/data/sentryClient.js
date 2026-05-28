@@ -200,6 +200,29 @@ export function initSentry() {
         // Cap how many breadcrumbs Sentry's own engine keeps — our
         // logger.js ring is the canonical source, this just supplements.
         maxBreadcrumbs: 50,
+        // 2026-05-27 — drop chunk-load errors at the Sentry SDK level.
+        // Same patterns logger.js + PageErrorBoundary use to skip
+        // /error_logs writes for stale-bundle reloads. Without this,
+        // every Kitchen Manager iPad opening Operations / Schedule /
+        // ChatThread after a deploy generated a TypeError 'Importing
+        // a module script failed.' Sentry event — pure noise, the
+        // page auto-reloads itself. ignoreErrors matches against the
+        // event's message via substring; case-insensitive when given
+        // a RegExp. Cross-origin 'Script error.' is also noise — the
+        // browser already censored the details, nothing actionable.
+        ignoreErrors: [
+            /Loading chunk \d+ failed/i,
+            /Failed to fetch dynamically imported module/i,
+            /Importing a module script failed/i,
+            /dynamically imported module/i,
+            /Failed to load module/i,
+            /ChunkLoadError/i,
+            // Cross-origin script errors with no detail (Sentry FAQ
+            // calls these out as the most common noise source on
+            // third-party-script-heavy pages).
+            'Script error.',
+            'Non-Error promise rejection captured',
+        ],
         // Run every event through our redactor before send.
         beforeSend: scrubSentryEvent,
         beforeBreadcrumb(breadcrumb) {
