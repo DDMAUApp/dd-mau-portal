@@ -1022,10 +1022,17 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
        flush against the back button + the keyboard. */
     body[data-chat-thread-open="true"] .ddmau-chat-shell {
         height: 100vh !important;
-        /* 2026-05-27 — see chat-page-open rule above for context.
-           Bottom safe-area subtraction removed so the composer's
-           white surface flows into the home-indicator strip. */
-        height: calc(100dvh - env(safe-area-inset-top)) !important;
+        /* 2026-05-27 (round 2) — Andrew: "mobile" — composer was
+           still 47px above the viewport bottom because we were
+           subtracting safe-area-inset-top from the shell. When a
+           thread is open the app header is hidden and the shell
+           starts at y=0; the chat thread's own <header class="safe-top">
+           handles the notch clearance via padding-top: env(safe-area-inset-top).
+           So the shell should be the FULL 100dvh — bottom flush
+           with the viewport, composer's safe-area-bottom padding
+           lifts the buttons above the home indicator. No more
+           sage strip below the composer. */
+        height: 100dvh !important;
         margin-top: 0 !important;
         margin-bottom: 0 !important;
         margin-left: 0 !important;
