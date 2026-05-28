@@ -142,6 +142,20 @@
                rounded-glass-lg shadow-glass-md;
         background-clip: padding-box;
     }
+    /* glass-sheet — surface-only variant for bottom-sheet / drawer /
+       sized modal interiors. Same translucent + blurred material as
+       .glass-card but WITHOUT forced rounded-glass-lg or shadow-glass-md,
+       so each sheet can keep its own corner radius (mobile bottom-
+       sheets use rounded-t-2xl only, drawers use no corners, etc.)
+       and its own shadow scale. Introduced 2026-05-28 to give the
+       Schedule modal interiors the same glass material as the rest
+       of the app without breaking their bottom-sheet flush-to-edge
+       behavior on mobile. */
+    .glass-sheet {
+        @apply bg-glass-surface-light backdrop-blur-glass-medium
+               border border-glass-border-light;
+        background-clip: padding-box;
+    }
     .glass-card.is-dark {
         @apply bg-glass-surface-dark border-glass-border-dark shadow-none;
         /* No backdrop-blur on dark: the solid #1c1c1e fill is the

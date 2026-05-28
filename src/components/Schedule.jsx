@@ -8242,7 +8242,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-dd-text">+ {tx('Add Shift', 'Agregar Turno')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
@@ -8588,7 +8588,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-gray-800">🚫 {tx('Closures & Blackouts', 'Cierres y Bloqueos')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
@@ -8871,7 +8871,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
     const canSubmit = form.staffName && form.startDate && form.endDate && form.startDate <= form.endDate;
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-amber-700">🌴 {tx("Time Off", "Tiempo Libre")}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
@@ -8990,7 +8990,7 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
         // rounded-2xl on all sides (no more bottom-sheet flush-to-edge
         // styling since the modal isn't at the edge anymore).
         <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-2 sm:p-4 pt-16 sm:pt-20">
-            <div className="bg-white w-full sm:max-w-md rounded-2xl max-h-[calc(100vh-90px)] sm:max-h-[calc(100vh-120px)] overflow-hidden flex flex-col shadow-2xl">
+            <div className="glass-sheet w-full sm:max-w-md rounded-2xl max-h-[calc(100vh-90px)] sm:max-h-[calc(100vh-120px)] overflow-hidden flex flex-col shadow-2xl">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between shrink-0">
                     <h3 className="text-lg font-bold text-amber-700">🌴 {tx('Request Time Off', 'Pedir Tiempo Libre')}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-lg bg-dd-bg text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-text text-lg">×</button>
@@ -9120,7 +9120,7 @@ function SwapShiftModal({ onClose, shifts, staffList, staffName, storeLocation, 
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0">
                     <div>
                         <h3 className="text-lg font-bold text-blue-700">🔄 {tx('Swap a Shift', 'Cambiar un Turno')}</h3>
@@ -9275,7 +9275,7 @@ function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
     };
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl">
+            <div className="glass-sheet w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-pink-700">🎂 {lt('My Birthday', 'Mi Cumpleaños')}</h3>
@@ -9349,7 +9349,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
     };
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-purple-700">🗓 {tx('My Availability', 'Mi Disponibilidad')}</h3>
@@ -9485,7 +9485,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div className="min-w-0 flex-1">
                         <h3 className="text-lg font-bold text-dd-text">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
@@ -9752,7 +9752,7 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
         <div className="fixed inset-0 bg-black/40 z-50 flex justify-end"
             onMouseDown={handleBackdrop}
             onTouchStart={handleBackdrop}>
-            <div className="bg-white w-full max-w-sm h-full overflow-y-auto shadow-2xl"
+            <div className="glass-sheet w-full max-w-sm h-full overflow-y-auto shadow-2xl"
                 onMouseDown={(e) => e.stopPropagation()}
                 onTouchStart={(e) => e.stopPropagation()}>
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
@@ -9879,7 +9879,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
     const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end;
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-blue-700">
                         👥 {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
@@ -10078,7 +10078,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
 
     return (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 {/* Header */}
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
@@ -10191,7 +10191,7 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
     const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
                     <div>
                         <h3 className="text-lg font-bold text-blue-700">
@@ -10390,7 +10390,7 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, we
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-indigo-700">📋 {initial ? tx("Edit Template", "Editar Plantilla") : tx("New Template", "Nueva Plantilla")}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
@@ -10727,7 +10727,7 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
     };
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div>
                         <h3 className="text-lg font-bold text-indigo-700">📋 {tx("Day Templates", "Plantillas del Día")}</h3>
@@ -10960,7 +10960,7 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
     const sortedStaff = [...(staffList || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
-            <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
+            <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-cyan-700">🔁 {tx("Recurring Shifts", "Turnos Recurrentes")}</h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full bg-gray-100 text-gray-600 text-lg">×</button>
