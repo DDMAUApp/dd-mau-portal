@@ -7,12 +7,18 @@
 //
 // Subscribes to /assigned_tasks/ where staffId == me.id. Real-time —
 // new assignments from a manager appear without a refresh.
+//
+// 2026-05-27 — visual refresh: PageHeader + glass-card + Lucide icons
+// + Apple-Reminders-style circular check buttons. Logic / state /
+// data flow / Firestore subscriptions all untouched.
 
 import { useEffect, useMemo, useState } from 'react';
 import {
     subscribeAssignmentsForStaff,
     setAssignmentDone,
 } from '../data/assignedTasks';
+import { CheckSquare, PartyPopper, Check, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
+import { PageHeader } from '../v2/PageShell';
 
 const tx = (en, es, isEs) => (isEs ? es : en);
 
@@ -71,39 +77,52 @@ export default function MyTasksPanel({
 
     if (!me) {
         return (
-            <div className="text-center text-dd-text-2 py-12 text-sm">
-                {tx('Sign in to see your tasks.', 'Inicia sesión para ver tus tareas.', isEs)}
+            <div className="max-w-2xl mx-auto p-4">
+                <div className="glass-card p-8 text-center text-dd-text-2 text-sm">
+                    {tx('Sign in to see your tasks.', 'Inicia sesión para ver tus tareas.', isEs)}
+                </div>
             </div>
         );
     }
 
+    // Subtitle for the page header — gives a quick at-a-glance status.
+    const subtitle = loading
+        ? tx('Loading…', 'Cargando…', isEs)
+        : open.length === 0
+            ? tx('All caught up — nothing open right now.', 'Todo al día — nada pendiente.', isEs)
+            : tx(
+                `${open.length} open · ${closed.length} completed`,
+                `${open.length} pendiente${open.length === 1 ? '' : 's'} · ${closed.length} completada${closed.length === 1 ? '' : 's'}`,
+                isEs,
+            );
+
     return (
-        <div className="space-y-3 max-w-2xl mx-auto">
-            <div className="flex items-center justify-between">
-                <h1 className="text-xl font-bold text-dd-text flex items-center gap-2">
-                    <span>✅</span>
-                    <span>{tx('My Tasks', 'Mis Tareas', isEs)}</span>
-                </h1>
-                {!loading && (
-                    <span className="text-sm text-dd-text-2">
-                        {open.length === 0
-                            ? tx('All done', 'Todo hecho', isEs)
-                            : `${open.length} ${tx(open.length === 1 ? 'open' : 'open', open.length === 1 ? 'abierta' : 'abiertas', isEs)}`}
-                    </span>
-                )}
-            </div>
+        <div className="space-y-4 max-w-2xl mx-auto p-4">
+            <PageHeader
+                icon={CheckSquare}
+                title={tx('My Tasks', 'Mis Tareas', isEs)}
+                subtitle={subtitle}
+            />
 
             {loading ? (
-                <div className="bg-white border border-dd-line rounded-xl p-6 text-center text-dd-text-2 shadow-card text-sm">
-                    {tx('Loading…', 'Cargando…', isEs)}
+                // Loading state — glass skeleton card so the layout
+                // doesn't jump when assignments resolve.
+                <div className="space-y-2">
+                    <div className="glass-skeleton h-16 w-full rounded-glass-lg" />
+                    <div className="glass-skeleton h-16 w-full rounded-glass-lg" />
                 </div>
             ) : open.length === 0 && closed.length === 0 ? (
-                <div className="bg-white border border-dd-line rounded-xl p-8 text-center shadow-card">
-                    <div className="text-5xl mb-2">🎉</div>
-                    <p className="text-dd-text font-bold">
+                // True empty state — never had any tasks (or everything
+                // ever assigned has been cleared by an admin). Friendly
+                // congratulatory copy + a confetti glyph.
+                <div className="glass-card p-10 text-center">
+                    <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-dd-sage-50 text-dd-green-700 flex items-center justify-center">
+                        <PartyPopper size={28} strokeWidth={2.25} aria-hidden="true" />
+                    </div>
+                    <p className="text-headline text-dd-text">
                         {tx("You're clear!", '¡Sin tareas!', isEs)}
                     </p>
-                    <p className="text-dd-text-2 text-sm mt-1">
+                    <p className="text-footnote-md text-dd-text-2 mt-1">
                         {tx(
                             'No tasks assigned to you right now.',
                             'No tienes tareas asignadas ahora.',
@@ -114,26 +133,38 @@ export default function MyTasksPanel({
             ) : (
                 <>
                     {open.length === 0 ? (
-                        <div className="bg-white border border-dd-line rounded-xl p-6 text-center text-dd-text-2 shadow-card">
-                            <div className="text-3xl mb-1">✅</div>
-                            {tx('All open tasks done. Nice.', 'Todas las tareas hechas. ¡Bien!', isEs)}
+                        // "All open done" state — there's history below
+                        // but nothing pending. Lighter celebration tone.
+                        <div className="glass-card p-6 text-center">
+                            <div className="w-12 h-12 mx-auto mb-2 rounded-full bg-dd-sage-50 text-dd-green-700 flex items-center justify-center">
+                                <Sparkles size={24} strokeWidth={2.25} aria-hidden="true" />
+                            </div>
+                            <p className="text-body-md font-bold text-dd-text">
+                                {tx('All open tasks done. Nice.', 'Todas las tareas hechas. ¡Bien!', isEs)}
+                            </p>
                         </div>
                     ) : (
                         <div className="space-y-2">
                             {open.map((a) => (
-                                <div key={a.id}
-                                    className="bg-white border border-dd-line rounded-xl p-3 shadow-card">
+                                <div key={a.id} className="glass-card p-3">
                                     <div className="flex items-start gap-3">
+                                        {/* Circular checkbox — Apple
+                                            Reminders style. Empty outline
+                                            ring at rest; fills with a
+                                            green disc + Lucide Check on
+                                            tap. The hit target is the
+                                            full disc plus the surrounding
+                                            tap area. */}
                                         <button onClick={() => toggle(a)}
-                                            className="mt-0.5 w-6 h-6 rounded-md border-2 border-dd-line hover:border-dd-green hover:bg-dd-green/10 active:scale-95 transition flex-shrink-0"
+                                            className="mt-0.5 w-6 h-6 rounded-full border-2 border-dd-line hover:border-dd-green hover:bg-dd-green/10 active:scale-90 transition-all duration-glass-fast ease-glass-out flex-shrink-0"
                                             aria-label={tx('Mark done', 'Marcar hecho', isEs)} />
                                         <div className="flex-1 min-w-0">
-                                            <div className="text-sm font-medium text-dd-text break-words">
+                                            <div className="text-body-md text-dd-text break-words">
                                                 {a.task}
                                             </div>
-                                            <div className="text-xs text-dd-text-2 mt-1">
+                                            <div className="text-caption-md text-dd-text-2 mt-1">
                                                 {tx('From', 'De', isEs)}{' '}
-                                                <span className="font-medium">{a.assignedBy || '—'}</span>
+                                                <span className="font-semibold text-dd-text">{a.assignedBy || '—'}</span>
                                                 {a.assignedAt && (
                                                     <span> · {fmtWhen(a.assignedAt)}</span>
                                                 )}
@@ -148,16 +179,19 @@ export default function MyTasksPanel({
                     {closed.length > 0 && (
                         <div className="mt-4">
                             <button onClick={() => setShowClosed((v) => !v)}
-                                className="text-xs font-bold text-dd-text-2 hover:text-dd-green transition">
+                                className="inline-flex items-center gap-1.5 text-caption-md font-bold text-dd-text-2 hover:text-dd-green transition-colors">
+                                {showClosed
+                                    ? <ChevronDown size={14} strokeWidth={2.5} aria-hidden="true" />
+                                    : <ChevronRight size={14} strokeWidth={2.5} aria-hidden="true" />}
                                 {showClosed
                                     ? tx(
-                                        `▼ Hide ${closed.length} completed`,
-                                        `▼ Ocultar ${closed.length} completadas`,
+                                        `Hide ${closed.length} completed`,
+                                        `Ocultar ${closed.length} completadas`,
                                         isEs
                                     )
                                     : tx(
-                                        `▶ Show ${closed.length} completed`,
-                                        `▶ Mostrar ${closed.length} completadas`,
+                                        `Show ${closed.length} completed`,
+                                        `Mostrar ${closed.length} completadas`,
                                         isEs
                                     )
                                 }
@@ -166,18 +200,18 @@ export default function MyTasksPanel({
                                 <div className="space-y-1.5 mt-2">
                                     {closed.map((a) => (
                                         <div key={a.id}
-                                            className="bg-dd-bg border border-dd-line rounded-lg p-2 flex items-start gap-2 opacity-75">
+                                            className="rounded-glass-md bg-white/40 border border-glass-border-light p-2.5 flex items-start gap-3 opacity-80 backdrop-blur-glass-subtle">
                                             <button onClick={() => toggle(a)}
-                                                className="mt-0.5 w-5 h-5 rounded-md bg-dd-green text-white flex items-center justify-center text-xs flex-shrink-0 active:scale-95 transition"
+                                                className="mt-0.5 w-5 h-5 rounded-full bg-dd-green text-white flex items-center justify-center flex-shrink-0 active:scale-90 transition-transform duration-glass-fast hover:bg-dd-green-700 ease-glass-out"
                                                 title={tx('Reopen', 'Reabrir', isEs)}
                                                 aria-label="Reopen">
-                                                ✓
+                                                <Check size={12} strokeWidth={3} aria-hidden="true" />
                                             </button>
                                             <div className="flex-1 min-w-0">
-                                                <div className="text-xs line-through text-dd-text-2 break-words">
+                                                <div className="text-footnote-md line-through text-dd-text-2 break-words">
                                                     {a.task}
                                                 </div>
-                                                <div className="text-[10px] text-dd-text-2 mt-0.5">
+                                                <div className="text-caption-md text-dd-text-2/80 mt-0.5">
                                                     {tx('Done', 'Hecho', isEs)}{' '}
                                                     {fmtWhen(a.doneAt)}
                                                 </div>
