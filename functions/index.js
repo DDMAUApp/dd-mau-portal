@@ -228,7 +228,7 @@ exports.dispatchNotification = onDocumentCreated(
         // locked: src/data/notificationTypes.js (mirrored below).
         const LOCKED_ON_TYPE_IDS = new Set([
             // chat
-            "chat_message", "chat_mention", "chat_nudge",
+            "chat_message", "chat_mention", "chat_reply", "chat_nudge",
             // personal schedule changes / outcomes
             "shift_reminder_1h",
             "shift_added", "shift_deleted", "shift_reassigned",
@@ -304,6 +304,7 @@ exports.dispatchNotification = onDocumentCreated(
             // specific channel.
             "chat_message",            // group / DM message
             "chat_mention",            // @-tagged, directly addressed
+            "chat_reply",              // replied to YOUR message (Andrew 2026-05-28)
             "chat_nudge",              // manager explicitly reminding YOU to read
             "eighty_six_alert",        // operational emergency
             "photo_issue",             // operational
@@ -327,7 +328,7 @@ exports.dispatchNotification = onDocumentCreated(
         // chatId is parsed from notif.tag (`chat:{id}:{to}`) which
         // both the client (ChatThread) and the scheduled-chat pump
         // set. Non-chat notifs are never muted this way.
-        if ((notif.type === "chat_message" || notif.type === "chat_mention")
+        if ((notif.type === "chat_message" || notif.type === "chat_mention" || notif.type === "chat_reply")
             && typeof notif.tag === "string" && notif.tag.startsWith("chat:")) {
             const chatId = notif.tag.split(":")[1];
             if (chatId) {
@@ -336,8 +337,12 @@ exports.dispatchNotification = onDocumentCreated(
                     const channelPref = prefsSnap.exists
                         ? (prefsSnap.data()?.channelPrefs || {})[chatId]
                         : null;
+                    // 2026-05-28 — chat_reply is treated like a mention
+                    // for channel-pref purposes: it's directly addressed
+                    // AT the recipient, so a user on the "mentions only"
+                    // pref still wants to see replies to themselves.
                     if (channelPref === "none"
-                        || (channelPref === "mentions" && notif.type !== "chat_mention")) {
+                        || (channelPref === "mentions" && notif.type !== "chat_mention" && notif.type !== "chat_reply")) {
                         logger.info(`channel-mute gate: suppressing ${notif.type} for ${forStaff} in ${chatId} (pref=${channelPref})`);
                         try {
                             await snap.ref.update({

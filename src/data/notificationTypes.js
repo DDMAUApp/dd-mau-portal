@@ -39,6 +39,7 @@ export const NOTIFICATION_TYPES = [
     // ── LOCKED ON — chat ──────────────────────────────────────────
     { id: 'chat_message', category: 'chat', en: 'New chat message',           es: 'Nuevo mensaje',          lockedOn: true },
     { id: 'chat_mention', category: 'chat', en: '@ mention',                  es: 'Mención (@)',            lockedOn: true },
+    { id: 'chat_reply',   category: 'chat', en: 'Someone replied to you',     es: 'Alguien te respondió',   lockedOn: true },
     { id: 'chat_nudge',   category: 'chat', en: 'Manager nudge / reminder',   es: 'Recordatorio del jefe',  lockedOn: true },
 
     // ── LOCKED ON — your own schedule changes ─────────────────────

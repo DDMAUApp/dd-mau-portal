@@ -3438,14 +3438,56 @@ async function sendMessage({
     const chatLabel = chat.type === 'dm' ? staffName : (chat.name || 'Chat');
     const title = chat.type === 'dm' ? staffName : `${chatLabel}`;
     const body = chat.type === 'dm' ? preview : `${staffName}: ${preview}`;
+    // 2026-05-28 — Andrew: "when i reply to a message on the chat does
+    // the person im replying to get a notification? saying so and so
+    // replied to your message." Before this they got the generic
+    // chat_message that every member got. Now the replied-to author
+    // gets a distinct chat_reply notification with louder copy
+    // ("↩ Andrew replied to you") and includes the snippet of THEIR
+    // own message so they remember which one was replied to.
+    //
+    // Mention beats reply: if the replied-to person was ALSO @-tagged
+    // in the body, the mention wins (it's explicit intent + already
+    // loud). No double-notify.
+    //
+    // Self-reply (replying to your own message) skips the reply
+    // notification entirely — you don't need a push for talking to
+    // yourself in a thread.
+    const replyToAuthor = (replyTo?.senderName || '').trim();
+    const replySnippet = String(replyTo?.snippet || '').slice(0, 80);
     await Promise.all(recipients.map(async (to) => {
         const wasMentioned = mentions.includes(to);
+        const isReplyTarget = !wasMentioned
+            && replyToAuthor
+            && to === replyToAuthor
+            && replyToAuthor !== staffName;
+        const notifType = wasMentioned
+            ? 'chat_mention'
+            : isReplyTarget
+                ? 'chat_reply'
+                : 'chat_message';
+        const notifTitle = wasMentioned
+            ? `@${staffName} → ${title}`
+            : isReplyTarget
+                ? (chat.type === 'dm'
+                    ? `↩ ${staffName} replied`
+                    : `↩ ${staffName} replied in ${chatLabel}`)
+                : title;
+        // For replies, body shape: "they replied to: '{your message}'"
+        // gives the receiver immediate context for which of THEIR
+        // messages was the target — useful in long threads where
+        // they might have sent dozens of messages today.
+        const notifBody = isReplyTarget
+            ? (replySnippet
+                ? `↩ "${replySnippet}"\n${staffName}: ${preview.slice(0, 80)}`
+                : `${staffName}: ${preview.slice(0, 120)}`)
+            : body.slice(0, 140);
         try {
             await notifyStaff({
                 forStaff: to,
-                type: wasMentioned ? 'chat_mention' : 'chat_message',
-                title: wasMentioned ? `@${staffName} → ${title}` : title,
-                body: body.slice(0, 140),
+                type: notifType,
+                title: notifTitle,
+                body: notifBody.slice(0, 200),
                 // The NotificationsDrawer routes deepLink='chat' to
                 // the chat tab. ChatCenter sorts unread chats to the
                 // top so the user lands next to their new message.
