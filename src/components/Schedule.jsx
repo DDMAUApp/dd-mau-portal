@@ -47,6 +47,9 @@ import {
     // for a more polished, OS-consistent look across iOS + Android.
     Sofa, Utensils, LayoutGrid, LayoutList, List, Palmtree,
     Search, User, Users, Megaphone, Plus, MoreHorizontal, Bell,
+    Hourglass, RefreshCw,
+    // More-menu items
+    Printer, Calendar, Copy, Repeat, Ban,
 } from 'lucide-react';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -4767,11 +4770,17 @@ ${dayBlocks}
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Tools', 'Herramientas')}</div>
                                     <button onClick={() => { setShowMoreActions(false); handlePrintWeek(); }}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                        <span>🖨</span>{personFilter ? tx('Print', 'Imprimir') : tx('Print Week', 'Imprimir Semana')}
+                                        <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                            <Printer size={12} strokeWidth={2.25} aria-hidden="true" />
+                                        </span>
+                                        {personFilter ? tx('Print', 'Imprimir') : tx('Print Week', 'Imprimir Semana')}
                                     </button>
                                     <button onClick={() => { setShowMoreActions(false); handleExportIcs(); }}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                        <span>📅</span>{tx('Export iCal', 'Exportar iCal')}
+                                        <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                            <Calendar size={12} strokeWidth={2.25} aria-hidden="true" />
+                                        </span>
+                                        {tx('Export iCal', 'Exportar iCal')}
                                     </button>
                                 </div>
                                 {/* MY ACTIONS */}
@@ -4779,7 +4788,9 @@ ${dayBlocks}
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('My Actions', 'Mis Acciones')}</div>
                                     <button onClick={() => { setShowMoreActions(false); setShowPtoRequestModal(true); }}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                        <Palmtree size={14} strokeWidth={2.25} className="text-dd-green-700 shrink-0" aria-hidden="true" />
+                                        <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                            <Palmtree size={12} strokeWidth={2.25} aria-hidden="true" />
+                                        </span>
                                         {tx('Request Time Off', 'Pedir Tiempo Libre')}
                                     </button>
                                     <button onClick={() => { setShowMoreActions(false); setShowMyAvailModal(true); }}
@@ -4812,25 +4823,38 @@ ${dayBlocks}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowNeedModal(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <Users size={14} strokeWidth={2.25} className="text-dd-green-700 shrink-0" aria-hidden="true" />
+                                            <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                                <Users size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
                                             {tx('Add open slot', 'Agregar espacio')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowTimeOffModal(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <Palmtree size={14} strokeWidth={2.25} className="text-dd-green-700 shrink-0" aria-hidden="true" />
+                                            <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                                <Palmtree size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
                                             {tx('All Time Off requests', 'Todas las solicitudes')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); handleCopyLastWeek(); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>📋</span>{tx('Copy last week', 'Copiar semana anterior')}
+                                            <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                                <Copy size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
+                                            {tx('Copy last week', 'Copiar semana anterior')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowApplyTemplate(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>📋</span>{tx('Apply template', 'Aplicar plantilla')}
+                                            <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                                <LayoutGrid size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
+                                            {tx('Apply template', 'Aplicar plantilla')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowRecurringModal(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>🔁</span>{tx('Recurring shifts', 'Turnos recurrentes')}
+                                            <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                                <Repeat size={12} strokeWidth={2.25} aria-hidden="true" />
+                                            </span>
+                                            {tx('Recurring shifts', 'Turnos recurrentes')}
                                         </button>
                                         {/* Closures & Calendar entry — admin-only.
                                             Hides the button entirely for non-admin
@@ -4839,7 +4863,10 @@ ${dayBlocks}
                                         {staffIsAdmin && (
                                             <button onClick={() => { setShowMoreActions(false); setShowBlockModal(true); }}
                                                 className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                                <span>🚫</span>{tx('Closures & Calendar', 'Cierres y Calendario')}
+                                                <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                                    <Ban size={12} strokeWidth={2.25} aria-hidden="true" />
+                                                </span>
+                                                {tx('Closures & Calendar', 'Cierres y Calendario')}
                                             </button>
                                         )}
                                     </div>
@@ -4911,8 +4938,10 @@ ${dayBlocks}
                             aria-controls="open-slots-list"
                         >
                             <span className="w-1 h-4 bg-blue-500 rounded-full shrink-0" />
-                            <h3 className="text-xs font-bold text-dd-text inline-flex items-center gap-1.5">
-                                <Users size={13} strokeWidth={2.25} className="text-dd-green-700" aria-hidden="true" />
+                            <h3 className="text-xs font-bold text-dd-text inline-flex items-center gap-2">
+                                <span className="w-6 h-6 rounded-md bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                    <Users size={12} strokeWidth={2.25} aria-hidden="true" />
+                                </span>
                                 {tx('Open slots', 'Abiertos')}
                             </h3>
                             <span className="text-[10px] font-bold text-dd-text-2">{side === 'foh' ? 'FOH' : 'BOH'} · {weekNeeds.length}</span>
@@ -7908,13 +7937,18 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                     aria-expanded={collapsible ? open : undefined}
                 >
                     <span className={`w-1 h-5 rounded-full ${accent}`} />
-                    <span className="text-sm font-bold text-dd-text flex items-center gap-1.5">
-                        {/* icon may be a string emoji (legacy) OR a Lucide
-                            React element. Rendering {icon} handles both
-                            cleanly — the wrapping <span> was forcing a
-                            text-only baseline that misaligned SVG icons
-                            vertically. */}
-                        <span className="inline-flex items-center">{icon}</span> {title}
+                    {/* Sage-green disc treatment matches the weather-forecast
+                        chip pattern that Andrew flagged: small rounded square
+                        with a sage-50 fill + dd-green-700 stroke. Applied
+                        uniformly across panel headers so every panel has the
+                        same icon language. The accent stripe to the left
+                        still carries the panel's semantic color (amber for
+                        PTO, blue for offers, etc.). */}
+                    <span className="text-sm font-bold text-dd-text flex items-center gap-2">
+                        <span className="w-7 h-7 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                            {icon}
+                        </span>
+                        {title}
                     </span>
                     {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
                     {collapsible && (
@@ -7936,7 +7970,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
         <div className="mb-3 space-y-2 print:hidden">
             {/* My own open offers — gentle reminder this is still mine */}
             {myOpenOffers.length > 0 && (
-                <Panel accent="bg-blue-500" icon={<Megaphone size={14} strokeWidth={2.25} className="text-blue-600" />} title={tx('Your offered shifts', 'Tus turnos ofrecidos')} count={`${myOpenOffers.length} ${tx('still yours', 'aún tuyos')}`}>
+                <Panel accent="bg-blue-500" icon={<Megaphone size={14} strokeWidth={2.25} />} title={tx('Your offered shifts', 'Tus turnos ofrecidos')} count={`${myOpenOffers.length} ${tx('still yours', 'aún tuyos')}`}>
                     {myOpenOffers.map(sh => (
                         <div key={sh.id} className="flex items-center justify-between gap-2 text-xs">
                             <span className="text-dd-text">{renderShiftLine(sh)}</span>
@@ -7949,7 +7983,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* Open shifts up for grabs (others can take) */}
             {openOffers.length > 0 && (
-                <Panel accent="bg-blue-500" icon={<Megaphone size={14} strokeWidth={2.25} className="text-blue-600" />} title={tx('Available to pick up', 'Disponibles para tomar')} count={openOffers.length}>
+                <Panel accent="bg-blue-500" icon={<Megaphone size={14} strokeWidth={2.25} />} title={tx('Available to pick up', 'Disponibles para tomar')} count={openOffers.length}>
                     {openOffers.map(sh => (
                         <div key={sh.id} className="flex items-center justify-between gap-2 bg-blue-50 rounded-lg p-2 border border-blue-200 text-xs">
                             <div className="min-w-0">
@@ -7965,7 +7999,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* Manager / admin pending approval queue */}
             {pending.length > 0 && (
-                <Panel accent="bg-purple-500" icon="⏳" title={tx('Pending swap approvals', 'Cambios pendientes')} count={pending.length}>
+                <Panel accent="bg-purple-500" icon={<Hourglass size={14} strokeWidth={2.25} />} title={tx('Pending swap approvals', 'Cambios pendientes')} count={pending.length}>
                     {pending.map(sh => (
                         <div key={sh.id} className="bg-purple-50 rounded-lg p-2 border border-purple-200 text-xs">
                             <div className="text-dd-text">
@@ -7989,7 +8023,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                 without flagging down a manager. See handleCancelOwnPto for
                 the per-status rationale (silent vs notify). */}
             {myPto.length > 0 && (
-                <Panel accent="bg-amber-500" icon={<Palmtree size={14} strokeWidth={2.25} className="text-amber-600" />} title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}
+                <Panel accent="bg-amber-500" icon={<Palmtree size={14} strokeWidth={2.25} />} title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}
                     collapsible open={myPtoOpen} onToggle={() => setMyPtoOpen(v => !v)}>
                     {myPto.map(t => {
                         const status = t.status || 'pending';
@@ -8037,7 +8071,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* Manager / admin pending PTO queue */}
             {canEdit && pendingPto.length > 0 && (
-                <Panel accent="bg-amber-500" icon={<Palmtree size={14} strokeWidth={2.25} className="text-amber-600" />} title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}
+                <Panel accent="bg-amber-500" icon={<Palmtree size={14} strokeWidth={2.25} />} title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}
                     collapsible open={pendingPtoOpen} onToggle={() => setPendingPtoOpen(v => !v)}>
                     {pendingPto.map(t => {
                         const submittedLabel = fmtSubmittedAt(t.submittedAt);
@@ -8062,7 +8096,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* 2026-05-16 — pending shift-swap requests (manager queue) */}
             {canEdit && pendingSwaps.length > 0 && (
-                <Panel accent="bg-blue-500" icon="🔄" title={tx('Pending swap requests', 'Solicitudes de cambio')} count={pendingSwaps.length}>
+                <Panel accent="bg-blue-500" icon={<RefreshCw size={14} strokeWidth={2.25} />} title={tx('Pending swap requests', 'Solicitudes de cambio')} count={pendingSwaps.length}>
                     {pendingSwaps.map(r => {
                         const f = r.fromShiftSnapshot || {};
                         const t = r.toShiftSnapshot || {};
@@ -8090,7 +8124,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* My swap requests (status visible to requester + partner) */}
             {mySwaps.length > 0 && (
-                <Panel accent="bg-blue-500" icon="🔄" title={tx('My swap requests', 'Mis cambios')} count={mySwaps.length}>
+                <Panel accent="bg-blue-500" icon={<RefreshCw size={14} strokeWidth={2.25} />} title={tx('My swap requests', 'Mis cambios')} count={mySwaps.length}>
                     {mySwaps.map(r => {
                         const f = r.fromShiftSnapshot || {};
                         const t2 = r.toShiftSnapshot || {};
@@ -9539,7 +9573,9 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div className="min-w-0 flex-1">
                         <h3 className="text-lg font-bold text-dd-text inline-flex items-center gap-2">
-                            <Users size={18} strokeWidth={2.25} className="text-dd-green-700" aria-hidden="true" />
+                            <span className="w-9 h-9 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                <Users size={18} strokeWidth={2.25} aria-hidden="true" />
+                            </span>
                             {tx('Who can work?', '¿Quién puede trabajar?')}
                         </h3>
                         <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
@@ -9935,7 +9971,9 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
                     <h3 className="text-lg font-bold text-blue-700 inline-flex items-center gap-2">
-                        <Users size={18} strokeWidth={2.25} className="text-blue-700" aria-hidden="true" />
+                        <span className="w-9 h-9 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                            <Users size={18} strokeWidth={2.25} aria-hidden="true" />
+                        </span>
                         {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
                     </h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
@@ -10249,7 +10287,9 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
                     <div>
                         <h3 className="text-lg font-bold text-blue-700 inline-flex items-center gap-2">
-                            <Users size={18} strokeWidth={2.25} className="text-blue-700" aria-hidden="true" />
+                            <span className="w-9 h-9 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
+                                <Users size={18} strokeWidth={2.25} aria-hidden="true" />
+                            </span>
                             {tx('Open Slots', 'Espacios Abiertos')}
                         </h3>
                         <p className="text-xs text-gray-600">{staff.name} · {dayLabel} {dateStr}</p>
