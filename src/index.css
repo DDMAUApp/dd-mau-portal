@@ -635,41 +635,12 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
         margin-right: 0 !important;
         border-radius: 0 !important;
     }
-    /* v2 header: black bar with white text on chat tab */
-    body[data-chat-page-open="true"] .ddmau-app-header {
-        background-color: #0a0a0a !important;
-        border-bottom-color: transparent !important;
-    }
-    body[data-chat-page-open="true"] .ddmau-app-header .text-dd-text,
-    body[data-chat-page-open="true"] .ddmau-app-header .text-dd-text-2 {
-        color: rgba(255, 255, 255, 0.85) !important;
-    }
-    body[data-chat-page-open="true"] .ddmau-app-header button:hover {
-        background-color: rgba(255, 255, 255, 0.08) !important;
-    }
-    body[data-chat-page-open="true"] .ddmau-app-header button.active\:bg-dd-bg:active {
-        background-color: rgba(255, 255, 255, 0.12) !important;
-    }
-    /* Bell badge ring was ring-white — kills contrast on black. Match
-       the chat-page background so the badge sits cleanly on the bar. */
-    body[data-chat-page-open="true"] .ddmau-app-header .ring-white {
-        --tw-ring-color: #0a0a0a !important;
-    }
-    /* Logout button hover was hover:bg-red-50 (light) — keep red as the
-       danger signal but make it readable against black. */
-    body[data-chat-page-open="true"] .ddmau-app-header .hover\:bg-red-50:hover {
-        background-color: rgba(239, 68, 68, 0.18) !important;
-    }
-    /* Propagate #0a0a0a to every wrapper above the chat shell so the
-       safe-area strips around the notch / home indicator render as
-       the same near-black, not sage green. */
-    html:has(body[data-chat-page-open="true"]),
-    body[data-chat-page-open="true"],
-    body[data-chat-page-open="true"] .bg-dd-sage,
-    body[data-chat-page-open="true"] #root,
-    body[data-chat-page-open="true"] #root > div {
-        background-color: #0a0a0a !important;
-    }
+    /* 2026-05-27 — Andrew: "the chat page lets make light as well
+       the black isnt working." Reverted the dark v2-header override
+       and the html/body/backdrop #0a0a0a propagation. Chat tab now
+       shares the same light glass-nav header + sage gradient
+       backdrop as the rest of the app, so the chat surface reads as
+       part of the same visual language instead of a dark island. */
 }
 
 /* 2026-05-27 — companion rules to the bottom-nav-hide above. When a
@@ -696,22 +667,13 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
         padding-top: 0 !important;
         padding-bottom: 0 !important;
     }
-    /* Make EVERYTHING under the chat shell near-black. The `:has()`
-       selector promotes the html element when the body has
-       data-chat-thread-open — covers the very-top status-bar strip
-       on iOS PWA installs where iOS samples the html bg for the
-       notch area. Safari 15.4+ supports :has() so this works on
-       every iPhone the staff use.
-       Uses #0a0a0a (not pure #000) so the iPhone OLED renders the
-       safe-area zones as the same near-black the chat shell shows,
-       avoiding a perceived seam where pure-#000 meets #0a0a0a. */
-    html:has(body[data-chat-thread-open="true"]),
-    body[data-chat-thread-open="true"],
-    body[data-chat-thread-open="true"] .bg-dd-sage,
-    body[data-chat-thread-open="true"] #root,
-    body[data-chat-thread-open="true"] #root > div {
-        background-color: #0a0a0a !important;
-    }
+    /* 2026-05-27 — chat thread is now LIGHT (Andrew: "the chat page
+       lets make light as well the black isnt working"). The #0a0a0a
+       propagation rules for html / body / #root / .bg-dd-sage are
+       gone — the iPhone safe-area strips inherit the same soft sage
+       gradient as the rest of the app, so the chat surface looks
+       like one continuous light glass space from notch to home
+       indicator. */
     /* ChatCenter's outer flex container subtracts the v2 header (56px)
        and bottom nav (~60px) from 100dvh. When BOTH are hidden by the
        rules above, the container still uses that calc and leaves a
@@ -729,150 +691,109 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     }
 }
 
-/* 2026-05-27 — dark-theme chat surface, refined.
-   Andrew: "make it look like this. look how the top and bottom looks
-   and how the chat room have a lite black in the background. make it
-   black black and make it more modern."
-   Zenzap / iMessage iOS-native pattern: the background is a very-near-
-   black (#0a0a0a) and elevated chrome (chips, bubbles, composer pill)
-   sits at a slightly-lighter near-black (#1c1c1e — same as iOS dark
-   surfaces). The contrast between the two layers reads as depth
-   without ever lifting above pure dark. No dividers, no white-tinted
-   borders — elevation alone separates the layers.
-   Mobile-first; desktop keeps the familiar two-pane white surface so
-   the dashboards next to it (Schedule, Operations) still look
-   consistent on widescreen. !important is used because Tailwind
-   utility classes generate single-class selectors that would
-   otherwise win on order. */
+/* 2026-05-27 — Light-glass chat surface (flipped from dark).
+   Andrew: "the chat page lets make light as well the black isnt
+   working." The earlier dark Zenzap-style palette (#0a0a0a base +
+   #1c1c1e elevated chrome) was hurting readability — reverted to a
+   light Liquid-Glass palette that matches the rest of the app:
+     - Page bg: shows through to the soft-sage gradient backdrop
+       in AppShellV2 (was overridden to dark before)
+     - Elevated chrome (header chip, bubbles, composer pill, search
+       pill, action pucks): translucent white at 72% over a 20px
+       backdrop blur — same recipe as .glass-card / .glass-input
+     - Borders: hairline at rgba(15, 23, 42, 0.08)
+     - Text: dd-text / dd-text-2 — inherits the existing Tailwind
+       utilities on the JSX, so we don't need to override colors here
+   The JSX class hooks (.ddmau-back-pill, .ddmau-bubble-other,
+   .ddmau-header-chip, .ddmau-header-back-puck, .ddmau-header-
+   action-puck, .ddmau-composer-btn, .ddmau-chat-divider,
+   .ddmau-chat-search-pill) all kept their names so we don't have
+   to re-edit ChatThread.jsx — they just got light fills now. */
 @media (max-width: 767px) {
-    /* ── Layer 1 — page background (near-black) ── */
-    .ddmau-chat-shell,
-    .ddmau-chat-shell aside,
-    .ddmau-chat-shell section,
-    .ddmau-chat-shell header {
-        background-color: #0a0a0a !important;
-    }
-
-    /* ── Text colors ── */
-    /* Andrew 2026-05-27 round 2: "lettering of the chat page need more
-       white some items are usable to see." Bumped primary to pure
-       white (was #fff already) and secondary from 0.55 → 0.78 so
-       chat-list timestamps, preview text, member counts, "Seen by 4"
-       receipts, etc. read cleanly against the #0a0a0a background. */
-    .ddmau-chat-shell .text-dd-text {
-        color: #fff !important;
-    }
-    .ddmau-chat-shell .text-dd-text-2 {
-        color: rgba(255, 255, 255, 0.78) !important;
-    }
-    /* Even fainter detail text (timestamps inside bubbles, the .text-dd-
-       text-2/70 fragments below the retry button) was rendering as a
-       single visible step above the bg. Force them to a brighter floor
-       so nothing in the chat is unreadable on dark. */
-    .ddmau-chat-shell .text-dd-text-2\/70 {
-        color: rgba(255, 255, 255, 0.6) !important;
-    }
-
-    /* ── Borders (subtle, on elevated chips only) ── */
-    .ddmau-chat-shell .border-dd-line,
-    .ddmau-chat-shell [class*="border-dd-line"] {
-        border-color: rgba(255, 255, 255, 0.06) !important;
-    }
-
-    /* ── Hover / active surface tints ── */
-    .ddmau-chat-shell .hover\:bg-dd-bg:hover,
-    .ddmau-chat-shell .active\:bg-dd-bg:active {
-        background-color: rgba(255, 255, 255, 0.06) !important;
-    }
-    .ddmau-chat-shell .bg-dd-bg,
-    .ddmau-chat-shell .bg-dd-bg\/80 {
-        background-color: rgba(255, 255, 255, 0.06) !important;
-    }
-
-    /* ── Layer 2 — elevated chrome (header chip, bubbles, composer) ── */
-    /* JSX-added marker classes are listed AFTER the .bg-white blanket
-       so they win on specificity (both are single-class + !important). */
-    .ddmau-chat-shell .bg-white {
-        background-color: #0a0a0a !important;
-    }
-
-    /* Other-person message bubble — slightly lighter than the page so
-       the message visibly "sits on" the chat, like iMessage's gray. */
+    /* Other-person message bubble — light card with hairline border.
+       (Mentioned messages keep their amber tint via the JSX
+       `mentioned` branch — only this default branch is restyled.) */
     .ddmau-chat-shell .ddmau-bubble-other {
-        background-color: #1c1c1e !important;
-        color: #fff !important;
-        border-color: transparent !important;
+        background-color: rgba(255, 255, 255, 0.88) !important;
+        color: #0F172A !important;
+        border-color: rgba(15, 23, 42, 0.08) !important;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
     }
 
-    /* Header chip (floating pill containing avatar + name + subtitle).
-       Compact dark fill, no outline, gentle radius. Matches the
-       "Front of House" capsule in the Zenzap reference. */
+    /* Header chip (avatar + name + subtitle). Translucent white card
+       so it floats above the sage backdrop like a piece of glass. */
     .ddmau-chat-shell .ddmau-header-chip {
-        background-color: #1c1c1e !important;
+        background-color: rgba(255, 255, 255, 0.72) !important;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        color: #0F172A !important;
     }
     .ddmau-chat-shell .ddmau-header-chip:active {
-        background-color: #2a2a2c !important;
+        background-color: rgba(255, 255, 255, 0.85) !important;
     }
 
-    /* Header back arrow + settings pucks — small circular dark
-       buttons flanking the chip. Subtle elevated fill so they read
-       as tappable without competing with the chip. */
+    /* Header back arrow + settings pucks — small circular glass
+       buttons flanking the chip. Same translucent fill so the row
+       reads as one continuous light-glass system. */
     .ddmau-chat-shell .ddmau-header-back-puck,
-    .ddmau-chat-shell .ddmau-header-action-puck {
-        background-color: #1c1c1e !important;
-        color: #fff !important;
+    .ddmau-chat-shell .ddmau-header-action-puck,
+    .ddmau-chat-shell .ddmau-back-pill {
+        background-color: rgba(255, 255, 255, 0.72) !important;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        color: #0F172A !important;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
     }
     .ddmau-chat-shell .ddmau-header-back-puck:hover,
-    .ddmau-chat-shell .ddmau-header-action-puck:hover {
-        background-color: #2a2a2c !important;
+    .ddmau-chat-shell .ddmau-header-action-puck:hover,
+    .ddmau-chat-shell .ddmau-back-pill:hover {
+        background-color: rgba(255, 255, 255, 0.88) !important;
     }
 
-    /* Composer textarea — pill input. Same elevated fill as the
-       header chip so the top and bottom of the screen feel like one
-       coherent system. No border. */
+    /* Composer textarea — light glass pill. */
     .ddmau-chat-shell textarea {
-        background-color: #1c1c1e !important;
-        color: #fff !important;
-        border-color: transparent !important;
-    }
-
-    /* Search pill in the chat list — same iOS-elevated style as the
-       composer textarea + header chip. The 🔍 SVG inside inherits
-       currentColor at 60% opacity so it reads as a hint, not a
-       primary action. */
-    .ddmau-chat-shell .ddmau-chat-search-pill {
-        background-color: #1c1c1e !important;
-        border-color: transparent !important;
-        color: rgba(255, 255, 255, 0.9) !important;
-    }
-    .ddmau-chat-shell .ddmau-chat-search-pill input {
-        color: #fff !important;
-    }
-    .ddmau-chat-shell .ddmau-chat-search-pill input::placeholder {
-        color: rgba(255, 255, 255, 0.5) !important;
+        background-color: rgba(255, 255, 255, 0.88) !important;
+        color: #0F172A !important;
+        border-color: rgba(15, 23, 42, 0.08) !important;
     }
     .ddmau-chat-shell textarea::placeholder {
-        color: rgba(255, 255, 255, 0.4) !important;
+        color: rgba(15, 23, 42, 0.4) !important;
     }
 
-    /* Composer outer bar: flush black, no divider. */
-    .ddmau-chat-shell .sticky.bottom-0 {
-        background-color: #0a0a0a !important;
-        border-top-color: transparent !important;
+    /* Search pill in the chat list — same recipe as composer + chip. */
+    .ddmau-chat-shell .ddmau-chat-search-pill {
+        background-color: rgba(255, 255, 255, 0.72) !important;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        color: #0F172A !important;
+    }
+    .ddmau-chat-shell .ddmau-chat-search-pill input {
+        color: #0F172A !important;
+    }
+    .ddmau-chat-shell .ddmau-chat-search-pill input::placeholder {
+        color: rgba(15, 23, 42, 0.5) !important;
     }
 
-    /* Composer +, mic, send buttons — circular elevated pucks
-       flanking the input pill. Send button stays brand green. */
+    /* Composer +, mic, send buttons — circular glass pucks flanking
+       the input pill. Send button stays brand green via the existing
+       .ddmau-composer-btn-send rule below this block. */
     .ddmau-chat-shell .ddmau-composer-btn {
-        background-color: #1c1c1e !important;
-        color: #fff !important;
+        background-color: rgba(255, 255, 255, 0.72) !important;
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        color: #0F172A !important;
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
     }
     .ddmau-chat-shell .ddmau-composer-btn:hover {
-        background-color: #2a2a2c !important;
+        background-color: rgba(255, 255, 255, 0.88) !important;
     }
     .ddmau-chat-shell .ddmau-composer-btn-send {
-        background-color: #1F7A4D !important;  /* dd-green */
+        background-color: #1F7A4D !important;  /* dd-green — brand, kept */
         color: #fff !important;
+        border-color: #1F7A4D !important;
     }
     .ddmau-chat-shell .ddmau-composer-btn-send:hover {
         background-color: #166442 !important;  /* dd-green-700 */
@@ -881,7 +802,7 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
     /* Date separator ("TODAY", "Yesterday", date) — subdued so it
        feels like a system stamp, not message content. */
     .ddmau-chat-shell .ddmau-chat-divider {
-        color: rgba(255, 255, 255, 0.4) !important;
+        color: rgba(15, 23, 42, 0.5) !important;
     }
 }
 

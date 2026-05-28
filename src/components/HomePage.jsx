@@ -155,10 +155,28 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
     };
 
     return (
-        <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-b from-mint-50 to-white p-4">
+        // 2026-05-27 — lock screen Liquid-Glass refresh.
+        // Andrew: "lets make the lock screen with the logo instead of
+        // the dd mau. and make the key pad with circle glass buttons."
+        // Background switched from mint-50→white to the same soft sage
+        // gradient AppShellV2 uses, so the lock screen feels like the
+        // entry-point to the same product — not a separate splash.
+        <div
+            className="flex flex-col items-center justify-center min-h-screen p-4"
+            style={{ background: 'linear-gradient(180deg, #EEF5EF 0%, #F3F5F1 50%, #F7F8FA 100%)' }}
+        >
             <div className="text-center mb-8">
-                <h1 className="text-5xl font-bold mb-2">🍜</h1>
-                <h1 className="text-4xl font-bold text-mint-700 mb-2">DD Mau</h1>
+                {/* DD Mau logo — the actual brand mark (scooter + lotus
+                    over the DD MAU wordmark + VIETNAMESE EATERY tagline).
+                    Replaces the previous 🍜 emoji + "DD Mau" text. If
+                    the asset 404s the alt text reads as a quiet text
+                    fallback. */}
+                <img
+                    src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
+                    alt="DD Mau Vietnamese Eatery"
+                    className="mx-auto h-28 w-auto object-contain mb-3 select-none pointer-events-none"
+                    draggable={false}
+                />
                 <p className="text-gray-600 text-lg">{t("staffPortal", language)}</p>
             </div>
 
@@ -189,42 +207,58 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                 </div>
             ) : (
                 <>
-                    <p className="text-gray-500 text-sm mb-4">{isEs ? "Ingresa tu PIN" : "Enter your PIN"}</p>
-                    <div className="flex gap-2 mb-3">
+                    <p className="text-gray-600 text-sm mb-4">{isEs ? "Ingresa tu PIN" : "Enter your PIN"}</p>
+                    {/* PIN dot display — filled green when entered, empty
+                        glass circle when waiting. Matches the keypad's
+                        circular glass aesthetic. */}
+                    <div className="flex gap-3 mb-4">
                         {[0,1,2,3].map(i => (
-                            <div key={i} className={"w-12 h-14 rounded-lg border-2 flex items-center justify-center text-2xl font-bold " +
-                                (pin.length > i ? "border-mint-400 bg-mint-50 text-mint-700" : "border-gray-200 bg-white text-gray-300")}>
-                                {pin.length > i ? "●" : ""}
-                            </div>
+                            <div key={i}
+                                className={`w-3.5 h-3.5 rounded-full transition-all duration-200 ease-out ${
+                                    pin.length > i
+                                        ? 'bg-dd-green shadow-[0_0_0_2px_rgba(31,122,77,0.18)] scale-110'
+                                        : 'bg-white/40 ring-1 ring-inset ring-black/10'
+                                }`}
+                            />
                         ))}
                     </div>
                     {isLocked && (
-                        <div className="mb-2 px-3 py-1.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-xs font-bold">
-                            🔒 {isEs ? `Bloqueado ${lockSecondsLeft}s` : `Locked ${lockSecondsLeft}s`}
+                        <div className="mb-3 px-3 py-1.5 rounded-full bg-red-100 border border-red-300 text-red-800 text-xs font-bold">
+                            {isEs ? `Bloqueado ${lockSecondsLeft}s` : `Locked ${lockSecondsLeft}s`}
                         </div>
                     )}
                     {error && !isLocked && <p className="text-red-500 text-xs mb-2">{error}</p>}
-                    <div className="grid grid-cols-3 gap-2 w-60 mt-2">
+                    {/* Circle glass keypad — iOS-style. Each digit is a
+                        translucent white disc with a backdrop blur and
+                        hairline border. 64×64 hits both Apple HIG (44pt)
+                        and Material (48dp) touch targets with room. */}
+                    <div className="grid grid-cols-3 gap-4 mt-2">
                         {[1,2,3,4,5,6,7,8,9].map(n => (
                             <button key={n} onClick={() => { setError(""); if (!isLocked && pin.length < 4) setPin(pin + n); }}
                                 disabled={isLocked}
-                                className={`h-14 rounded-lg bg-white border border-gray-200 text-xl font-semibold text-gray-700 hover:bg-mint-50 hover:border-mint-200 active:bg-mint-100 transition ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                                className={`w-16 h-16 rounded-full bg-white/70 backdrop-blur-md border border-black/10 text-2xl font-semibold text-dd-text shadow-glass-sm hover:bg-white/85 hover:shadow-glass-md active:scale-95 transition-all duration-150 ease-glass-out ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                                 {n}
                             </button>
                         ))}
                         <button onClick={handleClear} disabled={isLocked}
-                            className={`h-14 rounded-lg bg-gray-100 border border-gray-200 text-sm font-medium text-gray-500 hover:bg-gray-200 transition ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                            className={`w-16 h-16 rounded-full bg-white/40 backdrop-blur-md border border-black/10 text-xs font-bold uppercase tracking-wider text-dd-text-2 shadow-glass-sm hover:bg-white/70 active:scale-95 transition-all duration-150 ease-glass-out ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                             {isEs ? "Borrar" : "Clear"}
                         </button>
                         <button onClick={() => { setError(""); if (!isLocked && pin.length < 4) setPin(pin + "0"); }}
                             disabled={isLocked}
-                            className={`h-14 rounded-lg bg-white border border-gray-200 text-xl font-semibold text-gray-700 hover:bg-mint-50 hover:border-mint-200 active:bg-mint-100 transition ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                            className={`w-16 h-16 rounded-full bg-white/70 backdrop-blur-md border border-black/10 text-2xl font-semibold text-dd-text shadow-glass-sm hover:bg-white/85 hover:shadow-glass-md active:scale-95 transition-all duration-150 ease-glass-out ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                             0
                         </button>
+                        {/* OK button — brand green glass disc, only "on"
+                            once a 4-digit PIN is in. Pre-fill state stays
+                            dimmed glass so the keypad layout doesn't jump. */}
                         <button onClick={handlePinSubmit}
                             disabled={isLocked || pin.length !== 4}
-                            className={"h-14 rounded-lg text-sm font-bold transition " +
-                                (pin.length === 4 && !isLocked ? "bg-mint-700 text-white hover:bg-mint-700" : "bg-gray-100 text-gray-400 border border-gray-200")}>
+                            className={`w-16 h-16 rounded-full text-sm font-bold shadow-glass-sm active:scale-95 transition-all duration-150 ease-glass-out ${
+                                pin.length === 4 && !isLocked
+                                    ? 'bg-dd-green text-white border border-dd-green hover:bg-dd-green-700 hover:shadow-glass-md'
+                                    : 'bg-white/40 backdrop-blur-md border border-black/10 text-dd-text-2/50 cursor-not-allowed'
+                            }`}>
                             OK
                         </button>
                     </div>
