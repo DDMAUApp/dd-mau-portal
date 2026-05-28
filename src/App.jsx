@@ -1364,7 +1364,7 @@ export default function App() {
             if (activeTab === 'chat') return <PageErrorBoundary tabName="Chat" language={language}><ChatCenter language={language} staffName={staffName} staffList={staffList} setStaffList={setStaffList} isAdmin={staffIsAdmin} isManager={isManager} storeLocation={effectiveLocation} /></PageErrorBoundary>;
             if (activeTab === 'training' && canSeePage(currentStaffRecord, 'training')) return <TrainingHub staffName={staffName} language={language} staffList={staffList} />;
             if (activeTab === 'operations' && hasOpsAccess) return <PageErrorBoundary tabName="Operations" language={language}><Operations language={language} staffList={staffList} staffName={staffName} storeLocation={effectiveLocation} /></PageErrorBoundary>;
-            if (activeTab === 'mytasks') return <MyTasksPanel language={language} staffName={staffName} staffList={staffList} />;
+            if (activeTab === 'mytasks') return <MyTasksPanel language={language} staffName={staffName} staffList={staffList} isAdmin={staffIsAdmin} isManager={isManager} />;
             if (activeTab === 'menu' && canSeePage(currentStaffRecord, 'menu')) return <MenuReference language={language} />;
             if (activeTab === 'datestickers') return <DateStickerPrinter language={language} staffName={staffName} storeLocation={effectiveLocation} staffList={staffList} />;
             if (activeTab === 'schedule') return <PageErrorBoundary tabName="Schedule" language={language}><Schedule staffName={staffName} language={language} storeLocation={effectiveLocation} staffList={staffList} setStaffList={setStaffList} /></PageErrorBoundary>;

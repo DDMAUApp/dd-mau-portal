@@ -1,24 +1,38 @@
-// MyTasksPanel — staff-facing "My Tasks" tab.
+// MyTasksPanel — the "My Tasks" tab.
 //
-// Shows assignments addressed to the signed-in staffer:
-//   • Open tasks at top (latest first), tap the checkbox to mark done.
-//   • Completed tasks collapsed in a "Show N completed" section below.
-//   • Empty state when there's nothing.
+// 2026-05-27 (round 2) — Andrew: "i need that [the kanban] in the
+// task page and use the current list as the master list." Promoted
+// the kanban out of Operations → Assign Tasks (where it was buried)
+// to the top-level My Tasks tab. Role split:
 //
-// Subscribes to /assigned_tasks/ where staffId == me.id. Real-time —
-// new assignments from a manager appear without a refresh.
+//   • Admins + managers           → AssignTasksPanel (kanban with
+//                                   the existing task library on the
+//                                   left + per-staff columns on the
+//                                   right; add tasks, tap to assign,
+//                                   mark done from any column).
+//   • Staff + shift leads         → personal task list (their own
+//                                   assignments only; mark done flow).
 //
-// 2026-05-27 — visual refresh: PageHeader + glass-card + Lucide icons
-// + Apple-Reminders-style circular check buttons. Logic / state /
-// data flow / Firestore subscriptions all untouched.
+// The kanban + the personal list both read from the same
+// /assigned_tasks collection, so a task assigned by a manager on the
+// kanban appears on the assignee's personal list in real time.
+//
+// 2026-05-27 (round 1) — visual refresh: PageHeader + glass-card +
+// Lucide icons + Apple-Reminders-style circular check buttons.
+// Personal-list rendering below this header is unchanged from that
+// pass.
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import {
     subscribeAssignmentsForStaff,
     setAssignmentDone,
 } from '../data/assignedTasks';
 import { CheckSquare, PartyPopper, Check, ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
+
+// Lazy-load AssignTasksPanel so non-managers don't pay the bundle
+// cost for code they'll never render.
+const AssignTasksPanel = lazy(() => import('./AssignTasksPanel'));
 
 const tx = (en, es, isEs) => (isEs ? es : en);
 
@@ -40,8 +54,32 @@ export default function MyTasksPanel({
     language = 'en',
     staffName = '',
     staffList = [],
+    isAdmin = false,
+    isManager = false,
 }) {
     const isEs = language === 'es';
+
+    // Manager / admin viewers see the kanban — same component
+    // that powers the Operations → Assign Tasks sub-tab. Master
+    // list (the existing config/task_library_{side} doc) sits on
+    // the left; per-staff columns on the right. Staff and shift
+    // leads fall through to the personal-list render below.
+    if (isAdmin || isManager) {
+        return (
+            <Suspense fallback={
+                <div className="max-w-2xl mx-auto p-4">
+                    <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
+                </div>
+            }>
+                <AssignTasksPanel
+                    language={language}
+                    staffName={staffName}
+                    staffList={staffList}
+                    isAdmin={isAdmin}
+                />
+            </Suspense>
+        );
+    }
 
     const me = useMemo(
         () => (staffList || []).find((s) => s.name === staffName) || null,
