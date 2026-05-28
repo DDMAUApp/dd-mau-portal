@@ -2910,8 +2910,25 @@ function Composer({
         // forces a GPU layer so iOS scrollKit doesn't reflow it during
         // momentum scroll.
         <div
-            className="sticky bottom-0 z-10 px-2 py-2 border-t border-dd-line bg-white shrink-0 relative"
-            style={{ transform: 'translateZ(0)' }}
+            // 2026-05-27 — Andrew: "look at safari the app message input
+            // bar is still high and its the same in mobile."
+            //
+            // The chat-shell CSS rule used to subtract BOTH safe-area
+            // insets (top + bottom) from 100dvh, which left the
+            // composer sitting ~34px above the iPhone home-indicator
+            // strip. iOS-standard fix: the bottom safe-area subtraction
+            // is gone (see index.css ddmau-chat-shell rule), and the
+            // composer extends its WHITE BACKGROUND into the safe-area
+            // zone via `padding-bottom: env(safe-area-inset-bottom)`.
+            // The inner buttons/textarea row still sits above the home
+            // indicator (the padding pushes content up), but the
+            // composer's surface flows all the way to the screen
+            // bottom — no more sage strip below it.
+            className="sticky bottom-0 z-10 px-2 pt-2 pb-2 border-t border-dd-line bg-white shrink-0 relative"
+            style={{
+                transform: 'translateZ(0)',
+                paddingBottom: 'calc(0.5rem + env(safe-area-inset-bottom))',
+            }}
         >
             {/* 2026-05-24 — off-shift "Notify anyway" banner removed.
                 Chat now always pushes regardless of recipient shift

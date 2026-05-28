@@ -958,10 +958,17 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
        old `100dvh - 146px - safe-areas` calc left an empty band at
        the bottom that showed through whatever the page bg was; on
        mobile staff perceived that band as a horizontal line above
-       the FAB. Same height fix the chat-thread-open state uses. */
+       the FAB. Same height fix the chat-thread-open state uses.
+       2026-05-27 — Andrew: "look at safari the app message input
+       bar is still high and its the same in mobile." Stopped
+       subtracting safe-area-inset-bottom. The shell now extends all
+       the way to the screen edge; the COMPOSER's own
+       padding-bottom: env(safe-area-inset-bottom) lifts its
+       interactive row above the home indicator while keeping the
+       white surface flowing into the safe-area strip. */
     body[data-chat-page-open="true"] .ddmau-chat-shell {
         height: 100vh !important;
-        height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+        height: calc(100dvh - env(safe-area-inset-top)) !important;
         margin-top: 0 !important;
         margin-bottom: 0 !important;
         margin-left: 0 !important;
@@ -1015,7 +1022,10 @@ body[data-chat-thread-open="true"] .ddmau-mobile-bottom-nav {
        flush against the back button + the keyboard. */
     body[data-chat-thread-open="true"] .ddmau-chat-shell {
         height: 100vh !important;
-        height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom)) !important;
+        /* 2026-05-27 — see chat-page-open rule above for context.
+           Bottom safe-area subtraction removed so the composer's
+           white surface flows into the home-indicator strip. */
+        height: calc(100dvh - env(safe-area-inset-top)) !important;
         margin-top: 0 !important;
         margin-bottom: 0 !important;
         margin-left: 0 !important;
