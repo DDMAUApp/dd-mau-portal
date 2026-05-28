@@ -205,11 +205,24 @@ export default function ChatCenter({
     // To bring a system channel back, an admin can delete its
     // tombstone in /chats_purged via Firestore console (or via a
     // "Restore channel" UI — out of v1 scope).
+    //
+    // 2026-05-28 Audit #5 follow-up — the bug audit flagged this
+    // effect as missing a mounted/staffListReady guard. Verified:
+    //   • staffList.length > 0 gate already present
+    //   • cancelled flag + per-iteration cancel checks already
+    //     present (so an in-flight setDoc can't outlive unmount)
+    //   • AUTO_CHANNELS is currently [] (channels were purged in
+    //     the 2026-05-16 cleanup), so this loop is a no-op until
+    //     someone explicitly re-adds an entry
+    // Added a loop-top cancellation check so a future repopulation
+    // of AUTO_CHANNELS still aborts cleanly mid-loop instead of
+    // running through all remaining channels after unmount.
     useEffect(() => {
         if (!Array.isArray(staffList) || staffList.length === 0) return;
         let cancelled = false;
         (async () => {
             for (const ch of AUTO_CHANNELS) {
+                if (cancelled) return;
                 const id = channelDocId(ch.key);
                 const ref = doc(db, 'chats', id);
                 const tombRef = doc(db, 'chats_purged', id);
