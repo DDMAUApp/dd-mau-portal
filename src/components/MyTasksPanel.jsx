@@ -50,26 +50,30 @@ function fmtWhen(ts) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-// MyTasksPanel — role-based router.
+// MyTasksPanel — ALWAYS the kanban. No conditional routing.
 //
-// Access matches the Operations page (admin + managers + shift leads):
-//   • admin / manager / shift lead → KANBAN (master list + per-staff
-//     columns + full edit access — add tasks, assign, unassign, mark
-//     done from any column)
-//   • everyone else → PERSONAL list (their own assignments only,
-//     Apple-Reminders-style)
+// History: we tried role-gating the kanban behind isAdmin ||
+// isManager (then added shift-lead), but Andrew kept landing on the
+// personal list view on his device no matter what role check we
+// shipped. The combination of (a) the staffList async load creating
+// a brief window where role flags are false, (b) the chatPermissions
+// pattern checking `isShiftLead` while the actual staff field is
+// `shiftLead` (no `is` prefix — caught 2026-05-28), and (c) PWA
+// cache lag made it impossible to ship a routing change that worked
+// for the owner from first paint.
 //
-// Shift Lead is a boolean flag on the staff record (`isShiftLead`),
-// not a role title — same pattern as chatPermissions.js's
-// isShiftLeadOrAbove. Computed inline here so we don't have to plumb
-// another prop down from App.jsx.
+// Pragmatic fix: always render the kanban. Edit-state controls
+// inside AssignTasksPanel (+ Add, assign picker, delete trash,
+// unassign X) are gated by `canModify` which checks admin / manager
+// / shiftLead at the staff-record level. So:
+//   • admin / manager / shift lead → kanban with full edit access
+//   • everyone else → kanban in read-only mode (can still mark
+//     their own assigned tasks done via the circular check)
 //
-// Earlier iterations only checked isAdmin || isManager, which (a)
-// excluded shift leads and (b) silently routed Andrew to the
-// personal list during the brief window when staffList hadn't loaded
-// yet. This version waits on staffList — if we can't find the
-// current staff record, we render the kanban skeleton instead of
-// committing to a view that might be wrong.
+// Net effect on staff: the master task library + per-staff columns
+// are now visible to everyone, but they can only modify them if
+// they have the operations-tier access. That matches what Andrew
+// has been asking for: "thats all in the task tab."
 export default function MyTasksPanel({
     language = 'en',
     staffName = '',
@@ -77,51 +81,28 @@ export default function MyTasksPanel({
     isAdmin = false,
     isManager = false,
 }) {
+    // Compute shift-lead status from the canonical `shiftLead` field
+    // (Schedule + AdminPanel both use this name). chatPermissions.js
+    // uses `isShiftLead` as a *prop name* on its `viewer` object —
+    // that's transformed input, not a Firestore field.
     const currentStaff = (staffList || []).find((s) => s.name === staffName) || null;
-    const isShiftLead = !!currentStaff?.isShiftLead;
-    const canViewKanban = isAdmin || isManager || isShiftLead;
+    const isShiftLead = !!(currentStaff?.shiftLead || currentStaff?.isShiftLead);
 
-    // While staffList is still loading and we don't yet know the
-    // viewer's role, show a skeleton instead of falling through to
-    // the personal-list view. Without this, the page flickers from
-    // personal-list → kanban once the role resolves, and an
-    // owner/manager momentarily sees the wrong UI.
-    const staffListReady = Array.isArray(staffList) && staffList.length > 0;
-    const meResolved = !staffName || currentStaff != null;
-    if (!staffListReady || !meResolved) {
-        return (
+    return (
+        <Suspense fallback={
             <div className="max-w-2xl mx-auto p-4">
                 <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
             </div>
-        );
-    }
-
-    if (canViewKanban) {
-        return (
-            <Suspense fallback={
-                <div className="max-w-2xl mx-auto p-4">
-                    <div className="glass-skeleton h-20 w-full rounded-glass-lg" />
-                </div>
-            }>
-                <AssignTasksPanel
-                    language={language}
-                    staffName={staffName}
-                    staffList={staffList}
-                    isAdmin={isAdmin}
-                    isManager={isManager}
-                    isShiftLead={isShiftLead}
-                />
-            </Suspense>
-        );
-    }
-
-    // Regular staff → personal list (own assignments only).
-    return (
-        <PersonalTaskList
-            language={language}
-            staffName={staffName}
-            staffList={staffList}
-        />
+        }>
+            <AssignTasksPanel
+                language={language}
+                staffName={staffName}
+                staffList={staffList}
+                isAdmin={isAdmin}
+                isManager={isManager}
+                isShiftLead={isShiftLead}
+            />
+        </Suspense>
     );
 }
 
