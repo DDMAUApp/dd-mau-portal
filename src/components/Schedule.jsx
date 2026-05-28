@@ -2333,6 +2333,16 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         ));
         if (!ok) return;
         const snapshot = ids.map(id => shifts.find(s => s.id === id)).filter(Boolean);
+        // 2026-05-28 Audit #12 — compute a STABLE bulk op id so the
+        // notify() dedupe tag works across accidental double-fires.
+        // Previously the tag was `bulk:${Date.now()}` which produced
+        // a fresh suffix every invocation, defeating dedupe entirely
+        // — a user double-tapping the delete button could push two
+        // notifications per affected staff. Sorted-first-id is
+        // deterministic regardless of the order ids came in.
+        const bulkId = snapshot.length > 0
+            ? [...snapshot.map(s => s.id)].sort()[0]
+            : `empty:${ids.length}`;
         clearSelection();
         undoToast(
             tx(`🗑 Deleted ${snapshot.length} shifts`, `🗑 Eliminados ${snapshot.length} turnos`),
@@ -2381,7 +2391,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                         { en: lines.join('\n') + moreEn,
                           es: lines.join('\n') + moreEs },
                         '/schedule',
-                        { allowSelf: true, tagSuffix: `bulk:${Date.now()}` }
+                        { allowSelf: true, tagSuffix: `bulk:${bulkId}` }
                     ).catch(() => {});
                 }
                 // Admin summary — single roll-up so other managers know a
@@ -2399,7 +2409,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                                 es: `Turnos publicados eliminados • por ${staffName}` },
                         link: '/schedule',
                         deepLink: 'schedule',
-                        tag: `bulk_delete:${Date.now()}`,
+                        tag: `bulk_delete:${bulkId}`,
                         createdBy: staffName,
                     }).catch(() => {});
                 }
