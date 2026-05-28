@@ -50,6 +50,11 @@ function fmtWhen(ts) {
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+// MyTasksPanel — thin router. Picks the right sub-view based on role,
+// keeping all hook calls inside their respective sub-components so we
+// don't trip the Rules of Hooks (an earlier version of this file ran
+// hooks below a conditional early return and would have flickered or
+// crashed under StrictMode / role-flip).
 export default function MyTasksPanel({
     language = 'en',
     staffName = '',
@@ -57,13 +62,10 @@ export default function MyTasksPanel({
     isAdmin = false,
     isManager = false,
 }) {
-    const isEs = language === 'es';
-
     // Manager / admin viewers see the kanban — same component
     // that powers the Operations → Assign Tasks sub-tab. Master
     // list (the existing config/task_library_{side} doc) sits on
-    // the left; per-staff columns on the right. Staff and shift
-    // leads fall through to the personal-list render below.
+    // the left; per-staff columns on the right.
     if (isAdmin || isManager) {
         return (
             <Suspense fallback={
@@ -80,6 +82,25 @@ export default function MyTasksPanel({
             </Suspense>
         );
     }
+
+    // Staff + shift leads → personal list view (own assignments only).
+    return (
+        <PersonalTaskList
+            language={language}
+            staffName={staffName}
+            staffList={staffList}
+        />
+    );
+}
+
+// PersonalTaskList — the staff-side view (one's own assignments,
+// Apple-Reminders-style circular check). All hooks live here so the
+// rules-of-hooks check is satisfied. Previously this code lived inside
+// MyTasksPanel with hooks below a conditional early-return for the
+// admin/manager case, which would crash under StrictMode if isAdmin
+// ever flipped mid-session.
+function PersonalTaskList({ language, staffName, staffList }) {
+    const isEs = language === 'es';
 
     const me = useMemo(
         () => (staffList || []).find((s) => s.name === staffName) || null,
