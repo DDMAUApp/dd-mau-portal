@@ -504,9 +504,16 @@ function Tile({ tab, Icon, en, es, isEs, primary = false, badge, badgeTone, onTa
         >
             {/* Icon disc — square chip on the left so the Lucide
                 glyph has a visible "container" and doesn't compete
-                with the label. Subtle sage tint for primary tiles,
-                neutral bg for the rest. */}
-            <span className={`flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center ${primary ? 'bg-dd-sage-50 text-dd-green-700' : 'bg-white/70 text-dd-text-2'}`}>
+                with the label.
+                2026-05-27 — Andrew: "the home screen fix you just
+                made with the green lines the same bubbles has the
+                green and green tint aroung the emoji. apply that
+                to the rest of the bubbles." Every tile now gets
+                the sage-50 disc + dd-green-700 glyph (previously
+                only primary tiles did; secondary tiles had a
+                neutral white/gray disc). The whole launcher grid
+                now reads as one calm sage-tinted family. */}
+            <span className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center bg-dd-sage-50 text-dd-green-700">
                 {Icon && <Icon size={22} strokeWidth={2.25} aria-hidden="true" />}
             </span>
             <span className="flex-1 text-[15px] font-bold text-dd-text leading-tight text-left">
