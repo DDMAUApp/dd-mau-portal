@@ -1094,9 +1094,18 @@ function CategoryEditorModal({ mode, categoryId, categories, actorName, language
 //   2. Clears needsClassification (= one less queued item).
 //   3. Appends a correction row to /email_intel_corrections so the AI
 //      learns this owner's preference for next time.
-function ClassifyQueueModal({ items, categories, actorName, language, onClose }) {
+function ClassifyQueueModal({ items: itemsLive, categories, actorName, language, onClose }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
+    // Freeze the queue at modal-open. The parent passes a LIVE filtered
+    // list `items.filter(needsClassification)`, but picking an item
+    // clears its needsClassification flag — Firestore's local snapshot
+    // listener fires synchronously on that write, so the parent re-
+    // renders with a SHORTER items array before pick() even calls
+    // advance(). Without freezing, idx then points one item past the
+    // picked one in the now-shortened array → every other queued item
+    // is silently skipped. Snapshotting at mount keeps idx in sync.
+    const [items] = useState(() => Array.isArray(itemsLive) ? itemsLive.slice() : []);
     const [idx, setIdx] = useState(0);
     const [busy, setBusy] = useState(false);
     const total = items.length;

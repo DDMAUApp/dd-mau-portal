@@ -161,27 +161,38 @@ function buildCommonContext() {
 //
 // Returns the doc id of the written row (or null if the write
 // failed). Never throws.
-// Chunk-load error pattern — matches the wording every modern browser
-// uses when a dynamic import() fails (404 on a chunk hash that no
-// longer exists after a deploy). These are ALWAYS stale-cache, never
-// actionable bugs, and the global handler in App.jsx auto-reloads
-// the app to recover. logError() silently drops these so they never
-// pollute /error_logs or Sentry, regardless of who's calling.
-const CHUNK_ERR_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module/i;
+// Noise-pattern matcher — drops categories of error_logs rows we
+// already filter at the Sentry SDK level. Keeping them OUT of
+// /error_logs too avoids:
+//   1. paying Firestore writes for noise on every staff device
+//   2. burying the Admin → Error Report page under unactionable rows
+//
+// Categories suppressed:
+//   • chunk-load failures — dynamic import() 404 after a deploy that
+//     evicted the old chunk hash. App.jsx auto-reloads.
+//   • "Script error." — what every browser surfaces for an uncaught
+//     error in a cross-origin <script> (CORS strips the actual
+//     message). The cross-origin source is usually a Firebase SDK
+//     internal or a browser extension; we can't act on it either way.
+//     2026-05-28 — six "Script error." entries in 3 minutes on the
+//     lock screen surfaced this gap when Andrew asked to "check the
+//     errors."
+const NOISE_PATTERN_LOG = /Loading chunk|Failed to fetch dynamically imported module|Importing a module script failed|ChunkLoadError|dynamically imported module|Failed to load module|^Script error\.?$/i;
 
 export async function logError({ error, severity = 'error', feature, meta } = {}) {
     const errObj = error instanceof Error ? error : new Error(String(error ?? 'unknown error'));
 
-    // Defense in depth: filter chunk errors here too. The route-level
-    // PageErrorBoundary already filters them, and the global window
-    // error/rejection handlers in installGlobalHandlers() filter them,
-    // but a future ad-hoc try/catch calling logError() shouldn't be
-    // able to slip one through. 2026-05-27 — Kitchen Manager iPad
-    // chunk-load error generated a critical-severity row this way.
-    if (CHUNK_ERR_PATTERN_LOG.test(errObj.message || '') || errObj.name === 'ChunkLoadError') {
+    // Defense in depth: filter the same noise we drop at the Sentry
+    // level. The route-level PageErrorBoundary already filters chunks,
+    // and the global window error/rejection handlers in
+    // installGlobalHandlers() filter them, but a future ad-hoc
+    // try/catch calling logError() shouldn't be able to slip one
+    // through. 2026-05-27 — Kitchen Manager iPad chunk-load error
+    // generated a critical-severity row this way.
+    if (NOISE_PATTERN_LOG.test(errObj.message || '') || errObj.name === 'ChunkLoadError') {
         if (typeof console !== 'undefined') {
             // eslint-disable-next-line no-console
-            console.info('[logger] dropping chunk-load error (stale cache, not a bug):', errObj.message);
+            console.info('[logger] dropping noise error (cross-origin/stale-cache, not actionable):', errObj.message);
         }
         return null;
     }
