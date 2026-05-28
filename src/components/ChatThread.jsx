@@ -19,7 +19,7 @@
 // notify everyone except the sender, with @mentions getting a louder
 // "you were mentioned" badge.
 
-import { Component, useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { Component, memo, useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
