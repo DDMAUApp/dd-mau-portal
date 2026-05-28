@@ -46,7 +46,7 @@ import {
     // Schedule top-of-page chrome icons — replace bare emoji glyphs
     // for a more polished, OS-consistent look across iOS + Android.
     Sofa, Utensils, LayoutGrid, LayoutList, List, Palmtree,
-    Search, User, Megaphone, Plus, MoreHorizontal, Bell,
+    Search, User, Users, Megaphone, Plus, MoreHorizontal, Bell,
 } from 'lucide-react';
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -4779,7 +4779,8 @@ ${dayBlocks}
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('My Actions', 'Mis Acciones')}</div>
                                     <button onClick={() => { setShowMoreActions(false); setShowPtoRequestModal(true); }}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                        <span>🌴</span>{tx('Request Time Off', 'Pedir Tiempo Libre')}
+                                        <Palmtree size={14} strokeWidth={2.25} className="text-dd-green-700 shrink-0" aria-hidden="true" />
+                                        {tx('Request Time Off', 'Pedir Tiempo Libre')}
                                     </button>
                                     <button onClick={() => { setShowMoreActions(false); setShowMyAvailModal(true); }}
                                         className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
@@ -4811,11 +4812,13 @@ ${dayBlocks}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowNeedModal(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>👥</span>{tx('Add open slot', 'Agregar espacio')}
+                                            <Users size={14} strokeWidth={2.25} className="text-dd-green-700 shrink-0" aria-hidden="true" />
+                                            {tx('Add open slot', 'Agregar espacio')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); setShowTimeOffModal(true); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
-                                            <span>🌴</span>{tx('All Time Off requests', 'Todas las solicitudes')}
+                                            <Palmtree size={14} strokeWidth={2.25} className="text-dd-green-700 shrink-0" aria-hidden="true" />
+                                            {tx('All Time Off requests', 'Todas las solicitudes')}
                                         </button>
                                         <button onClick={() => { setShowMoreActions(false); handleCopyLastWeek(); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-bg flex items-center gap-2 text-sm text-dd-text">
@@ -4908,7 +4911,10 @@ ${dayBlocks}
                             aria-controls="open-slots-list"
                         >
                             <span className="w-1 h-4 bg-blue-500 rounded-full shrink-0" />
-                            <h3 className="text-xs font-bold text-dd-text">👥 {tx('Open slots', 'Abiertos')}</h3>
+                            <h3 className="text-xs font-bold text-dd-text inline-flex items-center gap-1.5">
+                                <Users size={13} strokeWidth={2.25} className="text-dd-green-700" aria-hidden="true" />
+                                {tx('Open slots', 'Abiertos')}
+                            </h3>
                             <span className="text-[10px] font-bold text-dd-text-2">{side === 'foh' ? 'FOH' : 'BOH'} · {weekNeeds.length}</span>
                             {openCount > 0 && (
                                 <span className="text-[10px] font-bold text-amber-700 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded-full">
@@ -5508,7 +5514,7 @@ ${dayBlocks}
                         </span>
                         <button onClick={handleBulkGiveUp}
                             className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 active:scale-95 transition">
-                            📣 {tx('Give up', 'Liberar')}
+                            <Megaphone size={14} strokeWidth={2.25} className="inline-block mr-1 -mt-0.5" aria-hidden="true" />{tx('Give up', 'Liberar')}
                         </button>
                         {canEdit && (
                             <button onClick={handleBulkDelete}
@@ -6271,7 +6277,8 @@ function OpenShiftsCalendarBar({
     // Per-mode visual + copy.
     const cfg = isUnassigned
         ? {
-            icon: '📋',
+            // icon is a React node (Lucide); rendered inside an iconBg disc
+            icon: <Users size={14} strokeWidth={2.25} aria-hidden="true" />,
             titleEn: 'Unassigned Shifts',     titleEs: 'Turnos Sin Asignar',
             countEn: 'unfilled',              countEs: 'sin llenar',
             footerEn: 'Tap a slot to fill',  footerEs: 'Toca para llenar',
@@ -6280,7 +6287,7 @@ function OpenShiftsCalendarBar({
             iconBg:   'bg-blue-50 text-blue-700',
         }
         : {
-            icon: '📣',
+            icon: <Megaphone size={14} strokeWidth={2.25} aria-hidden="true" />,
             titleEn: 'Available to Claim',    titleEs: 'Disponibles para Tomar',
             countEn: 'up for grabs',          countEs: 'disponibles',
             footerEn: 'Tap to claim',         footerEs: 'Toca para tomar',
@@ -7902,7 +7909,12 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                 >
                     <span className={`w-1 h-5 rounded-full ${accent}`} />
                     <span className="text-sm font-bold text-dd-text flex items-center gap-1.5">
-                        <span>{icon}</span> {title}
+                        {/* icon may be a string emoji (legacy) OR a Lucide
+                            React element. Rendering {icon} handles both
+                            cleanly — the wrapping <span> was forcing a
+                            text-only baseline that misaligned SVG icons
+                            vertically. */}
+                        <span className="inline-flex items-center">{icon}</span> {title}
                     </span>
                     {count != null && <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-dd-text-2">{count}</span>}
                     {collapsible && (
@@ -7924,7 +7936,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
         <div className="mb-3 space-y-2 print:hidden">
             {/* My own open offers — gentle reminder this is still mine */}
             {myOpenOffers.length > 0 && (
-                <Panel accent="bg-blue-500" icon="📣" title={tx('Your offered shifts', 'Tus turnos ofrecidos')} count={`${myOpenOffers.length} ${tx('still yours', 'aún tuyos')}`}>
+                <Panel accent="bg-blue-500" icon={<Megaphone size={14} strokeWidth={2.25} className="text-blue-600" />} title={tx('Your offered shifts', 'Tus turnos ofrecidos')} count={`${myOpenOffers.length} ${tx('still yours', 'aún tuyos')}`}>
                     {myOpenOffers.map(sh => (
                         <div key={sh.id} className="flex items-center justify-between gap-2 text-xs">
                             <span className="text-dd-text">{renderShiftLine(sh)}</span>
@@ -7937,7 +7949,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* Open shifts up for grabs (others can take) */}
             {openOffers.length > 0 && (
-                <Panel accent="bg-blue-500" icon="📣" title={tx('Available to pick up', 'Disponibles para tomar')} count={openOffers.length}>
+                <Panel accent="bg-blue-500" icon={<Megaphone size={14} strokeWidth={2.25} className="text-blue-600" />} title={tx('Available to pick up', 'Disponibles para tomar')} count={openOffers.length}>
                     {openOffers.map(sh => (
                         <div key={sh.id} className="flex items-center justify-between gap-2 bg-blue-50 rounded-lg p-2 border border-blue-200 text-xs">
                             <div className="min-w-0">
@@ -7977,7 +7989,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                 without flagging down a manager. See handleCancelOwnPto for
                 the per-status rationale (silent vs notify). */}
             {myPto.length > 0 && (
-                <Panel accent="bg-amber-500" icon="🌴" title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}
+                <Panel accent="bg-amber-500" icon={<Palmtree size={14} strokeWidth={2.25} className="text-amber-600" />} title={tx('My time-off requests', 'Mis solicitudes')} count={myPto.length}
                     collapsible open={myPtoOpen} onToggle={() => setMyPtoOpen(v => !v)}>
                     {myPto.map(t => {
                         const status = t.status || 'pending';
@@ -8025,7 +8037,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
 
             {/* Manager / admin pending PTO queue */}
             {canEdit && pendingPto.length > 0 && (
-                <Panel accent="bg-amber-500" icon="🌴" title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}
+                <Panel accent="bg-amber-500" icon={<Palmtree size={14} strokeWidth={2.25} className="text-amber-600" />} title={tx('Pending time-off requests', 'Solicitudes pendientes')} count={pendingPto.length}
                     collapsible open={pendingPtoOpen} onToggle={() => setPendingPtoOpen(v => !v)}>
                     {pendingPto.map(t => {
                         const submittedLabel = fmtSubmittedAt(t.submittedAt);
@@ -9526,7 +9538,10 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
                     <div className="min-w-0 flex-1">
-                        <h3 className="text-lg font-bold text-dd-text">👥 {tx('Who can work?', '¿Quién puede trabajar?')}</h3>
+                        <h3 className="text-lg font-bold text-dd-text inline-flex items-center gap-2">
+                            <Users size={18} strokeWidth={2.25} className="text-dd-green-700" aria-hidden="true" />
+                            {tx('Who can work?', '¿Quién puede trabajar?')}
+                        </h3>
                         <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
                             <span>{dayName} · {dateStr}</span>
                             {requiredGroup && requiredGroup.id !== 'any' && (
@@ -9919,8 +9934,9 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
-                    <h3 className="text-lg font-bold text-blue-700">
-                        👥 {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
+                    <h3 className="text-lg font-bold text-blue-700 inline-flex items-center gap-2">
+                        <Users size={18} strokeWidth={2.25} className="text-blue-700" aria-hidden="true" />
+                        {isEditing ? tx('Edit Slot', 'Editar Espacio') : tx('Add Staffing Need', 'Agregar Necesidad')}
                     </h3>
                     <button onClick={onClose} className="w-8 h-8 rounded-full glass-sheet text-dd-text-2 hover:text-dd-text text-lg">×</button>
                 </div>
@@ -10232,8 +10248,9 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
                     <div>
-                        <h3 className="text-lg font-bold text-blue-700">
-                            👥 {tx('Open Slots', 'Espacios Abiertos')}
+                        <h3 className="text-lg font-bold text-blue-700 inline-flex items-center gap-2">
+                            <Users size={18} strokeWidth={2.25} className="text-blue-700" aria-hidden="true" />
+                            {tx('Open Slots', 'Espacios Abiertos')}
                         </h3>
                         <p className="text-xs text-gray-600">{staff.name} · {dayLabel} {dateStr}</p>
                     </div>
