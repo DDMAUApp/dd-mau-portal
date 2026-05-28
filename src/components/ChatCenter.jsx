@@ -100,8 +100,26 @@ export default function ChatCenter({
     const [chatsLoading, setChatsLoading] = useState(true);
     const [chatsError, setChatsError] = useState(null);
     const [chatsSubGen, setChatsSubGen] = useState(0);
+    // 2026-05-28 audit fix (Audit #1): one-way staffListReady gate.
+    // Before this, the chats query fired as soon as `staffName` was
+    // restored from sessionStorage — even if the live `/config/staff`
+    // snapshot hadn't landed yet. On weak Wi-Fi that gap can run
+    // 1–3s. If the staff member was renamed/deactivated since their
+    // last session, the query ran with a stale identity and returned
+    // empty, presenting as "my chats didn't load." Waiting on a
+    // non-empty staffList ensures the chats query runs only after
+    // the roster is confirmed.
+    //
+    // staffListReady is intentionally a one-way edge (length > 0)
+    // included in the dep array, NOT staffList itself. Tracking the
+    // full array would cause re-subscription on every roster snapshot
+    // (~once per minute of normal admin activity), creating WebSocket
+    // churn for no benefit. We only need to re-fire when the gate
+    // flips false → true.
+    const staffListReady = Array.isArray(staffList) && staffList.length > 0;
     useEffect(() => {
         if (!staffName) return;
+        if (!staffListReady) return;
         // Firestore can't do "array-contains-any with OR another filter"
         // in one query, but we don't need it — channels are kept in the
         // members array by the sync logic below. So one query covers it.
@@ -155,7 +173,7 @@ export default function ChatCenter({
             clearTimeout(timeoutId);
             unsub();
         };
-    }, [staffName, chatsSubGen]);
+    }, [staffName, chatsSubGen, staffListReady]);
 
     // Retry handler — bumps chatsSubGen to re-fire the subscription
     // effect with a fresh listener. The error-state UI's Retry button
