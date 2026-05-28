@@ -10,6 +10,13 @@
 //                previous Blob-URL SW era (one-time cleanup)
 //   • no fetch handler — browser handles requests normally; the SW
 //                exists only to satisfy PWA installability
+//
+// Cache-bust version stamp. Bump this when a deployment needs to
+// force-evict stuck PWA bundles. Changing any byte in this file
+// triggers the browser to register the SW as "new" → install →
+// activate → the activate handler below wipes every cache key. This
+// is the lever to pull when Andrew reports "I don't see my changes."
+//   SW_VERSION = 2026-05-27.2 (kanban on My Tasks tab)
 
 self.addEventListener('install', (event) => {
     self.skipWaiting();

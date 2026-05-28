@@ -99,16 +99,18 @@ export default function AssignTasksPanel({
         if (!isAdmin) setSide(myInferredSide);
     }, [isAdmin, myInferredSide]);
 
-    // Staff on the current side (excluding the manager themselves —
-    // the manager-as-assignee adds noise in practice).
+    // Staff on the current side. INCLUDES the manager themselves —
+    // Andrew (admin) explicitly wanted to assign tasks to himself
+    // and see his own column on the kanban. Excluding self meant
+    // his column never appeared and the kanban felt empty for the
+    // owner who's most likely to use it. (2026-05-27 round 3.)
     const sideStaff = useMemo(() => {
         const list = Array.isArray(staffList) ? staffList : [];
         return list
             .filter((s) => s && s.name && s.active !== false)
-            .filter((s) => s.name !== staffName)
             .filter((s) => inferStaffSide(s) === side)
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    }, [staffList, side, staffName]);
+    }, [staffList, side]);
 
     // ── Master library subscription ─────────────────────────────────
     const [libItems, setLibItems] = useState([]);
