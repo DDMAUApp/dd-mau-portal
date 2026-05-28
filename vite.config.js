@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { execSync } from 'node:child_process'
-import { copyFileSync } from 'node:fs'
+import { copyFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 // Sentry source map upload plugin — Andrew 2026-05-26. Runs on every
 // `npm run build`. Reads three env vars from the local shell or CI:
@@ -40,6 +40,26 @@ const spa404Fallback = () => ({
   },
 })
 
+// Self-heal version manifest. Writes dist/version.json with the
+// current build's __APP_VERSION__ string. The running app fetches
+// /version.json with cache:'no-store' on every boot and compares
+// to its baked-in __APP_VERSION__ — if they differ, the bundle
+// nukes its caches + unregisters the SW + reloads. This is the
+// last-resort safety net for "Safari is showing the old bundle"
+// problems: even if the SW update channel fails to fire, the next
+// app boot self-heals as long as the user has network.
+const writeVersionManifest = () => ({
+  name: 'write-version-manifest',
+  closeBundle() {
+    try {
+      const payload = JSON.stringify({ v: APP_VERSION, ts: APP_BUILT_AT });
+      writeFileSync(resolve('dist/version.json'), payload + '\n');
+    } catch (e) {
+      console.warn('[write-version-manifest] failed (non-fatal):', e.message);
+    }
+  },
+})
+
 const buildId = Date.now().toString(36)
 
 // Build a human-readable version string at config time. Format:
@@ -61,6 +81,7 @@ export default defineConfig({
   plugins: [
     react(),
     spa404Fallback(),
+    writeVersionManifest(),
     // Sentry source-map upload — only attached when the three env vars
     // are present. Local dev/build without Sentry creds = no plugin,
     // no upload, no warning. CI/owner laptop with creds = source maps

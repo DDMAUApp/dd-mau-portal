@@ -1,5 +1,89 @@
+// ─── Self-heal cache-bust ────────────────────────────────────────────
+//
+// Safari (especially iOS PWAs) is notoriously aggressive about caching
+// /index.html and the SW. Even with skipWaiting() + clients.claim() on
+// our SW, devices in the wild can sit on a stale bundle for days. The
+// classic symptom: Andrew ships a fix, opens his PWA, and still sees
+// the previous build. The only manual rescue is "delete the PWA and
+// reinstall" — not a thing we want to ask 65 staff to do every week.
+//
+// Strategy: at boot, fetch /version.json (with cache:'no-store' to
+// bypass Safari's HTTP cache) and compare its `v` field to the
+// __APP_VERSION__ baked into THIS bundle at build time. If they
+// differ, the live deploy is newer than what we're running — wipe
+// every cache, unregister every SW, and reload. The fresh reload hits
+// the network for a new index.html, which references the new bundle
+// hashes, which loads the new code.
+//
+// Defensive guards:
+//   • localStorage `ddmau:lastSelfHealAt` throttles to ≤1 reload per
+//     30s, so a busted version.json (or a same-version race) can't
+//     bootloop the app
+//   • All network failures are swallowed (offline = stay on cached
+//     version, don't crash)
+//   • Runs once per page load — no polling, no timers
+//
+// After this lands, future deploys propagate to every device on its
+// next app open. No more "did you uninstall and reinstall?" support.
+async function selfHealIfStale() {
+    try {
+        // Loop-breaker: never run more than once per 30s.
+        const last = Number(localStorage.getItem('ddmau:lastSelfHealAt') || 0);
+        if (last && Date.now() - last < 30_000) return;
+
+        const localVersion = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : null;
+        if (!localVersion) return;
+
+        const url = (import.meta.env.BASE_URL || '/') + 'version.json?t=' + Date.now();
+        const resp = await fetch(url, { cache: 'no-store' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const serverVersion = data && data.v;
+        if (!serverVersion || serverVersion === localVersion) return;
+
+        // Version mismatch — the deployed bundle is newer than the
+        // one we're running. Stamp the timestamp BEFORE the reload so
+        // we can't loop, then wipe everything and reload.
+        console.warn('[self-heal] version mismatch — local:', localVersion, 'server:', serverVersion, '— reloading');
+        localStorage.setItem('ddmau:lastSelfHealAt', String(Date.now()));
+
+        // Unregister every SW first so the fresh reload hits the network.
+        if ('serviceWorker' in navigator) {
+            try {
+                const regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map((r) => r.unregister().catch(() => {})));
+            } catch {}
+        }
+
+        // Wipe every Cache Storage entry the old SW (or any other code)
+        // may have populated.
+        if ('caches' in window) {
+            try {
+                const keys = await caches.keys();
+                await Promise.all(keys.map((k) => caches.delete(k).catch(() => false)));
+            } catch {}
+        }
+
+        // Force a network reload. location.reload(true) is deprecated
+        // but a query string + replace() guarantees a fresh fetch
+        // without polluting back-button history.
+        const bustUrl = window.location.pathname + (window.location.search ? window.location.search + '&' : '?') + '_v=' + encodeURIComponent(serverVersion);
+        window.location.replace(bustUrl);
+    } catch {
+        // Network or parse error — stay on whatever we have, don't crash.
+    }
+}
+
 // Inline PWA manifest (no separate file needed)
 export function setupPWA() {
+    // Kick off the self-heal check immediately. Don't await — the
+    // rest of setupPWA needs to run synchronously so the manifest
+    // link tag lands before the user does anything. If the bundle
+    // is stale, the page will reload before they get past the lock
+    // screen anyway.
+    selfHealIfStale();
+
+
     const manifestData = {
         name: "DD Mau Staff Portal",
         short_name: "DD Mau",
