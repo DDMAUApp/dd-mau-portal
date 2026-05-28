@@ -6227,8 +6227,44 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 const totalQty = rows.reduce((s, r) => s + r.qty, 0);
 
                                 return (
-                                    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-center justify-center p-2" onClick={() => setShowCart(false)}>
-                                        <div className="bg-white w-full max-w-3xl max-h-[92vh] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+                                    // 2026-05-27 — Andrew: "in inventory the cart
+                                    // i want the view to be bigger. on desktop
+                                    // when pressed the view the cart window ends
+                                    // up too low have the window open at the top
+                                    // right inder the cart bar."
+                                    //
+                                    // Two positioning modes share one render tree:
+                                    //   • Mobile (<sm): bottom sheet — items-end
+                                    //     + justify-center + p-2. Slides up from
+                                    //     the bottom edge so the user's tap
+                                    //     gesture and the sheet's entry direction
+                                    //     match. Unchanged from before.
+                                    //   • Desktop (sm+): TOP-RIGHT anchored panel
+                                    //     — items-start + justify-end. Padding
+                                    //     pt-20 leaves room for the global app
+                                    //     header (h-16 desktop + safe-area inset)
+                                    //     so the cart panel sits visually UNDER
+                                    //     the header bar. pr-6 keeps it off the
+                                    //     viewport's right edge.
+                                    //
+                                    // Size bump: max-w-3xl (768px) → sm:max-w-5xl
+                                    // (1024px) and max-h-[92vh] (mobile) →
+                                    // sm:max-h-[calc(100vh-104px)] (desktop) so
+                                    // the vendor-comparison table has room to
+                                    // breathe and the bottom edge stays inside
+                                    // the viewport. Heavier shadow on desktop
+                                    // (shadow-2xl) signals "elevated panel" since
+                                    // the modal is no longer centered on the
+                                    // dimmed scrim — it visually floats off the
+                                    // corner like a Settings popover.
+                                    <div
+                                        className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-start justify-center sm:justify-end p-2 sm:p-6 sm:pt-20"
+                                        onClick={() => setShowCart(false)}
+                                    >
+                                        <div
+                                            className="bg-white w-full max-w-3xl sm:max-w-5xl max-h-[92vh] sm:max-h-[calc(100vh-104px)] rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col sm:shadow-2xl"
+                                            onClick={e => e.stopPropagation()}
+                                        >
                                             {/* Header */}
                                             <div className="bg-mint-700 text-white px-4 py-3 flex items-center justify-between flex-shrink-0">
                                                 <h3 className="font-bold text-base sm:text-lg">{"\u{1F6D2}"} {language === "es" ? "Carrito" : "Cart"} — {totalItems} {language === "es" ? "artículos" : "items"} · {totalQty} {language === "es" ? "total" : "total"}</h3>
