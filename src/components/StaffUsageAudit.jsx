@@ -51,7 +51,7 @@ import {
     Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi,
     MessageSquare, Send, PhoneOff,
 } from 'lucide-react';
-import { sendSetupReminderSms } from '../data/notify';
+import { composeSetupReminderSmsUrl, stampSetupReminderSent } from '../data/notify';
 
 // Coerce any timestamp shape to a millisecond number (or 0 for
 // nothing). Handles Firestore Timestamp objects, JS Dates, ISO
@@ -95,9 +95,11 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
     const tx = (en, es) => (isEs ? es : en);
     const [expanded, setExpanded] = useState(false);
     const [filter, setFilter] = useState('all'); // 'all' | 'missing' | 'inactive'
-    // Per-row send state — keyed by staffName. Values are 'sending' | 'sent' | error string.
+    // Per-row send state — keyed by staffName. Used only to flip the
+    // chip to "Texted ✓" after the admin taps the sms: link (the actual
+    // SMS send happens in their native Messages app — we can't observe
+    // it, we just optimistically mark sent on click).
     const [sendingState, setSendingState] = useState({});
-    const [bulkSending, setBulkSending] = useState(false);
     const [toast, setToast] = useState(null);
 
     // Cooldown matches the value in src/data/notify.js. Used here only
@@ -105,65 +107,25 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
     // does the authoritative enforcement.
     const REMINDER_COOLDOWN_DAYS = 7;
 
-    async function handleSendReminder(staffRow) {
-        if (!staffRow?.raw) return;
+    // 2026-05-27 — Andrew: "make a text to text like we do in onboarding.
+    // so i or any admin can go through and send a text through my phone
+    // and its not automatic." Tapping the row's link opens the admin's
+    // native Messages app pre-filled with the recipient phone + body
+    // (sms:NUMBER?body=...). The admin reviews and taps Send themselves.
+    // We stamp the cooldown marker on click — we can't observe whether
+    // the admin actually hit Send, but we don't want to nag them about
+    // the same staffer the next time they open this page.
+    async function handleStampReminderSent(staffRow) {
+        if (!staffRow?.name) return;
         setSendingState((m) => ({ ...m, [staffRow.name]: 'sending' }));
-        const res = await sendSetupReminderSms(staffRow.raw, {
-            name: currentManagerName,
-            id: currentManagerId,
-        });
+        const res = await stampSetupReminderSent(staffRow.name);
         if (res.ok) {
             setSendingState((m) => ({ ...m, [staffRow.name]: 'sent' }));
-            setToast(tx(`Reminder SMS sent to ${staffRow.name}`, `SMS enviado a ${staffRow.name}`));
         } else {
-            setSendingState((m) => ({ ...m, [staffRow.name]: res.reason }));
-            const reasonLabel = {
-                no_phone:      tx('no phone on file', 'sin teléfono'),
-                not_opted_in:  tx('not opted in to SMS', 'no aceptó SMS'),
-                replied_stop:  tx('staff replied STOP', 'respondió STOP'),
-                cooldown:      tx('already sent recently', 'enviado recientemente'),
-                write_failed:  tx('write failed', 'error al guardar'),
-            }[res.reason] || res.reason;
-            setToast(tx(
-                `Couldn't send to ${staffRow.name}: ${reasonLabel}`,
-                `No se pudo enviar a ${staffRow.name}: ${reasonLabel}`
-            ));
+            setSendingState((m) => ({ ...m, [staffRow.name]: 'error' }));
+            setToast(tx('Could not record reminder', 'No se pudo registrar'));
+            setTimeout(() => setToast(null), 3000);
         }
-        setTimeout(() => setToast(null), 4000);
-    }
-
-    async function handleBulkSendReminders(targetRows) {
-        if (bulkSending) return;
-        if (!window.confirm(tx(
-            `Send setup reminder SMS to ${targetRows.length} staff?`,
-            `¿Enviar SMS recordatorio a ${targetRows.length} miembros?`
-        ))) return;
-        setBulkSending(true);
-        let sent = 0;
-        let skipped = 0;
-        const skipReasons = {};
-        for (const row of targetRows) {
-            const res = await sendSetupReminderSms(row.raw, {
-                name: currentManagerName,
-                id: currentManagerId,
-            });
-            if (res.ok) {
-                sent += 1;
-                setSendingState((m) => ({ ...m, [row.name]: 'sent' }));
-            } else {
-                skipped += 1;
-                skipReasons[res.reason] = (skipReasons[res.reason] || 0) + 1;
-            }
-        }
-        setBulkSending(false);
-        const skipBits = Object.entries(skipReasons)
-            .map(([r, n]) => `${n} ${r}`)
-            .join(', ');
-        setToast(tx(
-            `Sent ${sent} · Skipped ${skipped}${skipBits ? ' (' + skipBits + ')' : ''}`,
-            `Enviados ${sent} · Omitidos ${skipped}${skipBits ? ' (' + skipBits + ')' : ''}`
-        ));
-        setTimeout(() => setToast(null), 6000);
     }
 
     // Build the per-staff rows. Skip inactive staff (active === false)
@@ -343,36 +305,15 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                 {tx('Inactive 7d+', 'Inactivos 7d+')} ({stats.inactive7d})
                             </FilterChip>
                         </div>
-                        {/* Bulk reminder — sends to every row in the
-                            current filter that's SMS-eligible. The
-                            sendSetupReminderSms helper enforces the
-                            7-day cooldown per staffer, so re-pressing
-                            this button right after a send only hits
-                            anyone who hasn't been pinged in the
-                            cooldown window. */}
-                        {(() => {
-                            const eligible = filtered.filter((r) =>
-                                !r.ready && r.phoneE164 && r.smsOptIn && !r.smsStopped
-                            );
-                            if (eligible.length === 0) return null;
-                            return (
-                                <button
-                                    type="button"
-                                    onClick={() => handleBulkSendReminders(eligible)}
-                                    disabled={bulkSending}
-                                    className="glass-button-apple inline-flex items-center gap-1.5 px-3 py-1.5 text-xs ml-auto disabled:opacity-50"
-                                    title={tx(
-                                        'Send setup-reminder SMS to all not-yet-ready, opted-in staff in this filter.',
-                                        'Enviar SMS recordatorio a todos los no listos opted-in en este filtro.'
-                                    )}
-                                >
-                                    <MessageSquare size={14} strokeWidth={2.25} aria-hidden="true" />
-                                    {bulkSending
-                                        ? tx('Sending…', 'Enviando…')
-                                        : tx(`Send reminder SMS to ${eligible.length}`, `SMS a ${eligible.length}`)}
-                                </button>
-                            );
-                        })()}
+                        {/* Bulk send removed — the manual sms: URL flow
+                            is one-at-a-time (each tap opens the admin's
+                            native Messages app for review + send).
+                            Going through ~10 stragglers one tap each is
+                            roughly the same effort as the old bulk
+                            confirm-then-fire, and avoids opening N tabs
+                            on desktop or N message threads on mobile.
+                            (Old Twilio bulk action still lives in git
+                            history if we want it back once 10DLC clears.) */}
                     </div>
 
                     {/* Per-staff rows */}
@@ -442,63 +383,72 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                             label={s.installed ? tx('PWA', 'PWA') : tx('No PWA', 'Sin PWA')}
                                         />
                                     </div>
-                                    {/* Send reminder SMS — only renders when
-                                        the staff isn't fully set up. Three
-                                        states: ready-to-send / sending /
-                                        sent. Hovers show why a button is
-                                        disabled (no phone, opted out,
-                                        STOP, cooldown). */}
+                                    {/* Manual-SMS link — same pattern Onboarding
+                                        uses (sms:NUMBER?body=...). Tapping
+                                        opens the admin's native Messages app
+                                        pre-filled with the recipient + body;
+                                        the admin reviews + taps Send from
+                                        their own phone. No Twilio, no
+                                        carrier registration required.
+                                        We stamp setupReminderSentAt on tap
+                                        so the same staffer doesn't show up
+                                        in the queue again for 7 days. */}
                                     {!s.ready && (
                                         (() => {
                                             const state = sendingState[s.name];
                                             const cooldownActive = s.reminderSentMs
                                                 && (Date.now() - s.reminderSentMs) < REMINDER_COOLDOWN_DAYS * 86400000;
-                                            const disabled =
-                                                bulkSending
-                                                || state === 'sending'
-                                                || state === 'sent'
-                                                || !s.phoneE164
-                                                || !s.smsOptIn
-                                                || s.smsStopped
-                                                || cooldownActive;
-                                            const reason = !s.phoneE164
-                                                ? tx('no phone', 'sin tel.')
-                                                : s.smsStopped
-                                                ? tx('replied STOP', 'STOP')
-                                                : !s.smsOptIn
-                                                ? tx('not opted in', 'sin SMS')
+                                            // Only blocker is missing phone — opt-in /
+                                            // STOP don't apply since this isn't Twilio
+                                            // (admin is texting from their personal cell).
+                                            const noPhone = !s.phoneE164;
+                                            const { url: smsUrl } = composeSetupReminderSmsUrl(s.raw, language);
+                                            const reason = noPhone
+                                                ? tx('no phone on file', 'sin teléfono')
                                                 : cooldownActive
-                                                ? tx(`sent ${fmtRelative(s.reminderSentMs, isEs)}`, `enviado ${fmtRelative(s.reminderSentMs, isEs)}`)
+                                                ? tx(`texted ${fmtRelative(s.reminderSentMs, isEs)}`, `enviado ${fmtRelative(s.reminderSentMs, isEs)}`)
                                                 : '';
+                                            // Disabled view: no phone OR already-sent state.
+                                            // Cooldown still allows a click (the admin
+                                            // can choose to re-text manually); reason
+                                            // line just informs them.
+                                            if (noPhone || state === 'sent') {
+                                                return (
+                                                    <span
+                                                        className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap ${
+                                                            state === 'sent'
+                                                                ? 'bg-dd-green text-white border-dd-green'
+                                                                : 'bg-dd-bg/50 text-dd-text-2/60 border-dd-line'
+                                                        }`}
+                                                        title={reason || tx('Sent', 'Enviado')}
+                                                    >
+                                                        {state === 'sent'
+                                                            ? <Check size={11} strokeWidth={3} aria-hidden="true" />
+                                                            : <PhoneOff size={11} strokeWidth={2.5} aria-hidden="true" />}
+                                                        {state === 'sent' ? tx('Texted', 'Enviado') : tx('No phone', 'Sin tel.')}
+                                                    </span>
+                                                );
+                                            }
                                             return (
-                                                <button
-                                                    type="button"
-                                                    onClick={() => handleSendReminder(s)}
-                                                    disabled={disabled}
-                                                    className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap transition ${
-                                                        state === 'sent'
-                                                            ? 'bg-dd-green text-white border-dd-green'
-                                                            : disabled
-                                                            ? 'bg-dd-bg/50 text-dd-text-2/60 border-dd-line cursor-not-allowed'
-                                                            : 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600 active:scale-95'
+                                                <a
+                                                    href={smsUrl}
+                                                    onClick={() => handleStampReminderSent(s)}
+                                                    className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap transition active:scale-95 ${
+                                                        cooldownActive
+                                                            ? 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                                                            : 'bg-amber-500 text-white border-amber-600 hover:bg-amber-600'
                                                     }`}
-                                                    title={reason || tx('Send setup-reminder SMS', 'Enviar SMS recordatorio')}
+                                                    title={cooldownActive
+                                                        ? tx(`Already texted ${fmtRelative(s.reminderSentMs, isEs)} — tap again to re-text.`, `Enviado ${fmtRelative(s.reminderSentMs, isEs)} — toca para reenviar.`)
+                                                        : tx('Open native Messages app pre-filled. Reviews & sends from your phone.', 'Abre Mensajes del teléfono con el texto listo.')}
                                                 >
                                                     {state === 'sending'
                                                         ? <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" aria-hidden="true" />
-                                                        : state === 'sent'
-                                                        ? <Check size={11} strokeWidth={3} aria-hidden="true" />
-                                                        : !s.phoneE164
-                                                        ? <PhoneOff size={11} strokeWidth={2.5} aria-hidden="true" />
-                                                        : <Send size={11} strokeWidth={2.5} aria-hidden="true" />}
+                                                        : <MessageSquare size={11} strokeWidth={2.5} aria-hidden="true" />}
                                                     <span>
-                                                        {state === 'sending' ? tx('Sending', 'Enviando')
-                                                            : state === 'sent' ? tx('Sent', 'Enviado')
-                                                            : reason
-                                                                ? reason
-                                                                : tx('Remind SMS', 'SMS')}
+                                                        {cooldownActive ? reason : tx('Text', 'SMS')}
                                                     </span>
-                                                </button>
+                                                </a>
                                             );
                                         })()
                                     )}
@@ -509,8 +459,8 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
 
                     <p className="text-caption-md text-dd-text-2/70 mt-3 italic leading-relaxed">
                         {tx(
-                            'Last sign-in = true session-start stamp (writes once per ~30min). Push = most recent FCM token refresh; only shown when it diverges from sign-in (means push setup failed even though they signed in). Notif = at least one device registered for push. PWA = opened from a home-screen install. Remind SMS = sends a one-time setup nudge; 7-day cooldown per staffer.',
-                            'Última conexión = sello de inicio real (~1/30min). Push = renovación de token; solo se muestra si difiere (significa que push falló aunque entraron). Notif = al menos un dispositivo registrado. PWA = abrió desde icono. Recordar SMS = envía un recordatorio único; espera 7 días entre envíos.'
+                            'Last sign-in = session-start stamp (~1 per 30 min). Push = most recent FCM refresh; only shown when it diverges from sign-in (means push setup failed even though they signed in). Notif = at least one device registered for push. PWA = opened from a home-screen install. Text = opens the Messages app on YOUR phone pre-filled — review + send manually from your number. 7-day cooldown per staffer.',
+                            'Última conexión = sello de inicio (~1/30min). Push = renovación reciente; solo se muestra si difiere. Notif = dispositivo registrado. PWA = abrió desde icono. SMS = abre Mensajes en tu teléfono — revisa y envía manualmente. Espera 7 días entre envíos.'
                         )}
                     </p>
                 </>

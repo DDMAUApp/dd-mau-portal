@@ -265,12 +265,16 @@ export async function notifyStaff({
     }
 }
 
-// ── Setup-reminder SMS (admin-triggered) ───────────────────────────────
-// 2026-05-27 — Andrew: "lets get the sms fully set up so if the staff
-// hasnt set everything up we can sent them a text to remind them."
-// Writes a /notifications doc with type='setup_reminder', which the
-// existing dispatchSms Cloud Function will pick up automatically (the
-// type was added to functions/smsTemplates.js → ALWAYS_SMS_TYPES).
+// ── Setup-reminder SMS — TWILIO PATH ───────────────────────────────────
+// NOTE (Andrew 2026-05-27): kept in place but currently UNUSED. The
+// admin-triggered SMS flow now uses the native sms: URL scheme (admin
+// taps a button, native Messages app opens with the text pre-filled,
+// admin reviews + hits Send manually). Reason: our Twilio number isn't
+// A2P 10DLC-registered yet, so programmatic sends queue but get
+// carrier-filtered before delivery. Once registration approves we can
+// flip back to this Cloud-Function path with no UI changes — the
+// `composeSetupReminderSmsUrl` helper and `stampSetupReminderSent`
+// helper below are designed to be drop-in compatible with this path.
 //
 // Pre-flight checks (all client-side; the Cloud Function does its own
 // authoritative gate too):
@@ -356,6 +360,72 @@ export async function sendSetupReminderSms(staff, manager, opts = {}) {
         return { ok: true, notificationId: ref.id };
     } catch (e) {
         console.warn(`sendSetupReminderSms write failed for ${staff.name}:`, e);
+        return { ok: false, reason: 'write_failed' };
+    }
+}
+
+// ── Setup-reminder SMS — MANUAL PATH (sms: URL scheme) ─────────────
+// 2026-05-27 — Andrew: "make a text to text like we do in onboarding.
+// so i or any admin can go through and send a text through my phone
+// and its not automatic." Mirrors the pattern in
+// src/components/Onboarding.jsx (line 1701):
+//   `sms:${phone}?body=${encodeURIComponent(message)}`
+//
+// Tapping an <a href={url}> on iPhone / Android opens the native
+// Messages app pre-populated with the recipient + body. The admin
+// reviews + taps Send. No Twilio, no Cloud Function, no A2P
+// registration required — the SMS goes out via the admin's own cell
+// carrier, from the admin's own number.
+//
+// Trade-offs vs. the Twilio path:
+//   ✓ Works today (no carrier registration needed)
+//   ✓ Staff see a familiar local number (the admin's cell)
+//   ✓ No per-message cost (uses admin's existing carrier plan)
+//   ✗ Manual — admin has to tap each one
+//   ✗ No delivery telemetry (no Twilio status callback)
+//   ✗ Limited by the admin's phone's carrier (rate limits apply)
+//
+// Returns { url, body } so the caller can use the URL in an <a href>
+// and optionally show the rendered body for preview.
+export function composeSetupReminderSmsUrl(staff, language = 'en') {
+    const isEs = language === 'es';
+    const firstName = (staff?.name || '').split(/\s+/)[0] || (isEs ? 'hola' : 'there');
+    const url = 'https://app.ddmaustl.com/';
+    const body = isEs
+        ? `Hola ${firstName}, abre la app DD Mau y activa notificaciones para no perder turnos: ${url}`
+        : `Hi ${firstName}, please open the DD Mau app and turn on notifications so you don't miss schedule alerts: ${url}`;
+    const phone = staff?.phoneE164 || '';
+    // RFC 5724 / iOS / Android compatible: `sms:NUMBER?body=...`. The
+    // `?body=` form is preferred over `;body=` (some Android skins only
+    // honor `?`). encodeURIComponent does the right thing for the body
+    // text. Phone goes raw (E.164 + already URL-safe).
+    const smsUrl = phone
+        ? `sms:${phone}?body=${encodeURIComponent(body)}`
+        : null;
+    return { url: smsUrl, body, phone };
+}
+
+// Stamp the cooldown marker on the staff doc so the same staffer
+// isn't pinged twice in REMINDER_COOLDOWN_DAYS. Called by the audit
+// panel when the admin taps the SMS link — we assume they hit Send,
+// since we can't observe what happens in the native Messages app.
+// (Conservative: if the admin opens the SMS app and then cancels, we
+// still set the marker. Admin can manually clear by editing staff or
+// pass {force: true} to sendSetupReminderSms to override.)
+export async function stampSetupReminderSent(staffName) {
+    if (!staffName) return { ok: false, reason: 'no_staff' };
+    try {
+        const stRef = doc(db, 'config', 'staff');
+        const snap = await getDoc(stRef);
+        const list = (snap.exists() ? snap.data().list : []) || [];
+        const next = list.map((s) => s && s.name === staffName
+            ? { ...s, setupReminderSentAt: Date.now() }
+            : s
+        );
+        await setDoc(stRef, { list: next });
+        return { ok: true };
+    } catch (e) {
+        console.warn('stampSetupReminderSent failed:', e);
         return { ok: false, reason: 'write_failed' };
     }
 }
