@@ -281,8 +281,22 @@ function ChatThreadInner({
     // Load-older handler — bumps the limit by another 50. Re-runs the
     // subscription effect above against the new limit, which re-fetches
     // (Firestore can't extend a snapshot's limit incrementally).
+    //
+    // 2026-05-28 Audit #7 — flagged this as potentially overlapping
+    // subscriptions on slow networks. Verified: useEffect cleanup is
+    // synchronous, so the OLD onSnapshot's unsub() always fires before
+    // the NEW one opens — no overlap. The remaining cost is bandwidth
+    // (50 → 100 → 150 messages each re-sent through the WebSocket on
+    // every Load Older tap, not incremental), which in practice is
+    // bounded by the fact that staff almost never scroll back past the
+    // initial 50. A snapshot-pagination refactor (startAfter cursor +
+    // separate subscriptions for the older slice) would fix the
+    // re-fetch but is medium-risk for negligible production impact.
+    // MAX_MESSAGE_LIMIT below caps runaway growth from accidental
+    // long-press / rapid-tap.
+    const MAX_MESSAGE_LIMIT = 2000;
     function loadOlderMessages() {
-        setMessageLimit(n => n + 50);
+        setMessageLimit(n => Math.min(n + 50, MAX_MESSAGE_LIMIT));
     }
 
     // ── Mark read on view + on each new message ────────────────────
