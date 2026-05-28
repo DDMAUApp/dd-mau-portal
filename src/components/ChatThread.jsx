@@ -20,6 +20,13 @@
 // "you were mentioned" badge.
 
 import { Component, memo, useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+// 2026-05-27 — Andrew: "the mic emoji lets make it more modern." Swapped
+// the 🎤 in both the composer voice-message button and the staged-audio
+// preview pill icon for Lucide's `Mic` glyph. Same lucide-react chunk
+// that vendor-react already pulls in (see vite.config.js manualChunks
+// — lucide-react is co-located with React after the 2026-05-27 outage
+// fix), so this is a zero-byte-add at the bundle level.
+import { Mic } from 'lucide-react';
 import { db, storage } from '../firebase';
 import {
     collection, doc, query, orderBy, limit, onSnapshot,
@@ -340,6 +347,30 @@ function ChatThreadInner({
     const [recording, setRecording] = useState(false);
     const [uploadProgress, setUploadProgress] = useState(null); // { kind, pct }
     const [typingNames, setTypingNames] = useState([]);
+    // ── Pending media attachment (Andrew 2026-05-27) ────────────────
+    // When the user picks a photo/video or finishes a voice memo, we
+    // now STAGE it as a preview in the composer instead of uploading
+    // + sending immediately. The user can add an optional text
+    // caption, keep typing, swap to a different attachment, or
+    // cancel — and the actual upload + send only happens when they
+    // tap the send arrow.
+    // Single slot (matches the per-message schema: one mediaUrl per
+    // msg). Shape:
+    //   {
+    //     kind:       'image' | 'video' | 'audio',
+    //     uploadFile: Blob | File,   // the blob to actually upload
+    //                                //   (resized for images; raw
+    //                                //   for video/audio)
+    //     previewUrl: string,        // local object URL — MUST be
+    //                                //   revoked on clear/unmount
+    //                                //   (see cleanup useEffect)
+    //     mimeType:   string,
+    //     width?:     number,
+    //     height?:    number,
+    //     duration?:  number,
+    //     filename?:  string,
+    //   }
+    const [pendingAttachment, setPendingAttachment] = useState(null);
 
     // ── Feature drawers / modals ──────────────────────────────────
     const [showPinsDrawer, setShowPinsDrawer] = useState(false);
@@ -640,7 +671,16 @@ function ChatThreadInner({
         setFailedSends(prev => prev.filter(f => f.id !== id));
     }
 
-    // ── Send media (photo / video) ────────────────────────────────
+    // ── Stage media (photo / video) ────────────────────────────────
+    // 2026-05-27 — Andrew: "when we add a photo or video or voice
+    // memo i want it to load in the message input board and then i
+    // send it when we want." Previously this function uploaded to
+    // Firebase Storage and called sendMessage() inline; now it just
+    // resizes/probes the file and parks it in `pendingAttachment`
+    // so the composer can render a preview. The real upload+send
+    // is deferred to `sendStagedAttachment()`, fired when the user
+    // taps the send arrow (which is now also wired to fire whenever
+    // a staged attachment is present, regardless of caption text).
     async function handleMediaPick(e, kind) {
         const file = e.target.files?.[0];
         e.target.value = ''; // reset so re-picking same file fires change
@@ -649,8 +689,10 @@ function ChatThreadInner({
             toast(tx('Video too large (50MB max).', 'Video muy grande (50MB máx).'), { kind: 'warn' });
             return;
         }
+        // Briefly disable the composer while we resize/probe — these
+        // are fast (sub-second) but blocking. Not an upload, so we
+        // don't show an upload-progress bar.
         setSending(true);
-        setUploadProgress({ kind, pct: 0 });
         try {
             let uploadFile = file;
             let width, height, duration;
@@ -665,32 +707,97 @@ function ChatThreadInner({
                 width = meta.width;
                 height = meta.height;
             }
-            const ext = (file.name?.split('.').pop() || 'bin').toLowerCase();
+            // Build a local preview URL the composer can render. Note:
+            // the useEffect cleanup above revokes the PREVIOUS value's
+            // URL automatically when setPendingAttachment fires, so
+            // back-to-back picks don't leak.
+            const previewUrl = URL.createObjectURL(uploadFile);
+            setPendingAttachment({
+                kind,
+                uploadFile,
+                previewUrl,
+                mimeType: file.type,
+                width, height, duration,
+                filename: file.name || '',
+            });
+        } catch (err) {
+            console.warn(`${kind} stage failed:`, err);
+            toast(tx('Could not load file', 'No se pudo cargar el archivo'), { kind: 'error' });
+        } finally {
+            setSending(false);
+        }
+    }
+
+    // ── Send a staged attachment (photo / video / voice memo) ─────
+    // Mirrors the upload+send flow that handleMediaPick / uploadVoice
+    // USED to do inline; now it's deferred to the moment the user
+    // taps the send arrow so they can add captions, cancel, or swap
+    // files before committing. The draft text becomes the caption.
+    // On failure we KEEP the staged attachment so the user can
+    // retry without re-picking.
+    async function sendStagedAttachment() {
+        if (!pendingAttachment) return;
+        if (sendingRef.current) return;
+        const att = pendingAttachment;
+        sendingRef.current = true;
+        setSending(true);
+        setUploadProgress({ kind: att.kind, pct: 0 });
+        try {
+            // Extension picking:
+            //   • voice: mime decides m4a vs webm
+            //   • photo/video: original filename suffix
+            let ext;
+            if (att.kind === 'audio') {
+                ext = att.mimeType?.includes('mp4') ? 'm4a' : 'webm';
+            } else {
+                ext = (att.filename?.split('.').pop() || 'bin').toLowerCase();
+            }
             const messageId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const path = `chats/${chat.id}/${messageId}.${ext}`;
-            const ref = sref(storage, path);
-            await uploadBytes(ref, uploadFile, { contentType: file.type });
-            const url = await getDownloadURL(ref);
+            const r = sref(storage, path);
+            await uploadBytes(r, att.uploadFile, { contentType: att.mimeType });
+            const url = await getDownloadURL(r);
             await sendMessage({
                 chat, staffName, viewer, staffList,
-                type: kind,
-                text: draft.trim(), // optional caption
+                type: att.kind,
+                text: draft.trim(),  // optional caption (photos/videos);
+                                     //   voice memos pre-2026-05-27 always
+                                     //   sent text:'' — we now allow a
+                                     //   caption on voice too, since the
+                                     //   composer textarea is right there
+                                     //   and the message schema supports it.
                 mediaUrl: url,
                 mediaPath: path,
-                mediaType: file.type,
-                width, height, duration,
+                mediaType: att.mimeType,
+                width: att.width,
+                height: att.height,
+                duration: att.duration,
                 replyTo: replyTarget,
-                forceDeliver: true,   // 2026-05-24 — always push chat (was: notifyAnyway)
+                forceDeliver: true,
             });
             setDraft('');
             setReplyTarget(null);
-            // notifyAnyway removed 2026-05-24 — chat always pushes.
+            setPendingAttachment(null);  // effect cleanup revokes URL
         } catch (err) {
-            console.warn(`${kind} send failed:`, err);
+            console.warn(`${att.kind} send failed:`, err);
             toast(tx('Upload failed', 'Error al subir'), { kind: 'error' });
         } finally {
+            sendingRef.current = false;
             setSending(false);
             setUploadProgress(null);
+        }
+    }
+
+    // Dispatcher wired to the composer's send arrow + Enter-to-send.
+    // Routes to staged-attachment send when one is present (caption
+    // is optional in that case), otherwise falls through to the
+    // text-only send path — preserving today's behavior for
+    // text-only messages.
+    async function handleSend() {
+        if (pendingAttachment) {
+            await sendStagedAttachment();
+        } else {
+            await handleSendText();
         }
     }
 
@@ -777,31 +884,54 @@ function ChatThreadInner({
             }
         };
     }, []);
+
+    // Pending-attachment object-URL cleanup. Every staged photo /
+    // video / voice memo creates a `URL.createObjectURL()` blob URL
+    // that the <img>/<video>/<audio> preview tags consume. Without
+    // explicit `URL.revokeObjectURL()` the browser pins each blob
+    // in memory until the tab closes — so back-to-back staging
+    // (pick photo A → swap to photo B → swap to photo C) would
+    // leak every prior blob.
+    //
+    // This effect's cleanup fires whenever `pendingAttachment`
+    // changes (revoking the PREVIOUS value's URL) and on unmount
+    // (revoking the FINAL value's URL — covers chat switches via
+    // the parent's `key={chatId}` remount and tab navigation).
+    useEffect(() => {
+        return () => {
+            if (pendingAttachment?.previewUrl) {
+                try { URL.revokeObjectURL(pendingAttachment.previewUrl); } catch {}
+            }
+        };
+    }, [pendingAttachment]);
+
+    function clearPendingAttachment() {
+        // The effect above handles URL.revokeObjectURL on the state
+        // transition — we just null the slot here.
+        setPendingAttachment(null);
+    }
+    // 2026-05-27 — function name is now misleading: it no longer
+    // uploads anything. It just stages the voice blob into
+    // pendingAttachment so the composer can render an <audio>
+    // preview. The real Storage upload + sendMessage now lives in
+    // sendStagedAttachment() (single choke-point with photo/video).
+    // Kept the name `uploadVoice` only to minimize churn at the
+    // single call site (rec.onstop above); semantically it's
+    // "stagePendingVoice".
     async function uploadVoice(blob, duration) {
-        setSending(true);
-        setUploadProgress({ kind: 'audio', pct: 0 });
         try {
-            const messageId = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-            const ext = (blob.type.includes('mp4') ? 'm4a' : 'webm');
-            const path = `chats/${chat.id}/${messageId}.${ext}`;
-            const ref = sref(storage, path);
-            await uploadBytes(ref, blob, { contentType: blob.type });
-            const url = await getDownloadURL(ref);
-            await sendMessage({
-                chat, staffName, viewer, staffList,
-                type: 'audio',
-                text: '',
-                mediaUrl: url,
-                mediaPath: path,
-                mediaType: blob.type,
+            const previewUrl = URL.createObjectURL(blob);
+            setPendingAttachment({
+                kind: 'audio',
+                uploadFile: blob,
+                previewUrl,
+                mimeType: blob.type,
                 duration,
+                filename: `voice.${blob.type.includes('mp4') ? 'm4a' : 'webm'}`,
             });
         } catch (e) {
-            console.warn('voice upload failed:', e);
-            toast(tx('Voice send failed', 'Error al enviar voz'), { kind: 'error' });
-        } finally {
-            setSending(false);
-            setUploadProgress(null);
+            console.warn('voice stage failed:', e);
+            toast(tx('Voice capture failed', 'Error al grabar voz'), { kind: 'error' });
         }
     }
 
@@ -1821,7 +1951,12 @@ function ChatThreadInner({
                 recording={recording}
                 replyTarget={replyTarget}
                 onClearReply={() => setReplyTarget(null)}
-                onSendText={handleSendText}
+                // 2026-05-27 — `onSendText` is now a dispatcher that
+                // routes to the staged-attachment send path when a
+                // pending photo/video/voice memo is parked in the
+                // composer. Text-only sends still hit handleSendText
+                // through the dispatcher (handleSend).
+                onSendText={handleSend}
                 onPickImage={(e) => handleMediaPick(e, 'image')}
                 onPickVideo={(e) => handleMediaPick(e, 'video')}
                 onStartRecording={startRecording}
@@ -1831,6 +1966,10 @@ function ChatThreadInner({
                 onOpenSchedule={() => setShowScheduleModal(true)}
                 onOpen86={() => setShow86Modal(true)}
                 recordStartMs={recordStartRef.current}
+                // Staged attachment + cancel handle. Composer renders
+                // the preview pill + flips the send/mic toggle.
+                pendingAttachment={pendingAttachment}
+                onClearAttachment={clearPendingAttachment}
             />
 
             {/* ── Poll modal ──────────────────────────────────── */}
@@ -2574,6 +2713,14 @@ function Composer({
     onStartRecording, onStopRecording, onCancelRecording,
     onOpenPoll, onOpenSchedule, onOpen86,
     recordStartMs,
+    // 2026-05-27 — Staged-attachment props. When the user picks a
+    // photo/video or finishes a voice memo, the parent parks it in
+    // `pendingAttachment` (shape: { kind, previewUrl, mimeType,
+    // duration?, filename?, ... }). The composer renders a preview
+    // pill + flips the trailing button from mic to send so the user
+    // can dispatch the upload with an optional caption. `onClearAttachment`
+    // discards the staged file (parent revokes its object URL).
+    pendingAttachment, onClearAttachment,
 }) {
     const imageInputRef = useRef(null);
     const videoInputRef = useRef(null);
@@ -2720,15 +2867,30 @@ function Composer({
                 <button
                     onClick={onStopRecording}
                     className="w-10 h-10 rounded-full bg-dd-green text-white flex items-center justify-center font-black"
-                    aria-label={isEs ? 'Enviar voz' : 'Send voice'}
+                    // 2026-05-27 — was "Send voice" when this button
+                    // sent immediately. Now it stops recording and
+                    // stages the voice memo in the composer for
+                    // review; the user taps the regular send arrow
+                    // (on the staged-attachment preview) to actually
+                    // dispatch. WhatsApp / iMessage two-step pattern.
+                    aria-label={isEs ? 'Terminar grabación' : 'Finish recording'}
+                    title={isEs ? 'Terminar grabación' : 'Finish recording'}
                 >
-                    ➤
+                    ✓
                 </button>
             </div>
         );
     }
 
+    // `empty` retains its original meaning — there's no DRAFT TEXT —
+    // and is still the gate for the Fix-spelling / Schedule-send
+    // menu items (which operate on text). The send/mic toggle below
+    // now uses `canSend`, which also accounts for staged attachments:
+    // the send arrow lights up when there's a photo/video/voice
+    // memo to dispatch even if the caption is blank.
     const empty = !draft.trim();
+    const hasAttachment = !!pendingAttachment;
+    const canSend = !empty || hasAttachment;
     return (
         // 2026-05-24 — Andrew: "make sure the message input bar is stuck
         // to the bottom bar i doesnt need to move."
@@ -2780,6 +2942,83 @@ function Composer({
                         onClick={onClearReply}
                         className="w-7 h-7 rounded-full hover:bg-white text-dd-text-2 flex items-center justify-center shrink-0"
                         aria-label={isEs ? 'Cancelar respuesta' : 'Cancel reply'}
+                        title={isEs ? 'Cancelar' : 'Cancel'}
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
+            {/* 2026-05-27 — Pending attachment preview pill. When the
+                user picks a photo/video or finishes a voice memo, it
+                lands HERE as a preview before the actual upload+send
+                happens. Optional caption can be typed in the textarea
+                below; tap the send arrow to commit, or ✕ to discard.
+                Mirrors the WhatsApp / iMessage staging pattern. Same
+                visual treatment as the reply pill above so the two
+                stack cleanly when the user is both replying AND
+                attaching media. */}
+            {pendingAttachment && (
+                <div className="flex items-center gap-2 mb-1 px-2 py-1.5 rounded-lg bg-dd-sage-50 border border-dd-green/30">
+                    {pendingAttachment.kind === 'image' && (
+                        <img
+                            src={pendingAttachment.previewUrl}
+                            alt=""
+                            className="w-14 h-14 rounded-md object-cover shrink-0 bg-black/5"
+                            draggable={false}
+                        />
+                    )}
+                    {pendingAttachment.kind === 'video' && (
+                        <video
+                            src={pendingAttachment.previewUrl}
+                            muted
+                            playsInline
+                            // Showing the first frame as a poster-style
+                            // preview. `preload="metadata"` is enough on
+                            // most browsers to paint frame 0 without
+                            // starting playback.
+                            preload="metadata"
+                            className="w-14 h-14 rounded-md object-cover shrink-0 bg-black"
+                        />
+                    )}
+                    {pendingAttachment.kind === 'audio' && (
+                        <div className="w-14 h-14 rounded-md bg-dd-green/15 text-dd-green-700 flex items-center justify-center shrink-0">
+                            <Mic size={26} strokeWidth={2.25} aria-hidden="true" />
+                        </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                        <div className="text-[10.5px] font-black uppercase tracking-wider text-dd-green-700">
+                            {pendingAttachment.kind === 'image'
+                                ? (isEs ? '📎 Foto lista' : '📎 Photo ready')
+                                : pendingAttachment.kind === 'video'
+                                ? (isEs ? '📎 Video listo' : '📎 Video ready')
+                                : (isEs ? '📎 Memo de voz listo' : '📎 Voice memo ready')}
+                        </div>
+                        {pendingAttachment.kind === 'audio' ? (
+                            // Inline <audio controls> lets the user
+                            // play back the recording before sending —
+                            // a "did I sound OK?" sanity check. Tiny
+                            // height (~28px) so the preview row stays
+                            // compact even with the player visible.
+                            <audio
+                                src={pendingAttachment.previewUrl}
+                                controls
+                                className="mt-1 h-7 w-full"
+                                style={{ maxWidth: '100%' }}
+                            />
+                        ) : (
+                            <div className="text-[12px] text-dd-text-2 truncate">
+                                {pendingAttachment.filename || (isEs ? 'Sin nombre' : 'Untitled')}
+                                {pendingAttachment.duration
+                                    ? ` · ${Math.round(pendingAttachment.duration)}s`
+                                    : ''}
+                            </div>
+                        )}
+                    </div>
+                    <button
+                        onClick={onClearAttachment}
+                        disabled={sending}
+                        className="w-7 h-7 rounded-full hover:bg-white text-dd-text-2 flex items-center justify-center shrink-0 disabled:opacity-40"
+                        aria-label={isEs ? 'Cancelar adjunto' : 'Cancel attachment'}
                         title={isEs ? 'Cancelar' : 'Cancel'}
                     >
                         ✕
@@ -2934,7 +3173,12 @@ function Composer({
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={onKeyDown}
                     onFocus={() => setShowAttachMenu(false)}
-                    placeholder={isEs ? 'Mensaje…' : 'Message…'}
+                    // Placeholder swaps to "Add a caption…" when a
+                    // staged attachment is parked above — makes the
+                    // optional-caption affordance discoverable.
+                    placeholder={hasAttachment
+                        ? (isEs ? 'Añade un comentario…' : 'Add a caption…')
+                        : (isEs ? 'Mensaje…' : 'Message…')}
                     disabled={sending}
                     // min-h / max-h are the same constants the auto-grow
                     // useEffect above uses — keep them in sync. resize-none
@@ -2949,17 +3193,12 @@ function Composer({
                     className="flex-1 min-w-0 px-4 py-2.5 rounded-full bg-dd-bg border border-dd-line text-base text-dd-text resize-none focus:outline-none focus:ring-2 focus:ring-dd-green/30 focus:border-dd-green"
                     style={{ lineHeight: 1.4, minHeight: '44px', maxHeight: '160px', height: '44px' }}
                 />
-                {empty ? (
-                    <button
-                        onClick={onStartRecording}
-                        disabled={sending}
-                        className="ddmau-composer-btn w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center text-2xl shrink-0 disabled:opacity-40"
-                        aria-label={isEs ? 'Mensaje de voz' : 'Voice message'}
-                        title={isEs ? 'Voz' : 'Voice'}
-                    >
-                        🎤
-                    </button>
-                ) : (
+                {canSend ? (
+                    // Send arrow — shown when there's text OR a staged
+                    // attachment to dispatch. `onSendText` is wired in
+                    // the parent to a dispatcher (handleSend) that
+                    // routes to sendStagedAttachment() when an
+                    // attachment is parked, otherwise to handleSendText().
                     <button
                         onClick={onSendText}
                         disabled={sending}
@@ -2972,6 +3211,20 @@ function Composer({
                         aria-label={isEs ? 'Enviar' : 'Send'}
                     >
                         ➤
+                    </button>
+                ) : (
+                    <button
+                        onClick={onStartRecording}
+                        disabled={sending}
+                        className="ddmau-composer-btn w-11 h-11 rounded-full hover:bg-dd-bg flex items-center justify-center shrink-0 disabled:opacity-40 text-dd-text-2"
+                        aria-label={isEs ? 'Mensaje de voz' : 'Voice message'}
+                        title={isEs ? 'Voz' : 'Voice'}
+                    >
+                        {/* Lucide Mic — strokeWidth 2.25 matches the
+                            other composer-area glyphs (send arrow,
+                            attach +) at this size. Inherits the
+                            button's text color via stroke=currentColor. */}
+                        <Mic size={20} strokeWidth={2.25} aria-hidden="true" />
                     </button>
                 )}
             </div>
