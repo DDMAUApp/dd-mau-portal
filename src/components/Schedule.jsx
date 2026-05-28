@@ -4541,7 +4541,7 @@ ${dayBlocks}
                 {unreadCount > 0 && (
                     <button onClick={() => setShowNotifDrawer(true)}
                         title="Schedule notifications"
-                        className="relative p-2 rounded-lg bg-white border border-dd-line hover:bg-dd-bg transition shadow-card">
+                        className="relative p-2 rounded-lg glass-sheet hover:bg-dd-bg transition shadow-card">
                         <span className="text-base">🔔</span>
                         <span className="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                             {unreadCount > 9 ? '9+' : unreadCount}
@@ -4558,7 +4558,7 @@ ${dayBlocks}
                 other side, which adds confusion. Admins and explicit
                 'both'-side staff still see + use it. */}
             {(staffIsAdmin || _viewerIsBothSide) && (
-                <div className="flex gap-1 mb-3 bg-white border border-dd-line rounded-lg p-1 print:hidden">
+                <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
                     <button onClick={() => setSide('foh')}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition ${side === 'foh' ? 'bg-dd-green text-white shadow-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
                         🪑 {tx('Front of House', 'Front of House')}
@@ -4574,7 +4574,7 @@ ${dayBlocks}
             <WeekNav weekStart={weekStart} setWeekStart={setWeekStart} isEn={isEn} />
 
             {/* View mode segmented control */}
-            <div className="flex gap-1 mb-3 bg-white border border-dd-line rounded-lg p-1 print:hidden">
+            <div className="flex gap-1 mb-3 glass-sheet rounded-lg p-1 print:hidden">
                 {[
                     { key: 'grid', labelEn: 'Week', labelEs: 'Semana', icon: '⊞' },
                     { key: 'day', labelEn: 'Day', labelEs: 'Día', icon: '☰' },
@@ -4651,7 +4651,7 @@ ${dayBlocks}
                     reads as an interactive picker instead of a generic input.
                     On mobile the wrapper expands full-width so the names list
                     is easy to scroll. */}
-                <label className="flex-1 min-w-[180px] flex items-center gap-2 bg-white border border-dd-line rounded-lg px-3 py-1.5 hover:border-dd-green/40 focus-within:border-dd-green focus-within:ring-2 focus-within:ring-dd-green-50 transition cursor-pointer">
+                <label className="flex-1 min-w-[180px] flex items-center gap-2 glass-sheet rounded-lg px-3 py-1.5 hover:border-dd-green/40 focus-within:border-dd-green focus-within:ring-2 focus-within:ring-dd-green-50 transition cursor-pointer">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 whitespace-nowrap">
                         {tx('View', 'Ver')}:
                     </span>
@@ -4698,7 +4698,7 @@ ${dayBlocks}
                     actions / Admin). */}
                 <div className="relative">
                     <button ref={moreBtnRef} onClick={() => setShowMoreActions(s => !s)}
-                        className="px-4 py-2 rounded-lg bg-white border border-dd-line text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-semibold flex items-center gap-1.5 transition">
+                        className="px-4 py-2 rounded-lg glass-sheet text-dd-text hover:bg-dd-bg active:scale-95 text-xs font-semibold flex items-center gap-1.5 transition">
                         ⋯ {tx('More', 'Más')}
                         <span className="text-dd-text-2 text-[10px]">{showMoreActions ? '▲' : '▼'}</span>
                     </button>
@@ -4723,7 +4723,7 @@ ${dayBlocks}
                                     maxHeight: `${moreMenuMaxH}px`,
                                     maxWidth: 'calc(100vw - 24px)',
                                 }}
-                                className="w-64 bg-white border border-dd-line rounded-xl shadow-card-hov z-40 overflow-y-auto">
+                                className="w-64 glass-sheet rounded-xl shadow-card-hov z-40 overflow-y-auto">
                                 {/* TOOLS */}
                                 <div className="px-3 py-2 border-b border-dd-line">
                                     <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Tools', 'Herramientas')}</div>
@@ -4861,7 +4861,7 @@ ${dayBlocks}
                     return acc + Math.max(0, (n.count || 0) - filled);
                 }, 0);
                 return (
-                    <div className="mb-3 rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
+                    <div className="mb-3 rounded-xl glass-sheet shadow-card overflow-hidden">
                         <button
                             type="button"
                             onClick={() => setOpenSlotsExpanded(v => !v)}
@@ -4918,7 +4918,7 @@ ${dayBlocks}
                                                 )}
                                                 <button onClick={() => setEditingNeed(n)}
                                                     title={tx('Edit slot times / count', 'Editar horario / cantidad')}
-                                                    className="px-1.5 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 text-[10px] hover:bg-dd-bg">✏</button>
+                                                    className="px-1.5 py-0.5 rounded glass-sheet text-dd-text-2 text-[10px] hover:bg-dd-bg">✏</button>
                                                 <button onClick={() => handleRemoveNeed(n.id)}
                                                     title={tx('Remove slot', 'Eliminar')}
                                                     className="px-1.5 py-0.5 rounded bg-white border border-red-200 text-red-700 text-[10px] font-bold hover:bg-red-50">×</button>
@@ -5137,9 +5137,9 @@ ${dayBlocks}
 
             {loading ? (
                 <div className="space-y-3 mt-4">
-                    <div className="h-20 bg-white border border-dd-line rounded-xl animate-pulse" />
-                    <div className="h-32 bg-white border border-dd-line rounded-xl animate-pulse" />
-                    <div className="h-64 bg-white border border-dd-line rounded-xl animate-pulse" />
+                    <div className="h-20 glass-sheet rounded-xl animate-pulse" />
+                    <div className="h-32 glass-sheet rounded-xl animate-pulse" />
+                    <div className="h-64 glass-sheet rounded-xl animate-pulse" />
                     <p className="text-center text-dd-text-2 text-xs">{tx('Loading schedule…', 'Cargando horario…')}</p>
                 </div>
             ) : (
@@ -5968,7 +5968,7 @@ function HoursScoreboard({ scoreboard, side, isEn }) {
     const allOver  = [...scoreboard.foh.over,  ...scoreboard.boh.over];
 
     return (
-        <div className="mb-3 bg-white border border-dd-line rounded-xl shadow-card p-3 print:hidden">
+        <div className="mb-3 glass-sheet rounded-xl shadow-card p-3 print:hidden">
             <div className="flex items-stretch divide-x divide-dd-line">
                 {sideRow(tx('FOH', 'FOH'), scoreboard.foh, foh, side === 'foh', 'bg-dd-green')}
                 {sideRow(tx('BOH', 'BOH'), scoreboard.boh, boh, side === 'boh', 'bg-orange-500')}
@@ -6070,7 +6070,7 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
                 amber/green tonal flips (we no longer carry the SPLH
                 advisory state). */}
             <button onClick={onToggle}
-                className="w-full text-left flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-white border border-dd-line shadow-card hover:shadow-card-hov transition">
+                className="w-full text-left flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl glass-sheet shadow-card hover:shadow-card-hov transition">
                 <span className="flex items-center gap-2 min-w-0">
                     <span className="w-9 h-9 rounded-lg bg-dd-sage-50 text-dd-green-700 flex items-center justify-center shrink-0">
                         <TodayIcon size={20} strokeWidth={2.25} aria-hidden="true" />
@@ -6099,7 +6099,7 @@ function SplhAdvisor({ splhForecast, advisory, weatherTips, weather, open, onTog
                 lays out as a flex row that wraps on narrow desktop
                 widths. Each card = one "weather flag" per day. */}
             {open && (
-                <div className="mt-2 bg-white border border-dd-line rounded-xl p-3 shadow-card">
+                <div className="mt-2 glass-sheet rounded-xl p-3 shadow-card">
                     {days.length === 0 ? (
                         <p className="text-xs text-dd-text-2 text-center py-4">
                             {tx('Loading forecast…', 'Cargando pronóstico…')}
@@ -6252,7 +6252,7 @@ function OpenShiftsCalendarBar({
         };
 
     return (
-        <div className="mb-3 bg-white border border-dd-line rounded-xl shadow-card overflow-hidden print:hidden">
+        <div className="mb-3 glass-sheet rounded-xl shadow-card overflow-hidden print:hidden">
             {/* Header strip — title + count, color-coded per mode */}
             <div className={`flex items-center justify-between gap-2 px-3 py-2 border-b border-dd-line bg-gradient-to-r ${cfg.headerBg}`}>
                 <div className="flex items-center gap-2 min-w-0">
@@ -6673,7 +6673,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                 <button
                                                     onClick={(e) => { e.stopPropagation(); onToggleDateOpen(dStr); }}
                                                     title={isEn ? 'Open this day (one-off)' : 'Abrir este día (puntual)'}
-                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-green-700 hover:border-dd-green/40 transition">
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded glass-sheet text-dd-text-2 hover:bg-dd-sage-50 hover:text-dd-green-700 hover:border-dd-green/40 transition">
                                                     ↺ {isEn ? 'Open' : 'Abrir'}
                                                 </button>
                                             )}
@@ -7072,7 +7072,7 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
                                                                 </button>
                                                                 <button type="button"
                                                                     onClick={() => onQuickAddClose && onQuickAddClose()}
-                                                                    className="flex-1 px-1 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
+                                                                    className="flex-1 px-1 py-1 rounded-md glass-sheet text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg active:scale-95 transition"
                                                                     title={isEn ? 'Cancel' : 'Cancelar'}>
                                                                     ✕
                                                                 </button>
@@ -7295,7 +7295,7 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                         <button onClick={commitTimeEdit}
                             className="flex-1 py-0.5 rounded bg-dd-green text-white text-[10px] font-bold hover:bg-dd-green-700">✓ {isEn ? 'Save' : 'Guardar'}</button>
                         <button onClick={cancelTimeEdit}
-                            className="px-2 py-0.5 rounded bg-white border border-dd-line text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg">✕</button>
+                            className="px-2 py-0.5 rounded glass-sheet text-dd-text-2 text-[10px] font-bold hover:bg-dd-bg">✕</button>
                     </div>
                 </div>
             ) : (
@@ -7364,7 +7364,7 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
                         </button>
                     )}
                     <button onClick={(e) => { e.stopPropagation(); isOffered ? onCancelOffer(shift) : onOfferShift(shift); }}
-                        className={`w-full text-[9px] font-bold px-1 py-1 rounded transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
+                        className={`w-full text-[9px] font-bold px-1 py-1 rounded transition ${isOffered ? 'glass-sheet text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
                         {isOffered
                             ? (isEn ? (isCoverRequest ? 'Cancel cover' : 'Cancel offer') : 'Cancelar')
                             : (isEn ? '📣 Give up' : '📣 Liberar')}
@@ -7627,7 +7627,7 @@ function DayRow({ shift, staffRole, isMinor, isShiftLead, isCurrentStaff, canEdi
                 )}
                 {isMine && !isPending && onOfferShift && (
                     <button onClick={() => isOffered ? onCancelOffer(shift) : onOfferShift(shift)}
-                        className={`px-2.5 py-1.5 text-xs rounded-md font-bold transition ${isOffered ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
+                        className={`px-2.5 py-1.5 text-xs rounded-md font-bold transition ${isOffered ? 'glass-sheet text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
                         {isOffered
                             ? (isEn ? (isCoverRequest ? 'Cancel cover' : 'Cancel') : 'Cancelar')
                             : (isEn ? '📣 Give up' : '📣 Liberar')}
@@ -7686,12 +7686,12 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
         <div>
             <div className="flex gap-2 mb-3 text-xs print:hidden">
                 <select value={sortKey} onChange={e => setSortKey(e.target.value)}
-                    className="bg-white border border-dd-line rounded-lg px-2.5 py-2 text-dd-text font-semibold focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
+                    className="glass-sheet rounded-lg px-2.5 py-2 text-dd-text font-semibold focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
                     <option value="date">{isEn ? 'Sort: Date' : 'Ordenar: Fecha'}</option>
                     <option value="staff">{isEn ? 'Sort: Staff' : 'Ordenar: Personal'}</option>
                 </select>
                 <select value={filterStaff} onChange={e => setFilterStaff(e.target.value)}
-                    className="bg-white border border-dd-line rounded-lg px-2.5 py-2 text-dd-text flex-1 focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
+                    className="glass-sheet rounded-lg px-2.5 py-2 text-dd-text flex-1 focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50">
                     <option value="">{isEn ? 'All staff' : 'Todo el personal'}</option>
                     {allStaff.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
@@ -7745,7 +7745,7 @@ function ListView({ shifts, isEn, currentStaffName, canEdit, onDeleteShift, staf
                                     )}
                                     {sh.staffName === currentStaffName && sh.offerStatus !== 'pending' && onOfferShift && (
                                         <button onClick={() => sh.offerStatus === 'open' ? onCancelOffer(sh) : onOfferShift(sh)}
-                                            className={`px-2 py-1.5 rounded-md font-bold text-[11px] transition ${sh.offerStatus === 'open' ? 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
+                                            className={`px-2 py-1.5 rounded-md font-bold text-[11px] transition ${sh.offerStatus === 'open' ? 'glass-sheet text-dd-text-2 hover:bg-dd-bg' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'}`}>
                                             {sh.offerStatus === 'open' ? (isEn ? 'Cancel' : 'Cancelar') : '📣'}
                                         </button>
                                     )}
@@ -7855,7 +7855,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
     const Panel = ({ accent, icon, title, count, children, collapsible = false, open = true, onToggle }) => {
         const HeaderTag = collapsible ? 'button' : 'div';
         return (
-            <div className="rounded-xl bg-white border border-dd-line shadow-card overflow-hidden">
+            <div className="rounded-xl glass-sheet shadow-card overflow-hidden">
                 <HeaderTag
                     type={collapsible ? 'button' : undefined}
                     onClick={collapsible ? onToggle : undefined}
@@ -7891,7 +7891,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                         <div key={sh.id} className="flex items-center justify-between gap-2 text-xs">
                             <span className="text-dd-text">{renderShiftLine(sh)}</span>
                             <button onClick={() => onCancelOffer(sh)}
-                                className="px-2 py-1 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">{tx('Cancel offer', 'Cancelar oferta')}</button>
+                                className="px-2 py-1 rounded-md glass-sheet text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">{tx('Cancel offer', 'Cancelar oferta')}</button>
                         </div>
                     ))}
                 </Panel>
@@ -7926,7 +7926,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                                 <button onClick={() => onApprove(sh)}
                                     className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve', 'Aprobar')}</button>
                                 <button onClick={() => onDeny(sh)}
-                                    className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
+                                    className="flex-1 px-2 py-1.5 rounded-md glass-sheet text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
                             </div>
                         </div>
                     ))}
@@ -8002,7 +8002,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                                 <button onClick={() => onApprovePto(t)}
                                     className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve', 'Aprobar')}</button>
                                 <button onClick={() => onDenyPto(t)}
-                                    className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
+                                    className="flex-1 px-2 py-1.5 rounded-md glass-sheet text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
                             </div>
                         </div>
                         );
@@ -8030,7 +8030,7 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
                                     <button onClick={() => onApproveSwapRequest && onApproveSwapRequest(r)}
                                         className="flex-1 px-2 py-1.5 rounded-md bg-dd-green text-white font-bold hover:bg-dd-green-700 shadow-sm text-[11px]">✓ {tx('Approve swap', 'Aprobar')}</button>
                                     <button onClick={() => onDenySwapRequest && onDenySwapRequest(r)}
-                                        className="flex-1 px-2 py-1.5 rounded-md bg-white border border-dd-line text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
+                                        className="flex-1 px-2 py-1.5 rounded-md glass-sheet text-dd-text-2 font-bold hover:bg-dd-bg text-[11px]">✕ {tx('Deny', 'Negar')}</button>
                                 </div>
                             </div>
                         );
@@ -8080,7 +8080,7 @@ function HoursSummary({ staffSummary, isEn, currentStaffName }) {
     const overtime = scheduled.filter(s => s.totalHours >= HOURS_YELLOW_MAX);
     const minorOver = scheduled.filter(s => s.isMinor && s.totalHours > MINOR_WEEKLY_HOURS_MAX);
     return (
-        <div className="mt-6 bg-white border border-dd-line rounded-xl shadow-card overflow-hidden">
+        <div className="mt-6 glass-sheet rounded-xl shadow-card overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-dd-line bg-dd-bg/60">
                 <h3 className="text-sm font-bold text-dd-text flex items-center gap-2">
                     <span className="w-1 h-5 bg-dd-green rounded-full" />
@@ -8476,7 +8476,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
 
                 <div className="sticky bottom-0 bg-white border-t border-dd-line p-4 flex gap-2 shadow-[0_-4px_8px_-4px_rgba(15,23,42,0.06)]">
                     <button onClick={onClose}
-                        className="flex-1 py-2.5 rounded-lg bg-white border border-dd-line text-dd-text font-bold hover:bg-dd-bg transition">{tx('Cancel', 'Cancelar')}</button>
+                        className="flex-1 py-2.5 rounded-lg glass-sheet text-dd-text font-bold hover:bg-dd-bg transition">{tx('Cancel', 'Cancelar')}</button>
                     <button onClick={async () => {
                         if (!canSubmit || saving) return;
                         // If the manager never tapped the side toggle, default to
@@ -9304,7 +9304,7 @@ function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
                 <div className="border-t border-gray-200 p-4 flex gap-2">
                     {initial && (
                         <button onClick={handleClear}
-                            className="px-3 py-2 rounded-lg bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg font-bold text-sm">
+                            className="px-3 py-2 rounded-lg glass-sheet text-dd-text-2 hover:bg-dd-bg font-bold text-sm">
                             {lt('Clear', 'Borrar')}
                         </button>
                     )}
