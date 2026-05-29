@@ -329,6 +329,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
 
             // Determine current user's role early
             const currentIsAdmin = isAdmin(staffName, staffList);
+            // Manager check (mirrors App.jsx's isManager): admin or
+            // role text contains "manager". Used to gate the new
+            // "Mgr Tasks" sub-tab so only managers see the manager-
+            // filtered kanban — Andrew 2026-05-28: "the current tasks
+            // in the task tab is just for managers."
+            const currentStaffRecord_op = (staffList || []).find(s => s.name === staffName);
+            const currentIsManagerOp = currentIsAdmin
+                || /manager/i.test(String(currentStaffRecord_op?.role || ''));
 
             // New checklist system {"\u{2014}"} FOH/BOH with multiple lists per side.
             //
@@ -5319,6 +5327,16 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         <div className="flex overflow-x-auto scrollbar-thin -mb-px">
                             {[
                                 { id: 'checklist', en: 'Tasks',     es: 'Tareas',     icon: '✓' },
+                                // Mgr Tasks — manager-only filtered kanban.
+                                // Shows only to managers/admins (gated by
+                                // currentIsManagerOp). Reuses AssignTasksPanel
+                                // with managersOnly so the master list is
+                                // shared with the regular Assign tab but the
+                                // per-staff columns + assign picker narrow
+                                // to manager-class staff only.
+                                ...(currentIsManagerOp ? [
+                                    { id: 'mgrtasks', en: 'Mgr Tasks', es: 'Gerentes',   icon: '👔' },
+                                ] : []),
                                 { id: 'assign',    en: 'Assign',    es: 'Asignar',    icon: '🎯' },
                                 { id: 'wall',      en: 'Wall',      es: 'Muro',       icon: '📺' },
                                 { id: 'saucelog',  en: 'Sauce Log', es: 'Salsas',     icon: '🥢' },
@@ -5372,6 +5390,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     )}
 
                     {activeTab === "checklist" && renderChecklist()}
+
+                    {activeTab === "mgrtasks" && currentIsManagerOp && (
+                        <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
+                            <AssignTasksPanel
+                                language={language}
+                                staffName={staffName}
+                                staffList={staffList}
+                                isAdmin={currentIsAdmin}
+                                isManager={currentIsManagerOp}
+                                managersOnly={true}
+                            />
+                        </Suspense>
+                    )}
 
                     {activeTab === "assign" && (
                         <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>

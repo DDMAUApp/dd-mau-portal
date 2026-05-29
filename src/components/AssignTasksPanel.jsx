@@ -80,6 +80,17 @@ function initialsOf(name) {
         .toUpperCase();
 }
 
+// Predicate matching the same "is this staff record a manager?" rule
+// used elsewhere in the app (App.jsx isManager check): admin id or
+// role text containing "manager". Used to filter the kanban to
+// manager-only columns when `managersOnly` is passed.
+const ADMIN_IDS = new Set([40, 41]);
+function isManagerLike(record) {
+    if (!record) return false;
+    if (ADMIN_IDS.has(Number(record.id))) return true;
+    return /manager/i.test(String(record.role || ''));
+}
+
 export default function AssignTasksPanel({
     language = 'en',
     staffName = '',
@@ -87,6 +98,14 @@ export default function AssignTasksPanel({
     isAdmin = false,
     isManager = false,
     isShiftLead = false,
+    // When true, restricts the kanban to manager-class staff only:
+    // staff-picker, columns, and "assigned-to" chips all filter to
+    // managers. Master list is unchanged (shared library per side).
+    // Used by Operations → "Mgr Tasks" sub-tab. Andrew 2026-05-28:
+    // "let work on the separate lists for the different managers …
+    // keep the master list with all tasks." (Per-MANAGER split rather
+    // than the per-staff split used everywhere else.)
+    managersOnly = false,
 }) {
     const isEs = language === 'es';
     // canModify gates the edit-state controls (+ Add new task, delete a
@@ -113,13 +132,20 @@ export default function AssignTasksPanel({
     // and see his own column on the kanban. Excluding self meant
     // his column never appeared and the kanban felt empty for the
     // owner who's most likely to use it. (2026-05-27 round 3.)
+    //
+    // managersOnly: when true, filter the pool down to manager-class
+    // staff (admins + anyone with /manager/ in their role). Per-staff
+    // columns + the assign picker both narrow to this pool, so the
+    // Operations "Mgr Tasks" view shows ONLY manager workloads
+    // without changing the underlying assigned_tasks data model.
     const sideStaff = useMemo(() => {
         const list = Array.isArray(staffList) ? staffList : [];
         return list
             .filter((s) => s && s.name && s.active !== false)
             .filter((s) => inferStaffSide(s) === side)
+            .filter((s) => !managersOnly || isManagerLike(s))
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    }, [staffList, side]);
+    }, [staffList, side, managersOnly]);
 
     // ── Master library subscription ─────────────────────────────────
     const [libItems, setLibItems] = useState([]);
@@ -273,12 +299,20 @@ export default function AssignTasksPanel({
         <div className="space-y-4 max-w-[1600px] mx-auto p-4">
             <PageHeader
                 icon={ClipboardList}
-                title={tx('Assign Tasks', 'Asignar Tareas', isEs)}
-                subtitle={tx(
-                    `Master list on the left · ${staffColumns.length} staff with open tasks`,
-                    `Lista maestra a la izquierda · ${staffColumns.length} miembros con tareas abiertas`,
-                    isEs,
-                )}
+                title={managersOnly
+                    ? tx('Manager Tasks', 'Tareas de Gerentes', isEs)
+                    : tx('Assign Tasks', 'Asignar Tareas', isEs)}
+                subtitle={managersOnly
+                    ? tx(
+                        `Master list on the left · split across ${staffColumns.length} manager${staffColumns.length === 1 ? '' : 's'}`,
+                        `Lista maestra a la izquierda · dividida entre ${staffColumns.length} gerente${staffColumns.length === 1 ? '' : 's'}`,
+                        isEs,
+                    )
+                    : tx(
+                        `Master list on the left · ${staffColumns.length} staff with open tasks`,
+                        `Lista maestra a la izquierda · ${staffColumns.length} miembros con tareas abiertas`,
+                        isEs,
+                    )}
                 actions={isAdmin ? (
                     // Admin-only FOH/BOH toggle in the page header's
                     // actions slot. Non-admin managers are locked to
@@ -453,14 +487,22 @@ export default function AssignTasksPanel({
                                 <UserPlus size={28} strokeWidth={2.25} aria-hidden="true" />
                             </div>
                             <p className="text-headline text-dd-text">
-                                {tx('No open assignments yet', 'Sin tareas asignadas', isEs)}
+                                {managersOnly
+                                    ? tx('No manager tasks yet', 'Sin tareas de gerentes', isEs)
+                                    : tx('No open assignments yet', 'Sin tareas asignadas', isEs)}
                             </p>
                             <p className="text-footnote-md text-dd-text-2 mt-1 max-w-sm mx-auto">
-                                {tx(
-                                    'Tap any task in the master list and pick a staff member to start.',
-                                    'Toca cualquier tarea en la lista maestra y elige un miembro del personal.',
-                                    isEs
-                                )}
+                                {managersOnly
+                                    ? tx(
+                                        'Tap any task in the master list and pick a manager to start splitting work.',
+                                        'Toca cualquier tarea y elige un gerente para empezar.',
+                                        isEs
+                                    )
+                                    : tx(
+                                        'Tap any task in the master list and pick a staff member to start.',
+                                        'Toca cualquier tarea en la lista maestra y elige un miembro del personal.',
+                                        isEs
+                                    )}
                             </p>
                         </div>
                     ) : (
