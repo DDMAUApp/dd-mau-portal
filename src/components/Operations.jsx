@@ -369,6 +369,39 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 try { localStorage.setItem('ddmau:tasks:sauceCollapsed', sauceCollapsed ? '1' : '0'); }
                 catch {}
             }, [sauceCollapsed]);
+            // Sauce-counts ticker — Andrew 2026-05-28: "since the sauce
+            // bar is collapsible have a little ticker or counter for
+            // urgent and tomorrow." Subscribes to the same doc the
+            // SauceLogBohBanner uses so we can show pending counts in
+            // the collapsed header. Cheap doc-level read; runs only
+            // when BOH side is shown (gated below before mount).
+            const [sauceCounts, setSauceCounts] = useState({ today: 0, tomorrow: 0, later: 0, total: 0 });
+            useEffect(() => {
+                if (checklistSide !== 'BOH') {
+                    setSauceCounts({ today: 0, tomorrow: 0, later: 0, total: 0 });
+                    return;
+                }
+                let alive = true;
+                const unsub = onSnapshot(doc(db, 'ops', 'sauceLog_' + storeLocation), (snap) => {
+                    if (!alive) return;
+                    if (!snap.exists()) {
+                        setSauceCounts({ today: 0, tomorrow: 0, later: 0, total: 0 });
+                        return;
+                    }
+                    const d = snap.data() || {};
+                    const sauceIds = new Set((d.sauces || []).map(s => s.id));
+                    const reqs = Object.entries(d.requests || {})
+                        .filter(([id, r]) => r && r.status === 'pending' && sauceIds.has(id));
+                    let today = 0, tomorrow = 0, later = 0;
+                    for (const [, r] of reqs) {
+                        if (r.urgency === 'today') today++;
+                        else if (r.urgency === 'tomorrow') tomorrow++;
+                        else later++;
+                    }
+                    setSauceCounts({ today, tomorrow, later, total: reqs.length });
+                }, (e) => console.warn('sauce counts subscribe:', e));
+                return () => { alive = false; unsub(); };
+            }, [checklistSide, storeLocation]);
             // (Removed 2026-05-09) PERIOD_KEY state — was always "all", setter
             // was never called. Direct usages below replaced with PERIOD_KEY.
             const [checks, setChecksRaw] = useState({});
@@ -4625,13 +4658,39 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             stays at the top so the banner can be hidden
                             without losing the affordance to reopen it. */}
                         {checklistSide === "BOH" && (
-                            <div className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+                            <div className={`rounded-xl overflow-hidden border ${
+                                sauceCounts.today > 0 ? 'bg-red-50 border-red-300'
+                                : sauceCounts.tomorrow > 0 ? 'bg-yellow-50 border-yellow-300'
+                                : 'bg-amber-50 border-amber-200'
+                            }`}>
                                 <button
                                     onClick={() => setSauceCollapsed(v => !v)}
                                     className="w-full px-3 py-2 flex items-center gap-2 text-left text-xs font-bold text-amber-900 hover:bg-amber-100/60 transition">
                                     <span className="text-base leading-none">{sauceCollapsed ? '▸' : '▾'}</span>
-                                    <span className="flex-1">🥢 {language === "es" ? "Pedidos de salsa" : "Sauce requests"}</span>
-                                    <span className="text-[10px] text-amber-700 font-normal">
+                                    <span className="flex-1 flex items-center gap-1.5 flex-wrap">
+                                        🥢 {language === "es" ? "Pedidos de salsa" : "Sauce requests"}
+                                        {/* Counter pills — only render when
+                                            there is something to show. Today
+                                            is red, tomorrow is yellow. Andrew
+                                            2026-05-28: "have a little ticker
+                                            or counter for urgent and tomorrow." */}
+                                        {sauceCounts.today > 0 && (
+                                            <span className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-red-600 text-white text-[10px] font-bold ${sauceCollapsed ? 'animate-pulse' : ''}`}>
+                                                🚨 {sauceCounts.today} {language === "es" ? "hoy" : "today"}
+                                            </span>
+                                        )}
+                                        {sauceCounts.tomorrow > 0 && (
+                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-[10px] font-bold">
+                                                ⏰ {sauceCounts.tomorrow} {language === "es" ? "mañana" : "tomorrow"}
+                                            </span>
+                                        )}
+                                        {sauceCounts.later > 0 && sauceCounts.today === 0 && sauceCounts.tomorrow === 0 && (
+                                            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 border border-green-300 text-[10px] font-bold">
+                                                {sauceCounts.later} {language === "es" ? "después" : "later"}
+                                            </span>
+                                        )}
+                                    </span>
+                                    <span className="text-[10px] text-amber-700 font-normal flex-shrink-0">
                                         {sauceCollapsed
                                             ? (language === "es" ? "Mostrar" : "Show")
                                             : (language === "es" ? "Ocultar" : "Hide")}
