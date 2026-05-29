@@ -4249,6 +4249,78 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 return [task.assignTo];
             };
 
+            // ── PER-ASSIGNEE COMPLETION ─────────────────────────────────
+            // Andrew 2026-05-28: "the tasks that has 2 staff connected to
+            // it they both have to be able to click... master say 1/2
+            // complete or 0/2 or 2/2 and the task one each staff member
+            // turns green on there own list when complete not until
+            // they do it. and not when the other staff does it."
+            //
+            // Key format: `${prefix}${taskId}__doneBy__${name}` stores
+            // the localized time string when assignee marks the task
+            // complete. Absent key = not done by that assignee. The
+            // legacy `${prefix}${taskId}` boolean is kept in sync as
+            // "all assignees done" so existing isTaskComplete + stats
+            // continue to work without changes.
+            const assigneeDoneKey = (taskId, name) =>
+                `${currentPrefix}${taskId}__doneBy__${name}`;
+            const isDoneForAssignee = (task, name) =>
+                !!checks[assigneeDoneKey(task.id, name)];
+            const getAssigneeProgress = (task) => {
+                const list = getAssignees(task);
+                if (list.length === 0) return { done: 0, total: 0 };
+                const done = list.filter(n => !!checks[assigneeDoneKey(task.id, n)]).length;
+                return { done, total: list.length };
+            };
+            // Toggle one assignee's done state. Recomputes the legacy
+            // task-done boolean so old code paths keep working.
+            const togglePerAssigneeCheck = async (taskId, assigneeName, parentTask) => {
+                const cur = checksRef.current;
+                const k = assigneeDoneKey(taskId, assigneeName);
+                const wasOn = !!cur[k];
+                const newChecks = { ...cur };
+                const patch = {};
+                if (wasOn) {
+                    delete newChecks[k];
+                    patch[k] = undefined;
+                } else {
+                    const timeStr = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                    newChecks[k] = timeStr;
+                    patch[k] = timeStr;
+                }
+                // Reconcile the legacy task-complete boolean: true iff
+                // every assignee is now done. Drives stats + master row
+                // "complete" styling without changing existing readers.
+                const assignees = getAssignees(parentTask);
+                const legacyKey = currentPrefix + taskId;
+                if (assignees.length > 0) {
+                    const allDone = assignees.every(n => {
+                        if (n === assigneeName) return !wasOn;
+                        return !!cur[assigneeDoneKey(taskId, n)];
+                    });
+                    if (allDone) {
+                        const ts = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                        newChecks[legacyKey] = true;
+                        newChecks[legacyKey + '_by'] = staffName;
+                        newChecks[legacyKey + '_at'] = ts;
+                        patch[legacyKey] = true;
+                        patch[legacyKey + '_by'] = staffName;
+                        patch[legacyKey + '_at'] = ts;
+                    } else if (cur[legacyKey]) {
+                        // Was previously fully-done, but someone just
+                        // unchecked their slot — back to in-progress.
+                        delete newChecks[legacyKey];
+                        delete newChecks[legacyKey + '_by'];
+                        delete newChecks[legacyKey + '_at'];
+                        patch[legacyKey] = undefined;
+                        patch[legacyKey + '_by'] = undefined;
+                        patch[legacyKey + '_at'] = undefined;
+                    }
+                }
+                setChecks(newChecks);
+                await writeCheckPatch(patch);
+            };
+
             const getCurrentTasks = () => {
                 const all = (customTasks[checklistSide] && customTasks[checklistSide][PERIOD_KEY]) || [];
                 const hasNoAssign = (t) => !t.assignTo || (Array.isArray(t.assignTo) && t.assignTo.length === 0);
@@ -4498,10 +4570,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         {language === 'es' ? 'Sin tareas asignadas.' : 'No tasks assigned.'}
                                     </p>
                                 ) : personalTasks.map((t) => {
-                                    const done = !!checks[currentPrefix + t.id];
+                                    // Per-assignee: green only when *I* checked
+                                    // it off — not when someone else did.
+                                    const done = isDoneForAssignee(t, staffName);
                                     return (
                                         <button key={t.id}
-                                            onClick={() => toggleCheckItem(t.id, t)}
+                                            onClick={() => togglePerAssigneeCheck(t.id, staffName, t)}
                                             className={`w-full text-left flex items-start gap-2 px-2 py-1.5 rounded border transition ${
                                                 done
                                                     ? 'bg-dd-sage-50 border-dd-green/40 text-dd-text-2'
@@ -4870,19 +4944,43 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                             {taskUrgency === "overdue" ? "\u{1F6A8}" : "\u{23F0}"} {item.completeBy.replace(/^0/, "")}
                                                         </span>
                                                     )}
+                                                    {/* Per-assignee progress chip — Andrew 2026-05-28:
+                                                        "the master say 1/2 complete or 0/2 or 2/2."
+                                                        Only renders when 2+ assignees so single-assignee
+                                                        tasks keep the simple checkbox UX. */}
+                                                    {assignees.length > 1 && (() => {
+                                                        const prog = getAssigneeProgress(item);
+                                                        const full = prog.done >= prog.total;
+                                                        return (
+                                                            <span className={`text-xs font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ${
+                                                                full ? 'bg-green-100 text-green-700 border border-green-300'
+                                                                : prog.done > 0 ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                                                : 'bg-gray-100 text-gray-700 border border-gray-300'
+                                                            }`}>
+                                                                {prog.done}/{prog.total} {language === 'es' ? 'hecho' : 'done'}
+                                                            </span>
+                                                        );
+                                                    })()}
                                                 </div>
-                                                {/* Assignee chips */}
+                                                {/* Assignee chips — each chip gets a ✓ when its
+                                                    assignee has marked the task done. Master can
+                                                    see at a glance who has and who has not. */}
                                                 {assignees.length > 0 && (
                                                     <div className="flex flex-wrap gap-1 mt-1">
-                                                        {assignees.map(name => (
-                                                            <span key={name} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold">
-                                                                {String.fromCodePoint(0x1F464)} {name.split(" ")[0]}
-                                                                {currentIsAdmin && editMode && (
-                                                                    <button onClick={(e) => { e.stopPropagation(); toggleTaskAssignee(origIdx, name); }}
-                                                                        className="text-blue-400 hover:text-red-500 ml-0.5">{String.fromCodePoint(0x2715)}</button>
-                                                                )}
-                                                            </span>
-                                                        ))}
+                                                        {assignees.map(asName => {
+                                                            const asDone = isDoneForAssignee(item, asName);
+                                                            return (
+                                                                <span key={asName} className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                                                    asDone ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
+                                                                }`}>
+                                                                    {asDone ? '✓' : String.fromCodePoint(0x1F464)} {asName.split(" ")[0]}
+                                                                    {currentIsAdmin && editMode && (
+                                                                        <button onClick={(e) => { e.stopPropagation(); toggleTaskAssignee(origIdx, asName); }}
+                                                                            className={`ml-0.5 ${asDone ? 'text-green-500 hover:text-red-500' : 'text-blue-400 hover:text-red-500'}`}>{String.fromCodePoint(0x2715)}</button>
+                                                                    )}
+                                                                </span>
+                                                            );
+                                                        })}
                                                     </div>
                                                 )}
                                                 {/* 2026-05-24 — Assign button (admin/manager, always visible
@@ -5334,17 +5432,28 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 </div>
                                 <div className="space-y-1.5 -mx-1 px-1">
                                     {list.map((t) => {
-                                        const done = !!checks[currentPrefix + t.id];
+                                        // Per-assignee done state — `done`
+                                        // means THIS column's staff checked
+                                        // it. Other columns + master pull
+                                        // their own slot. The column row
+                                        // turns green only for assignees
+                                        // who completed it.
+                                        const done = isDoneForAssignee(t, name);
                                         const cat = getCategoryFor(t);
                                         const tAssignees = getAssignees(t);
                                         const hasSubs = t.subtasks && t.subtasks.length > 0;
                                         const subsTotal = hasSubs ? t.subtasks.length : 0;
                                         const subsDone = hasSubs ? t.subtasks.filter(s => checks[currentPrefix + s.id]).length : 0;
-                                        const completedBy = checks[currentPrefix + t.id + "_by"];
-                                        const completedAt = checks[currentPrefix + t.id + "_at"];
+                                        const myDoneTime = checks[assigneeDoneKey(t.id, name)];
+                                        const completedAt = myDoneTime;
                                         const photoUrl = checks[currentPrefix + t.id + "_photo"];
                                         const commentsKey = currentPrefix + t.id + "_comments";
                                         const tComments = Array.isArray(checks[commentsKey]) ? checks[commentsKey] : [];
+                                        // Per-staff progress badge on the
+                                        // assignee-chip strip so each col
+                                        // shows how many other slots are
+                                        // also done.
+                                        const _prog = getAssigneeProgress(t);
                                         // Deadline urgency colors mirror master row.
                                         let tUrg = null;
                                         if (t.completeBy && !done) {
@@ -5365,7 +5474,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 <div className="flex items-start gap-2 p-2">
                                                     {!hasSubs && (
                                                         <input type="checkbox" checked={done}
-                                                            onChange={() => toggleCheckItem(t.id, t)}
+                                                            onChange={() => togglePerAssigneeCheck(t.id, name, t)}
                                                             className="w-4 h-4 mt-0.5 text-mint-700 rounded focus:ring-2 focus:ring-mint-700 shrink-0" />
                                                     )}
                                                     <div className="flex-1 min-w-0">
@@ -5424,10 +5533,20 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                     : (language === 'es' ? 'Editar' : 'Edit')}
                                                             </button>
                                                         )}
-                                                        {/* Completed-by stamp */}
-                                                        {!hasSubs && done && completedBy && (
+                                                        {/* Completed-by stamp — this column's staff,
+                                                            their own timestamp. Other assignees show
+                                                            in their own columns / chips. */}
+                                                        {!hasSubs && done && (
                                                             <p className="text-[10px] text-green-600 mt-0.5">
-                                                                ✓ {completedBy} {completedAt && `— ${completedAt}`}
+                                                                ✓ {name} {completedAt && `— ${completedAt}`}
+                                                            </p>
+                                                        )}
+                                                        {/* Overall progress mini-badge when there is
+                                                            more than 1 assignee on the task — so each
+                                                            assignee can glance and see "I am 1/2" */}
+                                                        {tAssignees.length > 1 && (
+                                                            <p className="text-[10px] text-dd-text-2 mt-0.5">
+                                                                {_prog.done}/{_prog.total} {language === 'es' ? 'completos' : 'done'}
                                                             </p>
                                                         )}
                                                         {/* Photo capture — same handler as master row.
