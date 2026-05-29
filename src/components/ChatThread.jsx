@@ -2115,6 +2115,38 @@ function MessageBubbleInner({
     const [showSeenBy, setShowSeenBy] = useState(false);    // seen-by sheet
     const reactionEntries = Object.entries(message.reactions || {})
         .filter(([, names]) => Array.isArray(names) && names.length > 0);
+    // Shared reaction-chips row. Andrew 2026-05-28: "in chat when i
+    // double click a message and put the thumbs up it doesnt show up."
+    // Bug was that the chips were only inlined in the catch-all bubble
+    // branch (text/image/video/audio). The 6 specialty bubble types
+    // (announcement, coverage_request, eighty_six_alert, photo_issue,
+    // task_handoff, poll) all wire up the MessageActionMenu correctly
+    // so the Firestore write happens, but they never rendered chips —
+    // so the user picked 👍 and nothing visible came back. Now every
+    // branch injects this fragment after its specialty card, so the
+    // chips appear no matter which bubble type was reacted to. Layout
+    // mirrors the catch-all original: row of pills aligned to the
+    // sender's side (right for "mine", left for theirs); click toggles
+    // own reaction off.
+    const reactionsRow = reactionEntries.length > 0 ? (
+        <div className={`flex gap-1 mt-1 px-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
+            {reactionEntries.map(([emoji, names]) => {
+                const youReacted = names.includes(staffName);
+                return (
+                    <button
+                        key={emoji}
+                        onClick={() => onReact(emoji)}
+                        className={`px-1.5 py-0.5 rounded-full text-[12px] font-bold flex items-center gap-1 transition ${youReacted
+                            ? 'bg-dd-green/20 border border-dd-green/40 text-dd-green-700'
+                            : 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}
+                    >
+                        <span>{emoji}</span>
+                        <span className="tabular-nums">{names.length}</span>
+                    </button>
+                );
+            })}
+        </div>
+    ) : null;
     // Read-receipts gating + readers list. Computed every render — both
     // helpers are cheap and need to reflect the live `lastReadByName`
     // map on the chat doc (which updates ~1.5s after each viewer scrolls
@@ -2179,6 +2211,7 @@ function MessageBubbleInner({
                     onOpenAckDashboard={onOpenAckDashboard}
                     onLongPress={() => setShowActions(true)}
                 />
+                {reactionsRow}
                 {showActions && (
                     <MessageActionMenu
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
@@ -2212,6 +2245,7 @@ function MessageBubbleInner({
                     onWithdraw={onWithdrawCoverage}
                     onLongPress={() => setShowActions(true)}
                 />
+                {reactionsRow}
                 {showActions && (
                     <MessageActionMenu
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
@@ -2237,6 +2271,7 @@ function MessageBubbleInner({
                     onResolve={onResolve86}
                     onLongPress={() => setShowActions(true)}
                 />
+                {reactionsRow}
                 {showActions && (
                     <MessageActionMenu
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
@@ -2264,6 +2299,7 @@ function MessageBubbleInner({
                     autoTranslate={autoTranslate}
                     onLongPress={() => setShowActions(true)}
                 />
+                {reactionsRow}
                 {showActions && (
                     <MessageActionMenu
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
@@ -2288,6 +2324,7 @@ function MessageBubbleInner({
                     targetLang={targetLang}
                     autoTranslate={autoTranslate}
                 />
+                {reactionsRow}
             </div>
         );
     }
@@ -2305,6 +2342,7 @@ function MessageBubbleInner({
                     onClose={onClosePoll}
                     onLongPress={() => setShowActions(true)}
                 />
+                {reactionsRow}
                 {showActions && (
                     <MessageActionMenu
                         message={message} chat={chat} isMine={isMine} viewer={viewer}
@@ -2432,26 +2470,11 @@ function MessageBubbleInner({
                             )}
                         </div>
                     </div>
-                    {/* Reactions row */}
-                    {reactionEntries.length > 0 && (
-                        <div className={`flex gap-1 mt-1 ${isMine ? 'justify-end' : 'justify-start'}`}>
-                            {reactionEntries.map(([emoji, names]) => {
-                                const youReacted = names.includes(staffName);
-                                return (
-                                    <button
-                                        key={emoji}
-                                        onClick={() => onReact(emoji)}
-                                        className={`px-1.5 py-0.5 rounded-full text-[12px] font-bold flex items-center gap-1 transition ${youReacted
-                                            ? 'bg-dd-green/20 border border-dd-green/40 text-dd-green-700'
-                                            : 'bg-white border border-dd-line text-dd-text-2 hover:bg-dd-bg'}`}
-                                    >
-                                        <span>{emoji}</span>
-                                        <span className="tabular-nums">{names.length}</span>
-                                    </button>
-                                );
-                            })}
-                        </div>
-                    )}
+                    {/* Reactions row — shared `reactionsRow` JSX defined
+                        at the top of MessageBubbleInner so the chips
+                        render on every bubble type, not just the
+                        catch-all. */}
+                    {reactionsRow}
                     {/* Action menu — reactions + reply + pin + task + delete.
                         2026-05-28 fix: this catch-all menu (rendered when
                         the bubble type wasn't one of the type-specific
