@@ -4295,8 +4295,20 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // legacy `${prefix}${taskId}` boolean is kept in sync as
             // "all assignees done" so existing isTaskComplete + stats
             // continue to work without changes.
+            // Sanitize the assignee name into a safe Firestore field
+            // segment — Firestore field paths split on `.` and choke
+            // on spaces / dots / brackets when written via the dotted-
+            // path syntax in updateDoc(). Andrew 2026-05-29: "the tasks
+            // they the staff finished isnt turning green on there own
+            // list." Root cause: keys like `__doneBy__Yuly Guerrero`
+            // had a space, the optimistic local update succeeded but
+            // the Firestore write rejected the path, so the snapshot
+            // round-trip reverted the row. Replacing non-alnum chars
+            // with underscore guarantees the field name is a valid
+            // path segment.
+            const sanitizeForKey = (s) => String(s || '').replace(/[^a-zA-Z0-9_]/g, '_');
             const assigneeDoneKey = (taskId, name) =>
-                `${currentPrefix}${taskId}__doneBy__${name}`;
+                `${currentPrefix}${taskId}__doneBy__${sanitizeForKey(name)}`;
             const isDoneForAssignee = (task, name) =>
                 !!checks[assigneeDoneKey(task.id, name)];
             const getAssigneeProgress = (task) => {
