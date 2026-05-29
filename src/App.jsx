@@ -629,14 +629,17 @@ function computeStaffListShapeHash(list) {
     try {
         return JSON.stringify((list || []).map((s) => {
             if (!s) return null;
-            const { lastSeen, fcmTokens, ...rest } = s;
-            return {
-                ...rest,
-                // Keep the COUNT (so FCM enable/disable still
-                // triggers an update) but drop per-token bookkeeping
-                // (lastSeen, deviceId rotations don't matter for UI).
-                fcmTokenCount: Array.isArray(fcmTokens) ? fcmTokens.length : 0,
-            };
+            // Perf audit 2026-05-28 #4: drop `fcmTokens` AND
+            // `fcmTokenCount` entirely. No UI component reads either
+            // of these — messaging.js reads fcmTokens directly off
+            // Firestore, not the React staffList. Keeping the count
+            // was making every device register / token refresh fire
+            // a setStaffList that cascaded through every memo'd
+            // route. Also drop `lastSeen` (every app-open bumps it)
+            // and `smsLastSentAt` (every SMS-status callback bumps
+            // it) for the same reason.
+            const { lastSeen, fcmTokens, smsLastSentAt, ...rest } = s;
+            return rest;
         }));
     } catch {
         // If JSON.stringify throws (circular ref etc.) fall through

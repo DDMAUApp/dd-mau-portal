@@ -237,7 +237,15 @@ function ChatThreadInner({
             orderBy('createdAt', 'desc'),
             limit(messageLimit)
         );
+        // Unmount guard — perf audit 2026-05-28 #2: snapshot can
+        // fire AFTER the user navigates to another chat, leaving us
+        // calling setState on an unmounted/superseded effect. The
+        // alive flag short-circuits all the state writes in that
+        // window so React stops logging warnings and we stop
+        // overwriting fresh state from the new effect.
+        let alive = true;
         const unsub = onSnapshot(q, (snap) => {
+            if (!alive) return;
             clearTimeout(timeoutId);
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
@@ -258,12 +266,14 @@ function ChatThreadInner({
             // someone was previously in); network errors auto-recover
             // when Firestore re-establishes its WebSocket so a Retry
             // tap will usually succeed.
+            if (!alive) return;
             clearTimeout(timeoutId);
             console.warn('messages snapshot failed:', err);
             setLoadError(err?.code || err?.message || 'load-failed');
             setLoading(false);
         });
         return () => {
+            alive = false;
             clearTimeout(timeoutId);
             unsub();
         };
@@ -486,7 +496,9 @@ function ChatThreadInner({
             collection(db, 'chats', chat.id, 'acks'),
             where('userName', '==', staffName)
         );
+        let alive = true;
         const unsub = onSnapshot(q, (snap) => {
+            if (!alive) return;
             const set = new Set();
             snap.forEach(d => {
                 const data = d.data();
@@ -494,7 +506,7 @@ function ChatThreadInner({
             });
             setMyAcks(set);
         }, () => {});
-        return () => unsub();
+        return () => { alive = false; unsub(); };
     }, [chat?.id, staffName]);
 
     // Pinned-message count for the top-of-thread banner.
@@ -525,12 +537,14 @@ function ChatThreadInner({
             orderBy('sendAt', 'asc'),
             limit(20),
         );
+        let alive = true;
         const unsub = onSnapshot(q, (snap) => {
+            if (!alive) return;
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setScheduledMessages(list);
         }, (err) => console.warn('scheduled snapshot failed:', err));
-        return () => unsub();
+        return () => { alive = false; unsub(); };
     }, [chat?.id, staffName]);
 
     // ── Typing indicator ──────────────────────────────────────────
