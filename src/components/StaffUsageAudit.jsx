@@ -45,11 +45,11 @@
 // Read-only — no buttons that change state. Admins use the
 // existing per-staff edit flow to act on missing signals.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
     Users, Bell, BellOff, Smartphone, MonitorOff,
     Check, AlertTriangle, Clock, ChevronDown, MonitorSmartphone, Wifi,
-    MessageSquare, Send, PhoneOff,
+    MessageSquare, Send, PhoneOff, Phone,
 } from 'lucide-react';
 import { composeSetupReminderSmsUrl, stampSetupReminderSent } from '../data/notify';
 
@@ -90,7 +90,7 @@ function fmtRelative(ms, isEs) {
     return `${Math.floor(days / 365)}${isEs ? 'a' : 'y ago'}`;
 }
 
-export default function StaffUsageAudit({ staffList = [], language = 'en', currentManagerName = '', currentManagerId = null }) {
+export default function StaffUsageAudit({ staffList = [], language = 'en', currentManagerName = '', currentManagerId = null, onSetPhone = null }) {
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
     const [expanded, setExpanded] = useState(false);
@@ -101,6 +101,13 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
     // it, we just optimistically mark sent on click).
     const [sendingState, setSendingState] = useState({});
     const [toast, setToast] = useState(null);
+    // 2026-05-29 — Andrew: "the no phone number for now make it so if we
+    // click the no phone button i can add a phone number and it will
+    // pull up a window like when we send out onboarding docs". Modal
+    // state — null when closed, the raw staff row when open. We trust
+    // onSetPhone (passed from AdminPanel) to normalize + validate +
+    // write to /config/staff + log the phone_change audit event.
+    const [addingPhoneFor, setAddingPhoneFor] = useState(null);
 
     // Cooldown matches the value in src/data/notify.js. Used here only
     // to disable the button + show "Sent 3d ago" — the Cloud Function
@@ -408,25 +415,49 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                                                 : cooldownActive
                                                 ? tx(`texted ${fmtRelative(s.reminderSentMs, isEs)}`, `enviado ${fmtRelative(s.reminderSentMs, isEs)}`)
                                                 : '';
-                                            // Disabled view: no phone OR already-sent state.
-                                            // Cooldown still allows a click (the admin
-                                            // can choose to re-text manually); reason
-                                            // line just informs them.
-                                            if (noPhone || state === 'sent') {
+                                            // "Texted ✓" — terminal state once the admin
+                                            // taps the sms: link. Stays visible until
+                                            // the next snapshot refresh.
+                                            if (state === 'sent') {
                                                 return (
                                                     <span
-                                                        className={`shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap ${
-                                                            state === 'sent'
-                                                                ? 'bg-dd-green text-white border-dd-green'
-                                                                : 'bg-dd-bg/50 text-dd-text-2/60 border-dd-line'
-                                                        }`}
-                                                        title={reason || tx('Sent', 'Enviado')}
+                                                        className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap bg-dd-green text-white border-dd-green"
+                                                        title={tx('Sent', 'Enviado')}
                                                     >
-                                                        {state === 'sent'
-                                                            ? <Check size={11} strokeWidth={3} aria-hidden="true" />
-                                                            : <PhoneOff size={11} strokeWidth={2.5} aria-hidden="true" />}
-                                                        {state === 'sent' ? tx('Texted', 'Enviado') : tx('No phone', 'Sin tel.')}
+                                                        <Check size={11} strokeWidth={3} aria-hidden="true" />
+                                                        {tx('Texted', 'Enviado')}
                                                     </span>
+                                                );
+                                            }
+                                            // "No phone" — clickable. Opens the
+                                            // AddPhoneSheet modal so an admin can
+                                            // add the number on the spot without
+                                            // bouncing to the staff editor below.
+                                            // Disabled only if AdminPanel didn't
+                                            // pass onSetPhone (defensive — should
+                                            // never happen in practice).
+                                            if (noPhone) {
+                                                if (!onSetPhone) {
+                                                    return (
+                                                        <span
+                                                            className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap bg-dd-bg/50 text-dd-text-2/60 border-dd-line"
+                                                            title={reason}
+                                                        >
+                                                            <PhoneOff size={11} strokeWidth={2.5} aria-hidden="true" />
+                                                            {tx('No phone', 'Sin tel.')}
+                                                        </span>
+                                                    );
+                                                }
+                                                return (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setAddingPhoneFor(s.raw)}
+                                                        className="shrink-0 inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-glass-sm border whitespace-nowrap bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100 active:scale-95 transition"
+                                                        title={tx('Add a phone number for this staffer', 'Agrega un número de teléfono para este personal')}
+                                                    >
+                                                        <Phone size={11} strokeWidth={2.5} aria-hidden="true" />
+                                                        {tx('Add phone', 'Añadir tel.')}
+                                                    </button>
                                                 );
                                             }
                                             return (
@@ -471,6 +502,137 @@ export default function StaffUsageAudit({ staffList = [], language = 'en', curre
                     {toast}
                 </div>
             )}
+
+            {addingPhoneFor && (
+                <AddPhoneSheet
+                    staff={addingPhoneFor}
+                    isEs={isEs}
+                    onClose={() => setAddingPhoneFor(null)}
+                    onSave={async (raw) => {
+                        if (!onSetPhone) return false;
+                        const result = await onSetPhone(addingPhoneFor, raw);
+                        // setPhoneForStaff returns the normalized E.164
+                        // on success (or '' if cleared), null on invalid.
+                        // Treat null as "stay open" so the admin can
+                        // correct the input; everything else closes.
+                        if (result === null) return false;
+                        setAddingPhoneFor(null);
+                        return true;
+                    }}
+                />
+            )}
+        </div>
+    );
+}
+
+// AddPhoneSheet — modeled after Onboarding.jsx's InviteSheet. Bottom
+// sheet on mobile, centered card on desktop. Loose validation here
+// (10+ digits) so the user gets quick feedback while typing; the real
+// E.164 normalize + reject happens in onSave (setPhoneForStaff) which
+// shows a toast if the input is unparseable. Trapping Escape + tapping
+// the scrim both close.
+function AddPhoneSheet({ staff, isEs, onClose, onSave }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [value, setValue] = useState('');
+    const [saving, setSaving] = useState(false);
+
+    // Escape closes — matches the modal patterns elsewhere in the app.
+    useEffect(() => {
+        const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [onClose]);
+
+    // 10+ digits gives us enough confidence to enable the Save button.
+    // The real authority (normalizeToE164) lives in setPhoneForStaff.
+    const digitCount = (value.match(/\d/g) || []).length;
+    const looksValid = digitCount >= 10;
+    const canSave = looksValid && !saving;
+
+    const handleSave = async () => {
+        if (!canSave) return;
+        setSaving(true);
+        try {
+            await onSave(value);
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    return (
+        <div
+            className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+            onClick={onClose}
+        >
+            <div
+                className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
+                    <h3 className="text-lg font-black text-dd-text">
+                        📱 {tx('Add phone number', 'Añadir teléfono')}
+                    </h3>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="w-8 h-8 rounded-full bg-dd-bg text-dd-text-2 text-lg"
+                        aria-label={tx('Close', 'Cerrar')}
+                    >
+                        ×
+                    </button>
+                </div>
+                <div className="p-4 space-y-3">
+                    <p className="text-sm text-dd-text-2">
+                        {tx('Saving a number for ', 'Guardando un número para ')}
+                        <span className="font-bold text-dd-text">{staff?.name}</span>.
+                        {' '}{tx('They will need to opt in to SMS separately (handbook acknowledgment or the SMS toggle in their staff card).', 'El personal debe activar SMS por separado (firma del manual o el botón SMS en su tarjeta).')}
+                    </p>
+                    <label className="block">
+                        <span className="text-[11px] font-bold uppercase text-dd-text-2">
+                            {tx('Mobile phone', 'Teléfono móvil')}
+                        </span>
+                        <input
+                            type="tel"
+                            inputMode="tel"
+                            autoComplete="tel"
+                            autoFocus
+                            value={value}
+                            onChange={(e) => setValue(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && canSave) {
+                                    e.preventDefault();
+                                    handleSave();
+                                }
+                            }}
+                            placeholder="(314) 555-1234"
+                            className="mt-1 w-full px-3 py-2 rounded-lg border border-dd-line font-mono text-base text-dd-text focus:outline-none focus:border-dd-green focus:ring-2 focus:ring-dd-green-50"
+                        />
+                        <span className="block mt-1 text-[11px] text-dd-text-2/80">
+                            {tx('10 digits — US numbers will be normalized to +1xxxxxxxxxx.', '10 dígitos — los números de EE. UU. se normalizan a +1xxxxxxxxxx.')}
+                        </span>
+                    </label>
+                </div>
+                <div className="border-t border-dd-line p-4 flex gap-2">
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="flex-1 py-2 rounded-lg bg-dd-bg text-dd-text-2 font-bold"
+                    >
+                        {tx('Cancel', 'Cancelar')}
+                    </button>
+                    <button
+                        type="button"
+                        onClick={handleSave}
+                        disabled={!canSave}
+                        className="flex-1 py-2 rounded-lg bg-dd-green text-white font-bold disabled:opacity-50 inline-flex items-center justify-center gap-2"
+                    >
+                        {saving
+                            ? <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+                            : <Check size={14} strokeWidth={2.75} aria-hidden="true" />}
+                        {saving ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }

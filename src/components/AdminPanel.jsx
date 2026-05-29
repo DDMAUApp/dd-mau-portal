@@ -1929,6 +1929,7 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                         language={language}
                         currentManagerName={staffName}
                         currentManagerId={(staffList || []).find(s => s.name === staffName)?.id ?? null}
+                        onSetPhone={setPhoneForStaff}
                     />
 
                     {/* ── ONBOARDING LAUNCHER ──
