@@ -305,6 +305,43 @@ export async function deleteLibraryEntry(side, libId) {
     await updateDoc(libRef, { items: next, updatedAt: serverTimestamp() });
 }
 
+// Rename a library entry (admin/manager inline edit on the master list).
+// Andrew 2026-05-28: "thats there we ad a edit the tasks." Lets the
+// manager fix a typo or sharpen the wording without having to delete
+// + re-add (which would lose useCount + lastUsedAt).
+//
+// Behavior:
+//   • Empty/whitespace newText → no-op (caller should delete instead).
+//   • If newText collides with a DIFFERENT existing entry (same
+//     normalized text), we leave both rows alone and signal duplicate.
+//     The picker would otherwise show two identical rows that act
+//     differently — confusing.
+//   • Existing /assigned_tasks/ rows are NOT touched. They snapshot
+//     the task text at assignment time and stay as-is. This matches
+//     deleteLibraryEntry's posture: library = template, assignments =
+//     ledger of work, edits to the template don't rewrite history.
+//
+// Returns { renamed: bool, reason?: 'not_found' | 'duplicate' | 'empty' }.
+export async function renameLibraryEntry(side, libId, newText) {
+    const norm = (newText || '').trim();
+    if (!side || !libId) return { renamed: false, reason: 'not_found' };
+    if (!norm) return { renamed: false, reason: 'empty' };
+    const libRef = doc(db, 'config', `task_library_${side}`);
+    const snap = await getDoc(libRef);
+    const items = Array.isArray(snap.data()?.items) ? [...snap.data().items] : [];
+    const idx = items.findIndex((it) => it.id === libId);
+    if (idx < 0) return { renamed: false, reason: 'not_found' };
+    // Collision check against OTHER rows.
+    const otherDupIdx = items.findIndex(
+        (it, i) => i !== idx && (it.task || '').trim().toLowerCase() === norm.toLowerCase(),
+    );
+    if (otherDupIdx >= 0) return { renamed: false, reason: 'duplicate' };
+    const next = items.slice();
+    next[idx] = { ...next[idx], task: norm };
+    await updateDoc(libRef, { items: next, updatedAt: serverTimestamp() });
+    return { renamed: true };
+}
+
 // ── SEARCH ─────────────────────────────────────────────────────────────
 
 // Fuzzy library search + sort. With a query: rank by token-match score

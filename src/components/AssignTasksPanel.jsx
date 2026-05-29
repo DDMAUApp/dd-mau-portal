@@ -48,11 +48,12 @@ import {
     addLibraryEntry,
     searchLibrary,
     deleteLibraryEntry,
+    renameLibraryEntry,
     deleteAssignment,
     setAssignmentDone,
     inferStaffSide,
 } from '../data/assignedTasks';
-import { ClipboardList, Search, Plus, Check, X, ChevronDown, Trash2, UserPlus } from 'lucide-react';
+import { ClipboardList, Search, Plus, Check, X, ChevronDown, Trash2, UserPlus, Pencil } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
 
 const tx = (en, es, isEs) => (isEs ? es : en);
@@ -233,6 +234,53 @@ export default function AssignTasksPanel({
     // assign tasks twice").
     const [assignTarget, setAssignTarget] = useState(null); // { id, task, category }
     const pickerRef = useRef(null);
+    // Inline edit state for a master library row. Andrew 2026-05-28:
+    // "thats there we ad a edit the tasks." A pencil button on each
+    // row swaps the title for an <input>; Enter / Save commits via
+    // renameLibraryEntry, Esc / Cancel reverts. Only one row can be
+    // edited at a time (state holds the row id).
+    const [editingLibId, setEditingLibId] = useState(null);
+    const [editingDraft, setEditingDraft] = useState('');
+    const [savingEdit, setSavingEdit] = useState(false);
+    function openEditLib(it) {
+        setAssignTarget(null);
+        setEditingLibId(it.id);
+        setEditingDraft(it.task || '');
+    }
+    function cancelEditLib() {
+        setEditingLibId(null);
+        setEditingDraft('');
+    }
+    async function commitEditLib(it) {
+        if (savingEdit) return;
+        const next = (editingDraft || '').trim();
+        if (!next) {
+            cancelEditLib();
+            return;
+        }
+        if (next === (it.task || '').trim()) {
+            cancelEditLib();
+            return;
+        }
+        setSavingEdit(true);
+        try {
+            const res = await renameLibraryEntry(side, it.id, next);
+            if (!res?.renamed) {
+                if (res?.reason === 'duplicate') {
+                    toastFlash(tx('Already in the master list', 'Ya está en la lista maestra', isEs));
+                } else {
+                    toastFlash(tx('Could not save — try again', 'No se pudo guardar — intenta otra vez', isEs));
+                }
+                return;
+            }
+            cancelEditLib();
+        } catch (err) {
+            console.warn('renameLibraryEntry failed:', err);
+            toastFlash(tx('Could not save — try again', 'No se pudo guardar — intenta otra vez', isEs));
+        } finally {
+            setSavingEdit(false);
+        }
+    }
     useEffect(() => {
         if (!assignTarget) return undefined;
         function onClickAway(e) {
@@ -391,8 +439,43 @@ export default function AssignTasksPanel({
                         ) : filteredLib.map((it) => {
                             const assignedStaff = assignmentsByTask.get((it.task || '').toLowerCase()) || [];
                             const isPicking = assignTarget?.id === it.id;
+                            const isEditingThis = editingLibId === it.id;
                             return (
-                                <div key={it.id} className="relative">
+                                <div key={it.id} className="relative group/lib">
+                                    {isEditingThis ? (
+                                        // Inline editor — swaps in place of
+                                        // the row button when admin clicks
+                                        // ✏️. Enter saves, Esc cancels.
+                                        <div className="w-full rounded-glass-md border bg-white border-dd-green/40 shadow-glass-sm px-2 py-1.5">
+                                            <div className="flex items-center gap-1">
+                                                <input
+                                                    type="text"
+                                                    autoFocus
+                                                    value={editingDraft}
+                                                    onChange={(e) => setEditingDraft(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') { e.preventDefault(); commitEditLib(it); }
+                                                        if (e.key === 'Escape') { e.preventDefault(); cancelEditLib(); }
+                                                    }}
+                                                    className="flex-1 min-w-0 text-body-md text-dd-text bg-transparent outline-none px-1 py-1"
+                                                />
+                                                <button
+                                                    onClick={() => commitEditLib(it)}
+                                                    disabled={savingEdit}
+                                                    className="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md bg-dd-green text-white disabled:opacity-60"
+                                                    aria-label={tx('Save', 'Guardar', isEs)}>
+                                                    <Check size={14} strokeWidth={2.5} aria-hidden="true" />
+                                                </button>
+                                                <button
+                                                    onClick={cancelEditLib}
+                                                    disabled={savingEdit}
+                                                    className="shrink-0 inline-flex items-center justify-center w-8 h-8 rounded-md bg-dd-bg text-dd-text-2"
+                                                    aria-label={tx('Cancel', 'Cancelar', isEs)}>
+                                                    <X size={14} strokeWidth={2.5} aria-hidden="true" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : (
                                     <button
                                         onClick={() => canModify && setAssignTarget(isPicking ? null : { id: it.id, task: it.task, category: it.category })}
                                         disabled={!canModify}
@@ -425,6 +508,25 @@ export default function AssignTasksPanel({
                                             </div>
                                         )}
                                     </button>
+                                    )}
+
+                                    {/* Edit pencil — manager/admin only,
+                                        appears on hover/focus so it doesn't
+                                        clutter the row. Hidden while the
+                                        assign picker is open OR this row
+                                        is already in edit mode. Andrew
+                                        2026-05-28 — "we ad a edit the
+                                        tasks." */}
+                                    {canModify && !isPicking && !isEditingThis && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); openEditLib(it); }}
+                                            className={`absolute ${isAdmin ? 'right-9' : 'right-2'} top-1/2 -translate-y-1/2 w-6 h-6 rounded-full text-dd-text-2/60 hover:text-dd-green-700 hover:bg-dd-sage-50 flex items-center justify-center opacity-0 group-hover/lib:opacity-100 focus:opacity-100 transition-opacity`}
+                                            style={{ pointerEvents: 'auto' }}
+                                            title={tx('Edit task text', 'Editar texto', isEs)}
+                                            aria-label={tx('Edit', 'Editar', isEs)}>
+                                            <Pencil size={12} strokeWidth={2.25} aria-hidden="true" />
+                                        </button>
+                                    )}
 
                                     {/* Inline staff-picker popover */}
                                     {isPicking && (
