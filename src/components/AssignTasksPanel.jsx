@@ -85,11 +85,22 @@ function initialsOf(name) {
 // used elsewhere in the app (App.jsx isManager check): admin id or
 // role text containing "manager". Used to filter the kanban to
 // manager-only columns when `managersOnly` is passed.
+//
+// When `includeShiftLeads` is true, also accepts staff with either
+// the `shiftLead: true` boolean OR a role string containing "shift
+// lead". Andrew 2026-05-28: assignees in the Tasks-tab kanban "can
+// only be managers or shift leads."
 const ADMIN_IDS = new Set([40, 41]);
-function isManagerLike(record) {
+function isManagerLike(record, { includeShiftLeads = false } = {}) {
     if (!record) return false;
     if (ADMIN_IDS.has(Number(record.id))) return true;
-    return /manager/i.test(String(record.role || ''));
+    const roleText = String(record.role || '');
+    if (/manager/i.test(roleText)) return true;
+    if (includeShiftLeads) {
+        if (record.shiftLead === true) return true;
+        if (/shift\s*lead/i.test(roleText)) return true;
+    }
+    return false;
 }
 
 export default function AssignTasksPanel({
@@ -102,11 +113,14 @@ export default function AssignTasksPanel({
     // When true, restricts the kanban to manager-class staff only:
     // staff-picker, columns, and "assigned-to" chips all filter to
     // managers. Master list is unchanged (shared library per side).
-    // Used by Operations → "Mgr Tasks" sub-tab. Andrew 2026-05-28:
-    // "let work on the separate lists for the different managers …
-    // keep the master list with all tasks." (Per-MANAGER split rather
-    // than the per-staff split used everywhere else.)
+    // Used inside the Tasks sub-tab in Operations. Andrew 2026-05-28:
+    // "when i assign a task in the task page to a staff which can
+    // only be managers or shift leads."
     managersOnly = false,
+    // When `managersOnly` is on, also include shift leads in the
+    // pool (staff.shiftLead === true OR role text "shift lead"). Has
+    // no effect if managersOnly is off.
+    includeShiftLeads = false,
 }) {
     const isEs = language === 'es';
     // canModify gates the edit-state controls (+ Add new task, delete a
@@ -144,9 +158,9 @@ export default function AssignTasksPanel({
         return list
             .filter((s) => s && s.name && s.active !== false)
             .filter((s) => inferStaffSide(s) === side)
-            .filter((s) => !managersOnly || isManagerLike(s))
+            .filter((s) => !managersOnly || isManagerLike(s, { includeShiftLeads }))
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    }, [staffList, side, managersOnly]);
+    }, [staffList, side, managersOnly, includeShiftLeads]);
 
     // ── Master library subscription ─────────────────────────────────
     const [libItems, setLibItems] = useState([]);
