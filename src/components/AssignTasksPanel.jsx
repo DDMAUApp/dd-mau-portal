@@ -368,14 +368,15 @@ export default function AssignTasksPanel({
                 isEs
             ));
             setAssignTarget(null);
-            // Scroll the columns area into view after the next paint
-            // so the freshly-created column is visible. Best-effort —
-            // bail quietly if the ref isn't attached yet.
+            // Scroll the new column into view horizontally (the
+            // master + columns share a horizontal scroller). Best-
+            // effort: bail quietly if the ref isn't attached yet.
             setTimeout(() => {
                 try {
                     columnsRef.current?.scrollIntoView({
                         behavior: 'smooth',
-                        block: 'start',
+                        inline: 'end',
+                        block: 'nearest',
                     });
                 } catch {}
             }, 120);
@@ -449,21 +450,14 @@ export default function AssignTasksPanel({
                 ) : null}
             />
 
-            {/* Mobile-first layout: on phones, when there are staff
-                columns showing they render ABOVE the master list so
-                the assignment result is immediately visible. On lg+
-                we keep the side-by-side grid. Andrew 2026-05-28: "look
-                at safari its still not changed you can see the master
-                list but not he split off list." The columns were
-                rendering below the master, off-screen unless you
-                scrolled. */}
-            <div className={`flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(280px,360px)_1fr]`}>
-                {/* ─── MASTER LIST (left column on lg, ordered below
-                       per-staff columns on mobile when there is any
-                       assigned work to show) ─── */}
-                <div className={`glass-card p-3 flex flex-col min-h-[480px] lg:sticky lg:top-20 lg:max-h-[calc(100vh-120px)] ${
-                    staffColumns.length > 0 ? 'order-2 lg:order-none' : ''
-                }`}>
+            {/* Trello-style horizontal kanban — master list on the
+                LEFT, per-staff columns scroll horizontally to the
+                right of it. Same on every viewport so the master and
+                the columns are always side-by-side. Andrew 2026-05-28
+                round 4: "its supposed to be next to it." */}
+            <div className="flex gap-3 overflow-x-auto pb-2 -mx-3 px-3 scrollbar-thin">
+                {/* ─── MASTER LIST (always leftmost column) ─── */}
+                <div className="glass-card p-3 flex flex-col w-[85vw] sm:w-[320px] lg:w-[360px] shrink-0 min-h-[480px] max-h-[calc(100vh-200px)]">
                     <div className="flex items-center justify-between mb-3">
                         <div className="text-overline text-dd-text-2">
                             {tx('Master list', 'Lista maestra', isEs)}
@@ -661,96 +655,86 @@ export default function AssignTasksPanel({
                     </div>
                 </div>
 
-                {/* ─── STAFF COLUMNS (right side on lg, ABOVE master
-                       on mobile when there are columns to show) ─── */}
-                <div ref={columnsRef}
-                    className={`min-w-0 ${staffColumns.length > 0 ? 'order-1 lg:order-none' : 'hidden lg:block'}`}>
-                    {staffColumns.length === 0 ? (
-                        <div className="glass-card p-10 text-center">
-                            <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-dd-sage-50 text-dd-green-700 flex items-center justify-center">
-                                <UserPlus size={28} strokeWidth={2.25} aria-hidden="true" />
-                            </div>
-                            <p className="text-headline text-dd-text">
-                                {managersOnly
-                                    ? tx('No manager tasks yet', 'Sin tareas de gerentes', isEs)
-                                    : tx('No open assignments yet', 'Sin tareas asignadas', isEs)}
-                            </p>
-                            <p className="text-footnote-md text-dd-text-2 mt-1 max-w-sm mx-auto">
-                                {managersOnly
-                                    ? tx(
-                                        'Tap any task in the master list and pick a manager to start splitting work.',
-                                        'Toca cualquier tarea y elige un gerente para empezar.',
-                                        isEs
-                                    )
-                                    : tx(
-                                        'Tap any task in the master list and pick a staff member to start.',
-                                        'Toca cualquier tarea en la lista maestra y elige un miembro del personal.',
-                                        isEs
-                                    )}
-                            </p>
+                {/* ─── STAFF COLUMNS (sit immediately next to the
+                       master list inside the same horizontal scroller
+                       so the columns are always physically next to
+                       master, not on a different row) ─── */}
+                {staffColumns.length === 0 ? (
+                    <div ref={columnsRef}
+                        className="glass-card p-6 w-[85vw] sm:w-[320px] lg:w-[360px] shrink-0 flex flex-col items-center justify-center text-center">
+                        <div className="w-12 h-12 mb-2 rounded-full bg-dd-sage-50 text-dd-green-700 flex items-center justify-center">
+                            <UserPlus size={24} strokeWidth={2.25} aria-hidden="true" />
                         </div>
-                    ) : (
-                        <div className="lg:overflow-x-auto -mx-1 px-1 pb-2">
-                            <div className="flex flex-col lg:flex-row gap-3 lg:min-w-min">
-                                {staffColumns.map(({ staff, items }) => (
-                                    <div key={staff.id}
-                                        className="glass-card p-3 lg:w-[280px] lg:shrink-0 flex flex-col">
-                                        {/* Column header — avatar + name + count */}
-                                        <div className="flex items-center gap-2 mb-3 pb-2 border-b border-glass-border-light">
-                                            <span className="glass-avatar-green w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0">
-                                                {initialsOf(staff.name)}
-                                            </span>
-                                            <div className="min-w-0 flex-1">
-                                                <div className="text-headline text-dd-text truncate leading-tight">
-                                                    {staff.name}
+                        <p className="text-headline text-dd-text">
+                            {managersOnly
+                                ? tx('No manager tasks yet', 'Sin tareas de gerentes', isEs)
+                                : tx('No open assignments yet', 'Sin tareas asignadas', isEs)}
+                        </p>
+                        <p className="text-footnote-md text-dd-text-2 mt-1">
+                            {managersOnly
+                                ? tx('Tap a task ← then pick a manager.', 'Toca una tarea ← y elige un gerente.', isEs)
+                                : tx('Tap a task ← then pick a staff.', 'Toca una tarea ← y elige un miembro.', isEs)}
+                        </p>
+                    </div>
+                ) : (
+                    <div ref={columnsRef} className="flex gap-3 shrink-0">
+                        {staffColumns.map(({ staff, items }) => (
+                            <div key={staff.id}
+                                className="glass-card p-3 w-[80vw] sm:w-[280px] shrink-0 flex flex-col max-h-[calc(100vh-200px)]">
+                                {/* Column header — avatar + name + count */}
+                                <div className="flex items-center gap-2 mb-3 pb-2 border-b border-glass-border-light">
+                                    <span className="glass-avatar-green w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0">
+                                        {initialsOf(staff.name)}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-headline text-dd-text truncate leading-tight">
+                                            {staff.name}
+                                        </div>
+                                        <div className="text-caption-md text-dd-text-2">
+                                            {items.length} {tx(
+                                                items.length === 1 ? 'open task' : 'open tasks',
+                                                items.length === 1 ? 'tarea abierta' : 'tareas abiertas',
+                                                isEs
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Task list */}
+                                <div className="space-y-1.5 overflow-y-auto">
+                                    {items.map((a) => (
+                                        <div key={a.id}
+                                            className="group flex items-start gap-2 px-2.5 py-2 rounded-glass-md bg-white/60 border border-glass-border-light hover:bg-white transition-colors">
+                                            <button onClick={() => handleMarkDone(a)}
+                                                className="mt-0.5 w-5 h-5 rounded-full border-2 border-dd-line hover:border-dd-green hover:bg-dd-green/10 active:scale-90 transition-all flex items-center justify-center shrink-0"
+                                                aria-label={tx('Mark done', 'Marcar hecho', isEs)} />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-body-md text-dd-text break-words">
+                                                    {a.task}
                                                 </div>
-                                                <div className="text-caption-md text-dd-text-2">
-                                                    {items.length} {tx(
-                                                        items.length === 1 ? 'open task' : 'open tasks',
-                                                        items.length === 1 ? 'tarea abierta' : 'tareas abiertas',
-                                                        isEs
+                                                <div className="text-caption-md text-dd-text-2 mt-0.5">
+                                                    {a.assignedBy && (
+                                                        <span>{tx('From', 'De', isEs)} <span className="font-semibold text-dd-text">{a.assignedBy}</span></span>
+                                                    )}
+                                                    {a.assignedAt && (
+                                                        <span> · {fmtWhen(a.assignedAt)}</span>
                                                     )}
                                                 </div>
                                             </div>
+                                            {canModify && (
+                                                <button onClick={() => handleUnassign(a)}
+                                                    className="w-6 h-6 rounded-full text-dd-text-2/60 hover:text-red-600 hover:bg-red-50 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
+                                                    aria-label={tx('Remove', 'Quitar', isEs)}>
+                                                    <X size={14} strokeWidth={2.5} aria-hidden="true" />
+                                                </button>
+                                            )}
                                         </div>
-
-                                        {/* Task list */}
-                                        <div className="space-y-1.5">
-                                            {items.map((a) => (
-                                                <div key={a.id}
-                                                    className="group flex items-start gap-2 px-2.5 py-2 rounded-glass-md bg-white/60 border border-glass-border-light hover:bg-white transition-colors">
-                                                    <button onClick={() => handleMarkDone(a)}
-                                                        className="mt-0.5 w-5 h-5 rounded-full border-2 border-dd-line hover:border-dd-green hover:bg-dd-green/10 active:scale-90 transition-all flex items-center justify-center shrink-0"
-                                                        aria-label={tx('Mark done', 'Marcar hecho', isEs)} />
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-body-md text-dd-text break-words">
-                                                            {a.task}
-                                                        </div>
-                                                        <div className="text-caption-md text-dd-text-2 mt-0.5">
-                                                            {a.assignedBy && (
-                                                                <span>{tx('From', 'De', isEs)} <span className="font-semibold text-dd-text">{a.assignedBy}</span></span>
-                                                            )}
-                                                            {a.assignedAt && (
-                                                                <span> · {fmtWhen(a.assignedAt)}</span>
-                                                            )}
-                                                        </div>
-                                                    </div>
-                                                    {canModify && (
-                                                        <button onClick={() => handleUnassign(a)}
-                                                            className="w-6 h-6 rounded-full text-dd-text-2/60 hover:text-red-600 hover:bg-red-50 flex items-center justify-center opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity shrink-0"
-                                                            aria-label={tx('Remove', 'Quitar', isEs)}>
-                                                            <X size={14} strokeWidth={2.5} aria-hidden="true" />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
-                        </div>
-                    )}
-                </div>
+                        ))}
+                    </div>
+                )}
             </div>
 
             {/* Toast pinned to the bottom-center */}
