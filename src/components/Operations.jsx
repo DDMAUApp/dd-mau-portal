@@ -357,6 +357,18 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 : (staffIsFOH ? "FOH" : "BOH");
             const showSideTabs = currentIsAdmin || viewerIsBothSide;
             const [checklistSide, setChecklistSide] = useState(staffSide);
+            // Sauce-requests banner collapsed state (BOH only). Andrew
+            // 2026-05-28: "lets also make the sauces window
+            // collapsible." Default open; the toggle persists per
+            // device.
+            const [sauceCollapsed, setSauceCollapsed] = useState(() => {
+                try { return localStorage.getItem('ddmau:tasks:sauceCollapsed') === '1'; }
+                catch { return false; }
+            });
+            useEffect(() => {
+                try { localStorage.setItem('ddmau:tasks:sauceCollapsed', sauceCollapsed ? '1' : '0'); }
+                catch {}
+            }, [sauceCollapsed]);
             // (Removed 2026-05-09) PERIOD_KEY state — was always "all", setter
             // was never called. Direct usages below replaced with PERIOD_KEY.
             const [checks, setChecksRaw] = useState({});
@@ -4252,11 +4264,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (categoryFilter && categoryFilter !== "all") {
                     tagged = tagged.filter(t => (t.category || "other") === categoryFilter);
                 }
-                // Non-admin staff: only see tasks assigned to them or unassigned
-                if (!currentIsAdmin) {
-                    return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, staffName));
-                }
-                // Admin with filter active: show only tasks for that person (+ unassigned)
+                // 2026-05-28 — Andrew: "the ones on the right still
+                // need to see the whole tasks and requests." Non-admin
+                // staff used to be auto-filtered down to their own
+                // tasks here, but with the personal column now pinned
+                // to the very left of the horizontal scroller that
+                // narrowing is redundant (the personal column already
+                // shows just their tasks). The master list to the
+                // right of it should show EVERYTHING so they have
+                // full visibility into the team's work. Admin filter
+                // pill (taskFilter) still applies for the explicit
+                // "View: [person]" picker.
                 if (taskFilter) {
                     return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, taskFilter));
                 }
@@ -4439,12 +4457,70 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
                 })();
 
+                // Personal column for non-admin viewers — Andrew
+                // 2026-05-28: "yuly logs into her account when she
+                // clicks tasks she should see her name and tasks on
+                // the left. the ones on the right still need to see
+                // the whole tasks and requests." Pinned to the very
+                // left of the horizontal scroller; the master list +
+                // per-assignee columns shift to the right.
+                const personalTasks = (!currentIsAdmin && staffName)
+                    ? allTasks.filter(t => isAssignedTo(t, staffName))
+                    : null;
+
                 return (
-                    // Horizontal scroller: master list on the LEFT,
-                    // per-assignee columns to the RIGHT of it on the
-                    // SAME ROW. Same layout on every viewport - swipe
-                    // horizontally on mobile to see overflowing columns.
+                    // Horizontal scroller: (personal column if non-
+                    // admin) -> master list -> per-assignee columns,
+                    // all on the SAME ROW. Swipe horizontally on
+                    // mobile to see overflowing columns.
                     <div className="flex gap-3 overflow-x-auto -mx-4 px-4 pb-3 scrollbar-thin">
+                    {/* Personal column (non-admin only) — your name +
+                        your assigned tasks. Brand-green border so it
+                        reads as the viewer's own card. */}
+                    {personalTasks && (
+                        <div className="w-[82vw] sm:w-[260px] shrink-0 bg-white border-2 border-dd-green/40 rounded-xl p-3 flex flex-col max-h-[calc(100vh-260px)]">
+                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-dd-line/60">
+                                <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-dd-green text-white font-bold text-xs shrink-0">
+                                    {staffName.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-bold text-dd-text truncate leading-tight">{staffName}</div>
+                                    <div className="text-[10px] text-dd-text-2">
+                                        {personalTasks.length} {language === 'es'
+                                            ? (personalTasks.length === 1 ? 'tarea mía' : 'tareas mías')
+                                            : (personalTasks.length === 1 ? 'my task' : 'my tasks')}
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="space-y-1 overflow-y-auto -mx-1 px-1">
+                                {personalTasks.length === 0 ? (
+                                    <p className="text-[11px] text-dd-text-2 italic text-center py-3">
+                                        {language === 'es' ? 'Sin tareas asignadas.' : 'No tasks assigned.'}
+                                    </p>
+                                ) : personalTasks.map((t) => {
+                                    const done = !!checks[currentPrefix + t.id];
+                                    return (
+                                        <button key={t.id}
+                                            onClick={() => toggleCheckItem(t.id, t)}
+                                            className={`w-full text-left flex items-start gap-2 px-2 py-1.5 rounded border transition ${
+                                                done
+                                                    ? 'bg-dd-sage-50 border-dd-green/40 text-dd-text-2'
+                                                    : 'bg-white border-dd-line hover:bg-dd-bg'
+                                            }`}>
+                                            <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                                done ? 'bg-dd-green border-dd-green' : 'border-dd-line'
+                                            }`}>
+                                                {done && <span className="text-white text-[9px] leading-none">✓</span>}
+                                            </span>
+                                            <span className={`text-xs flex-1 min-w-0 ${done ? 'line-through' : ''}`}>
+                                                {t.task}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                     <div className="space-y-3 w-[88vw] sm:w-auto sm:flex-1 sm:min-w-[420px] sm:max-w-3xl shrink-0">
                         {/* FOH / BOH side selector — v2 segmented control (matches Schedule).
                             Emojis dropped — 🪑 + 🍳 don't render reliably across systems
@@ -4469,15 +4545,34 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             </div>
                         )}
 
-                        {/* BOH-only: pending sauce requests from FOH. Hidden when no requests. */}
+                        {/* BOH-only: pending sauce requests from FOH.
+                            Collapsible — Andrew 2026-05-28: "lets also
+                            make the sauces window collapsible." Toggle
+                            stays at the top so the banner can be hidden
+                            without losing the affordance to reopen it. */}
                         {checklistSide === "BOH" && (
-                            <SauceLogBohBanner
-                                language={language}
-                                staffName={staffName}
-                                staffList={staffList}
-                                storeLocation={storeLocation}
-                                onOpenSauceLog={() => setActiveTab("saucelog")}
-                            />
+                            <div className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+                                <button
+                                    onClick={() => setSauceCollapsed(v => !v)}
+                                    className="w-full px-3 py-2 flex items-center gap-2 text-left text-xs font-bold text-amber-900 hover:bg-amber-100/60 transition">
+                                    <span className="text-base leading-none">{sauceCollapsed ? '▸' : '▾'}</span>
+                                    <span className="flex-1">🥢 {language === "es" ? "Pedidos de salsa" : "Sauce requests"}</span>
+                                    <span className="text-[10px] text-amber-700 font-normal">
+                                        {sauceCollapsed
+                                            ? (language === "es" ? "Mostrar" : "Show")
+                                            : (language === "es" ? "Ocultar" : "Hide")}
+                                    </span>
+                                </button>
+                                {!sauceCollapsed && (
+                                    <SauceLogBohBanner
+                                        language={language}
+                                        staffName={staffName}
+                                        staffList={staffList}
+                                        storeLocation={storeLocation}
+                                        onOpenSauceLog={() => setActiveTab("saucelog")}
+                                    />
+                                )}
+                            </div>
                         )}
 
                         {/* Admin: filter by staff member */}
@@ -4499,10 +4594,16 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             </div>
                         )}
 
-                        {/* Non-admin sees their assignment badge */}
+                        {/* Non-admin hint — points the viewer at the
+                            personal column on the left. Used to say
+                            "Showing your assigned tasks" but the master
+                            list now shows everything; the personal
+                            column is what's filtered to them. */}
                         {!currentIsAdmin && (
                             <div className="text-center text-xs font-bold py-1.5 rounded-lg mb-2 bg-green-50 text-green-700 border border-green-200">
-                                {language === "es" ? "Mostrando tus tareas asignadas" : "Showing your assigned tasks"}
+                                {language === "es"
+                                    ? "Tus tareas están en tu columna ←"
+                                    : "Your tasks are in your column ←"}
                             </div>
                         )}
 
