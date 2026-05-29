@@ -506,6 +506,27 @@ export function docDeadlineState(docDef, hireDateISO) {
     };
 }
 
+// Resolve the effective number of days a hire has from their start
+// date to turn in this doc. Same priority order as descriptions:
+//
+//   1. Per-hire override on the checklist entry —
+//      `hire.checklist[docId].daysOverride` (number).
+//   2. Global override at /config/onboarding_doc_text →
+//      `overrides[docId].days` (number).
+//   3. Hardcoded `docDef.daysFromHire` (number or undefined).
+//
+// Returns null when no deadline is set at any level — the deadline
+// pill is hidden in that case. Andrew 2026-05-28 asked to be able to
+// edit the days, so this is the merge point. Set days = 0 to hide
+// the pill explicitly per doc/hire even if the default says otherwise.
+export function effectiveDaysFromHire(docDef, opts = {}) {
+    const perHire = opts.hireChecklistEntry?.daysOverride;
+    if (typeof perHire === 'number' && perHire >= 0) return perHire;
+    const globalNum = opts.globalOverrides?.[docDef?.id]?.days;
+    if (typeof globalNum === 'number' && globalNum >= 0) return globalNum;
+    return typeof docDef?.daysFromHire === 'number' ? docDef.daysFromHire : null;
+}
+
 // Resolve the description the hire (or admin) should see for a doc.
 // Priority order, highest wins:
 //

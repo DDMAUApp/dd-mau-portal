@@ -25,7 +25,7 @@ import {
     HIRE_STATUS, HIRE_STATUS_META,
     INVITE_TTL_DAYS, makeInviteToken,
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
-    docDeadlineState, effectiveDocDescription,
+    docDeadlineState, effectiveDocDescription, effectiveDaysFromHire,
 } from '../data/onboarding';
 import {
     POSITIONS, LOCATIONS, DESIRED_HOURS,
@@ -1112,32 +1112,43 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
     const [files, setFiles] = useState(null);   // [{name, url, size, contentType}]
     const [loadingFiles, setLoadingFiles] = useState(false);
     const [internalExpanded, setInternalExpanded] = useState(false);
-    // Per-hire note override editor — pencil button on the description
-    // line flips this on; admin types a one-off note that REPLACES the
-    // default description for this hire only. Used for accommodations
-    // like "you have until Friday for the I-9" without changing the
-    // global text for everyone else.
+    // Per-hire override editor — pencil button on the description
+    // line opens this. Admin can edit BOTH the description text and
+    // the days-from-hire count for this hire only (others unaffected).
+    // Used for accommodations like "you have an extra 2 weeks for the
+    // I-9" without changing the global rule.
     const [editingDesc, setEditingDesc] = useState(false);
     const [descDraft, setDescDraft] = useState(state.descOverride || '');
+    // Days draft kept as a string so the input can be cleared cleanly
+    // (empty = inherit global/default; '0' = explicit zero); coerced
+    // to number on save.
+    const [daysDraft, setDaysDraft] = useState(
+        typeof state.daysOverride === 'number' ? String(state.daysOverride) : ''
+    );
     const [savingDesc, setSavingDesc] = useState(false);
-    // Resync descDraft when the underlying override changes — covers
+    // Resync drafts when the underlying override changes — covers
     // (a) admin switches between hires (DocReviewRow reuses its
-    // component instance because its key is doc.id, so descDraft would
+    // component instance because its key is doc.id, so drafts would
     // otherwise carry over from the previous hire), and (b) the
     // Firestore snapshot reflecting our own save settles. In case (b)
-    // the new value equals descDraft so the setState is a no-op; in
+    // the new value equals the draft so the setState is a no-op; in
     // case (a) we correctly reset to the new hire's value.
     useEffect(() => {
         setDescDraft(state.descOverride || '');
+        setDaysDraft(typeof state.daysOverride === 'number' ? String(state.daysOverride) : '');
         setEditingDesc(false);
-    }, [state.descOverride, hire?.id]);
+    }, [state.descOverride, state.daysOverride, hire?.id]);
     // Deadline pill — hidden once the doc is approved (nothing to chase).
     // Submitted-but-not-approved we still show so admin remembers it's
-    // a ticking clock even though the file's in. See docDeadlineState
-    // in src/data/onboarding.js for the math.
+    // a ticking clock even though the file's in. Days are the effective
+    // value: per-hire override → global override → hardcoded default.
+    const effectiveDays = effectiveDaysFromHire(docDef, {
+        hireChecklistEntry: state,
+        globalOverrides: docOverrides,
+    });
     const deadline = status === DOC_STATUS.APPROVED
         ? { kind: 'none' }
-        : docDeadlineState(docDef, hire?.hireDate);
+        : docDeadlineState({ ...docDef, daysFromHire: effectiveDays }, hire?.hireDate);
     const effectiveDesc = effectiveDocDescription(docDef, {
         hireChecklistEntry: state,
         globalOverrides: docOverrides,
@@ -1151,6 +1162,11 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
         : (docOverrides?.[docDef.id]?.[isEs ? 'es' : 'en'] || docOverrides?.[docDef.id]?.en)
             ? 'global'
             : 'default';
+    const daysSource = typeof state.daysOverride === 'number'
+        ? 'per_hire'
+        : (typeof docOverrides?.[docDef.id]?.days === 'number'
+            ? 'global'
+            : 'default');
     // forceExpand wins when truthy — used by the "Expand all to review"
     // toggle in HireDetail to open every row at once. Individual toggle
     // still works on top of an inactive forceExpand.
@@ -1231,46 +1247,71 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
         await setStatus(DOC_STATUS.REJECTED, reason);
     };
 
-    // Open the inline editor with the CURRENT effective description
-    // pre-filled (per-hire override → global override → default), so
-    // admin can edit the existing text rather than retyping it.
+    // Open the inline editor with the CURRENT effective description +
+    // days pre-filled (per-hire override → global override → default),
+    // so admin can edit the existing values rather than retyping them.
     // Andrew 2026-05-28: "i cant edit it. i dont want just a spot to
-    // write in the edit i want to be able to edit it."
+    // write in the edit i want to be able to edit it." + "i want to be
+    // able to edit the number of days left to complete."
     const openDescEdit = () => {
-        const seed = state.descOverride && state.descOverride.trim()
+        const seedDesc = state.descOverride && state.descOverride.trim()
             ? state.descOverride
             : effectiveDocDescription(docDef, {
                 globalOverrides: docOverrides,
                 language: isEs ? 'es' : 'en',
             });
-        setDescDraft(seed || '');
+        setDescDraft(seedDesc || '');
+        const eff = effectiveDaysFromHire(docDef, {
+            hireChecklistEntry: state,
+            globalOverrides: docOverrides,
+        });
+        setDaysDraft(typeof eff === 'number' ? String(eff) : '');
         setEditingDesc(true);
     };
 
-    // Save (or clear) the per-hire description override. Empty string
-    // / whitespace = "delete the override" — we want falling back to
-    // the global / default description to be one keystroke + save away,
-    // not a separate "remove override" button.
+    // Save (or clear) the per-hire description + days overrides in one
+    // write. Empty text or blank days = "delete that field" — falling
+    // back to the global / default is one keystroke + save away. Both
+    // fields are independent; only the one(s) you change become
+    // overrides.
     const saveDescOverride = async () => {
         if (savingDesc) return;
         setSavingDesc(true);
         try {
-            const trimmed = (descDraft || '').trim();
+            const trimmedDesc = (descDraft || '').trim();
+            // Parse days: blank → null (inherit); else integer ≥ 0.
+            // Reject negative / non-numeric so we never write garbage
+            // that breaks effectiveDaysFromHire's number check.
+            let daysVal = null;
+            if (daysDraft !== '' && daysDraft != null) {
+                const n = parseInt(daysDraft, 10);
+                if (!Number.isFinite(n) || n < 0) {
+                    alert(tx('Days must be a whole number 0 or greater.',
+                             'Los días deben ser un número entero ≥ 0.'));
+                    setSavingDesc(false);
+                    return;
+                }
+                daysVal = n;
+            }
             await updateDoc(doc(db, 'onboarding_hires', hire.id), {
                 [`checklist.${docDef.id}`]: {
                     ...state,
-                    descOverride: trimmed || null,
-                    descOverrideAt: trimmed ? new Date().toISOString() : null,
-                    descOverrideBy: trimmed ? staffName : null,
+                    descOverride: trimmedDesc || null,
+                    descOverrideAt: trimmedDesc ? new Date().toISOString() : null,
+                    descOverrideBy: trimmedDesc ? staffName : null,
+                    daysOverride: daysVal,
+                    daysOverrideAt: daysVal !== null ? new Date().toISOString() : null,
+                    daysOverrideBy: daysVal !== null ? staffName : null,
                 },
             });
-            onWriteAudit(trimmed ? 'doc_desc_set' : 'doc_desc_cleared', {
+            onWriteAudit('doc_override_set', {
                 hireId: hire.id, docId: docDef.id, hireName: hire.name,
+                descSet: !!trimmedDesc, daysSet: daysVal !== null,
             });
             setEditingDesc(false);
         } catch (e) {
             console.warn('saveDescOverride failed', e);
-            alert(tx('Could not save note. Try again.', 'No se pudo guardar la nota.'));
+            alert(tx('Could not save. Try again.', 'No se pudo guardar.'));
         } finally {
             setSavingDesc(false);
         }
@@ -1298,9 +1339,11 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                         </span>
                     </div>
                     {editingDesc ? (
-                        // Inline editor for the per-hire description override.
-                        // Saving an empty string clears the override (so the
-                        // hire falls back to the global / default text).
+                        // Inline editor for the per-hire overrides — both
+                        // the description text AND the days-from-hire count.
+                        // Saving an empty value on either field clears that
+                        // override (so the hire falls back to the global /
+                        // default for that field).
                         <div className="mt-1 space-y-1">
                             <textarea
                                 value={descDraft}
@@ -1313,18 +1356,45 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                                 className="w-full text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
                             />
                             <div className="flex items-center gap-1.5">
+                                <label className="text-[10px] font-bold uppercase text-dd-text-2">
+                                    ⏱ {tx('Days from hire', 'Días desde contratación')}
+                                </label>
+                                <input
+                                    type="number" min="0" step="1"
+                                    value={daysDraft}
+                                    onChange={(e) => setDaysDraft(e.target.value)}
+                                    placeholder={(() => {
+                                        // Show the inherited value as placeholder
+                                        // so admin knows what cleared = falls
+                                        // back to.
+                                        const inherited = effectiveDaysFromHire(docDef, {
+                                            globalOverrides: docOverrides,
+                                        });
+                                        return inherited === null ? tx('none', 'ninguno') : String(inherited);
+                                    })()}
+                                    className="w-20 text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
+                                />
+                                <span className="text-[10px] text-dd-text-2">
+                                    {tx('blank = inherit', 'vacío = heredar')}
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
                                 <button onClick={saveDescOverride} disabled={savingDesc}
                                     className="text-[10px] px-2 py-1 rounded bg-dd-green text-white font-bold disabled:opacity-60">
                                     {savingDesc ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
                                 </button>
-                                <button onClick={() => { setEditingDesc(false); setDescDraft(state.descOverride || ''); }}
+                                <button onClick={() => {
+                                        setEditingDesc(false);
+                                        setDescDraft(state.descOverride || '');
+                                        setDaysDraft(typeof state.daysOverride === 'number' ? String(state.daysOverride) : '');
+                                    }}
                                     className="text-[10px] px-2 py-1 rounded bg-dd-bg text-dd-text-2 font-bold">
                                     {tx('Cancel', 'Cancelar')}
                                 </button>
-                                {state.descOverride && (
-                                    <button onClick={() => { setDescDraft(''); }}
+                                {(state.descOverride || typeof state.daysOverride === 'number') && (
+                                    <button onClick={() => { setDescDraft(''); setDaysDraft(''); }}
                                         className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-700 font-bold ml-auto">
-                                        {tx('Clear override', 'Quitar nota')}
+                                        {tx('Clear all overrides', 'Quitar todo')}
                                     </button>
                                 )}
                             </div>
@@ -1349,6 +1419,15 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                             {descSource === 'per_hire'
                                 ? tx('✏️ Note customized for this hire', '✏️ Nota personalizada para este contratado')
                                 : tx('🌐 Using global doc-text override', '🌐 Usando texto global personalizado')}
+                        </p>
+                    )}
+                    {!editingDesc && daysSource !== 'default' && (
+                        <p className="text-[9px] text-dd-text-2 italic mt-0.5">
+                            {daysSource === 'per_hire'
+                                ? tx(`⏱ Days customized for this hire (${state.daysOverride}d)`,
+                                     `⏱ Días personalizados (${state.daysOverride}d)`)
+                                : tx(`⏱ Using global days override (${docOverrides?.[docDef.id]?.days}d)`,
+                                     `⏱ Días global personalizado (${docOverrides?.[docDef.id]?.days}d)`)}
                         </p>
                     )}
                     {state.note && (
@@ -2969,8 +3048,11 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
     const isDirty = (docId) => {
         const draft = (drafts || {})[docId] || {};
         const live  = (overrides || {})[docId] || {};
+        const draftDays = draft.days !== undefined ? draft.days : '';
+        const liveDays = typeof live.days === 'number' ? String(live.days) : '';
         return (draft.en || '') !== (live.en || '')
-            || (draft.es || '') !== (live.es || '');
+            || (draft.es || '') !== (live.es || '')
+            || draftDays !== liveDays;
     };
 
     const saveOne = async (docId) => {
@@ -2980,9 +3062,26 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
             const draft = (drafts || {})[docId] || {};
             const en = (draft.en || '').trim();
             const es = (draft.es || '').trim();
-            // If both fields are empty, clear the override entry entirely
-            // (delete via field path) so the hire falls back to the default.
-            const empty = !en && !es;
+            // Parse days: blank → no days override; integer ≥ 0 otherwise.
+            // Reject anything else to keep effectiveDaysFromHire's number
+            // check from misfiring.
+            let daysVal = null;
+            const rawDays = draft.days;
+            if (rawDays !== undefined && rawDays !== '' && rawDays !== null) {
+                const n = parseInt(rawDays, 10);
+                if (!Number.isFinite(n) || n < 0) {
+                    setErr(tx('Days must be a whole number 0 or greater.',
+                             'Los días deben ser un número entero ≥ 0.'));
+                    setSavingId('');
+                    return;
+                }
+                daysVal = n;
+            }
+            // If every field is empty / cleared, drop the whole override
+            // entry so the hire falls back to the hardcoded default.
+            const empty = !en && !es && daysVal === null;
+            const overridePayload = { en, es };
+            if (daysVal !== null) overridePayload.days = daysVal;
             const patch = empty
                 ? {
                     [`overrides.${docId}`]: deleteField(),
@@ -2990,7 +3089,7 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
                     updatedBy: staffName || 'admin',
                 }
                 : {
-                    [`overrides.${docId}`]: { en, es },
+                    [`overrides.${docId}`]: overridePayload,
                     updatedAt: new Date().toISOString(),
                     updatedBy: staffName || 'admin',
                 };
@@ -3041,14 +3140,14 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
                 <p className="font-bold">📝 {tx('Doc text editor', 'Editor de texto de docs')}</p>
                 <p className="mt-1">
                     {tx(
-                        'Edit the description each onboarding doc shows on the hire portal. Use this for wording that should apply to EVERYONE (e.g. "30 days from hire date" on Hep A). For one-off notes to a single hire, use the ✏️ pencil in that hire\'s doc row instead.',
-                        'Edita la descripción que cada documento muestra en el portal del contratado. Úsalo para texto que aplica a TODOS (ej: "30 días desde tu fecha de contratación" en Hep A). Para notas a una sola persona, usa el ✏️ en la fila del documento.',
+                        'Edit the description and the days-from-hire deadline each onboarding doc shows on the hire portal. Use this for changes that should apply to EVERYONE (e.g. "Hep A is now 45 days, not 30"). For one-off changes to a single hire, use the ✏️ pencil in that hire\'s doc row instead.',
+                        'Edita la descripción y el plazo (días) que cada documento muestra. Úsalo para cambios que aplican a TODOS. Para una sola persona, usa el ✏️ en la fila del documento.',
                     )}
                 </p>
                 <p className="mt-1.5 text-blue-700">
                     {tx(
-                        'Leave both fields empty + save to revert to the default wording.',
-                        'Deja ambos campos vacíos y guarda para volver al texto predeterminado.',
+                        'Clear every field + save to revert to the hardcoded default.',
+                        'Vacía todos los campos y guarda para volver al predeterminado.',
                     )}
                 </p>
             </div>
@@ -3077,6 +3176,14 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
                     const esVal = draft.es !== undefined
                         ? draft.es
                         : ((overrides || {})[d.id]?.es ?? d.description ?? '');
+                    // Days: same priority as effectiveDaysFromHire —
+                    // override.days if set, else docDef.daysFromHire.
+                    // Kept as a string so the input can be cleared.
+                    const daysVal = draft.days !== undefined
+                        ? draft.days
+                        : (typeof (overrides || {})[d.id]?.days === 'number'
+                            ? String((overrides || {})[d.id].days)
+                            : (typeof d.daysFromHire === 'number' ? String(d.daysFromHire) : ''));
                     const deadlineHint = d.daysFromHire
                         ? tx(`(Federal/legal: ${d.daysFromHire} day${d.daysFromHire === 1 ? '' : 's'} from hire date)`,
                               `(Federal/legal: ${d.daysFromHire} día${d.daysFromHire === 1 ? '' : 's'} desde la fecha de contratación)`)
@@ -3127,6 +3234,27 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
                                         className="w-full text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
                                     />
                                 </div>
+                            </div>
+                            {/* Days from hire — drives the "⏱ Due in N
+                                days" pill on the hire portal. Blank
+                                clears the override and the hardcoded
+                                default takes over again; 0 explicitly
+                                hides the pill for this doc. */}
+                            <div className="mt-2 flex items-center gap-2 flex-wrap">
+                                <label className="text-[10px] font-bold uppercase text-dd-text-2">
+                                    ⏱ {tx('Days from hire date', 'Días desde la fecha')}
+                                </label>
+                                <input
+                                    type="number" min="0" step="1"
+                                    value={daysVal}
+                                    onChange={(e) => setField(d.id, 'days', e.target.value)}
+                                    placeholder={typeof d.daysFromHire === 'number' ? String(d.daysFromHire) : tx('none', 'ninguno')}
+                                    className="w-24 text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
+                                />
+                                <span className="text-[10px] text-dd-text-2">
+                                    {tx(`(Default: ${typeof d.daysFromHire === 'number' ? d.daysFromHire + 'd' : 'no deadline'})`,
+                                        `(Predeterminado: ${typeof d.daysFromHire === 'number' ? d.daysFromHire + 'd' : 'sin plazo'})`)}
+                                </span>
                             </div>
                             <div className="flex items-center gap-1.5 mt-2">
                                 <button onClick={() => saveOne(d.id)}

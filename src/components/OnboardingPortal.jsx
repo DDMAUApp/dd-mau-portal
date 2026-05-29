@@ -29,6 +29,7 @@ import {
     DOC_STATUS, DOC_STATUS_META, ONBOARDING_DOCS,
     docsForHire, isHireMinor, hireProgressCounts,
     ID_DOC_TYPES, docDeadlineState, effectiveDocDescription,
+    effectiveDaysFromHire,
 } from '../data/onboarding';
 import { notifyAdmins } from '../data/notify';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
@@ -529,11 +530,17 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, 
 
     const isDone = status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED;
     // Deadline pill — "Due in N days" / "Due today" / "Overdue Nd",
-    // computed from hire.hireDate + doc.daysFromHire. Hidden once
-    // the file's in (status submitted/approved) so it doesn't nag
-    // the hire after the work is done. See docDeadlineState in
-    // src/data/onboarding.js for the math + color logic.
-    const deadline = isDone ? { kind: 'none' } : docDeadlineState(doc, hire?.hireDate);
+    // computed from hire.hireDate + the effective days (per-hire
+    // override → global override → hardcoded daysFromHire). Hidden
+    // once the file's in (status submitted/approved) so it doesn't
+    // nag the hire after the work is done.
+    const effectiveDays = effectiveDaysFromHire(doc, {
+        hireChecklistEntry: state,
+        globalOverrides: docOverrides,
+    });
+    const deadline = isDone
+        ? { kind: 'none' }
+        : docDeadlineState({ ...doc, daysFromHire: effectiveDays }, hire?.hireDate);
     // Effective description — per-hire override → global override →
     // hardcoded default. Lets the admin tailor wording per hire
     // (one-off notes) and also globally (universal rules like "30
