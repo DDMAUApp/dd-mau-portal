@@ -5184,31 +5184,18 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             </button>
                         )}
 
-                        {/* Manager/Shift-lead assignment kanban — Andrew
-                            2026-05-28: "i want to do this in the task tab
-                            … assign a task in the task page to a staff
-                            which can only be managers or shift leads."
-                            Master list above (existing checklist) stays
-                            the canonical task list. Kanban below shows
-                            per-staff columns of WHO is owning what
-                            right now, with managers + shift leads as the
-                            assignee pool. Visible only to people who can
-                            assign (admins/managers/shift leads). */}
-                        {currentIsManagerOp && (
-                            <div className="mt-6 pt-4 border-t-2 border-dd-line">
-                                <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
-                                    <AssignTasksPanel
-                                        language={language}
-                                        staffName={staffName}
-                                        staffList={staffList}
-                                        isAdmin={currentIsAdmin}
-                                        isManager={currentIsManagerOp}
-                                        managersOnly={true}
-                                        includeShiftLeads={true}
-                                    />
-                                </Suspense>
-                            </div>
-                        )}
+                        {/* Manager/Shift-lead assignment kanban removed
+                            from inside renderChecklist on 2026-05-28
+                            round 2 — Andrew: "if its a copy of the
+                            current list exactly then to make it ease
+                            delete one but the one that makes more easy."
+                            For managers/shift-leads the Tasks tab now
+                            renders the kanban DIRECTLY (skipping
+                            renderChecklist), eliminating the duplicate
+                            master list. See the activeTab === 'checklist'
+                            branch up in the main return. Regular staff
+                            still see this checklist for their per-staff
+                            check-off workflow. */}
 
                     </div>
                 );
@@ -5412,7 +5399,31 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         </div>
                     )}
 
-                    {activeTab === "checklist" && renderChecklist()}
+                    {/* Tasks tab — Andrew 2026-05-28: "i want to do this
+                        in the task tab ... assign a task in the task
+                        page to a staff which can only be managers or
+                        shift leads." For managers/shift-leads + admins
+                        the Tasks tab IS the manager-only kanban (single
+                        master list, per-staff columns). For everyone
+                        else it stays the existing FOH/BOH checklist so
+                        regular staff keep their check-off workflow. */}
+                    {activeTab === "checklist" && (
+                        currentIsManagerOp ? (
+                            <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
+                                <AssignTasksPanel
+                                    language={language}
+                                    staffName={staffName}
+                                    staffList={staffList}
+                                    isAdmin={currentIsAdmin}
+                                    isManager={currentIsManagerOp}
+                                    managersOnly={true}
+                                    includeShiftLeads={true}
+                                />
+                            </Suspense>
+                        ) : (
+                            renderChecklist()
+                        )
+                    )}
 
                     {activeTab === "assign" && (
                         <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
