@@ -1231,6 +1231,22 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
         await setStatus(DOC_STATUS.REJECTED, reason);
     };
 
+    // Open the inline editor with the CURRENT effective description
+    // pre-filled (per-hire override → global override → default), so
+    // admin can edit the existing text rather than retyping it.
+    // Andrew 2026-05-28: "i cant edit it. i dont want just a spot to
+    // write in the edit i want to be able to edit it."
+    const openDescEdit = () => {
+        const seed = state.descOverride && state.descOverride.trim()
+            ? state.descOverride
+            : effectiveDocDescription(docDef, {
+                globalOverrides: docOverrides,
+                language: isEs ? 'es' : 'en',
+            });
+        setDescDraft(seed || '');
+        setEditingDesc(true);
+    };
+
     // Save (or clear) the per-hire description override. Empty string
     // / whitespace = "delete the override" — we want falling back to
     // the global / default description to be one keystroke + save away,
@@ -1321,7 +1337,7 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWrit
                         <div className="flex items-start gap-1.5 mt-0.5">
                             <p className="text-[11px] text-dd-text-2 whitespace-pre-wrap flex-1">{effectiveDesc}</p>
                             <button
-                                onClick={() => setEditingDesc(true)}
+                                onClick={openDescEdit}
                                 title={tx('Edit the note this hire sees', 'Editar la nota que ve este contratado')}
                                 className="text-[10px] px-1.5 py-0.5 rounded text-dd-text-2 hover:bg-dd-bg flex-shrink-0">
                                 ✏️
@@ -3044,8 +3060,23 @@ function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
                     const draft = drafts[d.id] || {};
                     const dirty = isDirty(d.id);
                     const hasOverride = Boolean((overrides || {})[d.id]);
-                    const enVal = draft.en !== undefined ? draft.en : ((overrides || {})[d.id]?.en || '');
-                    const esVal = draft.es !== undefined ? draft.es : ((overrides || {})[d.id]?.es || '');
+                    // Pre-fill the EN textarea with the default
+                    // description when no override exists, so admin
+                    // can EDIT the existing text in place rather than
+                    // retyping the whole thing from scratch. Andrew
+                    // 2026-05-28: "i cant edit it. i dont want just a
+                    // spot to write in the edit i want to be able to
+                    // edit it." Same for ES, but fall back to EN
+                    // (or default) so they have a starting point to
+                    // translate. saveOne already treats unchanged-from-
+                    // default + Save as a no-op via the empty-string
+                    // branch + isDirty gate.
+                    const enVal = draft.en !== undefined
+                        ? draft.en
+                        : ((overrides || {})[d.id]?.en ?? d.description ?? '');
+                    const esVal = draft.es !== undefined
+                        ? draft.es
+                        : ((overrides || {})[d.id]?.es ?? d.description ?? '');
                     const deadlineHint = d.daysFromHire
                         ? tx(`(Federal/legal: ${d.daysFromHire} day${d.daysFromHire === 1 ? '' : 's'} from hire date)`,
                               `(Federal/legal: ${d.daysFromHire} día${d.daysFromHire === 1 ? '' : 's'} desde la fecha de contratación)`)
