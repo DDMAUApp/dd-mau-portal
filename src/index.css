@@ -317,6 +317,93 @@
         @apply outline-none ring-2 ring-dd-green/30 ring-offset-2 ring-offset-glass-bg-light;
     }
 
+    /* glass-keypad-button — circular Apple-Liquid-Glass disc used on
+       the lock-screen PIN pad (HomePage.jsx). Same backdrop + shadow
+       recipe as .glass-button-apple (stronger blur, saturate boost,
+       layered inset highlight + soft drop) so the lock-screen keys
+       feel like they came from the same family as the rest of the
+       app's glass chrome — not the lower-fi backdrop-blur-md treatment
+       they had before. Sizing/shape (w-16 h-16 rounded-full + font
+       size) stays on the parent element.
+       Andrew 2026-05-28 — "lets make a slight change to the loggin
+       screen. make the buttons more glass like like the apple glass." */
+    .glass-keypad-button {
+        background-color: rgba(255, 255, 255, 0.78);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.85),
+            0 1px 2px rgba(15, 23, 42, 0.06),
+            0 6px 16px -6px rgba(15, 23, 42, 0.14);
+        background-clip: padding-box;
+        transition: background-color 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    box-shadow 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+    .glass-keypad-button:hover {
+        background-color: rgba(255, 255, 255, 0.90);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.95),
+            0 2px 4px rgba(15, 23, 42, 0.08),
+            0 10px 24px -8px rgba(15, 23, 42, 0.18);
+    }
+    .glass-keypad-button:active {
+        transform: scale(0.94);
+    }
+    /* Quieter variant for secondary actions like Clear — same recipe,
+       lighter surface so it reads as the de-emphasized key. */
+    .glass-keypad-button-secondary {
+        background-color: rgba(255, 255, 255, 0.45);
+        backdrop-filter: blur(24px) saturate(180%);
+        -webkit-backdrop-filter: blur(24px) saturate(180%);
+        border: 1px solid rgba(15, 23, 42, 0.08);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.65),
+            0 1px 2px rgba(15, 23, 42, 0.04),
+            0 4px 12px -6px rgba(15, 23, 42, 0.10);
+        background-clip: padding-box;
+        transition: background-color 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    box-shadow 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+    .glass-keypad-button-secondary:hover {
+        background-color: rgba(255, 255, 255, 0.70);
+    }
+    .glass-keypad-button-secondary:active {
+        transform: scale(0.94);
+    }
+    /* Primary OK key — brand green, but same elevated shadow grammar
+       so it doesn't look flat next to the glass keys. */
+    .glass-keypad-button-primary {
+        background-color: #1F7A4D;  /* dd-green */
+        color: white;
+        border: 1px solid rgba(15, 23, 42, 0.10);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.22),
+            0 2px 4px rgba(15, 60, 35, 0.18),
+            0 10px 24px -8px rgba(15, 60, 35, 0.35);
+        transition: background-color 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    box-shadow 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    }
+    .glass-keypad-button-primary:hover {
+        background-color: #185E3A;  /* dd-green-700 */
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.28),
+            0 3px 6px rgba(15, 60, 35, 0.22),
+            0 14px 30px -10px rgba(15, 60, 35, 0.42);
+    }
+    .glass-keypad-button-primary:active {
+        transform: scale(0.94);
+    }
+    /* Browsers without backdrop-filter fall back to a near-opaque tint
+       so the keys still read as discrete buttons. */
+    @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+        .glass-keypad-button { background-color: rgba(240, 243, 247, 0.95); }
+        .glass-keypad-button-secondary { background-color: rgba(240, 243, 247, 0.85); }
+    }
+
     /* glass-avatar-green — Apple-style frosted initials disc, brand
        tint. 2026-05-27 — Andrew: "any dark green bubble for the
        top right that has our name and the bubble had our initials

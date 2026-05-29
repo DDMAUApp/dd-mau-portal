@@ -195,14 +195,14 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     <div className="space-y-2">
                         {collisionMatches.map(s => (
                             <button key={s.id || s.name} onClick={() => handleCollisionPick(s)}
-                                className="w-full p-3 rounded-lg border-2 border-mint-200 bg-white text-left hover:border-mint-500 transition">
-                                <div className="font-bold text-gray-800">{s.name}</div>
-                                <div className="text-xs text-gray-500">{s.role || ''}{s.location ? ` · ${s.location}` : ''}</div>
+                                className="glass-keypad-button w-full p-3 rounded-glass-md text-left">
+                                <div className="font-bold text-dd-text">{s.name}</div>
+                                <div className="text-xs text-dd-text-2">{s.role || ''}{s.location ? ` · ${s.location}` : ''}</div>
                             </button>
                         ))}
                     </div>
                     <button onClick={() => { setCollisionMatches([]); setPin(""); }}
-                        className="w-full mt-3 py-2 rounded-lg bg-gray-200 text-gray-700 font-bold text-sm">
+                        className="glass-keypad-button-secondary w-full mt-3 py-2 rounded-glass-md text-dd-text-2 font-bold text-sm">
                         {isEs ? "Cancelar" : "Cancel"}
                     </button>
                 </div>
@@ -229,36 +229,42 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                         </div>
                     )}
                     {error && !isLocked && <p className="text-red-500 text-xs mb-2">{error}</p>}
-                    {/* Circle glass keypad — iOS-style. Each digit is a
-                        translucent white disc with a backdrop blur and
-                        hairline border. 64×64 hits both Apple HIG (44pt)
-                        and Material (48dp) touch targets with room. */}
+                    {/* Apple-Liquid-Glass keypad. Each disc uses
+                        .glass-keypad-button (frosted white) /
+                        -secondary (Clear, quieter) / -primary (OK,
+                        brand green) so the lock screen reads as the
+                        same glass family as the rest of the app's
+                        chrome. 64×64 hits both Apple HIG (44pt) and
+                        Material (48dp) touch targets with room.
+                        Andrew 2026-05-28 — "make the buttons more
+                        glass like like the apple glass." */}
                     <div className="grid grid-cols-3 gap-4 mt-2">
                         {[1,2,3,4,5,6,7,8,9].map(n => (
                             <button key={n} onClick={() => { setError(""); if (!isLocked && pin.length < 4) setPin(pin + n); }}
                                 disabled={isLocked}
-                                className={`w-16 h-16 rounded-full bg-white/70 backdrop-blur-md border border-black/10 text-2xl font-semibold text-dd-text shadow-glass-sm hover:bg-white/85 hover:shadow-glass-md active:scale-95 transition-all duration-150 ease-glass-out ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                                className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                                 {n}
                             </button>
                         ))}
                         <button onClick={handleClear} disabled={isLocked}
-                            className={`w-16 h-16 rounded-full bg-white/40 backdrop-blur-md border border-black/10 text-xs font-bold uppercase tracking-wider text-dd-text-2 shadow-glass-sm hover:bg-white/70 active:scale-95 transition-all duration-150 ease-glass-out ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                            className={`glass-keypad-button-secondary w-16 h-16 rounded-full text-xs font-bold uppercase tracking-wider text-dd-text-2 ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                             {isEs ? "Borrar" : "Clear"}
                         </button>
                         <button onClick={() => { setError(""); if (!isLocked && pin.length < 4) setPin(pin + "0"); }}
                             disabled={isLocked}
-                            className={`w-16 h-16 rounded-full bg-white/70 backdrop-blur-md border border-black/10 text-2xl font-semibold text-dd-text shadow-glass-sm hover:bg-white/85 hover:shadow-glass-md active:scale-95 transition-all duration-150 ease-glass-out ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
+                            className={`glass-keypad-button w-16 h-16 rounded-full text-2xl font-semibold text-dd-text ${isLocked ? 'opacity-40 cursor-not-allowed' : ''}`}>
                             0
                         </button>
-                        {/* OK button — brand green glass disc, only "on"
-                            once a 4-digit PIN is in. Pre-fill state stays
-                            dimmed glass so the keypad layout doesn't jump. */}
+                        {/* OK — brand-green Apple-glass disc once a
+                            4-digit PIN is in. Pre-fill state stays the
+                            neutral secondary glass so the layout
+                            doesn't jump. */}
                         <button onClick={handlePinSubmit}
                             disabled={isLocked || pin.length !== 4}
-                            className={`w-16 h-16 rounded-full text-sm font-bold shadow-glass-sm active:scale-95 transition-all duration-150 ease-glass-out ${
+                            className={`w-16 h-16 rounded-full text-sm font-bold ${
                                 pin.length === 4 && !isLocked
-                                    ? 'bg-dd-green text-white border border-dd-green hover:bg-dd-green-700 hover:shadow-glass-md'
-                                    : 'bg-white/40 backdrop-blur-md border border-black/10 text-dd-text-2/50 cursor-not-allowed'
+                                    ? 'glass-keypad-button-primary'
+                                    : 'glass-keypad-button-secondary text-dd-text-2/50 cursor-not-allowed'
                             }`}>
                             OK
                         </button>
