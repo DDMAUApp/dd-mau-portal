@@ -4381,17 +4381,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 if (categoryFilter && categoryFilter !== "all") {
                     tagged = tagged.filter(t => (t.category || "other") === categoryFilter);
                 }
-                // 2026-05-28 — Andrew: "the ones on the right still
-                // need to see the whole tasks and requests." Non-admin
-                // staff used to be auto-filtered down to their own
-                // tasks here, but with the personal column now pinned
-                // to the very left of the horizontal scroller that
-                // narrowing is redundant (the personal column already
-                // shows just their tasks). The master list to the
-                // right of it should show EVERYTHING so they have
-                // full visibility into the team's work. Admin filter
-                // pill (taskFilter) still applies for the explicit
-                // "View: [person]" picker.
+                // Andrew 2026-05-29 round 2: "in safari im currently
+                // signed in as yuly its too confusing just show yulys
+                // own list when signed in so her list looks like the
+                // master list. when me or julie sign in we see all
+                // the lists." Restored the non-admin auto-filter so
+                // a logged-in staff member sees only their assigned
+                // tasks + unassigned, all rendered with the full
+                // master-row UI (name chips, edit, photo, notes).
+                // Per-staff columns + personal column removed for
+                // non-admin viewers (see returns below).
+                if (!currentIsAdmin) {
+                    return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, staffName));
+                }
+                // Admin with filter active: show only tasks for that
+                // person (+ unassigned).
                 if (taskFilter) {
                     return tagged.filter(t => hasNoAssign(t) || isAssignedTo(t, taskFilter));
                 }
@@ -4574,72 +4578,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                     return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
                 })();
 
-                // Personal column for non-admin viewers — Andrew
-                // 2026-05-28: "yuly logs into her account when she
-                // clicks tasks she should see her name and tasks on
-                // the left. the ones on the right still need to see
-                // the whole tasks and requests." Pinned to the very
-                // left of the horizontal scroller; the master list +
-                // per-assignee columns shift to the right.
-                const personalTasks = (!currentIsAdmin && staffName)
-                    ? allTasks.filter(t => isAssignedTo(t, staffName))
-                    : null;
-
                 return (
-                    // Horizontal scroller: (personal column if non-
-                    // admin) -> master list -> per-assignee columns,
-                    // all on the SAME ROW. Swipe horizontally on
-                    // mobile to see overflowing columns.
+                    // Horizontal scroller — master list on the LEFT,
+                    // per-assignee columns to the RIGHT for ADMINS
+                    // only. Non-admin viewers see ONLY the master
+                    // (filtered to their tasks by getCurrentTasks);
+                    // the per-staff columns are hidden so their page
+                    // is a single focused list with all the same
+                    // features the admin master list has (name chips,
+                    // edit, photo, notes, etc.). Andrew 2026-05-29:
+                    // "just show yulys own list when signed in so her
+                    // list looks like the master list. when me or
+                    // julie sign in we see all the lists."
                     <div className="flex gap-3 overflow-x-auto -mx-4 px-4 pb-3 scrollbar-thin">
-                    {/* Personal column (non-admin only) — your name +
-                        your assigned tasks. Brand-green border so it
-                        reads as the viewer's own card. */}
-                    {personalTasks && (
-                        <div className="w-[82vw] sm:w-[260px] shrink-0 bg-white border-2 border-dd-green/40 rounded-xl p-3 flex flex-col">
-                            <div className="flex items-center gap-2 mb-2 pb-2 border-b border-dd-line/60">
-                                <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-dd-green text-white font-bold text-xs shrink-0">
-                                    {staffName.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}
-                                </span>
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-bold text-dd-text truncate leading-tight">{staffName}</div>
-                                    <div className="text-[10px] text-dd-text-2">
-                                        {personalTasks.length} {language === 'es'
-                                            ? (personalTasks.length === 1 ? 'tarea mía' : 'tareas mías')
-                                            : (personalTasks.length === 1 ? 'my task' : 'my tasks')}
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="space-y-1 -mx-1 px-1">
-                                {personalTasks.length === 0 ? (
-                                    <p className="text-[11px] text-dd-text-2 italic text-center py-3">
-                                        {language === 'es' ? 'Sin tareas asignadas.' : 'No tasks assigned.'}
-                                    </p>
-                                ) : personalTasks.map((t) => {
-                                    // Per-assignee: green only when *I* checked
-                                    // it off — not when someone else did.
-                                    const done = isDoneForAssignee(t, staffName);
-                                    return (
-                                        <button key={t.id}
-                                            onClick={() => togglePerAssigneeCheck(t.id, staffName, t)}
-                                            className={`w-full text-left flex items-start gap-2 px-2 py-1.5 rounded border transition ${
-                                                done
-                                                    ? 'bg-dd-sage-50 border-dd-green/40 text-dd-text-2'
-                                                    : 'bg-white border-dd-line hover:bg-dd-bg'
-                                            }`}>
-                                            <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                                                done ? 'bg-dd-green border-dd-green' : 'border-dd-line'
-                                            }`}>
-                                                {done && <span className="text-white text-[9px] leading-none">✓</span>}
-                                            </span>
-                                            <span className={`text-xs flex-1 min-w-0 ${done ? 'line-through' : ''}`}>
-                                                {t.task}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
                     <div className="space-y-3 w-[88vw] sm:w-auto sm:flex-1 sm:min-w-[420px] sm:max-w-3xl shrink-0">
                         {/* FOH / BOH side selector — v2 segmented control (matches Schedule).
                             Emojis dropped — 🪑 + 🍳 don't render reliably across systems
@@ -4739,16 +4690,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             </div>
                         )}
 
-                        {/* Non-admin hint — points the viewer at the
-                            personal column on the left. Used to say
-                            "Showing your assigned tasks" but the master
-                            list now shows everything; the personal
-                            column is what's filtered to them. */}
+                        {/* Non-admin hint — single focused list view.
+                            Andrew 2026-05-29: "just show yulys own
+                            list when signed in." */}
                         {!currentIsAdmin && (
                             <div className="text-center text-xs font-bold py-1.5 rounded-lg mb-2 bg-green-50 text-green-700 border border-green-200">
-                                {language === "es"
-                                    ? "Tus tareas están en tu columna ←"
-                                    : "Your tasks are in your column ←"}
+                                {language === "es" ? "Mostrando tus tareas asignadas" : "Showing your assigned tasks"}
                             </div>
                         )}
 
@@ -5482,8 +5429,12 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         )}
 
                     </div>
-                    {/* ─── Per-assignee columns next to master list ─── */}
-                    {assigneeColumns.map(([name, list]) => {
+                    {/* ─── Per-assignee columns next to master list ───
+                        ADMIN ONLY. Andrew 2026-05-29: non-admin staff
+                        see just the master (already filtered to their
+                        own tasks); the right-side columns would be
+                        redundant noise on their phone. */}
+                    {currentIsAdmin && assigneeColumns.map(([name, list]) => {
                         const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
                         return (
                             <div key={name}
