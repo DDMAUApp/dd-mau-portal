@@ -205,9 +205,7 @@ export default function AssignTasksPanel({
         return map;
     }, [openAssignments]);
 
-    // Staff columns to render = staff with at least one open assignment,
-    // sorted alphabetically. Non-side staff (in case stale data appears)
-    // are skipped.
+    // Staff columns to render = staff with at least one open assignment.
     //
     // ID match coerces both sides to string — staffList records may
     // have numeric ids (40, 41, ...) while Firestore round-trip can
@@ -215,17 +213,38 @@ export default function AssignTasksPanel({
     // failed when the types diverged, which caused new assignments to
     // be silently dropped from the column render — Andrew 2026-05-28
     // "no movement when its assigned to a staff member."
+    //
+    // Fallback: if the staff record can't be found in sideStaff (the
+    // staff may be inactive, on a different side, or simply missing
+    // from the loaded staffList because of race conditions), we still
+    // render the column using the assignment's own `staffName`. The
+    // column appearing matters more than the avatar disc being styled
+    // from the staff record. Andrew 2026-05-28 round 2: "look at
+    // safari its still not changed you can see the master list but
+    // not he split off list."
     const staffColumns = useMemo(() => {
         const ids = Array.from(assignmentsByStaff.keys());
         const enriched = ids
             .map((id) => {
+                const items = assignmentsByStaff.get(id) || [];
+                if (items.length === 0) return null;
                 const idStr = String(id);
                 const member = sideStaff.find((s) => String(s.id) === idStr);
-                if (!member) return null;
-                return { staff: member, items: assignmentsByStaff.get(id) || [] };
+                if (member) {
+                    return { staff: member, items };
+                }
+                // Fallback to assignment's own staffName so the
+                // column still renders. Pull from the first item
+                // (all items in this bucket share the same staffId
+                // by construction of assignmentsByStaff).
+                const fallbackName = items[0].staffName || 'Unknown';
+                return {
+                    staff: { id, name: fallbackName },
+                    items,
+                };
             })
             .filter(Boolean)
-            .sort((a, b) => a.staff.name.localeCompare(b.staff.name));
+            .sort((a, b) => (a.staff.name || '').localeCompare(b.staff.name || ''));
         return enriched;
     }, [assignmentsByStaff, sideStaff]);
 
