@@ -5332,26 +5332,146 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         </div>
                                     </div>
                                 </div>
-                                <div className="space-y-1 -mx-1 px-1">
+                                <div className="space-y-1.5 -mx-1 px-1">
                                     {list.map((t) => {
                                         const done = !!checks[currentPrefix + t.id];
+                                        const cat = getCategoryFor(t);
+                                        const tAssignees = getAssignees(t);
+                                        const hasSubs = t.subtasks && t.subtasks.length > 0;
+                                        const subsTotal = hasSubs ? t.subtasks.length : 0;
+                                        const subsDone = hasSubs ? t.subtasks.filter(s => checks[currentPrefix + s.id]).length : 0;
+                                        const completedBy = checks[currentPrefix + t.id + "_by"];
+                                        const completedAt = checks[currentPrefix + t.id + "_at"];
+                                        const photoUrl = checks[currentPrefix + t.id + "_photo"];
+                                        const commentsKey = currentPrefix + t.id + "_comments";
+                                        const tComments = Array.isArray(checks[commentsKey]) ? checks[commentsKey] : [];
+                                        // Deadline urgency colors mirror master row.
+                                        let tUrg = null;
+                                        if (t.completeBy && !done) {
+                                            const curMin = getBusinessMinutesNow();
+                                            const [dh, dm] = t.completeBy.split(":").map(Number);
+                                            const deadMin = dh * 60 + dm;
+                                            if (curMin >= deadMin) tUrg = "overdue";
+                                            else if (curMin >= deadMin - 30) tUrg = "warning";
+                                        }
                                         return (
-                                            <button key={t.id}
-                                                onClick={() => toggleCheckItem(t.id, t)}
-                                                className={`w-full text-left flex items-start gap-2 px-2 py-1.5 rounded border transition ${
-                                                    done
-                                                        ? 'bg-dd-sage-50 border-dd-green/40 text-dd-text-2'
-                                                        : 'bg-white border-dd-line hover:bg-dd-bg'
+                                            <div key={t.id}
+                                                className={`rounded-lg border-2 transition overflow-hidden ${
+                                                    done ? 'border-green-300 bg-green-50'
+                                                    : tUrg === 'overdue' ? 'task-flash-red'
+                                                    : tUrg === 'warning' ? 'task-flash-yellow'
+                                                    : 'border-gray-200 bg-white'
                                                 }`}>
-                                                <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                                                    done ? 'bg-dd-green border-dd-green' : 'border-dd-line'
-                                                }`}>
-                                                    {done && <span className="text-white text-[9px] leading-none">✓</span>}
-                                                </span>
-                                                <span className={`text-xs flex-1 min-w-0 ${done ? 'line-through' : ''}`}>
-                                                    {t.task}
-                                                </span>
-                                            </button>
+                                                <div className="flex items-start gap-2 p-2">
+                                                    {!hasSubs && (
+                                                        <input type="checkbox" checked={done}
+                                                            onChange={() => toggleCheckItem(t.id, t)}
+                                                            className="w-4 h-4 mt-0.5 text-mint-700 rounded focus:ring-2 focus:ring-mint-700 shrink-0" />
+                                                    )}
+                                                    <div className="flex-1 min-w-0">
+                                                        {/* Title row with inline chips */}
+                                                        <div className="flex items-center gap-1 flex-wrap">
+                                                            <span className={`text-[12px] font-bold ${done ? 'line-through text-green-700' : 'text-gray-800'}`}>
+                                                                {t.task}
+                                                            </span>
+                                                            {cat.id !== 'other' && (
+                                                                <span className={`text-[9px] font-bold px-1 py-px rounded-full border ${cat.color}`}>
+                                                                    {cat.emoji}
+                                                                </span>
+                                                            )}
+                                                            {t.recurrence && t.recurrence !== 'daily' && (
+                                                                <span className="text-[9px] font-bold px-1 py-px rounded-full bg-cyan-100 text-cyan-800 border border-cyan-300">
+                                                                    🔁
+                                                                </span>
+                                                            )}
+                                                            {t.requirePhoto && (
+                                                                <span className={`text-[10px] ${photoUrl ? 'text-green-600' : 'text-gray-400'}`}>📸</span>
+                                                            )}
+                                                            {t.completeBy && (
+                                                                <span className={`text-[9px] font-bold px-1 py-px rounded-full whitespace-nowrap ${
+                                                                    done ? 'bg-green-100 text-green-600'
+                                                                    : tUrg === 'overdue' ? 'bg-red-600 text-white'
+                                                                    : tUrg === 'warning' ? 'bg-yellow-400 text-yellow-900'
+                                                                    : 'bg-orange-100 text-orange-600'
+                                                                }`}>
+                                                                    ⏰{t.completeBy.replace(/^0/, '')}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {/* Subtask progress (column shows count, not the list itself) */}
+                                                        {hasSubs && (
+                                                            <p className="text-[10px] text-gray-500 mt-0.5">
+                                                                ☑ {subsDone}/{subsTotal} {language === 'es' ? 'subtareas' : 'subtasks'}
+                                                            </p>
+                                                        )}
+                                                        {/* Assignee chips */}
+                                                        {tAssignees.length > 0 && (
+                                                            <div className="flex flex-wrap gap-0.5 mt-1">
+                                                                {tAssignees.map(n => (
+                                                                    <span key={n} className={`inline-flex items-center px-1 py-px rounded-full text-[9px] font-bold ${n === name ? 'bg-dd-green text-white' : 'bg-blue-100 text-blue-700'}`}>
+                                                                        👤 {n.split(' ')[0]}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {/* +Assign button — admin/manager only, opens the
+                                                            same picker the master row uses. */}
+                                                        {(currentIsAdmin || /manager/i.test(staffRole?.role || '')) && (
+                                                            <button onClick={(e) => { e.stopPropagation(); const origIdx = allTasks.findIndex(x => x.id === t.id); if (origIdx >= 0) setAssigningTaskIdx(origIdx); }}
+                                                                className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white border border-dd-line hover:bg-dd-bg text-[10px] font-bold text-dd-text-2">
+                                                                👤 {tAssignees.length === 0
+                                                                    ? `+ ${language === 'es' ? 'Asignar' : 'Assign'}`
+                                                                    : (language === 'es' ? 'Editar' : 'Edit')}
+                                                            </button>
+                                                        )}
+                                                        {/* Completed-by stamp */}
+                                                        {!hasSubs && done && completedBy && (
+                                                            <p className="text-[10px] text-green-600 mt-0.5">
+                                                                ✓ {completedBy} {completedAt && `— ${completedAt}`}
+                                                            </p>
+                                                        )}
+                                                        {/* Notes count + add note (mirrors master) */}
+                                                        {(() => {
+                                                            const isOpen = openCommentTask === t.id;
+                                                            return (
+                                                                <div className="mt-1">
+                                                                    <button onClick={(e) => { e.stopPropagation(); setOpenCommentTask(isOpen ? null : t.id); setCommentDraft(""); }}
+                                                                        className={`text-[10px] font-bold underline ${tComments.length > 0 ? 'text-blue-700' : 'text-gray-500'}`}>
+                                                                        💬 {tComments.length > 0
+                                                                            ? `${tComments.length} ${language === 'es' ? 'nota(s)' : 'note(s)'}`
+                                                                            : (language === 'es' ? 'Nota' : 'Note')}
+                                                                    </button>
+                                                                    {isOpen && (
+                                                                        <div className="mt-1 bg-blue-50 border border-blue-200 rounded p-1.5 space-y-1">
+                                                                            {tComments.map((c, ci) => (
+                                                                                <div key={ci} className="flex items-start justify-between gap-1 bg-white rounded p-1 border border-blue-100">
+                                                                                    <div className="text-[10px] flex-1 min-w-0">
+                                                                                        <span className="font-bold text-blue-800">{c.by}</span>
+                                                                                        <div className="text-gray-700">{c.text}</div>
+                                                                                    </div>
+                                                                                    <button onClick={() => removeTaskComment(t.id, ci)} className="text-red-400 text-xs">×</button>
+                                                                                </div>
+                                                                            ))}
+                                                                            <div className="flex gap-1">
+                                                                                <input type="text" value={commentDraft}
+                                                                                    onChange={e => setCommentDraft(e.target.value)}
+                                                                                    onKeyDown={e => { if (e.key === 'Enter' && commentDraft.trim()) { addTaskComment(t.id, commentDraft, t); setCommentDraft(""); } }}
+                                                                                    placeholder={language === 'es' ? 'Anota...' : 'Note...'}
+                                                                                    className="flex-1 px-1.5 py-0.5 border border-blue-200 rounded text-[10px]" />
+                                                                                <button onClick={() => { if (commentDraft.trim()) { addTaskComment(t.id, commentDraft, t); setCommentDraft(""); } }}
+                                                                                    disabled={!commentDraft.trim()}
+                                                                                    className={`px-1.5 rounded text-[10px] font-bold ${commentDraft.trim() ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-400'}`}>
+                                                                                    ✓
+                                                                                </button>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })()}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         );
                                     })}
                                 </div>
