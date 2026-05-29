@@ -4417,8 +4417,35 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                 const periodStats = getPeriodStats(checklistSide, PERIOD_KEY);
                 const overallStats = getCompletionStats(checklistSide);
 
+                // Per-assignee columns — Andrew 2026-05-28: "the
+                // current list ... is the master list ... when i
+                // assign a staff ... right next to it it starts a new
+                // list ... [staff name] at the top and the task ..."
+                // Group every task in the master by its assignees so
+                // each assignee gets a column on the right. Multiple
+                // assignees on one task = task appears in multiple
+                // columns. Done state is shared (single check key per
+                // task), so checking off in any column flips master.
+                const assigneeColumns = (() => {
+                    const map = new Map();
+                    for (const t of allTasks) {
+                        const names = getAssignees(t);
+                        for (const n of names) {
+                            if (!n) continue;
+                            if (!map.has(n)) map.set(n, []);
+                            map.get(n).push(t);
+                        }
+                    }
+                    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+                })();
+
                 return (
-                    <div className="space-y-3">
+                    // Horizontal scroller: master list on the LEFT,
+                    // per-assignee columns to the RIGHT of it on the
+                    // SAME ROW. Same layout on every viewport - swipe
+                    // horizontally on mobile to see overflowing columns.
+                    <div className="flex gap-3 overflow-x-auto -mx-4 px-4 pb-3 scrollbar-thin">
+                    <div className="space-y-3 w-[88vw] sm:w-auto sm:flex-1 sm:min-w-[420px] sm:max-w-3xl shrink-0">
                         {/* FOH / BOH side selector — v2 segmented control (matches Schedule).
                             Emojis dropped — 🪑 + 🍳 don't render reliably across systems
                             (showed as fallback tofu on some browsers). Side codes alone
@@ -5184,19 +5211,52 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             </button>
                         )}
 
-                        {/* Manager/Shift-lead assignment kanban removed
-                            from inside renderChecklist on 2026-05-28
-                            round 2 — Andrew: "if its a copy of the
-                            current list exactly then to make it ease
-                            delete one but the one that makes more easy."
-                            For managers/shift-leads the Tasks tab now
-                            renders the kanban DIRECTLY (skipping
-                            renderChecklist), eliminating the duplicate
-                            master list. See the activeTab === 'checklist'
-                            branch up in the main return. Regular staff
-                            still see this checklist for their per-staff
-                            check-off workflow. */}
-
+                    </div>
+                    {/* ─── Per-assignee columns next to master list ─── */}
+                    {assigneeColumns.map(([name, list]) => {
+                        const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
+                        return (
+                            <div key={name}
+                                className="w-[82vw] sm:w-[260px] shrink-0 bg-white border border-dd-line rounded-xl p-3 flex flex-col max-h-[calc(100vh-260px)]">
+                                <div className="flex items-center gap-2 mb-2 pb-2 border-b border-dd-line/60">
+                                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-dd-sage-50 text-dd-green-700 font-bold text-xs shrink-0">
+                                        {initials}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                        <div className="text-sm font-bold text-dd-text truncate leading-tight">{name}</div>
+                                        <div className="text-[10px] text-dd-text-2">
+                                            {list.length} {language === 'es'
+                                                ? (list.length === 1 ? 'tarea' : 'tareas')
+                                                : (list.length === 1 ? 'task' : 'tasks')}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="space-y-1 overflow-y-auto -mx-1 px-1">
+                                    {list.map((t) => {
+                                        const done = !!checks[currentPrefix + t.id];
+                                        return (
+                                            <button key={t.id}
+                                                onClick={() => toggleCheckItem(t.id, t)}
+                                                className={`w-full text-left flex items-start gap-2 px-2 py-1.5 rounded border transition ${
+                                                    done
+                                                        ? 'bg-dd-sage-50 border-dd-green/40 text-dd-text-2'
+                                                        : 'bg-white border-dd-line hover:bg-dd-bg'
+                                                }`}>
+                                                <span className={`mt-0.5 w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                                    done ? 'bg-dd-green border-dd-green' : 'border-dd-line'
+                                                }`}>
+                                                    {done && <span className="text-white text-[9px] leading-none">✓</span>}
+                                                </span>
+                                                <span className={`text-xs flex-1 min-w-0 ${done ? 'line-through' : ''}`}>
+                                                    {t.task}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        );
+                    })}
                     </div>
                 );
             };
