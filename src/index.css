@@ -318,87 +318,157 @@
     }
 
     /* glass-keypad-button — circular Apple-Liquid-Glass disc used on
-       the lock-screen PIN pad (HomePage.jsx). Same backdrop + shadow
-       recipe as .glass-button-apple (stronger blur, saturate boost,
-       layered inset highlight + soft drop) so the lock-screen keys
-       feel like they came from the same family as the rest of the
-       app's glass chrome.
+       the lock-screen PIN pad (HomePage.jsx).
 
-       Andrew 2026-05-28 round 2 — "lets make the lock screen buttons
-       with a slight blue tint to make it look like more like glass."
-       Subtle cool/blue tint applied to background, border, inset
-       highlight, and drop shadow. Reads like Apple Liquid Glass
-       sitting on top of a cool surface — not a pure white pill. The
-       tint is faint enough that the sage-green backdrop still bleeds
-       through the translucent fill, but enough to give the keys that
-       "frosted blue glass" feel. */
+       Andrew 2026-05-28 round 3 — "the buttons have a light blue
+       tint now but with glass there are different shades in the
+       colors to make it look like glass. check how apple does it."
+       The flat-tint version read like a colored pill. Real Apple
+       Liquid Glass has DIMENSION:
+         • Gradient surface, not flat — simulates light refracting
+           through curved glass, brighter at the top-left edge.
+         • Top specular highlight (the inset highlight at y=1) — the
+           sharp "lit edge" you see on a real glass disc.
+         • Bottom inner shadow (inset at -y) — paired with the top
+           highlight, this is what makes the surface read as having
+           CURVATURE. Without it, the disc looks flat.
+         • Subtle left/right inner highlights — light catching on the
+           bezel of the disc.
+         • Multi-layer drop shadow: a tight close shadow (ambient
+           contact), a mid-distance shadow (form), and a far diffuse
+           shadow (cast). This is what makes the disc feel like it is
+           floating slightly above the backdrop instead of glued to it.
+         • Slightly more saturated border than the surface tint, so
+           the rim catches the eye like a beveled edge.
+       All shadows tinted cool-blue for color consistency with the
+       glass tint itself. Backdrop blur + saturate stay strong so the
+       sage backdrop bleeds through but feels frosted. */
     .glass-keypad-button {
-        background-color: rgba(225, 238, 252, 0.72);
-        backdrop-filter: blur(24px) saturate(180%);
-        -webkit-backdrop-filter: blur(24px) saturate(180%);
-        border: 1px solid rgba(56, 110, 180, 0.16);
+        background:
+            linear-gradient(
+                145deg,
+                rgba(248, 252, 255, 0.88) 0%,
+                rgba(228, 240, 252, 0.70) 45%,
+                rgba(215, 232, 250, 0.62) 100%
+            );
+        backdrop-filter: blur(28px) saturate(180%);
+        -webkit-backdrop-filter: blur(28px) saturate(180%);
+        border: 1px solid rgba(120, 160, 215, 0.22);
         box-shadow:
-            inset 0 1px 0 rgba(235, 245, 255, 0.90),
-            0 1px 2px rgba(30, 60, 110, 0.07),
-            0 6px 16px -6px rgba(30, 70, 130, 0.18);
+            /* — inner — top specular + bottom curvature + side bevel */
+            inset 0 1.5px 0 rgba(255, 255, 255, 0.95),
+            inset 0 -1.5px 2px rgba(35, 65, 115, 0.10),
+            inset 1px 0 0 rgba(255, 255, 255, 0.40),
+            inset -1px 0 0 rgba(35, 65, 115, 0.05),
+            /* — outer — close ambient + form + far cast */
+            0 1px 2px rgba(30, 60, 110, 0.08),
+            0 4px 10px -3px rgba(30, 70, 130, 0.16),
+            0 14px 32px -10px rgba(30, 80, 140, 0.22);
         background-clip: padding-box;
-        transition: background-color 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
-                    box-shadow 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+        transition: background 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    box-shadow 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
                     transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .glass-keypad-button:hover {
-        background-color: rgba(235, 245, 255, 0.88);
+        background:
+            linear-gradient(
+                145deg,
+                rgba(255, 255, 255, 0.95) 0%,
+                rgba(238, 247, 255, 0.85) 45%,
+                rgba(225, 240, 254, 0.78) 100%
+            );
         box-shadow:
-            inset 0 1px 0 rgba(245, 250, 255, 0.95),
+            inset 0 1.5px 0 rgba(255, 255, 255, 1),
+            inset 0 -1.5px 2px rgba(35, 65, 115, 0.12),
+            inset 1px 0 0 rgba(255, 255, 255, 0.50),
+            inset -1px 0 0 rgba(35, 65, 115, 0.06),
             0 2px 4px rgba(30, 60, 110, 0.10),
-            0 10px 24px -8px rgba(30, 70, 130, 0.22);
+            0 6px 14px -3px rgba(30, 70, 130, 0.20),
+            0 20px 42px -12px rgba(30, 80, 140, 0.28);
     }
     .glass-keypad-button:active {
         transform: scale(0.94);
-    }
-    /* Quieter variant for secondary actions like Clear — same recipe,
-       lighter surface so it reads as the de-emphasized key. Same
-       blue tint family, just more washed out. */
-    .glass-keypad-button-secondary {
-        background-color: rgba(225, 238, 252, 0.40);
-        backdrop-filter: blur(24px) saturate(180%);
-        -webkit-backdrop-filter: blur(24px) saturate(180%);
-        border: 1px solid rgba(56, 110, 180, 0.12);
         box-shadow:
-            inset 0 1px 0 rgba(235, 245, 255, 0.70),
+            inset 0 1px 0 rgba(255, 255, 255, 0.70),
+            inset 0 -2px 3px rgba(35, 65, 115, 0.15),
+            0 0px 1px rgba(30, 60, 110, 0.10),
+            0 1px 3px rgba(30, 70, 130, 0.12);
+    }
+    /* Quieter variant for secondary actions like Clear — same
+       dimensional recipe, lower-contrast gradient so it reads as
+       the de-emphasized key. */
+    .glass-keypad-button-secondary {
+        background:
+            linear-gradient(
+                145deg,
+                rgba(248, 252, 255, 0.55) 0%,
+                rgba(225, 238, 252, 0.40) 50%,
+                rgba(212, 228, 248, 0.35) 100%
+            );
+        backdrop-filter: blur(28px) saturate(180%);
+        -webkit-backdrop-filter: blur(28px) saturate(180%);
+        border: 1px solid rgba(120, 160, 215, 0.16);
+        box-shadow:
+            inset 0 1.5px 0 rgba(255, 255, 255, 0.75),
+            inset 0 -1.5px 2px rgba(35, 65, 115, 0.07),
+            inset 1px 0 0 rgba(255, 255, 255, 0.28),
             0 1px 2px rgba(30, 60, 110, 0.05),
-            0 4px 12px -6px rgba(30, 70, 130, 0.14);
+            0 3px 8px -3px rgba(30, 70, 130, 0.12),
+            0 10px 24px -10px rgba(30, 80, 140, 0.16);
         background-clip: padding-box;
-        transition: background-color 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
-                    box-shadow 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+        transition: background 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    box-shadow 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
                     transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .glass-keypad-button-secondary:hover {
-        background-color: rgba(235, 245, 255, 0.66);
+        background:
+            linear-gradient(
+                145deg,
+                rgba(252, 254, 255, 0.75) 0%,
+                rgba(235, 245, 255, 0.60) 50%,
+                rgba(222, 236, 252, 0.55) 100%
+            );
     }
     .glass-keypad-button-secondary:active {
         transform: scale(0.94);
     }
-    /* Primary OK key — brand green, but same elevated shadow grammar
-       so it doesn't look flat next to the glass keys. */
+    /* Primary OK key — brand green, same dimensional shadow grammar
+       as the glass keys so it doesn't read flat next to them. */
     .glass-keypad-button-primary {
-        background-color: #1F7A4D;  /* dd-green */
+        background:
+            linear-gradient(
+                145deg,
+                #2A8A5A 0%,
+                #1F7A4D 50%,
+                #176540 100%
+            );
         color: white;
-        border: 1px solid rgba(15, 23, 42, 0.10);
+        border: 1px solid rgba(8, 50, 30, 0.30);
         box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.22),
-            0 2px 4px rgba(15, 60, 35, 0.18),
-            0 10px 24px -8px rgba(15, 60, 35, 0.35);
-        transition: background-color 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
-                    box-shadow 150ms cubic-bezier(0.22, 0.61, 0.36, 1),
+            inset 0 1.5px 0 rgba(255, 255, 255, 0.30),
+            inset 0 -1.5px 2px rgba(8, 40, 22, 0.20),
+            inset 1px 0 0 rgba(255, 255, 255, 0.15),
+            0 1px 2px rgba(8, 40, 22, 0.18),
+            0 4px 10px -3px rgba(15, 60, 35, 0.32),
+            0 14px 32px -10px rgba(15, 60, 35, 0.42);
+        transition: background 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
+                    box-shadow 200ms cubic-bezier(0.22, 0.61, 0.36, 1),
                     transform 150ms cubic-bezier(0.22, 0.61, 0.36, 1);
     }
     .glass-keypad-button-primary:hover {
-        background-color: #185E3A;  /* dd-green-700 */
+        background:
+            linear-gradient(
+                145deg,
+                #2D9560 0%,
+                #235F3D 50%,
+                #185735 100%
+            );
         box-shadow:
-            inset 0 1px 0 rgba(255, 255, 255, 0.28),
-            0 3px 6px rgba(15, 60, 35, 0.22),
-            0 14px 30px -10px rgba(15, 60, 35, 0.42);
+            inset 0 1.5px 0 rgba(255, 255, 255, 0.36),
+            inset 0 -1.5px 2px rgba(8, 40, 22, 0.24),
+            0 2px 4px rgba(8, 40, 22, 0.22),
+            0 6px 14px -3px rgba(15, 60, 35, 0.38),
+            0 20px 42px -12px rgba(15, 60, 35, 0.50);
     }
     .glass-keypad-button-primary:active {
         transform: scale(0.94);
