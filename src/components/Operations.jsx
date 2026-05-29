@@ -5385,7 +5385,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                 </span>
                                                             )}
                                                             {t.requirePhoto && (
-                                                                <span className={`text-[10px] ${photoUrl ? 'text-green-600' : 'text-gray-400'}`}>📸</span>
+                                                                <span className={`text-[10px] ${photoUrl ? 'text-green-600' : 'text-gray-400'}`} title={photoUrl ? 'Photo on file' : 'Photo required'}>📸</span>
                                                             )}
                                                             {t.completeBy && (
                                                                 <span className={`text-[9px] font-bold px-1 py-px rounded-full whitespace-nowrap ${
@@ -5429,6 +5429,39 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                             <p className="text-[10px] text-green-600 mt-0.5">
                                                                 ✓ {completedBy} {completedAt && `— ${completedAt}`}
                                                             </p>
+                                                        )}
+                                                        {/* Photo capture — same handler as master row.
+                                                            Andrew 2026-05-28: "you put the emoji of the
+                                                            photo required but not the functional button
+                                                            that says take photo." Each column gets its
+                                                            own hidden <input> with a column-scoped id so
+                                                            the picker still works when the master row
+                                                            for this task is offscreen/filtered out. */}
+                                                        {t.requirePhoto && (
+                                                            <div className="mt-1.5">
+                                                                {photoUrl ? (
+                                                                    <a href={photoUrl} target="_blank" rel="noopener noreferrer"
+                                                                        className="inline-block">
+                                                                        <img src={photoUrl} alt="Task photo"
+                                                                            loading="lazy" decoding="async"
+                                                                            className="rounded border border-gray-200 max-h-20" />
+                                                                    </a>
+                                                                ) : (
+                                                                    <>
+                                                                        <input type="file" accept="image/*" capture="environment"
+                                                                            onChange={e => handlePhotoCapture(e, t.id)}
+                                                                            className="hidden" id={`photo-col-${name}-${t.id}`} />
+                                                                        <button
+                                                                            onClick={(e) => { e.stopPropagation(); document.getElementById(`photo-col-${name}-${t.id}`)?.click(); }}
+                                                                            disabled={capturingPhoto === t.id}
+                                                                            className="inline-flex items-center gap-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded text-[10px] font-bold text-blue-700 hover:bg-blue-100">
+                                                                            {capturingPhoto === t.id
+                                                                                ? (language === 'es' ? '⏳ Subiendo' : '⏳ Uploading')
+                                                                                : (language === 'es' ? '📸 Tomar foto' : '📸 Take photo')}
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                            </div>
                                                         )}
                                                         {/* Notes count + add note (mirrors master) */}
                                                         {(() => {
