@@ -5399,31 +5399,17 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         </div>
                     )}
 
-                    {/* Tasks tab — Andrew 2026-05-28: "i want to do this
-                        in the task tab ... assign a task in the task
-                        page to a staff which can only be managers or
-                        shift leads." For managers/shift-leads + admins
-                        the Tasks tab IS the manager-only kanban (single
-                        master list, per-staff columns). For everyone
-                        else it stays the existing FOH/BOH checklist so
-                        regular staff keep their check-off workflow. */}
-                    {activeTab === "checklist" && (
-                        currentIsManagerOp ? (
-                            <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
-                                <AssignTasksPanel
-                                    language={language}
-                                    staffName={staffName}
-                                    staffList={staffList}
-                                    isAdmin={currentIsAdmin}
-                                    isManager={currentIsManagerOp}
-                                    managersOnly={true}
-                                    includeShiftLeads={true}
-                                />
-                            </Suspense>
-                        ) : (
-                            renderChecklist()
-                        )
-                    )}
+                    {/* Tasks tab — Andrew 2026-05-28 round 3: "lets
+                        take the roll check out its not working / the
+                        whole list is gone." The manager-vs-staff
+                        branching was hiding his existing checklist
+                        (the kanbans master list is a different
+                        Firestore collection, so for managers it came
+                        up empty). Reverted to a single render path:
+                        everyone sees the existing checklist here, the
+                        manager kanban stays in the dedicated Assign
+                        sub-tab. */}
+                    {activeTab === "checklist" && renderChecklist()}
 
                     {activeTab === "assign" && (
                         <Suspense fallback={<div className="text-center py-10 text-dd-text-2 text-sm">Loading…</div>}>
