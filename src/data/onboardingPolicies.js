@@ -461,6 +461,20 @@ DD MAU recognizes the fact many of their employees use a cell phone as a means f
 Violation of Policy Is Cause for Disciplinary Action
 Employees who violate this policy will be subject to disciplinary action, up to and including employment termination.
 
+SMS / TEXT MESSAGE CONSENT
+
+By providing my mobile phone number on my employee record and signing this handbook acknowledgment below, I consent to receive text messages from DD Mau Vietnamese Eatery for internal work-related communications. These messages may include, without limitation: shift schedule reminders, schedule changes and shift-coverage requests, sauce production requests from front-of-house to back-of-house, food safety log reminders, equipment maintenance alerts, on-boarding paperwork notifications, and other operational updates relevant to my job duties.
+
+I understand that:
+1. Message and data rates may apply, based on my mobile carrier plan.
+2. Message frequency varies based on operational need; on a typical workweek I may receive between zero and ten messages.
+3. I can opt out of SMS at any time by replying STOP to any DD Mau text message. After opting out I will continue to receive operational communications via other channels (in-person, email, the DD Mau Staff Portal).
+4. I can reply HELP to any DD Mau text message to receive help and the company contact information.
+5. My phone number will be used solely for internal employee communications and will not be sold, rented, or shared with third parties for marketing purposes. The only third party that will process my number is Twilio, our SMS delivery vendor, which is bound by carrier compliance rules.
+6. This consent is not a condition of employment; if I prefer not to receive SMS, I may decline and communications will be delivered through other channels.
+
+I have read and understand the above SMS consent.
+
 HANDBOOK RECEIPT AND POLICY STATEMENT
 
 This Employee Handbook does not constitute a contract of employment either in whole or in part. DD MAU reserves the right to add, delete, or change any portion of the Employee Handbook with or without notice.
@@ -916,6 +930,20 @@ DD MAU reconoce que muchos de sus empleados usan un celular como medio de notifi
 
 Violación de Política Es Causa de Acción Disciplinaria
 Los empleados que violen esta política estarán sujetos a acción disciplinaria, hasta e incluyendo la terminación del empleo.
+
+CONSENTIMIENTO PARA MENSAJES DE TEXTO (SMS)
+
+Al proporcionar mi número de teléfono móvil en mi expediente de empleado y firmar este reconocimiento del manual a continuación, doy mi consentimiento para recibir mensajes de texto de DD Mau Vietnamese Eatery para comunicaciones internas relacionadas con el trabajo. Estos mensajes pueden incluir, sin limitación: recordatorios de horarios de turnos, cambios de horario y solicitudes de cobertura de turnos, solicitudes de producción de salsas de la línea del frente a la cocina, recordatorios de registros de seguridad alimentaria, alertas de mantenimiento de equipos, notificaciones de papeleo de incorporación y otras actualizaciones operativas relevantes a mis funciones laborales.
+
+Entiendo que:
+1. Pueden aplicarse tarifas de mensajes y datos según mi plan de operador móvil.
+2. La frecuencia de los mensajes varía según la necesidad operativa; en una semana de trabajo típica puedo recibir entre cero y diez mensajes.
+3. Puedo darme de baja de los SMS en cualquier momento respondiendo STOP a cualquier mensaje de texto de DD Mau. Después de darme de baja, seguiré recibiendo comunicaciones operativas a través de otros canales (en persona, correo electrónico, el Portal del Personal de DD Mau).
+4. Puedo responder HELP (AYUDA) a cualquier mensaje de texto de DD Mau para recibir ayuda y la información de contacto de la empresa.
+5. Mi número de teléfono se usará únicamente para comunicaciones internas con los empleados y no será vendido, alquilado ni compartido con terceros con fines de marketing. El único tercero que procesará mi número es Twilio, nuestro proveedor de entrega de SMS, que está obligado por las reglas de cumplimiento de los operadores.
+6. Este consentimiento no es una condición para el empleo; si prefiero no recibir SMS, puedo rechazarlo y las comunicaciones se entregarán a través de otros canales.
+
+He leído y entiendo el consentimiento de SMS anterior.
 
 RECIBO DEL MANUAL Y DECLARACION DE POLITICA
 
