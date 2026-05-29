@@ -137,6 +137,21 @@ service cloud.firestore {
       allow create, update, delete: if false;
     }
 
+    // Onboarding doc-text overrides (Andrew 2026-05-28). Lets admins
+    // edit the description shown to hires for any ONBOARDING_DOCS
+    // entry — e.g. add "you have 30 days from hire date" to the Hep A
+    // wording. Shape: { overrides: { [docId]: { en, es } }, updatedAt,
+    // updatedBy }. Read open (the hire portal needs it on bare
+    // /?onboard=TOKEN routes); writes are admin-gated client-side
+    // (only the Onboarding tab UI exposes the editor, and that tab is
+    // restricted to canViewOnboarding staff). Map-shape check is the
+    // same posture as inbox_routing_rules / inbox_categories above.
+    match /config/onboarding_doc_text {
+      allow read: if true;
+      allow create, update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
     // Recipes doc — hardened after the 2026-05-09 Import Master incident.
     // The bug clobbered 39 of 40 recipes in a single write by replacing
     // each one with a master-default version. Since the doc is one giant

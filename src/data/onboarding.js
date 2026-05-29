@@ -426,14 +426,122 @@ export function deriveHireStatus(hire) {
     return HIRE_STATUS.IN_PROGRESS;
 }
 
-// (Removed 2026-05-18) `deadlineForDoc`, `deadlineStatus`,
-// `hireHasOverdueDocs` and the matching admin/hire deadline pills were
-// taken out along with the `onboardingReminderScan` Cloud Function.
-// Admins now decide manually when a hire needs a nudge — via the 📧
-// Remind button (mailto with the missing-docs list) or ↻ Resend invite.
-// `daysFromHire` is still set on each doc def above as informational
-// metadata for the next person editing the list. If we ever want
-// automation back, `git log -- src/data/onboarding.js` has the helpers.
+// (Removed 2026-05-18, partially revived 2026-05-28) The old
+// `onboardingReminderScan` Cloud Function + 📧/↻ admin nudge buttons
+// are still gone — admins handle outreach manually. But Andrew asked
+// 2026-05-28 to bring the per-doc "Due in N days / Overdue" pill back
+// onto the hire portal + admin DocReviewRow, computed from
+// `hireDate + daysFromHire`. New helper below = `docDeadlineState`.
+// No automated reminders attached — purely a visible cue so the hire
+// (and admin) can see at a glance that Hep A is due in 30 days, W-4
+// in 7, I-9 docs in 3, etc.
+
+// Per-doc deadline computed from hire start date + the doc's
+// jurisdictional `daysFromHire`. Pure function — UI calls it on each
+// render. Returns one of:
+//
+//   { kind: 'none' }                                 — no daysFromHire
+//                                                     or no hireDate;
+//                                                     don't show a pill.
+//   { kind: 'in_days',  days, label, labelEs, tone } — N days remain.
+//   { kind: 'due_today', days: 0, ... }              — due TODAY.
+//   { kind: 'overdue',  days, label, labelEs, tone } — N days past due.
+//
+// `tone` is a Tailwind class bundle (bg + text + border) chosen so the
+// pill reads at a glance: gray = comfortable runway, amber = within a
+// week / due today, red = overdue.
+//
+// Hide the pill entirely when the doc is already submitted / approved —
+// "Due in 5 days" is noise once the file's in. The DocCard / DocReviewRow
+// caller does that gate; this helper just computes the math.
+export function docDeadlineState(docDef, hireDateISO) {
+    if (!docDef || !docDef.daysFromHire) return { kind: 'none' };
+    if (!hireDateISO || typeof hireDateISO !== 'string') return { kind: 'none' };
+    // hireDate stored as YYYY-MM-DD. Anchor to midnight LOCAL so the
+    // diff isn't off by one in non-UTC timezones (DD Mau is Central).
+    const parts = hireDateISO.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return { kind: 'none' };
+    const [y, m, d] = parts;
+    const hire = new Date(y, m - 1, d);
+    if (Number.isNaN(hire.getTime())) return { kind: 'none' };
+    const due = new Date(hire);
+    due.setDate(due.getDate() + docDef.daysFromHire);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const diffDays = Math.floor((due.getTime() - today.getTime()) / 86400000);
+    if (diffDays < 0) {
+        const n = -diffDays;
+        return {
+            kind: 'overdue',
+            days: n,
+            label: `Overdue ${n}d`,
+            labelEs: `Vencido ${n}d`,
+            tone: 'bg-red-50 text-red-700 border-red-300',
+        };
+    }
+    if (diffDays === 0) {
+        return {
+            kind: 'due_today',
+            days: 0,
+            label: 'Due today',
+            labelEs: 'Vence hoy',
+            tone: 'bg-amber-50 text-amber-800 border-amber-300',
+        };
+    }
+    if (diffDays <= 7) {
+        return {
+            kind: 'in_days',
+            days: diffDays,
+            label: `Due in ${diffDays}d`,
+            labelEs: `Vence en ${diffDays}d`,
+            tone: 'bg-amber-50 text-amber-700 border-amber-200',
+        };
+    }
+    return {
+        kind: 'in_days',
+        days: diffDays,
+        label: `Due in ${diffDays}d`,
+        labelEs: `Vence en ${diffDays}d`,
+        tone: 'bg-gray-50 text-gray-600 border-gray-200',
+    };
+}
+
+// Resolve the description the hire (or admin) should see for a doc.
+// Priority order, highest wins:
+//
+//   1. Per-hire override stored on the checklist entry —
+//      `hire.checklist[docId].descOverride`. Lets admin add a
+//      one-off note for a single hire ("you have until Friday").
+//   2. Global override stored at /config/onboarding_doc_text →
+//      `{ overrides: { [docId]: { en, es } } }`. Edited via the
+//      "Doc text" admin tab; visible to ALL hires (existing +
+//      future). Use this when the wording change applies to
+//      everyone, like adding "30 days from hire date" to the
+//      default Hep A description.
+//   3. The hardcoded default from ONBOARDING_DOCS above
+//      (`docDef.description`). English only — Spanish falls back
+//      to English if no global Spanish override is set.
+//
+// Inputs:
+//   docDef               — entry from ONBOARDING_DOCS (or docsForHire)
+//   opts.hireChecklistEntry — `hire.checklist[docDef.id]` (or undefined)
+//   opts.globalOverrides — the `overrides` map from /config/onboarding_doc_text
+//   opts.language        — 'en' | 'es'  (default 'en')
+export function effectiveDocDescription(docDef, opts = {}) {
+    const lang = opts.language === 'es' ? 'es' : 'en';
+    const perHire = opts.hireChecklistEntry?.descOverride;
+    if (typeof perHire === 'string' && perHire.trim()) return perHire.trim();
+    const override = opts.globalOverrides?.[docDef?.id];
+    if (override && typeof override === 'object') {
+        if (lang === 'es' && typeof override.es === 'string' && override.es.trim()) {
+            return override.es.trim();
+        }
+        if (typeof override.en === 'string' && override.en.trim()) {
+            return override.en.trim();
+        }
+    }
+    return docDef?.description || '';
+}
 
 // Counts {needed, started, submitted, approved} across the required docs
 // for a hire. Used by the donut/progress UI.

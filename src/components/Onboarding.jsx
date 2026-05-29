@@ -25,6 +25,7 @@ import {
     HIRE_STATUS, HIRE_STATUS_META,
     INVITE_TTL_DAYS, makeInviteToken,
     docsForHire, isHireMinor, deriveHireStatus, hireProgressCounts,
+    docDeadlineState, effectiveDocDescription,
 } from '../data/onboarding';
 import {
     POSITIONS, LOCATIONS, DESIRED_HOURS,
@@ -56,7 +57,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     const isEs = language === 'es';
     const tx = (en, es) => (isEs ? es : en);
 
-    const [view, setView] = useState('hires');          // 'hires' | 'complete' | 'applications' | 'templates' | 'policies' | 'archive'
+    const [view, setView] = useState('hires');          // 'hires' | 'complete' | 'applications' | 'templates' | 'policies' | 'doctext' | 'archive'
     const [hires, setHires] = useState([]);
     const [applications, setApplications] = useState([]);
     const [templates, setTemplates] = useState([]);
@@ -99,6 +100,31 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setTemplates(list);
         }, () => {});
+        return () => unsub();
+    }, []);
+
+    // Global doc-text overrides — admins edit these in the "Doc text"
+    // tab to rewrite the description any hire sees for any
+    // ONBOARDING_DOCS entry. Shape on disk:
+    //   { overrides: { [docId]: { en, es } }, updatedAt, updatedBy }
+    // Held as the raw `overrides` map in state so passing to children
+    // is the same shape effectiveDocDescription() expects. Realtime
+    // subscription (not one-shot getDoc) so the admin sees their own
+    // edits appear in the hire-detail view immediately after saving.
+    const [docOverrides, setDocOverrides] = useState({});
+    useEffect(() => {
+        const unsub = onSnapshot(
+            doc(db, 'config', 'onboarding_doc_text'),
+            (snap) => {
+                if (snap.exists()) {
+                    const data = snap.data() || {};
+                    setDocOverrides(data.overrides && typeof data.overrides === 'object' ? data.overrides : {});
+                } else {
+                    setDocOverrides({});
+                }
+            },
+            (err) => { console.warn('onboarding doc-text overrides subscribe error', err); },
+        );
         return () => unsub();
     }, []);
 
@@ -257,6 +283,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     { id: 'applications', en: `Applications (${applications.length})`, es: `Aplicaciones (${applications.length})` },
                     { id: 'templates', en: `Templates (${templates.length})`, es: `Plantillas (${templates.length})` },
                     { id: 'policies', en: 'Policies', es: 'Políticas' },
+                    { id: 'doctext', en: 'Doc text', es: 'Texto de docs' },
                     { id: 'archive', en: `Archive (${archivedHires.length})`, es: `Archivo (${archivedHires.length})` },
                 ].map(t => (
                     <button key={t.id}
@@ -306,6 +333,8 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                     onEdit={(t) => setEditingTemplate(t)} />
             ) : view === 'policies' ? (
                 <PoliciesEditor isEs={isEs} staffName={staffName} onWriteAudit={writeAudit} />
+            ) : view === 'doctext' ? (
+                <DocTextEditor isEs={isEs} staffName={staffName} overrides={docOverrides} onWriteAudit={writeAudit} />
             ) : loading ? (
                 <p className="text-center text-dd-text-2 py-8 text-sm">
                     {tx('Loading…', 'Cargando…')}
@@ -336,6 +365,7 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                             hire={selected}
                             isEs={isEs}
                             staffName={staffName}
+                            docOverrides={docOverrides}
                             onWriteAudit={writeAudit}
                             onMoveToComplete={async () => {
                                 if (!confirm(tx(
@@ -617,7 +647,7 @@ function ProgressDonut({ counts, size = 64 }) {
 }
 
 // ── HireDetail ────────────────────────────────────────────────────────────
-function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, onEdit, onMoveToComplete, onMoveBackToActive }) {
+function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchive, onResend, onEdit, onMoveToComplete, onMoveBackToActive }) {
     const tx = (en, es) => (isEs ? es : en);
     const docs = docsForHire(hire);
     const counts = hireProgressCounts(hire);
@@ -921,6 +951,7 @@ function HireDetail({ hire, isEs, staffName, onWriteAudit, onArchive, onResend, 
                         hire={hire}
                         isEs={isEs}
                         staffName={staffName}
+                        docOverrides={docOverrides}
                         onWriteAudit={onWriteAudit}
                         forceExpand={expandAllDocs}
                     />
@@ -1073,7 +1104,7 @@ function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
 }
 
 // ── DocReviewRow ──────────────────────────────────────────────────────────
-function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit, forceExpand }) {
+function DocReviewRow({ doc: docDef, hire, isEs, staffName, docOverrides, onWriteAudit, forceExpand }) {
     const tx = (en, es) => (isEs ? es : en);
     const state = (hire.checklist && hire.checklist[docDef.id]) || {};
     const status = state.status || DOC_STATUS.NEEDED;
@@ -1081,6 +1112,45 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit, forceE
     const [files, setFiles] = useState(null);   // [{name, url, size, contentType}]
     const [loadingFiles, setLoadingFiles] = useState(false);
     const [internalExpanded, setInternalExpanded] = useState(false);
+    // Per-hire note override editor — pencil button on the description
+    // line flips this on; admin types a one-off note that REPLACES the
+    // default description for this hire only. Used for accommodations
+    // like "you have until Friday for the I-9" without changing the
+    // global text for everyone else.
+    const [editingDesc, setEditingDesc] = useState(false);
+    const [descDraft, setDescDraft] = useState(state.descOverride || '');
+    const [savingDesc, setSavingDesc] = useState(false);
+    // Resync descDraft when the underlying override changes — covers
+    // (a) admin switches between hires (DocReviewRow reuses its
+    // component instance because its key is doc.id, so descDraft would
+    // otherwise carry over from the previous hire), and (b) the
+    // Firestore snapshot reflecting our own save settles. In case (b)
+    // the new value equals descDraft so the setState is a no-op; in
+    // case (a) we correctly reset to the new hire's value.
+    useEffect(() => {
+        setDescDraft(state.descOverride || '');
+        setEditingDesc(false);
+    }, [state.descOverride, hire?.id]);
+    // Deadline pill — hidden once the doc is approved (nothing to chase).
+    // Submitted-but-not-approved we still show so admin remembers it's
+    // a ticking clock even though the file's in. See docDeadlineState
+    // in src/data/onboarding.js for the math.
+    const deadline = status === DOC_STATUS.APPROVED
+        ? { kind: 'none' }
+        : docDeadlineState(docDef, hire?.hireDate);
+    const effectiveDesc = effectiveDocDescription(docDef, {
+        hireChecklistEntry: state,
+        globalOverrides: docOverrides,
+        language: isEs ? 'es' : 'en',
+    });
+    // Show admin what's actually overriding the default so they can
+    // tell at a glance whether they're editing the per-hire copy or
+    // the global one.
+    const descSource = state.descOverride && state.descOverride.trim()
+        ? 'per_hire'
+        : (docOverrides?.[docDef.id]?.[isEs ? 'es' : 'en'] || docOverrides?.[docDef.id]?.en)
+            ? 'global'
+            : 'default';
     // forceExpand wins when truthy — used by the "Expand all to review"
     // toggle in HireDetail to open every row at once. Individual toggle
     // still works on top of an inactive forceExpand.
@@ -1161,6 +1231,35 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit, forceE
         await setStatus(DOC_STATUS.REJECTED, reason);
     };
 
+    // Save (or clear) the per-hire description override. Empty string
+    // / whitespace = "delete the override" — we want falling back to
+    // the global / default description to be one keystroke + save away,
+    // not a separate "remove override" button.
+    const saveDescOverride = async () => {
+        if (savingDesc) return;
+        setSavingDesc(true);
+        try {
+            const trimmed = (descDraft || '').trim();
+            await updateDoc(doc(db, 'onboarding_hires', hire.id), {
+                [`checklist.${docDef.id}`]: {
+                    ...state,
+                    descOverride: trimmed || null,
+                    descOverrideAt: trimmed ? new Date().toISOString() : null,
+                    descOverrideBy: trimmed ? staffName : null,
+                },
+            });
+            onWriteAudit(trimmed ? 'doc_desc_set' : 'doc_desc_cleared', {
+                hireId: hire.id, docId: docDef.id, hireName: hire.name,
+            });
+            setEditingDesc(false);
+        } catch (e) {
+            console.warn('saveDescOverride failed', e);
+            alert(tx('Could not save note. Try again.', 'No se pudo guardar la nota.'));
+        } finally {
+            setSavingDesc(false);
+        }
+    };
+
     return (
         <div className="p-3">
             <div className="flex items-start gap-3">
@@ -1173,11 +1272,69 @@ function DocReviewRow({ doc: docDef, hire, isEs, staffName, onWriteAudit, forceE
                                 {tx('REQUIRED', 'REQUERIDO')}
                             </span>
                         )}
+                        {deadline.kind !== 'none' && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${deadline.tone}`}>
+                                ⏱ {isEs ? deadline.labelEs : deadline.label}
+                            </span>
+                        )}
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.tone}`}>
                             {meta.emoji} {isEs ? meta.es : meta.en}
                         </span>
                     </div>
-                    <p className="text-[11px] text-dd-text-2 mt-0.5">{docDef.description}</p>
+                    {editingDesc ? (
+                        // Inline editor for the per-hire description override.
+                        // Saving an empty string clears the override (so the
+                        // hire falls back to the global / default text).
+                        <div className="mt-1 space-y-1">
+                            <textarea
+                                value={descDraft}
+                                onChange={(e) => setDescDraft(e.target.value)}
+                                rows={3}
+                                placeholder={effectiveDocDescription(docDef, {
+                                    globalOverrides: docOverrides,
+                                    language: isEs ? 'es' : 'en',
+                                })}
+                                className="w-full text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
+                            />
+                            <div className="flex items-center gap-1.5">
+                                <button onClick={saveDescOverride} disabled={savingDesc}
+                                    className="text-[10px] px-2 py-1 rounded bg-dd-green text-white font-bold disabled:opacity-60">
+                                    {savingDesc ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                                </button>
+                                <button onClick={() => { setEditingDesc(false); setDescDraft(state.descOverride || ''); }}
+                                    className="text-[10px] px-2 py-1 rounded bg-dd-bg text-dd-text-2 font-bold">
+                                    {tx('Cancel', 'Cancelar')}
+                                </button>
+                                {state.descOverride && (
+                                    <button onClick={() => { setDescDraft(''); }}
+                                        className="text-[10px] px-2 py-1 rounded bg-red-50 text-red-700 font-bold ml-auto">
+                                        {tx('Clear override', 'Quitar nota')}
+                                    </button>
+                                )}
+                            </div>
+                            <p className="text-[9px] text-dd-text-2 italic">
+                                {tx('Replaces what this hire sees. Leave blank to use the default.',
+                                    'Reemplaza lo que ve esta persona. Deja en blanco para usar el predeterminado.')}
+                            </p>
+                        </div>
+                    ) : (
+                        <div className="flex items-start gap-1.5 mt-0.5">
+                            <p className="text-[11px] text-dd-text-2 whitespace-pre-wrap flex-1">{effectiveDesc}</p>
+                            <button
+                                onClick={() => setEditingDesc(true)}
+                                title={tx('Edit the note this hire sees', 'Editar la nota que ve este contratado')}
+                                className="text-[10px] px-1.5 py-0.5 rounded text-dd-text-2 hover:bg-dd-bg flex-shrink-0">
+                                ✏️
+                            </button>
+                        </div>
+                    )}
+                    {!editingDesc && descSource !== 'default' && (
+                        <p className="text-[9px] text-dd-text-2 italic mt-0.5">
+                            {descSource === 'per_hire'
+                                ? tx('✏️ Note customized for this hire', '✏️ Nota personalizada para este contratado')
+                                : tx('🌐 Using global doc-text override', '🌐 Usando texto global personalizado')}
+                        </p>
+                    )}
                     {state.note && (
                         <p className="text-[10px] text-amber-700 italic mt-1">
                             {tx('Note:', 'Nota:')} {state.note}
@@ -2734,6 +2891,234 @@ function PolicyPreview({ enTitle, enBody, esTitle, esBody, isEs, onClose }) {
                             'Así se ve la política para un contratado. El PDF firmado usa el mismo texto en Helvetica.')}
                     </p>
                 </div>
+            </div>
+        </div>
+    );
+}
+
+// ── DocTextEditor ─────────────────────────────────────────────────────────
+// Global override editor for the per-doc description strings that hires
+// see on their portal. The Hep A description ("Photo of your Hep A
+// vaccination card or doctor's record. Food-service requirement.") is
+// the canonical example — it's accurate but doesn't tell the hire they
+// have 30 days from their start date to turn it in. Andrew can rewrite
+// it here ONCE and every hire (current + future) sees the better
+// wording the next time they open the portal.
+//
+// Storage:
+//   /config/onboarding_doc_text = {
+//     overrides: { [docId]: { en, es } },
+//     updatedAt, updatedBy
+//   }
+//
+// Resolution: effectiveDocDescription() in src/data/onboarding.js. The
+// resolver picks per-hire override (highest), then global override
+// (this tab), then the hardcoded default from ONBOARDING_DOCS.
+//
+// Per-hire overrides — added in the same change as this editor — live
+// inline on each DocReviewRow in the hire-detail view. Use those for
+// one-off accommodations ("you have until Friday"); use THIS tab for
+// wording everyone should see.
+function DocTextEditor({ isEs, staffName, overrides, onWriteAudit }) {
+    const tx = (en, es) => (isEs ? es : en);
+    const [drafts, setDrafts] = useState(null);     // { [docId]: { en, es } }
+    const [savingId, setSavingId] = useState('');
+    const [err, setErr] = useState('');
+
+    // Seed drafts from the live overrides snapshot the parent passes
+    // in. We deliberately re-sync only when `overrides` itself swaps
+    // identity (i.e. snapshot fired) AND we're not currently editing
+    // an unsaved field — otherwise our typing would get clobbered on
+    // every keystroke that fires another snapshot. Cheap proxy: if
+    // drafts is null OR every field matches the persisted value, take
+    // the fresh data.
+    useEffect(() => {
+        if (drafts === null) {
+            setDrafts({ ...(overrides || {}) });
+            return;
+        }
+        // We don't auto-overwrite unsaved drafts.
+    }, [overrides]);
+
+    const setField = (docId, lang, value) => {
+        setDrafts(prev => ({
+            ...(prev || {}),
+            [docId]: {
+                ...((prev || {})[docId] || {}),
+                [lang]: value,
+            },
+        }));
+    };
+
+    const isDirty = (docId) => {
+        const draft = (drafts || {})[docId] || {};
+        const live  = (overrides || {})[docId] || {};
+        return (draft.en || '') !== (live.en || '')
+            || (draft.es || '') !== (live.es || '');
+    };
+
+    const saveOne = async (docId) => {
+        setSavingId(docId);
+        setErr('');
+        try {
+            const draft = (drafts || {})[docId] || {};
+            const en = (draft.en || '').trim();
+            const es = (draft.es || '').trim();
+            // If both fields are empty, clear the override entry entirely
+            // (delete via field path) so the hire falls back to the default.
+            const empty = !en && !es;
+            const patch = empty
+                ? {
+                    [`overrides.${docId}`]: deleteField(),
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: staffName || 'admin',
+                }
+                : {
+                    [`overrides.${docId}`]: { en, es },
+                    updatedAt: new Date().toISOString(),
+                    updatedBy: staffName || 'admin',
+                };
+            // setDoc + merge so we create the doc on first write without
+            // wiping the rest of the overrides map. updateDoc would fail
+            // if the parent doc didn't exist yet.
+            await setDoc(doc(db, 'config', 'onboarding_doc_text'), patch, { merge: true });
+            try { onWriteAudit(empty ? 'doc_text_cleared' : 'doc_text_set', { docId }); } catch {}
+        } catch (e) {
+            console.error('doc text save failed', e);
+            setErr(String(e.message || e));
+        } finally { setSavingId(''); }
+    };
+
+    const resetOne = async (docId) => {
+        if (!confirm(tx(
+            'Reset this doc\'s text back to the default? Your custom wording will be lost.',
+            '¿Restablecer al texto predeterminado? Se perderán tus ediciones.',
+        ))) return;
+        setSavingId(docId);
+        setErr('');
+        try {
+            await setDoc(doc(db, 'config', 'onboarding_doc_text'), {
+                [`overrides.${docId}`]: deleteField(),
+                updatedAt: new Date().toISOString(),
+                updatedBy: staffName || 'admin',
+            }, { merge: true });
+            // Optimistically clear the local draft for this row.
+            setDrafts(prev => {
+                const next = { ...(prev || {}) };
+                delete next[docId];
+                return next;
+            });
+            try { onWriteAudit('doc_text_reset', { docId }); } catch {}
+        } catch (e) {
+            console.error('doc text reset failed', e);
+            setErr(String(e.message || e));
+        } finally { setSavingId(''); }
+    };
+
+    if (drafts === null) {
+        return <p className="text-center text-dd-text-2 py-8 text-sm">{tx('Loading…', 'Cargando…')}</p>;
+    }
+
+    return (
+        <div className="space-y-3">
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-[12px] text-blue-900">
+                <p className="font-bold">📝 {tx('Doc text editor', 'Editor de texto de docs')}</p>
+                <p className="mt-1">
+                    {tx(
+                        'Edit the description each onboarding doc shows on the hire portal. Use this for wording that should apply to EVERYONE (e.g. "30 days from hire date" on Hep A). For one-off notes to a single hire, use the ✏️ pencil in that hire\'s doc row instead.',
+                        'Edita la descripción que cada documento muestra en el portal del contratado. Úsalo para texto que aplica a TODOS (ej: "30 días desde tu fecha de contratación" en Hep A). Para notas a una sola persona, usa el ✏️ en la fila del documento.',
+                    )}
+                </p>
+                <p className="mt-1.5 text-blue-700">
+                    {tx(
+                        'Leave both fields empty + save to revert to the default wording.',
+                        'Deja ambos campos vacíos y guarda para volver al texto predeterminado.',
+                    )}
+                </p>
+            </div>
+            {err && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-[11px] text-red-800">{err}</div>
+            )}
+            <div className="space-y-2">
+                {ONBOARDING_DOCS.map(d => {
+                    const draft = drafts[d.id] || {};
+                    const dirty = isDirty(d.id);
+                    const hasOverride = Boolean((overrides || {})[d.id]);
+                    const enVal = draft.en !== undefined ? draft.en : ((overrides || {})[d.id]?.en || '');
+                    const esVal = draft.es !== undefined ? draft.es : ((overrides || {})[d.id]?.es || '');
+                    const deadlineHint = d.daysFromHire
+                        ? tx(`(Federal/legal: ${d.daysFromHire} day${d.daysFromHire === 1 ? '' : 's'} from hire date)`,
+                              `(Federal/legal: ${d.daysFromHire} día${d.daysFromHire === 1 ? '' : 's'} desde la fecha de contratación)`)
+                        : '';
+                    return (
+                        <div key={d.id} className="bg-white border border-dd-line rounded-xl p-3">
+                            <div className="flex items-start gap-2 mb-2">
+                                <span className="text-2xl">{d.emoji}</span>
+                                <div className="flex-1 min-w-0">
+                                    <div className="font-bold text-sm text-dd-text">
+                                        {isEs ? d.es : d.en}
+                                        {hasOverride && (
+                                            <span className="ml-2 text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                                {tx('CUSTOM', 'PERSONALIZADO')}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="text-[10px] text-dd-text-2 mt-0.5">
+                                        {tx('Default:', 'Predeterminado:')} <span className="italic">{d.description}</span>
+                                    </div>
+                                    {deadlineHint && (
+                                        <div className="text-[10px] text-amber-700 mt-0.5">⏱ {deadlineHint}</div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase text-dd-text-2 mb-1">
+                                        {tx('English description', 'Descripción en inglés')}
+                                    </label>
+                                    <textarea
+                                        value={enVal}
+                                        onChange={(e) => setField(d.id, 'en', e.target.value)}
+                                        rows={3}
+                                        placeholder={d.description}
+                                        className="w-full text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase text-dd-text-2 mb-1">
+                                        {tx('Spanish description', 'Descripción en español')}
+                                    </label>
+                                    <textarea
+                                        value={esVal}
+                                        onChange={(e) => setField(d.id, 'es', e.target.value)}
+                                        rows={3}
+                                        placeholder={tx('(English will be shown if blank)', '(Se mostrará en inglés si está vacío)')}
+                                        className="w-full text-[11px] border border-dd-line rounded px-2 py-1 bg-white"
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1.5 mt-2">
+                                <button onClick={() => saveOne(d.id)}
+                                    disabled={!dirty || savingId === d.id}
+                                    className="text-[11px] px-2.5 py-1 rounded bg-dd-green text-white font-bold disabled:opacity-50">
+                                    {savingId === d.id ? tx('Saving…', 'Guardando…') : tx('Save', 'Guardar')}
+                                </button>
+                                {hasOverride && (
+                                    <button onClick={() => resetOne(d.id)}
+                                        disabled={savingId === d.id}
+                                        className="text-[11px] px-2.5 py-1 rounded bg-red-50 text-red-700 font-bold disabled:opacity-50">
+                                        {tx('Reset to default', 'Restablecer')}
+                                    </button>
+                                )}
+                                {dirty && (
+                                    <span className="ml-auto text-[10px] text-amber-600 font-bold">
+                                        {tx('Unsaved changes', 'Sin guardar')}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );

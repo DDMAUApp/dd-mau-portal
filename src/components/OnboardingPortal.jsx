@@ -28,7 +28,7 @@ import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'fir
 import {
     DOC_STATUS, DOC_STATUS_META, ONBOARDING_DOCS,
     docsForHire, isHireMinor, hireProgressCounts,
-    ID_DOC_TYPES,
+    ID_DOC_TYPES, docDeadlineState, effectiveDocDescription,
 } from '../data/onboarding';
 import { notifyAdmins } from '../data/notify';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
@@ -53,6 +53,34 @@ export default function OnboardingPortal({ token, language = 'en' }) {
     const [errorMsg, setErrorMsg] = useState('');
     const [hire, setHire] = useState(null);
     const [hireId, setHireId] = useState(null);
+    // Global doc-text overrides — admins can rewrite any ONBOARDING_DOCS
+    // description from the "Doc text" admin tab. Map shape is
+    // { [docId]: { en, es } }. Best-effort read; if the doc doesn't
+    // exist (no overrides yet) we just fall back to the hardcoded
+    // defaults in ONBOARDING_DOCS. One-shot getDoc — overrides change
+    // rarely and a stale value for the duration of a single portal
+    // session is fine. (No onSnapshot — would be a wasted realtime
+    // subscription on the hire portal, which only lives for a few
+    // minutes.)
+    const [docOverrides, setDocOverrides] = useState({});
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const snap = await getDoc(doc(db, 'config', 'onboarding_doc_text'));
+                if (alive && snap.exists()) {
+                    const data = snap.data() || {};
+                    if (data.overrides && typeof data.overrides === 'object') {
+                        setDocOverrides(data.overrides);
+                    }
+                }
+            } catch (e) {
+                // Non-fatal — hires just see the default descriptions.
+                console.warn('doc-text overrides read failed', e);
+            }
+        })();
+        return () => { alive = false; };
+    }, []);
 
     useEffect(() => {
         let alive = true;
@@ -383,6 +411,7 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                             hireId={hireId}
                             isEs={isEs}
                             isLocked={isLocked}
+                            docOverrides={docOverrides}
                             onSaveForm={saveForm}
                             onSetStatus={setDocStatus}
                         />
@@ -491,7 +520,7 @@ function CompletedExitCard({ isEs, hireName, signedAt, typedSignature }) {
 }
 
 // ── DocCard ───────────────────────────────────────────────────────────────
-function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus }) {
+function DocCard({ doc, hire, hireId, isEs, isLocked, docOverrides, onSaveForm, onSetStatus }) {
     const tx = (en, es) => (isEs ? es : en);
     const state = (hire.checklist && hire.checklist[doc.id]) || {};
     const status = state.status || DOC_STATUS.NEEDED;
@@ -499,6 +528,21 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
     const [expanded, setExpanded] = useState(status === DOC_STATUS.NEEDED || status === DOC_STATUS.REJECTED);
 
     const isDone = status === DOC_STATUS.SUBMITTED || status === DOC_STATUS.APPROVED;
+    // Deadline pill — "Due in N days" / "Due today" / "Overdue Nd",
+    // computed from hire.hireDate + doc.daysFromHire. Hidden once
+    // the file's in (status submitted/approved) so it doesn't nag
+    // the hire after the work is done. See docDeadlineState in
+    // src/data/onboarding.js for the math + color logic.
+    const deadline = isDone ? { kind: 'none' } : docDeadlineState(doc, hire?.hireDate);
+    // Effective description — per-hire override → global override →
+    // hardcoded default. Lets the admin tailor wording per hire
+    // (one-off notes) and also globally (universal rules like "30
+    // days from hire" on Hep A) without code changes.
+    const description = effectiveDocDescription(doc, {
+        hireChecklistEntry: state,
+        globalOverrides: docOverrides,
+        language: isEs ? 'es' : 'en',
+    });
 
     // Look up BOTH kinds of admin-uploaded templates for this doc:
     //
@@ -574,6 +618,11 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
                                 {tx('REQUIRED', 'REQUERIDO')}
                             </span>
                         )}
+                        {deadline.kind !== 'none' && (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${deadline.tone}`}>
+                                ⏱ {isEs ? deadline.labelEs : deadline.label}
+                            </span>
+                        )}
                     </div>
                     <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${meta.tone}`}>
@@ -585,7 +634,7 @@ function DocCard({ doc, hire, hireId, isEs, isLocked, onSaveForm, onSetStatus })
             </button>
             {expanded && (
                 <div className="p-3 border-t border-gray-100 bg-gray-50/50">
-                    <p className="text-xs text-gray-600 mb-3">{doc.description}</p>
+                    <p className="text-xs text-gray-600 mb-3 whitespace-pre-wrap">{description}</p>
                     {refTemplate && (
                         <div className="mb-3 p-2 rounded bg-amber-50 border border-amber-200 flex items-center gap-2">
                             <span className="text-lg flex-shrink-0">📎</span>
