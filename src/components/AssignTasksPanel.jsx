@@ -349,6 +349,11 @@ export default function AssignTasksPanel({
         };
     }, [assignTarget]);
 
+    // Ref + flag so we can auto-scroll the new column into view on
+    // mobile after assignment. Without this Andrew on Safari kept
+    // missing the column because it was rendering off-screen below
+    // the master list. (2026-05-28 round 3.)
+    const columnsRef = useRef(null);
     async function handleAssignTo(target, member) {
         try {
             await assignTasksToStaff({
@@ -363,6 +368,17 @@ export default function AssignTasksPanel({
                 isEs
             ));
             setAssignTarget(null);
+            // Scroll the columns area into view after the next paint
+            // so the freshly-created column is visible. Best-effort —
+            // bail quietly if the ref isn't attached yet.
+            setTimeout(() => {
+                try {
+                    columnsRef.current?.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'start',
+                    });
+                } catch {}
+            }, 120);
         } catch (err) {
             console.warn('assignTasksToStaff failed:', err);
             toastFlash(tx('Assign failed — try again', 'Error — intenta otra vez', isEs));
@@ -433,9 +449,21 @@ export default function AssignTasksPanel({
                 ) : null}
             />
 
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(280px,360px)_1fr] gap-4">
-                {/* ─── MASTER LIST (left column) ─── */}
-                <div className="glass-card p-3 flex flex-col min-h-[480px] lg:sticky lg:top-20 lg:max-h-[calc(100vh-120px)]">
+            {/* Mobile-first layout: on phones, when there are staff
+                columns showing they render ABOVE the master list so
+                the assignment result is immediately visible. On lg+
+                we keep the side-by-side grid. Andrew 2026-05-28: "look
+                at safari its still not changed you can see the master
+                list but not he split off list." The columns were
+                rendering below the master, off-screen unless you
+                scrolled. */}
+            <div className={`flex flex-col gap-4 lg:grid lg:grid-cols-[minmax(280px,360px)_1fr]`}>
+                {/* ─── MASTER LIST (left column on lg, ordered below
+                       per-staff columns on mobile when there is any
+                       assigned work to show) ─── */}
+                <div className={`glass-card p-3 flex flex-col min-h-[480px] lg:sticky lg:top-20 lg:max-h-[calc(100vh-120px)] ${
+                    staffColumns.length > 0 ? 'order-2 lg:order-none' : ''
+                }`}>
                     <div className="flex items-center justify-between mb-3">
                         <div className="text-overline text-dd-text-2">
                             {tx('Master list', 'Lista maestra', isEs)}
@@ -633,8 +661,10 @@ export default function AssignTasksPanel({
                     </div>
                 </div>
 
-                {/* ─── STAFF COLUMNS (right side, horizontal scroll on desktop) ─── */}
-                <div className="min-w-0">
+                {/* ─── STAFF COLUMNS (right side on lg, ABOVE master
+                       on mobile when there are columns to show) ─── */}
+                <div ref={columnsRef}
+                    className={`min-w-0 ${staffColumns.length > 0 ? 'order-1 lg:order-none' : 'hidden lg:block'}`}>
                     {staffColumns.length === 0 ? (
                         <div className="glass-card p-10 text-center">
                             <div className="w-14 h-14 mx-auto mb-3 rounded-full bg-dd-sage-50 text-dd-green-700 flex items-center justify-center">
