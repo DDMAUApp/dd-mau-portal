@@ -4478,7 +4478,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         your assigned tasks. Brand-green border so it
                         reads as the viewer's own card. */}
                     {personalTasks && (
-                        <div className="w-[82vw] sm:w-[260px] shrink-0 bg-white border-2 border-dd-green/40 rounded-xl p-3 flex flex-col max-h-[calc(100vh-260px)]">
+                        <div className="w-[82vw] sm:w-[260px] shrink-0 bg-white border-2 border-dd-green/40 rounded-xl p-3 flex flex-col">
                             <div className="flex items-center gap-2 mb-2 pb-2 border-b border-dd-line/60">
                                 <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-dd-green text-white font-bold text-xs shrink-0">
                                     {staffName.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase()}
@@ -4492,7 +4492,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     </div>
                                 </div>
                             </div>
-                            <div className="space-y-1 overflow-y-auto -mx-1 px-1">
+                            <div className="space-y-1 -mx-1 px-1">
                                 {personalTasks.length === 0 ? (
                                     <p className="text-[11px] text-dd-text-2 italic text-center py-3">
                                         {language === 'es' ? 'Sin tareas asignadas.' : 'No tasks assigned.'}
@@ -5318,7 +5318,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                         const initials = name.split(' ').map(p => p[0]).join('').slice(0, 2).toUpperCase();
                         return (
                             <div key={name}
-                                className="w-[82vw] sm:w-[260px] shrink-0 bg-white border border-dd-line rounded-xl p-3 flex flex-col max-h-[calc(100vh-260px)]">
+                                className="w-[82vw] sm:w-[260px] shrink-0 bg-white border border-dd-line rounded-xl p-3 flex flex-col">
                                 <div className="flex items-center gap-2 mb-2 pb-2 border-b border-dd-line/60">
                                     <span className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-dd-sage-50 text-dd-green-700 font-bold text-xs shrink-0">
                                         {initials}
@@ -5332,7 +5332,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         </div>
                                     </div>
                                 </div>
-                                <div className="space-y-1 overflow-y-auto -mx-1 px-1">
+                                <div className="space-y-1 -mx-1 px-1">
                                     {list.map((t) => {
                                         const done = !!checks[currentPrefix + t.id];
                                         return (
