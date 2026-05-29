@@ -3,8 +3,9 @@ import { db } from '../firebase';
 import { collection, query, where, limit, onSnapshot, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
+import { subscribePrinterConfig, printFreeText } from '../data/labelPrinting';
 
-export default function ToastOrders({ language }) {
+export default function ToastOrders({ language, staffName = '' }) {
     const [orders, setOrders] = useState([]);
     const [loading, setLoading] = useState(true);
     const [location, setLocation] = useState("webster");
@@ -235,6 +236,106 @@ export default function ToastOrders({ language }) {
         // If it's a clean name from Toast config, just show it with a generic icon
         if (type.length < 30 && !type.includes("-") && type !== type.toUpperCase()) return `📋 ${type}`;
         return type;
+    };
+
+    // ── Kitchen label printer (Epson TM-L100 / Brother QL) ─────────
+    // Andrew 2026-05-29: "when we look at the orders page the orders
+    // we can print. when the printer is set up i want to be able to
+    // print the orders to this printer too." The existing handlePrint
+    // opens a new browser window → window.print() → OS print dialog.
+    // That's fine for an 8.5×11 office printer. For the thermal label
+    // printer at the kitchen station, we instead build a compact
+    // 80mm-wide text payload and POST it straight to the printer via
+    // the existing labelPrinting.printFreeText() helper (same path the
+    // date sticker printer uses).
+    //
+    // The label button only appears when there's a configured + enabled
+    // kitchen-slot printer for the current location — otherwise it'd
+    // confuse staff at locations where the hardware isn't installed.
+    const [kitchenPrinter, setKitchenPrinter] = useState(null);
+    const [labelPrinting, setLabelPrinting] = useState(null); // ord.guid being printed
+    useEffect(() => {
+        const unsub = subscribePrinterConfig(location, setKitchenPrinter, 'kitchen');
+        return () => { try { unsub && unsub(); } catch {} };
+    }, [location]);
+    const kitchenReady = !!kitchenPrinter && kitchenPrinter.enabled !== false;
+
+    // Format an order for an 80mm thermal receipt. Plain text — the
+    // printFreeText helper renders it through ePOS-Print XML (Epson)
+    // or AirPrint (Brother). Order # in big text up top, customer +
+    // promised time, then items with a leading qty and indented
+    // modifiers, then notes. Keep it scannable for a runner / line
+    // cook with one glance.
+    const buildOrderLabelText = (ord) => {
+        const lines = [];
+        const promised = ord.promisedDate
+            ? new Date(ord.promisedDate).toLocaleString('en-US', {
+                weekday: 'short', month: 'short', day: 'numeric',
+                hour: 'numeric', minute: '2-digit',
+            })
+            : '';
+        // Header
+        lines.push(`#${ord.orderNumber || ''}`);
+        if (ord.orderType) lines.push(ord.orderType);
+        lines.push(''); // blank
+        // Customer block
+        if (ord.customerName) lines.push(`NAME: ${ord.customerName}`);
+        if (ord.phone)        lines.push(`PHONE: ${ord.phone}`);
+        if (promised)         lines.push(`READY: ${promised}`);
+        if (ord.address)      lines.push(`DELIVER: ${ord.address}`);
+        if (ord.customerName || ord.phone || promised || ord.address) lines.push('');
+        // Items
+        lines.push('--- ORDER ---');
+        for (const item of (ord.items || [])) {
+            const qty = item.qty || 1;
+            lines.push(`${qty}x ${item.name || ''}`);
+            for (const m of (item.modifiers || [])) {
+                lines.push(`   - ${m}`);
+            }
+        }
+        // Notes
+        if (ord.specialInstructions) {
+            lines.push('');
+            lines.push(`NOTES: ${ord.specialInstructions}`);
+        }
+        return lines.join('\n');
+    };
+
+    const handleLabelPrint = async (ord) => {
+        if (!kitchenReady) return;
+        const orderKey = ord.guid || ord.orderNumber || String(Math.random());
+        setLabelPrinting(orderKey);
+        try {
+            const text = buildOrderLabelText(ord);
+            const res = await printFreeText({
+                location,
+                slot: 'kitchen',
+                text,
+                size: 1,        // 1× scale — readable but compact
+                bold: true,
+                align: 'left',
+                copies: 1,
+                byName: staffName || 'orders',
+            });
+            if (res.ok) {
+                toast(isEn ? '🏷 Sent to kitchen printer' : '🏷 Enviado a la impresora');
+            } else {
+                const codeMsg = {
+                    no_printer_configured: isEn ? 'No printer set up' : 'Sin impresora',
+                    printer_disabled:      isEn ? 'Printer disabled in admin' : 'Impresora deshabilitada',
+                    timeout:               isEn ? 'Printer did not respond' : 'No respondió',
+                    network_error:         isEn ? 'Network / CORS error' : 'Error de red / CORS',
+                    text_too_long:         isEn ? 'Order is too long for one label' : 'Pedido demasiado largo',
+                    empty_text:            isEn ? 'Empty order body' : 'Pedido vacío',
+                }[res.error] || (isEn ? `Failed: ${res.error}` : `Falló: ${res.error}`);
+                toast(`⚠ ${codeMsg}`);
+            }
+        } catch (e) {
+            console.error('handleLabelPrint failed:', e);
+            toast(isEn ? '⚠ Label print failed' : '⚠ Falló la impresión');
+        } finally {
+            setLabelPrinting(null);
+        }
     };
 
     const handlePrint = (ord) => {
@@ -546,12 +647,29 @@ export default function ToastOrders({ language }) {
                                             </div>
                                         )}
 
-                                        {/* Print button */}
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); handlePrint(ord); }}
-                                            className="mt-3 w-full py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
-                                            🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
-                                        </button>
+                                        {/* Print buttons. Browser-print (full 8.5×11
+                                            HTML receipt → window.print() → OS dialog)
+                                            is always available. The thermal label
+                                            button appears only when the kitchen
+                                            printer for the current location is set
+                                            up + enabled in admin (Andrew 2026-05-29). */}
+                                        <div className={`mt-3 grid ${kitchenReady ? 'grid-cols-2' : 'grid-cols-1'} gap-2`}>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handlePrint(ord); }}
+                                                className="py-2 rounded-lg text-sm font-bold border-2 border-mint-300 text-mint-700 bg-white hover:bg-mint-50 transition">
+                                                🖨️ {isEn ? "Print Order" : "Imprimir Pedido"}
+                                            </button>
+                                            {kitchenReady && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleLabelPrint(ord); }}
+                                                    disabled={labelPrinting === (ord.guid || ord.orderNumber)}
+                                                    className="py-2 rounded-lg text-sm font-bold border-2 border-purple-300 text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-50 transition">
+                                                    {labelPrinting === (ord.guid || ord.orderNumber)
+                                                        ? (isEn ? '… Printing' : '… Imprimiendo')
+                                                        : `🏷 ${isEn ? 'Print to label printer' : 'Imprimir etiqueta'}`}
+                                                </button>
+                                            )}
+                                        </div>
                                     </div>
                                 )}
                             </div>

@@ -1001,7 +1001,7 @@ export default function CateringOrder({ language, staffName }) {
                     </div>
 
                     {/* ── Orders Tab (daily takeout/delivery) ── */}
-                    {pageTab === "orders" && <ToastOrders language={language} />}
+                    {pageTab === "orders" && <ToastOrders language={language} staffName={staffName} />}
 
                     {/* ── Catering Invoices Tab ── */}
                     {pageTab === "invoices" && <ToastInvoices language={language} />}
