@@ -157,7 +157,18 @@ export default function AssignTasksPanel({
         const list = Array.isArray(staffList) ? staffList : [];
         return list
             .filter((s) => s && s.name && s.active !== false)
-            .filter((s) => inferStaffSide(s) === side)
+            // scheduleSide === 'both' is a real value some managers
+            // have ('both' meaning they cover both sides). inferStaffSide
+            // returns null/FOH for those depending on role, which dropped
+            // them from the picker AND from the column lookup, so the
+            // assignment wrote successfully but the column never
+            // appeared. Andrew 2026-05-28: "in the current task list
+            // there is no movement when its assigned to a staff member."
+            .filter((s) => {
+                const explicit = String(s.scheduleSide || '').toLowerCase();
+                if (explicit === 'both') return true;
+                return inferStaffSide(s) === side;
+            })
             .filter((s) => !managersOnly || isManagerLike(s, { includeShiftLeads }))
             .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }, [staffList, side, managersOnly, includeShiftLeads]);
@@ -197,11 +208,19 @@ export default function AssignTasksPanel({
     // Staff columns to render = staff with at least one open assignment,
     // sorted alphabetically. Non-side staff (in case stale data appears)
     // are skipped.
+    //
+    // ID match coerces both sides to string — staffList records may
+    // have numeric ids (40, 41, ...) while Firestore round-trip can
+    // return them as strings depending on the writer. Strict equality
+    // failed when the types diverged, which caused new assignments to
+    // be silently dropped from the column render — Andrew 2026-05-28
+    // "no movement when its assigned to a staff member."
     const staffColumns = useMemo(() => {
         const ids = Array.from(assignmentsByStaff.keys());
         const enriched = ids
             .map((id) => {
-                const member = sideStaff.find((s) => s.id === id);
+                const idStr = String(id);
+                const member = sideStaff.find((s) => String(s.id) === idStr);
                 if (!member) return null;
                 return { staff: member, items: assignmentsByStaff.get(id) || [] };
             })
