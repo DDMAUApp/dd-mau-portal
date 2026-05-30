@@ -1564,7 +1564,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // doc is read-only (fallback for BOH on first load) and
                     // becomes orphaned once the user saves once.
                     await setDoc(doc(db, "config", "stations_" + breakSide), { stations, side: breakSide, updatedAt: new Date().toISOString() });
-                } catch (err) { console.error("Error saving stations:", err); }
+                } catch (err) {
+                    console.error("Error saving stations:", err);
+                    toast(language === 'es'
+                        ? '⚠ No se pudo guardar las estaciones.'
+                        : '⚠ Could not save stations.',
+                        { kind: 'error' });
+                }
             };
 
             const addStation = () => {
@@ -1622,7 +1628,13 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 setSkillsMatrix(newMatrix);
                 try {
                     await setDoc(doc(db, "config", "skillsMatrix"), { matrix: newMatrix, updatedAt: new Date().toISOString() });
-                } catch (err) { console.error("Error saving skills matrix:", err); }
+                } catch (err) {
+                    console.error("Error saving skills matrix:", err);
+                    toast(language === 'es'
+                        ? '⚠ No se pudo guardar la matriz de habilidades.'
+                        : '⚠ Could not save skills matrix.',
+                        { kind: 'error' });
+                }
             };
 
             // Check if a person can work a position (based on skill matrix)
@@ -2953,6 +2965,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     });
                 } catch (err) {
                     console.error("Error uploading photo:", err);
+                    // 2026-05-30 audit — surface to staff. Photo uploads
+                    // are the highest-stakes silent failure: the staffer
+                    // already took the photo, tapped Upload, and would
+                    // walk away assuming it was attached. Now they know.
+                    toast(language === 'es'
+                        ? '⚠ No se pudo subir la foto. Intenta de nuevo.'
+                        : '⚠ Could not upload the photo. Please try again.',
+                        { kind: 'error' });
                     // If we successfully uploaded the file but the Firestore
                     // write failed, the storage object is orphaned (no DB
                     // reference). Delete it so we don't accumulate dead bytes.
