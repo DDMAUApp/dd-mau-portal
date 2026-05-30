@@ -70,6 +70,11 @@ function emptyState() {
         // Section 3: availability
         availability: { mon:{},tue:{},wed:{},thu:{},fri:{},sat:{},sun:{} },
         minHoursPerWeek: '',
+        // 2026-05-29 — Andrew: "add a note section if they want to add a
+        // note just incase its outside the time or wanted to add
+        // something". Free-text catch-all for applicants whose real
+        // availability doesn't fit the lunch/dinner grid.
+        availabilityNote: '',
         // Section 4: experience + skills
         restaurantExperienceYears: '',
         previousRoles: [],
@@ -100,6 +105,16 @@ function emptyState() {
         truthfulnessConsent: false,
         atWillAck: false,
         typedSignature: '',
+        // 2026-05-29 — Andrew: "at the signiture page make it pop up a
+        // sign with your hand window or you can just type it. when
+        // signed add a time stamp to it kinda like docusign".
+        // signatureMethod: 'draw' | 'type' — which tab they used.
+        // drawnSignature: PNG data URL when they drew it.
+        // signedAt: ISO timestamp captured the first time we see a
+        //   non-empty signature (frozen — re-edits don't bump it).
+        signatureMethod: 'draw',
+        drawnSignature: '',
+        signedAt: '',
     };
 }
 
@@ -166,8 +181,17 @@ function validateStep(step, v, tx) {
             if (!v.contactConsent) return tx('Check the contact consent box.', 'Marca la casilla de consentimiento.');
             if (!v.truthfulnessConsent) return tx('Check the truthfulness certification.', 'Marca la casilla de certificación.');
             if (!v.atWillAck) return tx('Check the at-will acknowledgment.', 'Marca la casilla del empleo a voluntad.');
-            const sigOk = v.typedSignature.trim().toLowerCase() === v.legalName.trim().toLowerCase();
-            if (!sigOk) return tx('Typed signature must match your legal name exactly.', 'La firma debe coincidir con tu nombre legal.');
+            // Signature: accept EITHER a hand-drawn signature OR a
+            // typed name that matches the legal name. Drawn signatures
+            // can't be name-matched, so we trust any non-empty data
+            // URL. Typed mode still has to match (cheap fraud control).
+            const hasDrawn = (v.drawnSignature || '').startsWith('data:image');
+            const typedOk = v.typedSignature.trim().toLowerCase() === v.legalName.trim().toLowerCase();
+            if (v.signatureMethod === 'draw' ? !hasDrawn : !typedOk) {
+                return v.signatureMethod === 'draw'
+                    ? tx('Draw your signature in the box.', 'Dibuja tu firma en el recuadro.')
+                    : tx('Typed signature must match your legal name exactly.', 'La firma debe coincidir con tu nombre legal.');
+            }
             return null;
         }
         default: return null;
@@ -404,6 +428,7 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 // Section 3
                 availability: values.availability,
                 minHoursPerWeek: values.minHoursPerWeek ? Number(values.minHoursPerWeek) : null,
+                availabilityNote: values.availabilityNote.trim() || '',
                 // Section 4
                 restaurantExperienceYears: values.restaurantExperienceYears,
                 previousRoles: values.previousRoles,
@@ -433,14 +458,22 @@ export default function OnboardingApply({ language = 'en', onClose, onSubmitted 
                 // legacy mirrors so admin reads keep working
                 position: (POSITIONS.find(p => values.positionsAppliedFor[0] === p.id) || {}).en || '',
                 location: values.locations[0] || 'webster',
-                availabilityNote: '', // legacy text field — superseded by grid
-                note: values.anythingElse.trim() || '',
                 // Section 10
                 contactConsent: true,
                 truthfulnessConsent: true,
                 atWillAck: true,
                 typedSignature: values.typedSignature.trim(),
-                signedAt: new Date().toISOString(),
+                drawnSignature: values.drawnSignature || '',
+                signatureMethod: values.signatureMethod || 'type',
+                // signedAt is captured the moment the applicant lifts
+                // their finger from the canvas (or types the matching
+                // name), then frozen. Falls back to "now" only if
+                // somehow missing — the validator would have caught
+                // an empty signature already so this should be rare.
+                signedAt: values.signedAt || new Date().toISOString(),
+                // legacy mirror for downstream readers that expected
+                // the old free-text field
+                note: values.anythingElse.trim() || '',
                 userAgent: navigator.userAgent || '',
                 ipHash: ipHash,
                 // Lifecycle
@@ -994,6 +1027,34 @@ function Step3({ values, setNested, setField, isEs }) {
                 <TextInput type="number" inputMode="numeric" value={values.minHoursPerWeek}
                     onChange={v => setField('minHoursPerWeek', v)} placeholder="20" maxLength={2} />
             </div>
+
+            {/* 2026-05-29 — Andrew added this for cases where the
+                applicant's real availability doesn't fit the two grid
+                windows (e.g. "I can do 6-10am weekdays before class"
+                or "weekends only after 4pm"). Free-text so the hiring
+                manager sees the nuance during review. */}
+            <div>
+                <FieldLabel helper={tx(
+                    'Anything else about your availability — outside the windows above, school schedule, blackouts, etc.',
+                    'Algo más sobre tu disponibilidad — fuera de los horarios, escuela, días que no puedes, etc.',
+                )}>
+                    {tx('Availability note (optional)', 'Nota de disponibilidad (opcional)')}
+                </FieldLabel>
+                <textarea
+                    value={values.availabilityNote}
+                    onChange={e => setField('availabilityNote', e.target.value)}
+                    placeholder={tx(
+                        'Example: I can only work weekday mornings before school starts at noon.',
+                        'Ejemplo: solo puedo trabajar mañanas entre semana antes de la escuela.',
+                    )}
+                    rows={3}
+                    maxLength={500}
+                    className="w-full border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-dd-green"
+                />
+                <div className="text-[10px] text-gray-400 text-right mt-0.5">
+                    {(values.availabilityNote || '').length}/500
+                </div>
+            </div>
         </div>
     );
 }
@@ -1407,23 +1468,235 @@ function Step10({ values, setField, isEs }) {
             </label>
 
             <div>
-                <FieldLabel required helper={tx('Type your full legal name to sign.', 'Escribe tu nombre legal completo para firmar.')}>
+                <FieldLabel required helper={tx(
+                    'Draw your signature with your finger/mouse or type your full legal name.',
+                    'Dibuja tu firma con el dedo/ratón o escribe tu nombre legal.',
+                )}>
                     {tx('Signature', 'Firma')}
                 </FieldLabel>
-                <input value={values.typedSignature} onChange={e => setField('typedSignature', e.target.value)}
-                    placeholder={values.legalName || tx('Your legal name', 'Tu nombre legal')} maxLength={80}
-                    autoComplete="off"
-                    className={`w-full border-2 rounded-lg px-3 py-3 text-sm font-bold italic ${
-                        sigOk ? 'border-green-500 bg-green-50' :
-                        values.typedSignature ? 'border-amber-500 bg-amber-50' :
-                        'border-gray-300'
-                    }`} />
-                {values.typedSignature && !sigOk && (
-                    <p className="text-[11px] text-amber-700 mt-1">
-                        {tx('Must match your legal name exactly.', 'Debe coincidir exactamente con tu nombre legal.')}
-                    </p>
-                )}
+                <SignatureField
+                    method={values.signatureMethod}
+                    drawn={values.drawnSignature}
+                    typed={values.typedSignature}
+                    typedOk={sigOk}
+                    legalName={values.legalName}
+                    signedAt={values.signedAt}
+                    isEs={isEs}
+                    onMethodChange={(m) => setField('signatureMethod', m)}
+                    onDrawn={(dataUrl) => {
+                        setField('drawnSignature', dataUrl || '');
+                        // Freeze the signedAt timestamp on first
+                        // non-empty signature. DocuSign-style — the
+                        // moment they finish the stroke (or clear
+                        // and re-sign), capture now().
+                        if (dataUrl && !values.signedAt) {
+                            setField('signedAt', new Date().toISOString());
+                        }
+                        if (!dataUrl) {
+                            setField('signedAt', '');
+                        }
+                    }}
+                    onTyped={(v) => {
+                        setField('typedSignature', v);
+                        const matches = v.trim().toLowerCase() === values.legalName.trim().toLowerCase()
+                            && v.trim().length > 0;
+                        if (matches && !values.signedAt) {
+                            setField('signedAt', new Date().toISOString());
+                        }
+                        if (!matches) {
+                            setField('signedAt', '');
+                        }
+                    }}
+                />
             </div>
+        </div>
+    );
+}
+
+// ── SignatureField — Draw / Type tabs, hand-drawn canvas, DocuSign-style
+// timestamp once signed. Drawing uses Pointer Events so finger + mouse
+// both work without extra deps. Output is a PNG data URL — small enough
+// to embed in the application doc, big enough to render legibly when
+// the admin reviews it later.
+function SignatureField({
+    method, drawn, typed, typedOk, legalName, signedAt, isEs,
+    onMethodChange, onDrawn, onTyped,
+}) {
+    const tx = (en, es) => (isEs ? es : en);
+    const canvasRef = useRef(null);
+    const drawingRef = useRef(false);
+    const lastPtRef = useRef(null);
+    const hasInkRef = useRef(false);
+
+    // Resize the canvas to its CSS pixel size × DPR so strokes are
+    // crisp on retina screens. Run once on mount + on window resize.
+    useEffect(() => {
+        if (method !== 'draw') return;
+        const cv = canvasRef.current;
+        if (!cv) return;
+        const fit = () => {
+            const rect = cv.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            cv.width = Math.round(rect.width * dpr);
+            cv.height = Math.round(rect.height * dpr);
+            const ctx = cv.getContext('2d');
+            ctx.scale(dpr, dpr);
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = '#111';
+            // If we already had a drawn signature (e.g. the user came
+            // back to this step), re-paint it onto the resized canvas.
+            if (drawn && drawn.startsWith('data:image')) {
+                const img = new Image();
+                img.onload = () => ctx.drawImage(img, 0, 0, rect.width, rect.height);
+                img.src = drawn;
+                hasInkRef.current = true;
+            }
+        };
+        fit();
+        window.addEventListener('resize', fit);
+        return () => window.removeEventListener('resize', fit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [method]);
+
+    const ptOf = (e) => {
+        const cv = canvasRef.current;
+        const rect = cv.getBoundingClientRect();
+        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    };
+    const startStroke = (e) => {
+        e.preventDefault();
+        drawingRef.current = true;
+        const p = ptOf(e);
+        lastPtRef.current = p;
+        const ctx = canvasRef.current.getContext('2d');
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+    };
+    const extendStroke = (e) => {
+        if (!drawingRef.current) return;
+        e.preventDefault();
+        const p = ptOf(e);
+        const ctx = canvasRef.current.getContext('2d');
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+        lastPtRef.current = p;
+        hasInkRef.current = true;
+    };
+    const endStroke = () => {
+        if (!drawingRef.current) return;
+        drawingRef.current = false;
+        if (hasInkRef.current) {
+            try {
+                const dataUrl = canvasRef.current.toDataURL('image/png');
+                onDrawn(dataUrl);
+            } catch {}
+        }
+    };
+    const clearCanvas = () => {
+        const cv = canvasRef.current;
+        if (!cv) return;
+        const ctx = cv.getContext('2d');
+        ctx.clearRect(0, 0, cv.width, cv.height);
+        hasInkRef.current = false;
+        onDrawn('');
+    };
+
+    // Friendly format for the timestamp pill (DocuSign-style).
+    const fmtSignedAt = (iso) => {
+        if (!iso) return '';
+        try {
+            return new Date(iso).toLocaleString(isEs ? 'es-US' : 'en-US', {
+                weekday: 'short', month: 'short', day: 'numeric',
+                hour: 'numeric', minute: '2-digit',
+                timeZoneName: 'short',
+            });
+        } catch { return iso; }
+    };
+
+    const hasDrawn = (drawn || '').startsWith('data:image');
+    const signedOk = method === 'draw' ? hasDrawn : typedOk;
+
+    return (
+        <div className="space-y-2">
+            {/* Tabs */}
+            <div className="inline-flex bg-gray-100 rounded-lg p-0.5 text-[12px] font-bold">
+                <button type="button"
+                    onClick={() => onMethodChange('draw')}
+                    className={`px-3 py-1.5 rounded-md transition ${
+                        method === 'draw' ? 'bg-white text-dd-green shadow-sm' : 'text-gray-500'
+                    }`}>
+                    ✍ {tx('Draw', 'Dibujar')}
+                </button>
+                <button type="button"
+                    onClick={() => onMethodChange('type')}
+                    className={`px-3 py-1.5 rounded-md transition ${
+                        method === 'type' ? 'bg-white text-dd-green shadow-sm' : 'text-gray-500'
+                    }`}>
+                    ⌨ {tx('Type', 'Escribir')}
+                </button>
+            </div>
+
+            {method === 'draw' ? (
+                <div>
+                    <div className={`relative border-2 rounded-lg bg-white overflow-hidden ${
+                        signedOk ? 'border-green-500' : 'border-gray-300'
+                    }`}>
+                        <canvas
+                            ref={canvasRef}
+                            onPointerDown={startStroke}
+                            onPointerMove={extendStroke}
+                            onPointerUp={endStroke}
+                            onPointerLeave={endStroke}
+                            onPointerCancel={endStroke}
+                            style={{ touchAction: 'none', width: '100%', height: '140px', display: 'block' }}
+                        />
+                        {!hasInkRef.current && !hasDrawn && (
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-[12px] text-gray-400 italic">
+                                {tx('Sign here with your finger or mouse', 'Firma aquí con el dedo o el ratón')}
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex items-center justify-between mt-1">
+                        <button type="button" onClick={clearCanvas}
+                            className="text-[11px] font-bold text-gray-500 hover:text-gray-700">
+                            ✕ {tx('Clear', 'Borrar')}
+                        </button>
+                        {signedOk && signedAt && (
+                            <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                                ✓ {tx('Signed', 'Firmado')} · {fmtSignedAt(signedAt)}
+                            </span>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <div>
+                    <input
+                        value={typed}
+                        onChange={e => onTyped(e.target.value)}
+                        placeholder={legalName || tx('Your legal name', 'Tu nombre legal')}
+                        maxLength={80}
+                        autoComplete="off"
+                        className={`w-full border-2 rounded-lg px-3 py-3 text-sm font-bold italic ${
+                            typedOk ? 'border-green-500 bg-green-50' :
+                            typed ? 'border-amber-500 bg-amber-50' :
+                            'border-gray-300'
+                        }`} />
+                    <div className="flex items-center justify-between mt-1">
+                        {typed && !typedOk
+                            ? <p className="text-[11px] text-amber-700">
+                                  {tx('Must match your legal name exactly.', 'Debe coincidir exactamente con tu nombre legal.')}
+                              </p>
+                            : <span />}
+                        {signedOk && signedAt && (
+                            <span className="text-[10px] font-bold text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5">
+                                ✓ {tx('Signed', 'Firmado')} · {fmtSignedAt(signedAt)}
+                            </span>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

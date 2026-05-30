@@ -55,11 +55,14 @@ export const DAYS = [
     { id: 'sun', en: 'Sun', es: 'Dom' },
 ];
 
+// 2026-05-29 — Andrew: "the available work hours we should just have
+// 10-3 for lunch 3-8 dinner". Simplified from 4 windows (open/lunch/
+// dinner/close) to 2 windows that match the restaurant's actual
+// operating shifts. Applicants who can work outside these windows
+// can say so in `availabilityNote` (free-text field, same step).
 export const SHIFT_BLOCKS = [
-    { id: 'open',   en: 'Open (6a-11a)',   es: 'Apertura (6a-11a)' },
-    { id: 'lunch',  en: 'Lunch (11a-3p)',  es: 'Almuerzo (11a-3p)' },
-    { id: 'dinner', en: 'Dinner (3p-9p)',  es: 'Cena (3p-9p)' },
-    { id: 'close',  en: 'Close (9p-mid)',  es: 'Cierre (9p-12a)' },
+    { id: 'lunch',  en: 'Lunch (10a-3p)',  es: 'Almuerzo (10a-3p)' },
+    { id: 'dinner', en: 'Dinner (3p-8p)',  es: 'Cena (3p-8p)' },
 ];
 
 export const EXPERIENCE_YEARS = [
