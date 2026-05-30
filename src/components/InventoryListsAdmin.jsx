@@ -491,6 +491,61 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
         setCats(next);
     };
 
+    // 2026-05-29 — Andrew: "the other category is at the bottom and
+    // there is around 80 items. the drink has around 505 items and
+    // should be around 20-30". Per-item delete already exists but
+    // doesn't scale to 80+. These two bulk actions cover the cleanup
+    // patterns Andrew actually needs:
+    //
+    //   • clearCatItems  — wipe every item in a category but keep the
+    //                      category header. Useful for the "Other"
+    //                      catch-all once you decide nothing in it is
+    //                      worth keeping.
+    //   • resetCatToMaster — find the matching category by name in
+    //                        INVENTORY_CATEGORIES (the canonical seed
+    //                        in src/data/inventory.js) and replace
+    //                        items with that seed. The Drinks fix:
+    //                        Drinks bloats to 505 over time as
+    //                        scrapers add vendor SKUs; the seed has 24.
+    //
+    // Both confirm with the current count so Andrew can't fat-finger.
+    // Both are LOCAL ONLY until Save is hit — Discard reverts.
+    const clearCatItems = (catIdx) => {
+        const c = cats[catIdx];
+        const count = (c.items || []).length;
+        if (count === 0) return;
+        if (!window.confirm(tx(
+            `Delete all ${count} items in "${c.name}"? The category itself stays. Discard before saving to undo.`,
+            `¿Borrar los ${count} artículos en "${c.name}"? La categoría se queda. Toca Descartar antes de guardar para deshacer.`,
+        ))) return;
+        const next = [...cats];
+        next[catIdx] = { ...next[catIdx], items: [] };
+        setCats(next);
+    };
+    const resetCatToMaster = (catIdx) => {
+        const c = cats[catIdx];
+        const master = INVENTORY_CATEGORIES.find(m => m.name === c.name);
+        if (!master) {
+            window.alert(tx(
+                `No master seed category named "${c.name}". Reset only works for canonical categories (Proteins, Veggies, Drinks, etc.).`,
+                `Sin categoría maestra llamada "${c.name}". Reset solo funciona con categorías canónicas.`,
+            ));
+            return;
+        }
+        const have = (c.items || []).length;
+        const seed = (master.items || []).length;
+        if (!window.confirm(tx(
+            `Replace the ${have} items in "${c.name}" with the ${seed} canonical seed items? You'll lose any custom items added here. Discard before saving to undo.`,
+            `¿Reemplazar los ${have} artículos en "${c.name}" con los ${seed} artículos maestros? Perderás los personalizados. Toca Descartar antes de guardar para deshacer.`,
+        ))) return;
+        const next = [...cats];
+        next[catIdx] = {
+            ...next[catIdx],
+            items: (master.items || []).map(it => ({ ...it })),
+        };
+        setCats(next);
+    };
+
     // Set of item ids currently in the list — fast membership check
     // for the left pane's checkmark rendering.
     const presentIds = useMemo(() => {
@@ -776,7 +831,30 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                                         onChange={e => renameCat(catIdx, e.target.value)}
                                         className="flex-1 min-w-0 px-1.5 py-0.5 rounded border border-dd-line text-xs font-bold bg-white" />
                                     <span className="text-[10px] text-dd-text-2">{cat.items?.length || 0}</span>
+                                    {/* Bulk actions — added 2026-05-29 for cleaning
+                                        bloated categories (Other has 80 items,
+                                        Drinks has 505 → should be 24). Reset only
+                                        shows when this category has a matching
+                                        canonical seed in INVENTORY_CATEGORIES. */}
+                                    {INVENTORY_CATEGORIES.some(m => m.name === cat.name) && (
+                                        <button onClick={() => resetCatToMaster(catIdx)}
+                                            title={tx('Reset to master seed (replaces all items)',
+                                                'Restaurar a la lista maestra (reemplaza todo)')}
+                                            className="px-1.5 py-0.5 rounded text-[10px] text-blue-700 hover:bg-blue-50 font-bold">
+                                            ↻ {tx('Reset', 'Reset')}
+                                        </button>
+                                    )}
+                                    {(cat.items?.length || 0) > 0 && (
+                                        <button onClick={() => clearCatItems(catIdx)}
+                                            title={tx('Delete every item in this category (keep header)',
+                                                'Borrar todos los artículos de esta categoría (mantener encabezado)')}
+                                            className="px-1.5 py-0.5 rounded text-[10px] text-amber-700 hover:bg-amber-50 font-bold">
+                                            🧹 {tx('Empty', 'Vaciar')}
+                                        </button>
+                                    )}
                                     <button onClick={() => removeCat(catIdx)}
+                                        title={tx('Remove this category (and all items)',
+                                            'Quitar categoría (y todos los artículos)')}
                                         className="px-1.5 py-0.5 rounded text-[10px] text-red-700 hover:bg-red-50">🗑</button>
                                 </div>
                                 <div className="bg-white">
