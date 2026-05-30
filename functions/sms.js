@@ -246,20 +246,30 @@ function classifyInboundBody(body) {
 // Update a staff record's SMS fields atomically. Reads config/staff,
 // maps the list, writes back. Returns the updated staff record (or
 // null if no match).
+//
+// HF-1, 2026-05-30: WAS read+modify+set without a transaction. STOP
+// replies + concurrent dispatchSms sends race — whichever wrote last
+// silently clobbered the other's update. Same pattern that caused the
+// 2026-05-09 PIN-wipe regression. Now wrapped in runTransaction so the
+// read is re-done if the doc was touched between read and write.
 async function updateStaffSmsState(db, staffName, updates) {
     if (!staffName) return null;
     const ref = db.doc("config/staff");
-    const snap = await ref.get();
-    const list = (snap.exists ? snap.data().list : []) || [];
     let found = null;
-    const newList = list.map((s) => {
-        if (!s || s.name !== staffName) return s;
-        const merged = { ...s, ...updates };
-        found = merged;
-        return merged;
+    await db.runTransaction(async (tx) => {
+        const snap = await tx.get(ref);
+        const list = (snap.exists ? snap.data().list : []) || [];
+        let didMatch = false;
+        const newList = list.map((s) => {
+            if (!s || s.name !== staffName) return s;
+            const merged = { ...s, ...updates };
+            found = merged;
+            didMatch = true;
+            return merged;
+        });
+        if (!didMatch) return;       // no matching staff — skip write
+        tx.set(ref, { list: newList });
     });
-    if (!found) return null;
-    await ref.set({ list: newList });
     return found;
 }
 

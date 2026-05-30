@@ -61,11 +61,17 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
     const isEs = language === "es";
 
     // Tick once a second while locked so the countdown updates.
+    // MED-1, 2026-05-30: `now` was previously in the dep array, which
+    // tore down + recreated the interval EVERY tick. Removing it lets
+    // a single interval run for the full lock window. The early-return
+    // still self-stops once the lock clears (when the next state change
+    // re-evaluates the effect).
     useEffect(() => {
-        if (!lockedUntil || lockedUntil <= now) return;
+        if (!lockedUntil) return;
+        if (lockedUntil <= Date.now()) return;
         const id = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(id);
-    }, [lockedUntil, now]);
+    }, [lockedUntil]);
 
     // Auto-submit when the 4th digit lands. Saves a tap — most staff
     // were typing four digits and then having to scan down to the OK

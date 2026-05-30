@@ -181,7 +181,7 @@ export default function MobileHome({
         if (h < 18) return tx('Good afternoon', 'Buenas tardes');
         return tx('Good evening', 'Buenas noches');
     })();
-    const firstName = (staffName || '').split(' ')[0] || tx('there', '');
+    const firstName = (staffName || '').split(' ')[0] || tx('there', 'hola');
     const todayDateLabel = (() => {
         const d = new Date();
         return d.toLocaleDateString(isEs ? 'es' : 'en', {

@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense, memo } from 'react';
 import { db, storage } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
+import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, serverTimestamp, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
-import { isAdmin, ADMIN_NAMES, DEFAULT_STAFF, LOCATION_LABELS, canViewLabor } from '../data/staff';
+import { isAdmin, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
@@ -396,7 +396,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // which vendor data is current vs stale per location.
             //
             // Shape: { sysco: { dateIso, dateLabel, fileName }, ... }
-            const [lastVendorImport, setLastVendorImport] = useState({});
+            // DC-2, 2026-05-30: removed lastVendorImport state — was set
+            // once (per-vendor CSV import time) but never read anywhere.
+            // The "last imported" label rendering it powered was removed
+            // in an earlier refactor; the setter was left behind.
             // CSV-import modal — replaces the broken Sysco/USF live scraper
             // for any week where the scraper is down. Admin exports the
             // order guide from the vendor portal (one click) and uploads
@@ -408,7 +411,10 @@ export default function Operations({ language, staffList, staffName, storeLocati
             // master inventory ids. Stored under inventory_<location>.vendorCounts in Firestore.
             const [vendorCounts, setVendorCounts] = useState({});
             const [activeTab, setActiveTab] = useState("checklist");
-            const [lastUpdated, setLastUpdated] = useState({});
+            // DC-2, 2026-05-30: removed lastUpdated state — set 4× from
+            // snapshot handlers but never rendered (the "last updated X"
+            // ribbon was removed in an earlier UI cleanup). Setter calls
+            // below are dropped too.
             const [editMode, setEditMode] = useState(false);
             const [editingIdx, setEditingIdx] = useState(null);
             // Per-task messaging composer state. When non-null = open for that
@@ -436,8 +442,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [newRequirePhoto, setNewRequirePhoto] = useState(false);
             // Category filter for the task list view (also used by quick-add to default the new task's category)
             const [categoryFilter, setCategoryFilter] = useState("all");
-            // Skip-with-reason modal state — { taskId, parentTaskId } when picking, null otherwise
-            const [skipPickerFor, setSkipPickerFor] = useState(null);
+            // DC-2, 2026-05-30: removed skipPickerFor state — set once
+            // to null after the modal closed but never read; the modal
+            // it gated was migrated to a different pattern.
             // Quick-add inline input state (single field on top of task list)
             const [quickAddText, setQuickAddText] = useState("");
             // Per-task comments — which task's thread is open + draft text
@@ -1909,7 +1916,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             const migLists = { FOH: [{ id: "FOH_0", assignee: (data.assignments || {})["FOH_all"] || "" }], BOH: [{ id: "BOH_0", assignee: (data.assignments || {})["BOH_all"] || "" }] };
                             setChecklistLists(migLists);
                         }
-                        setLastUpdated(prev => ({ ...prev, checklists: data.updatedAt ? new Date(data.updatedAt).toLocaleString() : "" }));
                     }
                 });
 
@@ -1950,7 +1956,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         // doc (per-location, orthogonal to the list).
                         const overrideList = activeListRef.current;
                         if (overrideList && Array.isArray(overrideList.categories) && overrideList.categories.length > 0) {
-                            setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
                             return;
                         }
                         if (data.customInventory) {
@@ -1964,8 +1969,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             // → re-derivation of every useMemo in the tab.
                             const nextHash = JSON.stringify(data.customInventory);
                             if (nextHash === lastCustomInvHash) {
-                                setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
-                                return;
+                                    return;
                             }
                             lastCustomInvHash = nextHash;
                             // Merge Firestore custom items into the master INVENTORY_CATEGORIES
@@ -2058,7 +2062,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                                 });
                             }
                         }
-                        setLastUpdated(prev => ({ ...prev, inventory: data.date ? new Date(data.date).toLocaleString() : "" }));
                     }
                 });
 
@@ -2820,7 +2823,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 else { delete newChecks[pKey + "_skipNote"]; patch[pKey + "_skipNote"] = undefined; }
                 setChecks(newChecks);
                 await writeCheckPatch(patch);
-                setSkipPickerFor(null);
             };
 
             const unskipTask = async (taskId) => {
@@ -3524,7 +3526,6 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         };
                     }
                     setLastEnteredByItem(summary);
-                    setLastVendorImport(vendorImports);
                     setSuggestedByItem(suggestions);
                 } catch (err) {
                     console.warn('reloadLastEnteredByItem failed:', err);
@@ -3654,7 +3655,8 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         await updateDoc(vmRef, updates);
                     }
                 }
-                console.log(`[idMigration] healed ${Object.keys(idMigration).length} ids`);
+                // MED-5, 2026-05-30: removed [idMigration] console.log left
+                // in production after the one-shot heal migration shipped.
             };
 
             const inventoryDocRef = () => doc(db, "ops", "inventory_" + storeLocation);

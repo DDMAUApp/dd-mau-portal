@@ -120,10 +120,19 @@ const {
 async function isOnShiftNow(staffName) {
     if (!staffName) return false;
     const now = Date.now();
+    // HF-3, 2026-05-30: derive date keys in America/Chicago, not UTC.
+    // The previous UTC-based fmt() worked by coincidence (UTC is 5-6h
+    // ahead of CT, so [UTC-yesterday, UTC-today] happened to cover the
+    // right CT dates most of the day) but the intent is fragile. Using
+    // CT directly makes the dateRange self-explanatory and removes the
+    // hidden coupling to the UTC-vs-CT offset.
     const today = new Date();
     const yest = new Date(today.getTime() - 86400_000);
-    const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const dateRange = [fmt(yest), fmt(today)];
+    const ctDateKey = (d) => new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Chicago',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+    const dateRange = [ctDateKey(yest), ctDateKey(today)];
 
     const snap = await db
         .collection("shifts")
@@ -1027,10 +1036,22 @@ exports.sendShiftReminders = onSchedule(
         const windowEnd = now + 65 * 60 * 1000;   // 65 min from now
 
         // Date range covering today and tomorrow (broad query, then filter in JS).
+        //
+        // HF-3, 2026-05-30: derive date keys in America/Chicago, not UTC.
+        // Cron runs every 5 min. Between midnight UTC and ~5am UTC
+        // (= 6pm-11pm CT prior day), UTC "today" is the next CT calendar
+        // day, so [UTC-today, UTC-tomorrow] EXCLUDES the actual CT-today
+        // date — meaning every CT-evening shift dated for the current CT
+        // day silently lost its 1-hour reminder during that 5-hour window.
+        // ctDateKey resolves to the CT calendar date for `d`, fixing the
+        // gap.
         const today = new Date();
         const tomorrow = new Date(today.getTime() + 24 * 60 * 60 * 1000);
-        const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        const dateRange = [fmt(today), fmt(tomorrow)];
+        const ctDateKey = (d) => new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'America/Chicago',
+            year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(d);
+        const dateRange = [ctDateKey(today), ctDateKey(tomorrow)];
 
         const snap = await db
             .collection("shifts")
@@ -1668,7 +1689,12 @@ exports.scheduledFirestoreBackup = onSchedule(
 // Runs daily at 3:30am Central (after the backup at 3am).
 exports.expireAndPurgeApplications = onSchedule(
     {
-        schedule: "30 9 * * *", // 9:30 UTC = 3:30 Central daylight
+        // MED-3, 2026-05-30: comment used to claim "9:30 UTC = 3:30 Central"
+        // but `timeZone: "America/Chicago"` is set, so the cron expression
+        // is already evaluated in Central time — this runs at 9:30 AM CT,
+        // not 3:30 AM CT. If 3:30 AM is wanted, change the cron to "30 3 * * *".
+        // For now: documenting actual behavior.
+        schedule: "30 9 * * *", // 9:30 AM Central (DST-aware via timeZone)
         timeZone: "America/Chicago",
         region: "us-central1",
         // 2026-05-24 audit: was reading the entire onboarding_applications
@@ -1978,7 +2004,20 @@ exports.i9ReverificationReminder = onSchedule(
                 }));
                 pingedCount++;
             });
-            await Promise.all(ops);
+            // HF-4, 2026-05-30: Promise.allSettled instead of Promise.all.
+            // One failing notification write (e.g. one admin's doc rejected
+            // by a stale snapshot) used to roll back the per-hire
+            // i9ReverifyPingedFor arrayUnion update too — the next cron
+            // run would re-fire the same pings to every admin. Settled
+            // lets each write succeed or fail independently, and the dedup
+            // marker survives partial failures. Failed writes are logged
+            // so they're not silently swallowed.
+            const results = await Promise.allSettled(ops);
+            const failed = results.filter(r => r.status === "rejected");
+            if (failed.length) {
+                logger.warn(`i9 reverify: ${failed.length}/${results.length} ops failed`,
+                    failed.slice(0, 5).map(f => f.reason?.message || String(f.reason)));
+            }
             logger.info(`i9 reverify: pinged ${pingedCount} hire(s)`);
         } catch (err) {
             logger.error("i9ReverificationReminder failed", err);
@@ -2004,7 +2043,11 @@ exports.i9ReverificationReminder = onSchedule(
 // Runs weekly Sunday 4am Central.
 exports.purgeVoidedChecks = onSchedule(
     {
-        schedule: "0 9 * * 0", // 9 UTC Sunday = 4 Central daylight
+        // MED-3, 2026-05-30: same misleading-comment fix as
+        // expireAndPurgeApplications. With timeZone:"America/Chicago" the
+        // cron expression is evaluated in CT, so this runs Sunday 9 AM CT
+        // (NOT 4 AM as the old comment claimed).
+        schedule: "0 9 * * 0", // 9 AM Sunday Central (DST-aware via timeZone)
         timeZone: "America/Chicago",
         region: "us-central1",
     },
@@ -2031,11 +2074,25 @@ exports.purgeVoidedChecks = onSchedule(
                     await d.ref.update({ voidedCheckPurgedAt: new Date().toISOString() });
                     continue;
                 }
-                await Promise.all(files.map((f) => f.delete().catch(() => null)));
-                purgedFiles += files.length;
+                // HF-5, 2026-05-30: log delete failures instead of swallowing.
+                // The old `.catch(() => null)` made bucket-permission errors
+                // invisible — voidedCheckPurgedAt got stamped even when zero
+                // files were actually removed, leaving stale PII on disk
+                // forever with no signal that anything went wrong.
+                const results = await Promise.allSettled(files.map((f) => f.delete()));
+                const failures = results.filter(r => r.status === "rejected");
+                const succeeded = results.length - failures.length;
+                if (failures.length) {
+                    logger.warn(`voided check purge: ${failures.length}/${files.length} delete(s) failed for ${d.id}`,
+                        failures.slice(0, 3).map(f => f.reason?.message || String(f.reason)));
+                }
+                purgedFiles += succeeded;
                 await d.ref.update({
                     voidedCheckPurgedAt: new Date().toISOString(),
-                    voidedCheckPurgedCount: files.length,
+                    voidedCheckPurgedCount: succeeded,
+                    // Surface partial-failure count on the hire doc so admin
+                    // can spot stuck purges in the dashboard.
+                    ...(failures.length ? { voidedCheckPurgeFailedCount: failures.length } : {}),
                 });
                 try {
                     await db.collection("onboarding_audits").add({

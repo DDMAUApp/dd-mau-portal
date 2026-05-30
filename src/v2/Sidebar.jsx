@@ -368,7 +368,7 @@ export default function Sidebar({
                         </div>
                         <div className="min-w-0 flex-1">
                             <div className="text-xs font-semibold text-white truncate">{staffName}</div>
-                            <div className="text-[9px] text-white/40 leading-tight">Signed in</div>
+                            <div className="text-[9px] text-white/40 leading-tight">{isEs ? 'Conectado' : 'Signed in'}</div>
                         </div>
                     </div>
                 )}

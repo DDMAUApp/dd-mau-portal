@@ -36,7 +36,7 @@ import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../da
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { enableFcmPush } from '../messaging';
-import { DAYPARTS, DOW_EN, DOW_ES, aggregateSplh, scheduledHoursByDayPart, fmtUSD, splhTone, variance } from '../data/splh';
+import { DAYPARTS, aggregateSplh, scheduledHoursByDayPart, variance } from '../data/splh';
 // 2026-05-27 — Andrew: forecast bar redesigned to a weather-channel-
 // style row of day cards. Lucide weather glyphs picked per NWS
 // shortForecast keyword (sunny/cloudy/rain/etc.).
@@ -522,8 +522,9 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Time-off entries (Phase 2: admin-entered on behalf of staff. Phase 3: staff self-serve).
     const [timeOff, setTimeOff] = useState([]);
     const [showTimeOffModal, setShowTimeOffModal] = useState(false);
-    // Auto-populate modal
-    const [showAutoFillModal, setShowAutoFillModal] = useState(false);
+    // DC-2, 2026-05-30: removed showAutoFillModal state — only ever set
+    // to `false` from inside the success path; the modal was migrated to
+    // a different gate and the open-trigger no longer wired this state.
     // Phase 3: staff self-serve PTO request modal + my-availability modal
     const [showPtoRequestModal, setShowPtoRequestModal] = useState(false);
     const [showMyAvailModal, setShowMyAvailModal] = useState(false);
@@ -848,8 +849,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     }, [sixMonthsAgo]);
 
     // ── Listen for day templates ──
+    // MED-2, 2026-05-30: capped at 200 docs. Realistic max for DD Mau is
+    // a few dozen reusable day patterns; 200 is comfortable headroom
+    // while still preventing an unbounded read if a future bug starts
+    // minting templates in a loop.
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'schedule_templates'), (snap) => {
+        const unsub = onSnapshot(query(collection(db, 'schedule_templates'), limit(200)), (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setScheduleTemplates(items);
@@ -966,8 +971,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     }, [storeLocation]);
 
     // ── Listen for recurring shift rules ──
+    // MED-2, 2026-05-30: capped at 200 docs. Realistic upper bound is
+    // staff_count × rules_per_staff (≈ 25 × 4 = 100 today). 200 cap
+    // protects against runaway growth or a bulk-import bug.
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'recurring_shifts'), (snap) => {
+        const unsub = onSnapshot(query(collection(db, 'recurring_shifts'), limit(200)), (snap) => {
             const items = [];
             snap.forEach((d) => items.push({ id: d.id, ...d.data() }));
             setRecurringShifts(items);
@@ -4476,7 +4484,6 @@ ${dayBlocks}
             }
             toast(tx(`✅ Auto-filled ${created.length} draft shifts.${skipped.length ? `\n\nSkipped:\n${skipped.slice(0,5).join('\n')}` : ''}`,
                 `✅ Se auto-rellenaron ${created.length} turnos borrador.${skipped.length ? `\n\nOmitidos:\n${skipped.slice(0,5).join('\n')}` : ''}`));
-            setShowAutoFillModal(false);
         } catch (e) {
             console.error('Auto-fill failed:', e);
             toast(tx('Auto-fill error: ', 'Error de auto-rellenar: ') + e.message);
@@ -4509,7 +4516,7 @@ ${dayBlocks}
                 <div>
                     <h2 className="text-2xl font-bold text-dd-text">📅 {tx('Schedule', 'Horario')}</h2>
                     <p className="text-xs text-dd-text-2 mt-0.5 flex items-center gap-2 flex-wrap">
-                        <span>📍 {LOCATION_LABELS[storeLocation] || storeLocation} · {side === 'foh' ? tx('Front of House', 'Front of House') : tx('Back of House', 'Back of House')}</span>
+                        <span>📍 {LOCATION_LABELS[storeLocation] || storeLocation} · {side === 'foh' ? tx('Front of House', 'Servicio') : tx('Back of House', 'Cocina')}</span>
                         {/* Cache + freshness indicator. Shown only after the
                             page has settled (no flash on cold load). Three
                             states:
@@ -4581,13 +4588,13 @@ ${dayBlocks}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'foh' ? 'bg-dd-green/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
                         <Sofa size={16} strokeWidth={2.25} aria-hidden="true"
                             className={side === 'foh' ? 'text-white' : 'text-dd-green-700'} />
-                        {tx('Front of House', 'Front of House')}
+                        {tx('Front of House', 'Servicio')}
                     </button>
                     <button onClick={() => setSide('boh')}
                         className={`flex-1 py-2 rounded-md text-sm font-bold transition flex items-center justify-center gap-1.5 ${side === 'boh' ? 'bg-orange-600/90 text-white shadow-sm backdrop-blur-sm' : 'text-dd-text-2 hover:bg-dd-bg'}`}>
                         <Utensils size={16} strokeWidth={2.25} aria-hidden="true"
                             className={side === 'boh' ? 'text-white' : 'text-dd-green-700'} />
-                        {tx('Back of House', 'Back of House')}
+                        {tx('Back of House', 'Cocina')}
                     </button>
                 </div>
             )}
@@ -4826,7 +4833,7 @@ ${dayBlocks}
                                 {/* ADMIN */}
                                 {canEdit && (
                                     <div className="px-3 py-2">
-                                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Admin', 'Admin')}</div>
+                                        <div className="text-[10px] font-bold uppercase tracking-wider text-dd-text-2 mb-1">{tx('Admin', 'Administración')}</div>
                                         <button onClick={() => { setShowMoreActions(false); handleAutoPopulate(); }}
                                             className="w-full text-left px-2 py-1.5 rounded-md hover:bg-dd-sage-50 flex items-center gap-2 text-sm text-dd-green-700 font-semibold">
                                             <span>✨</span>{tx('Auto-fill week', 'Auto-rellenar')}

@@ -6,12 +6,9 @@ import { isAdmin, ADMIN_IDS, LOCATION_LABELS, HIDEABLE_PAGES } from '../data/sta
 import { getPositionTemplate, hasPositionTemplate } from '../data/positionTemplates';
 import {
     normalizeToE164,
-    isValidPhone,
     formatE164ForDisplay,
     smsStatusPill,
     writeClientOptInEvent,
-    CONSENT_TEXT,
-    CONSENT_TEXT_VERSION,
 } from '../data/sms';
 import ChecklistHistory from './ChecklistHistory';
 import InventoryHistory from './InventoryHistory';
@@ -22,7 +19,7 @@ import StaffTodosAdmin from './StaffTodosAdmin';
 // page. i want to know which staff has used the app?" Self-contained
 // read-only card; reads staffList in-place, no new Firestore writes.
 import StaffUsageAudit from './StaffUsageAudit';
-import { toast, undoToast } from '../toast';
+import { toast } from '../toast';
 import { enableFcmPush } from '../messaging';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 const RequiredTaskAdmin = reactLazy(() => import('./RequiredTaskAdmin'));
@@ -1669,18 +1666,50 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                 }
                 // AUDIT: read current Firestore + compute diff before write.
                 let oldByName = new Map();
+                let preReadSize = -1;
                 try {
                     const cur = await getDoc(doc(db, 'config', 'staff'));
                     if (cur.exists()) {
                         const list = (cur.data() || {}).list || [];
+                        preReadSize = list.length;
                         for (const s of list) oldByName.set(`${s.id}|${s.name}`, s.pin);
                     }
                 } catch (e) {
                     console.warn('audit: pre-read failed (proceeding anyway):', e);
                 }
+                // HF-7, 2026-05-30: concurrent-edit guard. Two admins
+                // editing the staff list at the same time used to silently
+                // clobber each other — last writer wins, the loser's
+                // changes vanish. Wrap the write in a transaction that
+                // re-reads inside the txn and aborts if the list SIZE
+                // changed since our pre-read (another admin added or
+                // removed a record). Doesn't catch same-size concurrent
+                // in-place edits, but catches the most common Andrew+Julie
+                // race. Anything tighter requires schema work (versioned
+                // staff doc).
                 try {
-                    await setDoc(doc(db, "config", "staff"), { list: updatedList });
+                    const { runTransaction } = await import('firebase/firestore');
+                    await runTransaction(db, async (tx) => {
+                        const snap = await tx.get(doc(db, "config", "staff"));
+                        if (snap.exists() && preReadSize >= 0) {
+                            const currentSize = ((snap.data() || {}).list || []).length;
+                            if (currentSize !== preReadSize) {
+                                const err = new Error('CONCURRENT_STAFF_EDIT');
+                                err.code = 'CONCURRENT_STAFF_EDIT';
+                                throw err;
+                            }
+                        }
+                        tx.set(doc(db, "config", "staff"), { list: updatedList });
+                    });
                 } catch (err) {
+                    if (err && err.code === 'CONCURRENT_STAFF_EDIT') {
+                        console.warn('saveStaff: concurrent edit detected, asking user to reload');
+                        toast(language === 'es'
+                            ? 'Otro administrador editó al personal — recargue la página'
+                            : 'Another admin edited the staff list — please reload',
+                            { kind: 'error' });
+                        return;
+                    }
                     console.error("Error saving staff:", err);
                     toast(language === 'es' ? 'Error al guardar personal' : 'Staff save failed', { kind: 'error' });
                     return;
@@ -1838,7 +1867,8 @@ function AdminPanelInner({ language, staffName, staffList, setStaffList, storeLo
                             const batch = writeBatch(db);
                             futureShifts.forEach(d => batch.delete(d.ref));
                             await batch.commit();
-                            console.log(`[handleRemoveStaff] cascaded ${futureShifts.size} future shifts for ${removedName}`);
+                            // MED-5, 2026-05-30: removed [handleRemoveStaff] console.log;
+                            // the cascade is observable in /shifts collection diff anyway.
                         }
                     } catch (e) {
                         console.warn('cascade shift cleanup failed:', e);

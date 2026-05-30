@@ -12,3 +12,6 @@ firebase-service-account.json
 serviceAccountKey.json
 gmail-oauth-client.json
 backups/
+# Vitest writes temp config files like vitest.config.js.timestamp-*.mjs
+# during test runs that should clean up but sometimes leak.
+vitest.config.js.timestamp-*

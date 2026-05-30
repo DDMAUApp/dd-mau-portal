@@ -18,7 +18,20 @@
 // underlying action (creating a hire, submitting a doc, etc.).
 
 import { db } from '../firebase';
-import { collection, addDoc, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, setDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+
+// HF-6, 2026-05-30: stable fallback tag bucket. The fallback path for
+// callers that didn't pass an explicit `tag` used to be
+// `${type}:${Date.now()}` — a per-millisecond tag — which made every
+// notif unique and silently defeated the OS-level dedup the `tag` field
+// is supposed to provide (see Audit #134, which fixed the explicit-tag
+// call sites but missed the fallbacks). A 1-minute bucket strikes the
+// balance: rapid retries within the same minute share a tag and dedupe;
+// genuinely new notifs across minutes get distinct tags. Per-staff
+// flavours of this are formed at the call site by appending `forStaff`.
+function fallbackTagBucket() {
+    return Math.floor(Date.now() / 60_000);
+}
 
 // Resolve a title/body that may be a string OR { en, es } into the
 // recipient's preferred language.
@@ -154,7 +167,7 @@ export async function notifyAdmins({
                 title: resolveText(title, recipient),
                 body: resolveText(body, recipient),
                 link,
-                tag: tag || `${type}:${Date.now()}`,
+                tag: tag || `${type}:${fallbackTagBucket()}`,
                 createdAt: serverTimestamp(),
                 read: false,
                 createdBy,
@@ -203,7 +216,7 @@ export async function notifyManagement({
                 body: resolveText(body, recipient),
                 link,
                 ...(deepLink ? { deepLink } : {}),
-                tag: tag || `${type}:${Date.now()}`,
+                tag: tag || `${type}:${fallbackTagBucket()}`,
                 createdAt: serverTimestamp(),
                 read: false,
                 createdBy,
@@ -253,7 +266,7 @@ export async function notifyStaff({
             ...(deepLink ? { deepLink } : {}),
             ...(priority ? { priority } : {}),
             ...(forceDeliver === true ? { forceDeliver: true } : {}),
-            tag: tag || `${type}:${forStaff}:${Date.now()}`,
+            tag: tag || `${type}:${forStaff}:${fallbackTagBucket()}`,
             createdAt: serverTimestamp(),
             read: false,
             createdBy,
@@ -337,7 +350,14 @@ export async function sendSetupReminderSms(staff, manager, opts = {}) {
             // Bypass off-shift quiet hours — setup reminders are not
             // time-sensitive, but skipping them defeats the purpose.
             forceDeliver: true,
-            tag: `setup_reminder:${staff.name}:${Date.now()}`,
+            // HF-6, 2026-05-30: day-bucket so two attempts in the same
+            // day share a tag and the OS / dispatch-side dedup catches
+            // retries. Daily cadence is appropriate here because the
+            // function itself enforces a REMINDER_COOLDOWN_DAYS gate
+            // before getting this far — there is never a legitimate
+            // case for two real setup reminders to the same staff on
+            // the same day.
+            tag: `setup_reminder:${staff.name}:${Math.floor(Date.now() / 86400_000)}`,
             createdAt: serverTimestamp(),
             read: false,
             createdBy: manager?.name || 'admin',
@@ -345,15 +365,21 @@ export async function sendSetupReminderSms(staff, manager, opts = {}) {
         });
 
         // Stamp the cooldown marker on the staff doc.
+        // HF-1, 2026-05-30: read+modify+set raced with concurrent admin
+        // edits of the staff doc — both writes had stale `list` data
+        // and one silently won. Wrap in a transaction so the inner
+        // read re-runs on conflict.
         try {
             const stRef = doc(db, 'config', 'staff');
-            const snap = await getDoc(stRef);
-            const list = (snap.exists() ? snap.data().list : []) || [];
-            const next = list.map((s) => s && s.name === staff.name
-                ? { ...s, setupReminderSentAt: Date.now() }
-                : s
-            );
-            await setDoc(stRef, { list: next });
+            await runTransaction(db, async (tx) => {
+                const snap = await tx.get(stRef);
+                const list = (snap.exists() ? snap.data().list : []) || [];
+                const next = list.map((s) => s && s.name === staff.name
+                    ? { ...s, setupReminderSentAt: Date.now() }
+                    : s
+                );
+                tx.set(stRef, { list: next });
+            });
         } catch (e) {
             console.warn('setupReminderSentAt stamp failed (non-fatal):', e);
         }
@@ -415,14 +441,19 @@ export function composeSetupReminderSmsUrl(staff, language = 'en') {
 export async function stampSetupReminderSent(staffName) {
     if (!staffName) return { ok: false, reason: 'no_staff' };
     try {
+        // HF-1, 2026-05-30: transaction-wrapped to avoid silent clobber
+        // when an admin is editing staff at the same time the manual SMS
+        // send completes.
         const stRef = doc(db, 'config', 'staff');
-        const snap = await getDoc(stRef);
-        const list = (snap.exists() ? snap.data().list : []) || [];
-        const next = list.map((s) => s && s.name === staffName
-            ? { ...s, setupReminderSentAt: Date.now() }
-            : s
-        );
-        await setDoc(stRef, { list: next });
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(stRef);
+            const list = (snap.exists() ? snap.data().list : []) || [];
+            const next = list.map((s) => s && s.name === staffName
+                ? { ...s, setupReminderSentAt: Date.now() }
+                : s
+            );
+            tx.set(stRef, { list: next });
+        });
         return { ok: true };
     } catch (e) {
         console.warn('stampSetupReminderSent failed:', e);

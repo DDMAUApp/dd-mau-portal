@@ -257,7 +257,7 @@ export default function HomeV2({ language = 'en', staffName = '', storeLocation 
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <h1 className="text-2xl font-black text-dd-text tracking-tight">
-                        {greeting}, {staffName?.split(' ')[0] || tx('there', '')}
+                        {greeting}, {staffName?.split(' ')[0] || tx('there', 'hola')}
                     </h1>
                     <p className="text-sm text-dd-text-2 mt-1 capitalize">
                         {todayLong} <span className="text-dd-text-2/50 mx-1">·</span>

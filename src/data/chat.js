@@ -1,6 +1,6 @@
 // Chat helpers — pure functions, no React, no Firebase.
 //
-// These get tested standalone (TODO: chat.test.js) and reused across
+// These get tested standalone (see chat.test.js) and reused across
 // ChatCenter / ChatThread / ChatSettingsModal so the permission model
 // has a single source of truth.
 //
