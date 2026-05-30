@@ -4039,7 +4039,12 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         // list instead of the multi-staff wide grid. Better for handing to one
         // staff member.
         if (personFilter) {
-            const myShifts = visibleShifts.filter(sh => sh.staffName === personFilter && sh.published !== false);
+            // 2026-05-30 — Andrew: include DRAFT shifts in the printable
+            // sheet so managers can hand a paper version that reflects
+            // every shift currently on the grid, not just the published
+            // ones. Drafts render with a dashed amber border + DRAFT pill
+            // so the printee can see which are still subject to change.
+            const myShifts = visibleShifts.filter(sh => sh.staffName === personFilter);
             // Group by date so the per-day double-shift break gets deducted once.
             const byDate = new Map();
             for (const sh of myShifts) {
@@ -4063,9 +4068,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     const hrs = isDoubleDayPrint
                         ? hoursBetween(sh.startTime, sh.endTime, false)
                         : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
-                    return `<div class="shift-row">
+                    const isDraft = sh.published === false;
+                    return `<div class="shift-row${isDraft ? ' draft' : ''}">
                         <span class="time">${escape(formatTime12h(sh.startTime))} – ${escape(formatTime12h(sh.endTime))}</span>
                         <span class="hrs">${escape(formatHours(hrs))}</span>
+                        ${isDraft ? '<span class="draft-tag">DRAFT</span>' : ''}
                         ${sh.isShiftLead ? '<span class="lead">🛡️ LEAD</span>' : ''}
                         ${sh.isDouble ? '<span class="dbl">⏱ DOUBLE</span>' : ''}
                         ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
@@ -4096,6 +4103,8 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     .dnum { font-size: 11px; color: #6b7280; }
     .day-body { flex: 1; }
     .shift-row { padding: 4px 8px; background: #ecfdf5; border-left: 3px solid #10b981; margin-bottom: 4px; border-radius: 2px; }
+    .shift-row.draft { background: #fef3c7; border-left-color: #d97706; border: 1px dashed #d97706; border-left-width: 3px; }
+    .draft-tag { display: inline-block; margin-left: 8px; font-size: 9px; padding: 1px 5px; background: #fde68a; color: #78350f; font-weight: 700; border-radius: 8px; letter-spacing: 0.5px; }
     .time { font-weight: 700; font-size: 13px; }
     .hrs { font-size: 11px; color: #6b7280; margin-left: 8px; }
     .lead { display: inline-block; margin-left: 8px; font-size: 9px; padding: 1px 5px; background: #ddd6fe; color: #5b21b6; font-weight: 700; border-radius: 8px; }
@@ -4140,9 +4149,14 @@ ${dayBlocks}
         }
 
         // Build cell HTML for each staff/day (escape() is hoisted at top of fn)
+        // 2026-05-30 — Andrew: drafts now print too. Each shift cell tags
+        // unpublished entries with a `.draft` class (dashed amber border +
+        // DRAFT pill) so the printee sees at a glance which entries are
+        // still subject to change. Removing the skip means a draft-only
+        // staffer also appears in rowsToShow (staffSummary.shiftCount
+        // counts drafts for editors, so this works out).
         const shiftsByCell = new Map();
         for (const sh of visibleShifts) {
-            if (sh.published === false) continue; // skip drafts
             const key = `${sh.staffName}|${sh.date}`;
             if (!shiftsByCell.has(key)) shiftsByCell.set(key, []);
             shiftsByCell.get(key).push(sh);
@@ -4169,12 +4183,15 @@ ${dayBlocks}
                         const hrs = cellIsDoubleDay
                             ? hoursBetween(sh.startTime, sh.endTime, false)
                             : hoursBetween(sh.startTime, sh.endTime, sh.isDouble);
+                        const isDraft = sh.published === false;
                         // Compact time (10a–3p) keeps the cell to ONE line in
                         // the narrow weekday columns. Hours pill appended on
                         // the same line. Was: 10:00 AM–3:00 PM 5h (wrapped).
-                        return `<div class="shift">
+                        // Drafts get a dashed amber border + tiny DRAFT pill.
+                        return `<div class="shift${isDraft ? ' draft' : ''}">
                             <b>${escape(compactTime(sh.startTime))}–${escape(compactTime(sh.endTime))}</b>
                             <span class="hrs">${escape(formatHours(hrs))}</span>
+                            ${isDraft ? '<span class="draft-pill">DRAFT</span>' : ''}
                             ${sh.isShiftLead ? '<span class="lead">🛡️</span>' : ''}
                             ${sh.isDouble ? '<span class="dbl">⏱</span>' : ''}
                             ${sh.notes ? `<div class="notes">${escape(sh.notes)}</div>` : ''}
@@ -4234,6 +4251,8 @@ ${dayBlocks}
     .dow { font-size: 9px; text-transform: uppercase; color: #6b7280; }
     .dnum { font-size: 14px; font-weight: 700; color: #1f2937; }
     .shift { background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 3px; padding: 2px 4px; margin-bottom: 2px; }
+    .shift.draft { background: #fef3c7; border: 1px dashed #d97706; }
+    .draft-pill { display: inline-block; margin-left: 3px; font-size: 7px; padding: 0 3px; background: #fde68a; color: #78350f; font-weight: 700; border-radius: 6px; letter-spacing: 0.3px; vertical-align: middle; }
     .shift b { font-size: 9px; }
     .shift .hrs { display: inline-block; margin-left: 4px; font-size: 8px; opacity: 0.7; }
     .shift .notes { font-size: 8px; font-style: italic; color: #4b5563; margin-top: 1px; }
