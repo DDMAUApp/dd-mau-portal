@@ -546,6 +546,62 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
         setCats(next);
     };
 
+    // 2026-05-29 (round 2) — Andrew: "dry items have the same drinks
+    // too get rid of the drinks in dry items". Surgical alternative
+    // to Reset: walk the items in a category, and for each one parse
+    // its canonical seed id ("{catIdx}-{itemIdx}") to see which
+    // INVENTORY_CATEGORIES bucket it BELONGS to. If the canonical
+    // bucket name differs from this category's name, the item is
+    // misplaced (typically a vendor scraper miscategorized it) and
+    // gets removed.
+    //
+    // Vendor-only items (id formats like "sysco:1234" or "1234")
+    // are LEFT ALONE — we don't have enough info to know where they
+    // belong, and they may have been intentionally placed here.
+    //
+    // Returns the misplaced items the function would remove. Used both
+    // for the confirm-dialog count AND to decide whether to render
+    // the button (zero misplaced = no button).
+    const findMisplacedItems = (catIdx) => {
+        const c = cats[catIdx];
+        if (!c) return [];
+        const out = [];
+        for (const it of (c.items || [])) {
+            const id = String(it.id || '');
+            const dash = id.indexOf('-');
+            if (dash <= 0) continue; // vendor-only or unrecognized — skip
+            const seedCatIdx = Number(id.slice(0, dash));
+            if (!Number.isFinite(seedCatIdx)) continue;
+            const seedCat = INVENTORY_CATEGORIES.find(m => m.id === seedCatIdx);
+            if (!seedCat) continue; // unknown seed cat — defensively skip
+            if (seedCat.name !== c.name) out.push({ item: it, belongsIn: seedCat.name });
+        }
+        return out;
+    };
+    const removeMisplacedFromCat = (catIdx) => {
+        const c = cats[catIdx];
+        const misplaced = findMisplacedItems(catIdx);
+        if (misplaced.length === 0) return;
+        // Build a "belongs in X (n)" summary for the confirm.
+        const byTarget = new Map();
+        for (const m of misplaced) {
+            byTarget.set(m.belongsIn, (byTarget.get(m.belongsIn) || 0) + 1);
+        }
+        const breakdown = [...byTarget.entries()]
+            .map(([n, k]) => `${k} from ${n}`).join(', ');
+        if (!window.confirm(tx(
+            `Remove ${misplaced.length} items from "${c.name}" that belong in another category (${breakdown})? Vendor-only items will be kept. Discard before saving to undo.`,
+            `¿Quitar ${misplaced.length} artículos de "${c.name}" que pertenecen a otra categoría (${breakdown})? Los artículos solo-de-proveedor se mantienen. Toca Descartar antes de guardar para deshacer.`,
+        ))) return;
+        const ids = new Set(misplaced.map(m => m.item.id));
+        const next = [...cats];
+        next[catIdx] = {
+            ...next[catIdx],
+            items: (next[catIdx].items || []).filter(it => !ids.has(it.id)),
+        };
+        setCats(next);
+    };
+
     // Set of item ids currently in the list — fast membership check
     // for the left pane's checkmark rendering.
     const presentIds = useMemo(() => {
@@ -844,6 +900,24 @@ function ListEditor({ list, tx, language, staffName, onClose }) {
                                             ↻ {tx('Reset', 'Reset')}
                                         </button>
                                     )}
+                                    {/* Surgical cleanup — only shows when there
+                                        are actually misplaced items (canonical
+                                        seed id points to a different category).
+                                        Vendor-only items are left untouched. */}
+                                    {(() => {
+                                        const misplaced = findMisplacedItems(catIdx);
+                                        if (misplaced.length === 0) return null;
+                                        return (
+                                            <button onClick={() => removeMisplacedFromCat(catIdx)}
+                                                title={tx(
+                                                    `Remove ${misplaced.length} items that belong in another category`,
+                                                    `Quitar ${misplaced.length} artículos que pertenecen a otra categoría`,
+                                                )}
+                                                className="px-1.5 py-0.5 rounded text-[10px] text-purple-700 hover:bg-purple-50 font-bold">
+                                                🔀 {tx('Cleanup', 'Limpiar')} ({misplaced.length})
+                                            </button>
+                                        );
+                                    })()}
                                     {(cat.items?.length || 0) > 0 && (
                                         <button onClick={() => clearCatItems(catIdx)}
                                             title={tx('Delete every item in this category (keep header)',
