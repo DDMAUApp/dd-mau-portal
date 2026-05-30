@@ -2423,6 +2423,29 @@ function DetailsBlock({ app, isEs, dinners }) {
 function ActionButtonsRow({ app, isEs, onConvert, onStatusChange, onDismiss }) {
     const tx = (en, es) => (isEs ? es : en);
     const status = app.status || 'applied';
+    // 2026-05-29 — Andrew: "i need to be able to export the application
+    // because at the end they sign it and agree to terms that might
+    // need to export one day." Exports the full filled-out application
+    // (positions, contact, availability + note, experience, references,
+    // consents, signature image, DocuSign-style timestamp) to a PDF
+    // file. pdf-lib is lazy-imported by the builder so it doesn't
+    // bloat the Onboarding chunk.
+    const [exporting, setExporting] = useState(false);
+    const [exportErr, setExportErr] = useState('');
+    const handleExportPdf = async () => {
+        setExporting(true);
+        setExportErr('');
+        try {
+            const mod = await import('../data/applicationPdf');
+            const bytes = await mod.buildApplicationPdf(app);
+            mod.downloadApplicationPdf(bytes, app);
+        } catch (e) {
+            console.error('Export PDF failed:', e);
+            setExportErr(tx('Export failed. Try again.', 'Falló la exportación. Intenta de nuevo.'));
+        } finally {
+            setExporting(false);
+        }
+    };
     return (
         <div className="space-y-2">
             <div className="flex flex-wrap gap-1">
@@ -2464,11 +2487,23 @@ function ActionButtonsRow({ app, isEs, onConvert, onStatusChange, onDismiss }) {
                     className="text-[11px] px-2.5 py-1.5 rounded-lg bg-dd-green text-white font-bold hover:bg-dd-green/90">
                     ✓ {tx('Convert to hire', 'Crear contratación')}
                 </button>
+                <button onClick={handleExportPdf}
+                    disabled={exporting}
+                    title={tx('Save the signed application as a PDF (with signature + timestamp)',
+                        'Guardar la solicitud firmada como PDF (con firma + fecha)')}
+                    className="text-[11px] px-2.5 py-1.5 rounded-lg bg-purple-100 text-purple-700 font-bold hover:bg-purple-200 disabled:opacity-50">
+                    {exporting
+                        ? '… ' + tx('Building PDF', 'Generando PDF')
+                        : '📥 ' + tx('Export PDF', 'Exportar PDF')}
+                </button>
                 <button onClick={() => onDismiss(app.id)}
                     className="text-[11px] px-2.5 py-1.5 rounded-lg bg-gray-200 text-gray-700 font-bold hover:bg-gray-300">
                     🗑 {tx('Delete', 'Eliminar')}
                 </button>
             </div>
+            {exportErr && (
+                <p className="text-[11px] text-red-700 font-bold">{exportErr}</p>
+            )}
         </div>
     );
 }
