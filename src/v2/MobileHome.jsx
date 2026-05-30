@@ -334,6 +334,10 @@ export default function MobileHome({
                     location={storeLocation}
                     language={language}
                     variant="strip"
+                    todaysShifts={shifts14.filter(s =>
+                        s.date === todayKey() &&
+                        (storeLocation === 'both' || s.location === storeLocation)
+                    )}
                 />
             )}
 
