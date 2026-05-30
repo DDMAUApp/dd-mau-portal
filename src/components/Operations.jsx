@@ -6605,6 +6605,20 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "category" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "📋 Lista Maestra" : "📋 Master List"}
                                     </button>
+                                    {/* 📍 Location view — 2026-05-29 Andrew:
+                                        "the locations drop down is to reorder
+                                        the item on the inventory list so
+                                        instead of protiens, veggies dairy.
+                                        its to help us when we actully go
+                                        throught he list and make our cart."
+                                        Same items, regrouped by storage
+                                        location instead of food category, so
+                                        the counting walk through the kitchen
+                                        matches the physical layout. */}
+                                    <button onClick={() => setInvViewMode("location")}
+                                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "location" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
+                                        {language === "es" ? "📍 Ubicación" : "📍 Location"}
+                                    </button>
                                     <button onClick={() => setInvViewMode("vendor")}
                                         className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${invViewMode === "vendor" ? "bg-mint-700 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
                                         {language === "es" ? "Proveedor" : "Vendor"}
@@ -7874,6 +7888,148 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         )}
                                     </div>
                                 );
+                            })()}
+
+                            {/* ── LOCATION VIEW ──────────────────────────
+                                Same items, regrouped by storage location.
+                                Use case (Andrew 2026-05-29): counting walks
+                                through the kitchen physically — walk-in,
+                                pantry, expo, etc. — and category sorting
+                                (proteins/veggies/dairy) doesn't help. This
+                                view stacks every counted item under the
+                                location header it lives in, so the staffer
+                                can stand in front of the walk-in and count
+                                everything there before moving on.
+
+                                Streamlined cell content: name + count
+                                input + chevron + / -. No edit, no vendor
+                                selector, no price badge — those workflows
+                                stay in Master List. */}
+                            {invViewMode === "location" && (() => {
+                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
+                                // Flatten every item across categories.
+                                // Preserve a name-only badge so the user
+                                // can still see what kind of item it is.
+                                const allItems = [];
+                                for (const cat of customInventory) {
+                                    for (const it of (cat.items || [])) {
+                                        allItems.push({ it, catName: cat.name });
+                                    }
+                                }
+                                // Apply the same filters the Master List does.
+                                const filtered = allItems.filter(({ it }) => {
+                                    if (searchLower && !itemMatchesSearchAi(it, searchLower)) return false;
+                                    if (invShowOnlyCounted && !((inventory[it.id] || 0) > 0)) return false;
+                                    if (invShowOnlyLow) {
+                                        const min = Number(it?.min);
+                                        if (!Number.isFinite(min) || min <= 0) return false;
+                                        const c = Number(inventory[it.id] || 0);
+                                        if (!(c > 0 && c <= min)) return false;
+                                    }
+                                    return true;
+                                });
+                                // Group by location. Items without one go
+                                // to a special bucket that sorts last so
+                                // they're easy to spot and fix.
+                                const UNASSIGNED = '(no location set)';
+                                const byLoc = new Map();
+                                for (const row of filtered) {
+                                    const key = (row.it.location || '').trim() || UNASSIGNED;
+                                    if (!byLoc.has(key)) byLoc.set(key, []);
+                                    byLoc.get(key).push(row);
+                                }
+                                // Order: canonical INVENTORY_LOCATIONS first
+                                // (in their declared order), then any non-
+                                // canonical custom locations alphabetically,
+                                // then UNASSIGNED at the bottom.
+                                const canonical = INVENTORY_LOCATIONS.filter(l => byLoc.has(l));
+                                const customLocs = [...byLoc.keys()]
+                                    .filter(l => l !== UNASSIGNED && !INVENTORY_LOCATIONS.includes(l))
+                                    .sort();
+                                const orderedLocs = [...canonical, ...customLocs];
+                                if (byLoc.has(UNASSIGNED)) orderedLocs.push(UNASSIGNED);
+                                if (orderedLocs.length === 0) {
+                                    return (
+                                        <div className="p-8 text-center text-gray-400 text-sm italic bg-white border-2 border-dashed border-gray-200 rounded-xl">
+                                            {language === "es"
+                                                ? "Sin artículos para mostrar. Ajusta los filtros o agrega artículos en Lista Maestra."
+                                                : "No items to show. Adjust filters or add items in Master List."}
+                                        </div>
+                                    );
+                                }
+                                return orderedLocs.map(loc => {
+                                    const rows = byLoc.get(loc) || [];
+                                    const countedInLoc = rows.reduce(
+                                        (n, { it }) => n + ((inventory[it.id] || 0) > 0 ? 1 : 0), 0);
+                                    const isUnassigned = loc === UNASSIGNED;
+                                    return (
+                                        <div key={loc} className="bg-white border-2 border-gray-200 rounded-xl overflow-hidden mb-3">
+                                            <div className={`flex items-center justify-between px-3 py-2 ${
+                                                isUnassigned ? 'bg-amber-50 border-b-2 border-amber-200' : 'bg-mint-50 border-b-2 border-mint-200'
+                                            }`}>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`text-sm font-black uppercase tracking-wide ${
+                                                        isUnassigned ? 'text-amber-800' : 'text-mint-800'
+                                                    }`}>
+                                                        {isUnassigned
+                                                            ? (language === "es" ? '⚠ Sin ubicación' : '⚠ No location')
+                                                            : `📍 ${loc}`}
+                                                    </span>
+                                                    <span className="text-[10px] text-gray-500 font-bold">
+                                                        {rows.length} {language === "es" ? "artíc." : "items"}
+                                                        {countedInLoc > 0 && ` · ${countedInLoc} ${language === "es" ? "contados" : "counted"}`}
+                                                    </span>
+                                                </div>
+                                                {isUnassigned && (
+                                                    <span className="text-[10px] text-amber-700 italic">
+                                                        {language === "es"
+                                                            ? "Edita en Lista Maestra para asignar"
+                                                            : "Edit in Master List to assign"}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <div className="divide-y divide-gray-200">
+                                                {rows.map(({ it: item, catName }) => {
+                                                    const count = inventory[item.id] || 0;
+                                                    return (
+                                                        <div key={item.id}
+                                                            className={`flex items-center justify-between gap-2 px-3 py-2 ${count > 0 ? 'bg-green-50/50' : ''}`}>
+                                                            <div className="flex-1 min-w-0 pr-2">
+                                                                <p className={`text-sm font-semibold truncate ${count > 0 ? 'text-green-800' : 'text-gray-800'}`}>
+                                                                    {language === "es" && item.nameEs ? item.nameEs : item.name}
+                                                                </p>
+                                                                <div className="text-[10px] text-gray-400 truncate">
+                                                                    {catName}
+                                                                    {item.subcat && ` · ${item.subcat}`}
+                                                                    {item.pack && ` · ${item.pack}`}
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex items-center gap-1 flex-shrink-0">
+                                                                <button onClick={() => updateInventoryCount(item.id, Math.max(0, count - 1), -1)}
+                                                                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
+                                                                <input
+                                                                    type="text"
+                                                                    inputMode="numeric"
+                                                                    pattern="[0-9]*"
+                                                                    value={count}
+                                                                    onChange={(e) => {
+                                                                        const raw = e.target.value.replace(/[^0-9]/g, '');
+                                                                        const n = parseInt(raw || '0', 10);
+                                                                        if (!Number.isFinite(n)) return;
+                                                                        updateInventoryCount(item.id, Math.max(0, n));
+                                                                    }}
+                                                                    onFocus={(e) => e.target.select()}
+                                                                    className="w-12 h-9 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
+                                                                <button onClick={() => updateInventoryCount(item.id, count + 1, 1)}
+                                                                    className="w-9 h-9 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                });
                             })()}
 
                             {/* ── VENDOR VIEW ── */}
