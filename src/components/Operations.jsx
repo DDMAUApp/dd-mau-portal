@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense } from 'react';
 import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
@@ -515,6 +515,14 @@ export default function Operations({ language, staffList, staffName, storeLocati
             const [inventoryAudits, setInventoryAudits] = useState([]);
             const [showInventoryAudits, setShowInventoryAudits] = useState(false);
             const [invSearch, setInvSearch] = useState("");
+            // 2026-05-29 perf: defer the search value used by the
+            // expensive filter pass so typing stays buttery on the
+            // 300+ item master list. The input itself reads invSearch
+            // (instant feedback); the row-level filter reads
+            // invSearchDeferred, which React updates at a lower
+            // priority — so a keystroke never blocks paint. No
+            // setTimeout / debounce machinery to maintain.
+            const invSearchDeferred = useDeferredValue(invSearch);
             // AI semantic search toggle for the inventory tab. ON sends
             // queries to the aiSearch Cloud Function (~$0.001 each)
             // alongside the local substring matcher; results are
@@ -7048,7 +7056,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             {/* ── CATEGORY VIEW ── */}
                             {invViewMode === "category" && customInventory.map((category, catIdx) => {
                                 // Same filter pattern used by vendor / split / pricing views.
-                                const searchLower = (invSearch || "").toLowerCase().trim();
+                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
                                 let filteredItems = searchLower
                                     ? category.items.filter(item => itemMatchesSearchAi(item, searchLower))
                                     : category.items;
@@ -7678,7 +7686,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 matching) and an inline "Match to master" pencil that opens the
                                 existing audit modal. */}
                             {invViewMode === "category" && unmatchedVendorItems.length > 0 && !invEditMode && (() => {
-                                const searchLower = (invSearch || "").toLowerCase().trim();
+                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
                                 let visible = unmatchedVendorItems;
                                 if (searchLower) {
                                     visible = visible.filter(it =>
@@ -7757,7 +7765,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 // O(n) cat.items.indexOf(item) lookup per
                                 // item (overall O(n²) per render).
                                 const vendorGroups = {};
-                                const searchLower = (invSearch || "").toLowerCase().trim();
+                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
                                 customInventory.forEach((cat, catIdx) => {
                                     cat.items.forEach((item, iIdx) => {
                                         const v = item.vendor || item.supplier || "Other";
@@ -7885,7 +7893,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     { name: "Yuly", nameEs: "Yuly", emoji: "\u{1F4E6}", color: "from-amber-600 to-amber-500", label: language === "es" ? "Seco, Papel y Salsas" : "Dry, Paper & Sauces", categories: ["Sauces & Seasonings", "Rice & Noodles", "Oils & Cooking", "Paper & Supplies", "Cleaning"] },
                                     { name: "Brandon", nameEs: "Brandon", emoji: "\u{1F964}", color: "from-green-700 to-green-600", label: language === "es" ? "Bebidas" : "Beverages", categories: ["Beverages"] }
                                 ];
-                                const searchLower = invSearch.toLowerCase().trim();
+                                const searchLower = invSearchDeferred.toLowerCase().trim();
 
                                 // Build item assignments: default by category, then apply overrides
                                 const getPersonForItem = (item, defaultPerson) => {
@@ -8340,7 +8348,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         {/* Category-grouped items (Sysco) or flat list (US Foods) */}
                                         {isSysco && pData.byCategory ? (
                                             SYSCO_CATEGORY_ORDER.filter(cat => pData.byCategory[cat] && pData.byCategory[cat].length > 0).map(cat => {
-                                                const searchLower = (invSearch || "").toLowerCase().trim();
+                                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
                                                 const allCatItems = pData.byCategory[cat];
                                                 // Pricing view also matches brand + sysco/usfoods key — useful here because the
                                                 // user is shopping by SKU/brand rather than just by item name.
@@ -8442,7 +8450,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                         ) : (
                                             (() => {
                                                 let unmatchedHeaderShown = false;
-                                                const searchLower = (invSearch || "").toLowerCase().trim();
+                                                const searchLower = (invSearchDeferred || "").toLowerCase().trim();
                                                 let filteredSorted = searchLower
                                                     ? sorted.filter(([key, data]) =>
                                                         itemMatchesSearch(data, searchLower) ||
