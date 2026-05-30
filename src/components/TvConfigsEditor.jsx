@@ -46,12 +46,19 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
     // the editor lazily through <Suspense> and prop drilling would
     // mean threading state through both halves of the page.
     useEffect(() => {
+        // Andrew 2026-05-30 — track deferred-tick timers so they're
+        // cancelled if the editor unmounts before the next frame.
+        // Without this, fast open-then-close cycles can fire setState
+        // after unmount and emit the "memory leak" warning. Tiny edge,
+        // belt-and-suspenders fix.
+        const pendingTimers = new Set();
         function onOpen(ev) {
             const { tvId, presetLocation } = (ev && ev.detail) || {};
             if (tvId) {
                 // Defer one tick so configs are populated if the
                 // editor just mounted in the same frame.
-                setTimeout(() => {
+                const t = setTimeout(() => {
+                    pendingTimers.delete(t);
                     setConfigs(prev => {
                         const existing = prev.find(c => c.tvId === tvId);
                         if (existing) setEditing({ existing });
@@ -60,12 +67,17 @@ export default function TvConfigsEditor({ language = 'en', byName }) {
                         return prev;
                     });
                 }, 0);
+                pendingTimers.add(t);
             } else {
                 setEditing({ presetLocation: presetLocation || 'webster' });
             }
         }
         window.addEventListener('ddmau:openTvEditor', onOpen);
-        return () => window.removeEventListener('ddmau:openTvEditor', onOpen);
+        return () => {
+            window.removeEventListener('ddmau:openTvEditor', onOpen);
+            for (const t of pendingTimers) clearTimeout(t);
+            pendingTimers.clear();
+        };
     }, []);
 
     const baseUrl = useMemo(() => {

@@ -1598,6 +1598,37 @@ export default function Schedule({ staffName, language, storeLocation, staffList
             });
     }, [sideStaff, viewerShifts, visibleShifts, storeLocation, staffList]);
 
+    // ── Memoized props for WeeklyGrid ─────────────────────────────────
+    // Andrew 2026-05-30 — these used to be inline filter() expressions
+    // passed straight into WeeklyGrid (openSlots/openOffers/weekNeeds),
+    // which meant a fresh array identity every parent render. That
+    // defeated any future React.memo on WeeklyGrid + caused every cell
+    // to re-eval its open-slot/open-offer indicator on every tick.
+    // Hoisting to useMemo keyed on the actual inputs lets those props
+    // be referentially stable until something real changes.
+    const weekStartStr = toDateStr(weekStart);
+    const weekEndStr = toDateStr(addDays(weekStart, 7));
+    const memoOpenSlots = useMemo(() => (
+        (staffingNeeds || []).filter(n =>
+            n.date >= weekStartStr &&
+            n.date < weekEndStr &&
+            n.side === side &&
+            (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
+            ((n.filledStaff || []).length < (n.count || 0)))
+    ), [staffingNeeds, weekStartStr, weekEndStr, side, storeLocation]);
+    const memoOpenOffers = useMemo(() => (
+        visibleShifts.filter(s =>
+            s.offerStatus === 'open' &&
+            s.date >= weekStartStr &&
+            s.date < weekEndStr &&
+            (!s.side || s.side === side))
+    ), [visibleShifts, weekStartStr, weekEndStr, side]);
+    const memoWeekNeeds = useMemo(() => (
+        (staffingNeeds || []).filter(n =>
+            n.side === side &&
+            (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation))
+    ), [staffingNeeds, side, storeLocation]);
+
     // ── Hours scoreboard ─────────────────────────────────────────────
     // Live, both-sides-at-once roll-up of scheduled vs target hours so a
     // manager building a week sees over/under signals BEFORE publishing.
@@ -4290,7 +4321,7 @@ ${dayBlocks}
     <tbody>${bodyRows || `<tr><td colspan="8" style="text-align:center;padding:30px;color:#9ca3af">No published shifts.</td></tr>`}</tbody>
 </table>
 <div class="footer">
-    <span>Drafts excluded. Closed dates shown in grey. Today highlighted in mint.</span>
+    <span>Drafts shown with dashed amber border. Closed dates shown in grey. Today highlighted in mint.</span>
     <span>Printed ${new Date().toLocaleString()}</span>
 </div>
 <script>setTimeout(() => window.print(), 300);</script>
@@ -4347,7 +4378,12 @@ ${dayBlocks}
             `X-WR-CALNAME:DD Mau ${side === 'foh' ? 'FOH' : 'BOH'} ${LOCATION_LABELS[storeLocation] || storeLocation}${personFilter ? ' — ' + personFilter : ''}`,
         ];
         for (const sh of events) {
-            const summary = `${sh.staffName} (${sh.location || ''})${sh.isShiftLead ? ' 🛡️' : ''}${sh.isDouble ? ' ⏱' : ''}`;
+            // Andrew 2026-05-30 — guard against legacy shifts where
+            // location is undefined; without this the ICS event title
+            // reads "Maria ()" which is ugly. Only show the loc tag
+            // when we actually have a label for it.
+            const locLabel = LOCATION_LABELS[sh.location] || sh.location || '';
+            const summary = `${sh.staffName}${locLabel ? ` (${locLabel})` : ''}${sh.isShiftLead ? ' 🛡️' : ''}${sh.isDouble ? ' ⏱' : ''}`;
             lines.push(
                 'BEGIN:VEVENT',
                 `UID:${sh.id}@ddmau`,
@@ -5818,18 +5854,12 @@ ${dayBlocks}
                                 side={side}
                                 storeLocation={storeLocation}
                                 // Open Shifts data for the Sling-style rows at
-                                // the top of the table.
-                                openSlots={(staffingNeeds || []).filter(n =>
-                                    n.date >= toDateStr(weekStart) &&
-                                    n.date < toDateStr(addDays(weekStart, 7)) &&
-                                    n.side === side &&
-                                    (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation) &&
-                                    ((n.filledStaff || []).length < (n.count || 0)))}
-                                openOffers={visibleShifts.filter(s =>
-                                    s.offerStatus === 'open' &&
-                                    s.date >= toDateStr(weekStart) &&
-                                    s.date < toDateStr(addDays(weekStart, 7)) &&
-                                    (!s.side || s.side === side))}
+                                // the top of the table. Memoized upstream
+                                // (memoOpenSlots/memoOpenOffers) so identity
+                                // is stable until real inputs change — keeps
+                                // WeeklyGrid from re-rendering on every parent tick.
+                                openSlots={memoOpenSlots}
+                                openOffers={memoOpenOffers}
                                 onFillSlot={(n) => {
                                     if (canEdit) {
                                         setFillingNeed(n);
@@ -5904,10 +5934,7 @@ ${dayBlocks}
                                     openAddModal({ staffName: staff.name, date: dateStr, location: staff.location });
                                 }}
                                 onQuickAddClose={() => setQuickAddCell(null)}
-                                weekNeeds={staffingNeeds.filter(n =>
-                                    n.side === side &&
-                                    (storeLocation === 'both' || n.location === 'both' || n.location === storeLocation)
-                                )}
+                                weekNeeds={memoWeekNeeds}
                                 onDeleteShift={handleDeleteShift}
                                 onStaffClick={(name) => setPersonFilter(name)}
                                 onOfferShift={handleOfferShift}
@@ -7291,9 +7318,21 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
         // (so it correctly includes isAdmin alongside role-Manager).
         const positionByName = new Map();
         for (const s of staffSummary) positionByName.set(s.name, s.position || 'regular');
+        // Andrew 2026-05-30 — pre-bucket shifts by date once instead of
+        // a .filter() scan PER day. Drops the inner work from O(7×N) to
+        // O(N) where N is week-shift count. With ~50 weekly shifts this
+        // is small in absolute terms but it ran every time `shifts`
+        // identity changed (every Firestore snapshot).
+        const shiftsByDate = new Map();
+        for (const sh of shifts) {
+            if (!sh.date) continue;
+            const arr = shiftsByDate.get(sh.date);
+            if (arr) arr.push(sh);
+            else shiftsByDate.set(sh.date, [sh]);
+        }
         for (const d of days) {
             const dStr = toDateStr(d);
-            const dayShifts = shifts.filter(sh => sh.date === dStr);
+            const dayShifts = shiftsByDate.get(dStr) || [];
             const lunch = new Set();
             const dinner = new Set();
             let lunchLeads = 0, lunchManagers = 0;

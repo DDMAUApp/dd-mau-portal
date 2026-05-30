@@ -34,7 +34,7 @@
 
 import { useEffect, useMemo, useState, lazy, Suspense } from 'react';
 import { db } from '../firebase';
-import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { collection, query, where, onSnapshot, limit, Timestamp } from 'firebase/firestore';
 import {
     subscribeTvConfigs, subscribeTvHeartbeats, MODES,
     publishTvConfigDraft, discardTvConfigDraft,
@@ -135,10 +135,18 @@ export default function MenuScreensPage({ language = 'en', staffName, storeLocat
     const [crashesByTv, setCrashesByTv] = useState({});
     useEffect(() => {
         const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
-        // Firestore doesn't let us filter on serverTimestamp() === null
-        // efficiently; we read all crash logs and filter client-side.
-        // Volume is tiny (most days = 0 crashes; bad day = handful).
-        const q = query(collection(db, 'tv_crash_logs'));
+        // Andrew 2026-05-30 — bounded with a Firestore `where` on
+        // crashedAt + a hard limit() so this listener doesn't grow to
+        // wire every historical crash on every snapshot. The 500-row
+        // limit is a defense-in-depth; real bad-day volume is <50.
+        // Client-side filter kept as a belt-and-suspenders in case a
+        // doc lacks crashedAt (older format).
+        const cutoffTs = Timestamp.fromMillis(cutoffMs);
+        const q = query(
+            collection(db, 'tv_crash_logs'),
+            where('crashedAt', '>=', cutoffTs),
+            limit(500)
+        );
         const unsub = onSnapshot(q, (snap) => {
             const counts = {};
             const latestByTv = {};
