@@ -172,10 +172,19 @@ export default function HomePage({ onSelectStaff, language, staffList, onApplyCl
                     Replaces the previous 🍜 emoji + "DD Mau" text. If
                     the asset 404s the alt text reads as a quiet text
                     fallback. */}
+                {/* 2026-05-30 perf — explicit width + height + aspectRatio
+                    so the browser reserves the logo slot BEFORE the PNG
+                    downloads. Without these, the layout below (PIN keypad)
+                    jumps on first paint when the image bytes land. The
+                    intrinsic 1:1 ratio matches the source asset; h-28
+                    (112px) class still rules the final rendered size. */}
                 <img
                     src={(import.meta.env.BASE_URL || '/') + 'dd-mau-logo.png'}
                     alt="DD Mau Vietnamese Eatery"
-                    className="mx-auto h-28 w-auto object-contain mb-3 select-none pointer-events-none"
+                    width="112"
+                    height="112"
+                    style={{ aspectRatio: '1 / 1' }}
+                    className="mx-auto h-28 w-28 object-contain mb-3 select-none pointer-events-none"
                     draggable={false}
                 />
                 <p className="text-headline text-dd-text-2">{t("staffPortal", language)}</p>

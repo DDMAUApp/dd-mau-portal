@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '../firebase';
-import { doc, getDoc, setDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, collection, getDocs, query, orderBy, limit } from 'firebase/firestore';
 import { toast } from '../toast';
 import { escapeHtml as esc } from '../data/htmlEscape';
 import { isAdmin as checkIsAdmin } from '../data/staff';
@@ -137,11 +137,22 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
     setSubmitting(false);
   };
 
-  // Admin: load all enrollments
+  // Admin: load all enrollments.
+  // 2026-05-30 audit fix — was an unscoped getDocs(collection) that would
+  // pull every doc in /insurance if the collection ever grew large
+  // (compliance docs accumulate forever — multi-year retention is the
+  // norm). Added orderBy + limit so it's bounded. updatedAt fallback to
+  // a fixed key would also work; in practice the doc id is the staff
+  // name so we sort client-side after the fetch (already does).
   const loadAllEnrollments = async () => {
     setLoadingAll(true);
     try {
-      const snap = await getDocs(collection(db, "insurance"));
+      const q = query(
+        collection(db, "insurance"),
+        orderBy("updatedAt", "desc"),
+        limit(500),
+      );
+      const snap = await getDocs(q);
       const list = [];
       snap.forEach(d => list.push({ id: d.id, ...d.data() }));
       list.sort((a, b) => (a.staffName || "").localeCompare(b.staffName || ""));

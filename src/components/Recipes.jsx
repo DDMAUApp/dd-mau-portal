@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useDeferredValue, lazy, Suspense } from 'react';
 import { db } from '../firebase';
 import { doc, onSnapshot, setDoc, addDoc, updateDoc, collection, runTransaction, serverTimestamp } from 'firebase/firestore';
 import { t } from '../data/translations';
@@ -209,6 +209,12 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // the same restaurant-vocabulary synonym list that powers chat search
     // (chicken↔pollo, lime↔limón, broth↔caldo). See src/data/recipeSearch.js.
     const [searchQuery, setSearchQuery] = useState('');
+    // 2026-05-30 perf — defer the search value used by the heavy filter +
+    // AI dispatch. The input itself reads searchQuery (instant feedback);
+    // the filter at line 798 + the AI search hook below read the deferred
+    // value, so React updates them at lower priority and a keystroke
+    // never blocks paint.
+    const searchQueryDeferred = useDeferredValue(searchQuery);
     // AI semantic search toggle. When ON, the search query is ALSO
     // sent to the aiSearch Cloud Function (Claude-backed). The
     // substring matcher keeps running locally — AI results are
@@ -596,9 +602,9 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
         });
     }, [recipes]);
     const { loading: aiLoading, matchingIds: aiIds, error: aiError } = useAiSearch({
-        query: searchQuery,
+        query: searchQueryDeferred,
         items: aiItems,
-        enabled: aiOn && searchQuery.trim().length > 0,
+        enabled: aiOn && searchQueryDeferred.trim().length > 0,
     });
     const aiIdSet = useMemo(() => (aiIds ? new Set(aiIds) : null), [aiIds]);
 
@@ -795,9 +801,9 @@ export default function Recipes({ language, staffName, staffList, storeLocation,
     // synonyms, multi-word AND, and allergen-label matching.
     // When AI is on, the AI ids are UNIONed into the substring set
     // — substring matches always show; AI adds semantic extras.
-    const filteredRecipes = searchQuery.trim()
+    const filteredRecipes = searchQueryDeferred.trim()
         ? recipes.filter(r => {
-            if (matchesRecipeQuery(r, searchQuery)) return true;
+            if (matchesRecipeQuery(r, searchQueryDeferred)) return true;
             if (aiIdSet && aiIdSet.has(String(r.id))) return true;
             return false;
         })

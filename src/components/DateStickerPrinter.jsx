@@ -25,7 +25,7 @@
 //   - Editable build sheet (add/edit/delete components in-app)
 //   - Print history dashboard filtered to this surface
 
-import { useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
+import { useEffect, useMemo, useRef, useState, useDeferredValue, lazy, Suspense } from 'react';
 import {
     getAllMenuItems, getMenuItemBuild,
     getSearchableIndex, getAiSearchItems,
@@ -77,6 +77,12 @@ export default function DateStickerPrinter({
     const adminUser = isAdmin(staffName, staffList);
 
     const [search, setSearch] = useState('');
+    // 2026-05-30 perf — defer the search value used by the heavy filter
+    // pipeline (queryTokens + AI dispatch + per-row substring + 3-way
+    // union). Input reads `search` for instant feedback; downstream
+    // consumers read `searchDeferred` so React updates them at lower
+    // priority and keystrokes never block paint.
+    const searchDeferred = useDeferredValue(search);
     const [openItemId, setOpenItemId] = useState(null);
     // What we hand to PrintLabelModal — a recipe-shaped object so the
     // existing modal renders it without modification.
@@ -203,7 +209,7 @@ export default function DateStickerPrinter({
         return base;
     }, [customItems]);
 
-    const queryTokens = useMemo(() => expandQueryTermsTight(search), [search]);
+    const queryTokens = useMemo(() => expandQueryTermsTight(searchDeferred), [searchDeferred]);
     const hasQuery = queryTokens.length > 0;
 
     // AI hook — MUST sit above any conditional return (the React #300
@@ -213,7 +219,7 @@ export default function DateStickerPrinter({
         matchingIds: aiIds,
         error: aiError,
     } = useAiSearch({
-        query: search,
+        query: searchDeferred,
         items: aiItems,
         enabled: aiOn && hasQuery,
     });
