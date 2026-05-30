@@ -3413,6 +3413,29 @@ exports.aiGeneratePromo = onCall(
 exports.translateMessage = onCall(
     { region: "us-central1", cors: true, maxInstances: 10 },
     async (request) => {
+        // Origin allowlist (CR-7, 2026-05-30). Without Firebase Auth
+        // we cannot tie a call to a staff member, but we CAN require
+        // the caller to be a browser tab sourced from a known DD Mau
+        // origin. A script running outside the browser cannot forge
+        // an Origin header the user-agent's CORS guarantees integrity
+        // for; a malicious page on a different origin can't call us
+        // because CORS preflight will block the response. This raises
+        // the bar from "any apiKey holder anywhere" to "any page
+        // running on our domain or localhost dev". Phase 2 (Firebase
+        // Auth + admin claims) is the real lock; this is the right
+        // step now.
+        const origin = (request.rawRequest?.headers?.origin || "").toLowerCase();
+        const ALLOWED_ORIGINS = [
+            "https://app.ddmaustl.com",
+            "https://ddmaustl.github.io",       // pre-custom-domain build target
+            "http://localhost:5173",
+            "http://localhost:4173",            // npm run preview
+        ];
+        if (origin && !ALLOWED_ORIGINS.includes(origin)) {
+            logger.warn("translateMessage: rejected unknown origin:", origin);
+            throw new HttpsError("permission-denied", "origin not allowed");
+        }
+
         // Rate limit by source IP before doing any work. This is the
         // only auth-shaped check we can do without Firebase Auth wired
         // — see SEC-002 in AUDIT.md for the full picture.
@@ -4310,6 +4333,14 @@ exports.pruneSystemLogs = onSchedule(
         // zero operational value (the message itself lives in the
         // chat's messages subcollection where it belongs). Open
         // ('pending') rows are NEVER touched — they're the worklist.
+        //
+        // 2026-05-30 code-review fix: pass the Date object directly
+        // to .where() — sendAt is stored as a Firestore Timestamp
+        // (ChatThread.jsx writes Timestamp.fromDate(...)). Firestore
+        // type-aware comparison means String-vs-Timestamp matches 0
+        // docs, so the original .toISOString() silently no-op'd the
+        // cleanup. Matches the canonical pattern at line ~1120 in
+        // sendScheduledChatMessages.
         try {
             const schedCutoff = new Date(Date.now() - 30 * 24 * 60 * 60_000);
             let deleted = 0;
@@ -4317,7 +4348,7 @@ exports.pruneSystemLogs = onSchedule(
                 try {
                     const snap = await db.collection("scheduled_messages")
                         .where("status", "==", status)
-                        .where("sendAt", "<", schedCutoff.toISOString())
+                        .where("sendAt", "<", schedCutoff)
                         .limit(SCAN_LIMIT)
                         .get();
                     if (snap.empty) continue;

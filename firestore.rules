@@ -274,11 +274,19 @@ service cloud.firestore {
 
     // Invite tokens — single-use, time-boxed. The new-hire portal reads
     // its own invite by token id (the URL param), then loads the hire.
+    //
+    // Hardened 2026-05-30 (CR-3): `update: if true` previously let any
+    // caller rewrite `hireId` on an existing invite — i.e. steal a token
+    // that was minted for hire A and repoint it to hire B. We now hold
+    // `hireId` immutable across updates so the only thing that can change
+    // is the status flip (markUsed / openedAt / etc.). Phase 2 (Firebase
+    // Auth) will close this entirely; this is the right gate to add now.
     match /onboarding_invites/{token} {
       allow read: if true;
       allow create: if request.resource.data.hireId is string
                     && request.resource.data.expiresAt is string;
-      allow update: if true;       // status flips (used/openedAt) only
+      allow update: if request.resource.data is map
+                    && request.resource.data.hireId == resource.data.hireId;
       allow delete: if false;
     }
 
@@ -296,13 +304,23 @@ service cloud.firestore {
     // The shape narrowing (name is string, length 2..200) discourages
     // empty-payload spam. Other fields are optional to keep the form
     // permissive for legit applicants.
+    // Hardened 2026-05-30 (CR-4): split update + delete. Previously
+    // `update, delete: if true` let any caller wipe an application or
+    // overwrite a submitted payload. Real lifecycle:
+    //   • Admin updates status / notes / interview state from the UI
+    //     (kept open as map-shape — no Auth yet to pin to admin claim)
+    //   • Hard delete is owned by the expireAndPurgeApplications Cloud
+    //     Function (admin SDK bypasses rules). No client-side delete
+    //     path exists in the app today, so denying delete here doesn't
+    //     break any flow.
     match /onboarding_applications/{appId} {
       allow read: if true;
       allow create: if request.resource.data.name is string
                     && request.resource.data.name.size() > 1
                     && request.resource.data.name.size() < 200
                     && request.resource.data.createdAt == request.time;
-      allow update, delete: if true;   // admin-only in practice (client gate)
+      allow update: if request.resource.data is map;
+      allow delete: if false;
     }
 
     // Onboarding audit trail — every admin view/download/approve/reject.
@@ -636,11 +654,17 @@ service cloud.firestore {
         allow delete: if true;
       }
     }
+    // Hardened 2026-05-30 (CR-5): require lastSeenAt to be exactly the
+    // server-side request.time. The old rule permitted lastSeenAt == null
+    // which let a hostile client mask an offline TV by writing a heartbeat
+    // with null timestamp — `checkTvHeartbeats` would skip the staleness
+    // check on a null and the owner-alert never fires. MenuDisplay always
+    // writes a fresh serverTimestamp on heartbeat, so banning null does
+    // not affect legitimate clients.
     match /tv_heartbeats/{tvId} {
       allow read: if true;
       allow create, update: if request.resource.data.tvId is string
-                            && (request.resource.data.lastSeenAt == null
-                                || request.resource.data.lastSeenAt == request.time);
+                            && request.resource.data.lastSeenAt == request.time;
       allow delete: if false;
     }
 
@@ -693,11 +717,113 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ── /insurance — benefits enrollment (CR-1, 2026-05-30) ──────────────
+    // Doc IDs are predictable: `staffName.toLowerCase().replace(/\s+/g, "_")`
+    // (see InsuranceEnrollment.jsx). KNOWN PHASE-2 GAP: without Firebase
+    // Auth, anyone with the public apiKey can still READ another staff
+    // member's record by guessing the docId — there is no Auth-less fix
+    // for that. The Phase 2 roadmap at the top of this file is the only
+    // real lock. What we CAN enforce now:
+    //   • Block client-side deletes — benefits-enrollment history must
+    //     not be wipable from DevTools.
+    //   • Make staffName immutable on update — stops a hostile client
+    //     from rewriting whose record this is.
+    //   • Map-shape check rejects garbage writes.
+    // Cloud Functions (admin SDK) bypass these rules for any legitimate
+    // server-side cleanup.
+    match /insurance/{docId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.staffName is string;
+      allow update: if request.resource.data is map
+                    && request.resource.data.staffName is string
+                    && request.resource.data.staffName == resource.data.staffName;
+      allow delete: if false;
+    }
+
+    // ── /tardies — tardiness records (CR-2, 2026-05-30) ──────────────────
+    // Written by TardinessTracker (addDoc on punch-in, updateDoc to
+    // toggle excused, deleteDoc when admin removes). Previously fell
+    // through to catch-all so any apiKey holder could forge a tardy
+    // record (false attendance write-up). Tighten the create shape and
+    // keep delete open because the dashboard removes entries.
+    match /tardies/{tardyId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.staffName is string;
+      allow update: if request.resource.data is map;
+      allow delete: if true;   // admin removes via dashboard
+    }
+
+    // ── /maintenanceRequests — ticket queue (CR-2, 2026-05-30) ───────────
+    // Written by MaintenanceRequest (staff submits) and AdminPanel
+    // (admin updates status, deletes resolved). Tighten create shape;
+    // delete stays open for admin cleanup.
+    match /maintenanceRequests/{id} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.description is string;
+      allow update: if request.resource.data is map;
+      allow delete: if true;
+    }
+
+    // ── /offsite_shifts — off-property clock-ins (CR-2, 2026-05-30) ──────
+    // Written by src/data/offsiteClock.js (addDoc on clock-in,
+    // updateDoc on clock-out / break / note). Clock-in history is
+    // payroll-adjacent — block client deletes; the audit trail must
+    // survive even if a manager wants to "tidy up."
+    match /offsite_shifts/{id} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+                    && request.resource.data.staffName is string;
+      allow update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
+    // ── /cateringOrders — catering inquiry / order log (CR-2, 2026-05-30) ─
+    // Written by CateringOrder (addDoc + setDoc on update). No client
+    // delete path exists today; lock it down so spammed/forged orders
+    // can't be silently erased from history before owners review.
+    match /cateringOrders/{id} {
+      allow read: if true;
+      allow create: if request.resource.data is map;
+      allow update: if request.resource.data is map;
+      allow delete: if false;
+    }
+
+    // ── /sms_delivery_logs — CF-only writes (CR-2, 2026-05-30) ───────────
+    // dispatchSms (functions/sms.js) and twilioStatusCallback write
+    // every SMS attempt/result here via admin SDK (bypasses these
+    // rules). Clients READ for the Health dashboard. Sealing client
+    // writes prevents a tampered client from forging fake delivery
+    // success entries to hide failed sends (or vice versa).
+    match /sms_delivery_logs/{logId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // ── /sms_inbound_events — CF-only writes (CR-2, 2026-05-30) ──────────
+    // twilioInbound webhook writes via admin SDK. Inbound STOP/START/HELP
+    // events drive compliance — clients should never mint or alter them.
+    match /sms_inbound_events/{eventId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
+    // ── /sms_opt_in_events — CF-only writes (CR-2, 2026-05-30) ───────────
+    // Audit trail of consent changes (functions/sms.js). Append-only
+    // server-side. Clients READ for the staff usage dashboard's opt-in
+    // history; sealing writes prevents tampering.
+    match /sms_opt_in_events/{eventId} {
+      allow read: if true;
+      allow create, update, delete: if false;
+    }
+
     // ── Catch-all ──────────────────────────────────────────────────────
     // Every other collection inherits a permissive default. KNOWN GAP:
     // this is the single biggest security weakness in the rules — any
     // collection not explicitly listed above (shifts, vendor_*,
-    // staff_todos, swap_requests, tardies, scheduled_messages,
+    // staff_todos, swap_requests, scheduled_messages,
     // required_tasks, calendar_events, etc.) is fully writable by
     // anyone holding the public Firebase apiKey. The Phase 2 roadmap
     // at the top of this file is the correct fix — Firebase Auth +

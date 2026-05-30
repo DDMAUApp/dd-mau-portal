@@ -111,10 +111,54 @@ service firebase.storage {
       allow delete: if true;
     }
 
-    // Everything else — match existing app behavior (open). Tighten
-    // per-path as new features land.
+    // Menu item photos — MenuEditor uploads.
+    //
+    // Hardened 2026-05-30 (CR-6, was bleeding through the catch-all).
+    // Path: menu_photos/{slug}_{ts}.{ext} (MenuEditor.jsx). Image-only,
+    // 10 MB cap is generous (typical compressed JPEG is well under 2 MB).
+    match /menu_photos/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if true;
+    }
+
+    // Maintenance ticket photos — legacy path used by MaintenanceRequest.jsx
+    // (the /maintenance/{ticketId}/{fileName} block above is the newer
+    // shape; this one is `maintenance-photos/{ts}_{name}`). Same posture.
+    // CR-6, 2026-05-30: was inheriting the catch-all.
+    match /maintenance-photos/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if true;
+    }
+
+    // Checklist completion photos — Operations.jsx writes
+    // `checklist-photos/{dateKey}/{taskId}_{ts}.jpg` whenever a staff
+    // member attaches a proof photo to a task. CR-6, 2026-05-30.
+    match /checklist-photos/{dateKey}/{fileName} {
+      allow read: if true;
+      allow write: if request.resource.size < 10 * 1024 * 1024
+                   && request.resource.contentType.matches('image/.*');
+      allow delete: if true;
+    }
+
+    // ── Catch-all ──────────────────────────────────────────────────────
+    // Hardened 2026-05-30 (CR-6). The previous catch-all allowed both
+    // read AND write on any unlisted path — meaning any new feature that
+    // wrote to a path not listed above silently inherited zero size
+    // cap, zero content-type allowlist, and zero rate ceiling. A scripted
+    // attacker with the public apiKey could fill the bucket arbitrarily.
+    //
+    // New posture: reads stay open (the bucket serves public CDN-style
+    // for now), but WRITES default-deny. Any new upload path MUST land
+    // a matching `match` block above with explicit size + content-type
+    // checks. If you see a "permission denied" on a Storage upload after
+    // this change, the fix is to add a rule above — not to revert this.
     match /{allPaths=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if false;
     }
   }
 }
