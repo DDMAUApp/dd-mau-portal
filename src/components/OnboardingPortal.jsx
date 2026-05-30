@@ -22,7 +22,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { db, storage, functions } from '../firebase';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, increment, collection, query, where, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ref as sref, uploadBytes, getDownloadURL, listAll, getBytes } from 'firebase/storage';
 import {
@@ -205,6 +205,35 @@ export default function OnboardingPortal({ token, language = 'en' }) {
                     setResolvedLang(hireData.preferredLanguage);
                 }
                 setStatus('ready');
+
+                // 2026-05-30 — Andrew: track when the hire opens their
+                // onboarding link so the admin Onboarding tab can show
+                // "Opened 5 min ago" / "Never opened" per row. Fields
+                // are written to the hire doc (not the invite doc) so
+                // the admin tab can render them directly from the
+                // already-subscribed onboarding_hires snapshot — no
+                // extra cross-doc lookup.
+                //
+                //   firstOpenedAt — ISO, set on first open only
+                //   lastOpenedAt  — ISO, set on every open
+                //   openCount     — incremented on every open
+                //
+                // Fire-and-forget: failure here must NOT block the
+                // portal from rendering. Firestore rule allows this
+                // (onboarding_hires update is wide open per the
+                // current rules at firestore.rules:271).
+                try {
+                    const nowIso = new Date().toISOString();
+                    const updates = {
+                        lastOpenedAt: nowIso,
+                        openCount: increment(1),
+                    };
+                    if (!hireData.firstOpenedAt) {
+                        updates.firstOpenedAt = nowIso;
+                    }
+                    updateDoc(doc(db, 'onboarding_hires', gotHireId), updates)
+                        .catch((e) => console.warn('open-tracking write failed:', e));
+                } catch (e) { /* swallow — never block portal render */ }
             } catch (e) {
                 if (!alive) return;
                 setStatus('error');

@@ -47,6 +47,48 @@ const loadQRCode = () => import('qrcode').then(m => m.default || m);
 
 // Build the invite URL. The new-hire portal reads ?onboard=TOKEN on load
 // and bypasses the lock screen.
+// 2026-05-30 — Andrew "show when hires opened their onboarding doc".
+// OnboardingPortal writes lastOpenedAt + firstOpenedAt + openCount to
+// the hire doc on mount; this helper turns those into a glance-friendly
+// string for the admin tab. Returns shape { label, tone } so the caller
+// can render with appropriate color (amber for never-opened, green for
+// recently opened, dd-text-2 for older).
+function fmtOpenedAgo(hire, isEs) {
+    const last = hire?.lastOpenedAt;
+    if (!last) {
+        return {
+            label: isEs ? 'Sin abrir aún' : 'Not opened yet',
+            tone:  'bg-amber-50 text-amber-800 border-amber-200',
+            opened: false,
+        };
+    }
+    const t = new Date(last).getTime();
+    if (!t || isNaN(t)) {
+        return { label: isEs ? 'Abierto' : 'Opened', tone: 'bg-dd-bg text-dd-text-2 border-dd-line', opened: true };
+    }
+    const diffMs = Date.now() - t;
+    const min = Math.round(diffMs / 60_000);
+    const hr  = Math.round(diffMs / 3_600_000);
+    const day = Math.round(diffMs / 86_400_000);
+    let ago;
+    if (min < 1)    ago = isEs ? 'ahora' : 'just now';
+    else if (min < 60)  ago = isEs ? `hace ${min} min` : `${min}m ago`;
+    else if (hr  < 24)  ago = isEs ? `hace ${hr} h`   : `${hr}h ago`;
+    else if (day < 30)  ago = isEs ? `hace ${day} días` : `${day}d ago`;
+    else ago = new Date(last).toLocaleDateString(isEs ? 'es' : 'en-US', { month: 'short', day: 'numeric' });
+    // Fresh (<24h) gets a green tint so admin sees activity at a glance.
+    const tone = hr < 24
+        ? 'bg-dd-green-50 text-dd-green-700 border-dd-green/30'
+        : 'bg-dd-bg text-dd-text-2 border-dd-line';
+    return {
+        label:  (isEs ? 'Abierto ' : 'Opened ') + ago,
+        tone,
+        opened: true,
+        count:  Number(hire.openCount) || 0,
+        firstAt: hire.firstOpenedAt || null,
+    };
+}
+
 function buildInviteUrl(token) {
     const base = typeof window !== 'undefined'
         ? window.location.origin + window.location.pathname.replace(/\/$/, '')
@@ -603,6 +645,7 @@ function HireList({ hires, selectedId, onSelect, isEs }) {
                 const meta = HIRE_STATUS_META[status];
                 const pct = counts.total === 0 ? 0 : Math.round((counts.approved / counts.total) * 100);
                 const isSel = selectedId === h.id;
+                const opened = fmtOpenedAgo(h, isEs);
                 return (
                     <button key={h.id}
                         onClick={() => onSelect(h.id)}
@@ -623,6 +666,9 @@ function HireList({ hires, selectedId, onSelect, isEs }) {
                                     </span>
                                     <span className="text-[10px] text-dd-text-2">
                                         {pct}% {isEs ? 'completo' : 'done'}
+                                    </span>
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${opened.tone}`}>
+                                        {opened.label}
                                     </span>
                                 </div>
                             </div>
@@ -785,6 +831,25 @@ function HireDetail({ hire, isEs, staffName, docOverrides, onWriteAudit, onArchi
                         <span className="text-[10px] text-dd-text-2">
                             {counts.approved}/{counts.total} {tx('approved', 'aprobados')} · {counts.submitted} {tx('to review', 'por revisar')}
                         </span>
+                        {/* 2026-05-30 — open-tracking pill. Tooltip carries
+                            firstOpenedAt + total openCount so admin can hover
+                            for the full history without cluttering the row. */}
+                        {(() => {
+                            const o = fmtOpenedAgo(hire, isEs);
+                            const tooltip = o.opened
+                                ? tx(
+                                    `First opened ${o.firstAt ? new Date(o.firstAt).toLocaleString() : '?'} · ${o.count} open${o.count === 1 ? '' : 's'} total`,
+                                    `Primera apertura ${o.firstAt ? new Date(o.firstAt).toLocaleString() : '?'} · ${o.count} apertura${o.count === 1 ? '' : 's'} en total`)
+                                : tx(
+                                    'The hire has not opened their invite link yet.',
+                                    'El contratado aún no ha abierto su enlace.');
+                            return (
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${o.tone}`}
+                                      title={tooltip}>
+                                    {o.label}{o.opened && o.count > 1 ? ` · ${o.count}×` : ''}
+                                </span>
+                            );
+                        })()}
                     </div>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
