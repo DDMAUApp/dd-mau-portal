@@ -244,9 +244,25 @@ export default function AssignTasksPanel({
                 };
             })
             .filter(Boolean)
-            .sort((a, b) => (a.staff.name || '').localeCompare(b.staff.name || ''));
+            // 2026-05-30 — Andrew: "i want staff to see their own task
+            // list as the main list but to the side i want them to see
+            // the whole list. that list they cant click. they check off
+            // items only from their own list."
+            //
+            // Put the viewer's own column FIRST so it sits leftmost in
+            // the horizontal scroller (acts as the prominent "my tasks"
+            // pane). Other columns stay alphabetical to its right and
+            // render with a view-only treatment for non-managers (the
+            // mark-done button is hidden on those rows so a staffer
+            // can't accidentally check off a coworker's task).
+            .sort((a, b) => {
+                const aMine = (a.staff.name || '') === staffName;
+                const bMine = (b.staff.name || '') === staffName;
+                if (aMine !== bMine) return aMine ? -1 : 1;
+                return (a.staff.name || '').localeCompare(b.staff.name || '');
+            });
         return enriched;
-    }, [assignmentsByStaff, sideStaff]);
+    }, [assignmentsByStaff, sideStaff, staffName]);
 
     // ── Master library — search + sort ──────────────────────────────
     const [librarySearch, setLibrarySearch] = useState('');
@@ -678,19 +694,53 @@ export default function AssignTasksPanel({
                     </div>
                 ) : (
                     <div ref={columnsRef} className="flex gap-3 shrink-0">
-                        {staffColumns.map(({ staff, items }) => (
+                        {staffColumns.map(({ staff, items }) => {
+                            // 2026-05-30 — per-column ownership + viewer
+                            // capability. `isMine` is the only column the
+                            // viewer can interact with when they aren't a
+                            // manager (and even managers see the visual
+                            // distinction). `readOnly` flips off the
+                            // mark-done button on coworkers' columns for
+                            // regular staff so they can't accidentally
+                            // check off someone else's task.
+                            const isMine   = (staff.name || '') === staffName;
+                            const readOnly = !canModify && !isMine;
+                            return (
                             <div key={staff.id}
-                                className="glass-card p-3 w-[80vw] sm:w-[280px] shrink-0 flex flex-col max-h-[calc(100vh-200px)]">
-                                {/* Column header — avatar + name + count */}
+                                className={`glass-card p-3 w-[80vw] sm:w-[280px] shrink-0 flex flex-col max-h-[calc(100vh-200px)] transition ${
+                                    isMine
+                                        ? 'ring-2 ring-dd-green/40 shadow-card-hov'
+                                        : readOnly
+                                            ? 'opacity-75'
+                                            : ''
+                                }`}>
+                                {/* Column header — avatar + name + count + mine/view-only pill */}
                                 <div className="flex items-center gap-2 mb-3 pb-2 border-b border-glass-border-light">
-                                    <span className="glass-avatar-green w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0">
+                                    <span className={`w-9 h-9 rounded-full flex items-center justify-center text-[12px] font-bold shrink-0 ${
+                                        isMine ? 'bg-dd-green text-white' : 'glass-avatar-green'
+                                    }`}>
                                         {initialsOf(staff.name)}
                                     </span>
                                     <div className="min-w-0 flex-1">
-                                        <div className="text-headline text-dd-text truncate leading-tight">
-                                            {staff.name}
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="text-headline text-dd-text truncate leading-tight">
+                                                {isMine ? tx('My tasks', 'Mis tareas', isEs) : staff.name}
+                                            </div>
+                                            {isMine && (
+                                                <span className="text-[9px] font-black uppercase tracking-wider bg-dd-green text-white px-1.5 py-0.5 rounded-full shrink-0">
+                                                    {tx('Mine', 'Mío', isEs)}
+                                                </span>
+                                            )}
+                                            {readOnly && (
+                                                <span className="text-[9px] font-black uppercase tracking-wider bg-dd-bg text-dd-text-2 border border-dd-line px-1.5 py-0.5 rounded-full shrink-0">
+                                                    {tx('View only', 'Solo ver', isEs)}
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="text-caption-md text-dd-text-2">
+                                            {!isMine && (
+                                                <span className="font-semibold text-dd-text">{staff.name} · </span>
+                                            )}
                                             {items.length} {tx(
                                                 items.length === 1 ? 'open task' : 'open tasks',
                                                 items.length === 1 ? 'tarea abierta' : 'tareas abiertas',
@@ -704,10 +754,18 @@ export default function AssignTasksPanel({
                                 <div className="space-y-1.5 overflow-y-auto">
                                     {items.map((a) => (
                                         <div key={a.id}
-                                            className="group flex items-start gap-2 px-2.5 py-2 rounded-glass-md bg-white/60 border border-glass-border-light hover:bg-white transition-colors">
-                                            <button onClick={() => handleMarkDone(a)}
-                                                className="mt-0.5 w-5 h-5 rounded-full border-2 border-dd-line hover:border-dd-green hover:bg-dd-green/10 active:scale-90 transition-all flex items-center justify-center shrink-0"
-                                                aria-label={tx('Mark done', 'Marcar hecho', isEs)} />
+                                            className={`group flex items-start gap-2 px-2.5 py-2 rounded-glass-md bg-white/60 border border-glass-border-light transition-colors ${
+                                                readOnly ? '' : 'hover:bg-white'
+                                            }`}>
+                                            {!readOnly && (
+                                                <button onClick={() => handleMarkDone(a)}
+                                                    className="mt-0.5 w-5 h-5 rounded-full border-2 border-dd-line hover:border-dd-green hover:bg-dd-green/10 active:scale-90 transition-all flex items-center justify-center shrink-0"
+                                                    aria-label={tx('Mark done', 'Marcar hecho', isEs)} />
+                                            )}
+                                            {readOnly && (
+                                                <span className="mt-0.5 w-5 h-5 rounded-full border-2 border-dd-line/40 shrink-0"
+                                                    title={tx('Only the owner can check this off', 'Solo el dueño puede marcarlo', isEs)} />
+                                            )}
                                             <div className="flex-1 min-w-0">
                                                 <div className="text-body-md text-dd-text break-words">
                                                     {a.task}
@@ -732,7 +790,8 @@ export default function AssignTasksPanel({
                                     ))}
                                 </div>
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                 )}
             </div>
