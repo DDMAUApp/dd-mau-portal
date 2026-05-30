@@ -5664,6 +5664,136 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                 );
             };
 
+            // ── Cart data memoization (Andrew 2026-05-29 perf batch D) ──
+            //
+            // The cart modal lives inside an IIFE deeper in the JSX
+            // (`{showCart && (() => { ... })()}`). Before this memo,
+            // every parent re-render — sauce updates, checklist ticks,
+            // inventory snapshots, ANYTHING — re-ran 150 lines of
+            // compute that walks every inventory item + every vendor
+            // count + every vendor price source to derive cart rows,
+            // sort them, build the vendor list, compute per-vendor
+            // totals, and compute the best-mix totals. With 200+ cart
+            // items × 8 vendors that's measurable work per render.
+            //
+            // The IIFE pattern blocks an in-place useMemo (hooks can't
+            // live in IIFEs). So we hoist the pure-data derivation to
+            // component scope here, gated on showCart so the work
+            // skips entirely when the cart is closed. The IIFE just
+            // reads the memoized fields.
+            //
+            // Closure-bound helpers (effectiveVendor, assignRow,
+            // findVendorEntry, vendorColor) stay inside the IIFE —
+            // they're cheap to construct and tie to setState callbacks
+            // that change identity per render.
+            const cartData = useMemo(() => {
+                if (!showCart) return null;
+                const findVendorEntry = (vendor, vendorId) => {
+                    const src = vendor === "sysco"
+                        ? (syscoPricingData?.sorted || [])
+                        : (usfoodsPricingData?.sorted || []);
+                    const found = src.find(([k]) => k === vendorId);
+                    return found ? found[1] : null;
+                };
+                const rows = [];
+                const itemLookup = new Map();
+                for (const cat of INVENTORY_CATEGORIES) {
+                    for (const item of (cat.items || [])) {
+                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                    }
+                }
+                for (const cat of customInventory) {
+                    for (const item of (cat.items || [])) {
+                        itemLookup.set(item.id, { item, categoryName: cat.name });
+                    }
+                }
+                Object.entries(inventory).forEach(([id, rawQty]) => {
+                    const qty = Number(rawQty) || 0;
+                    if (qty <= 0) return;
+                    const lookup = itemLookup.get(id);
+                    if (!lookup) return;
+                    const { item, categoryName } = lookup;
+                    rows.push({
+                        kind: "master",
+                        id: item.id,
+                        name: language === "es" && item.nameEs ? item.nameEs : item.name,
+                        altName: item.name,
+                        category: categoryName,
+                        qty,
+                        vendorPrices: invToVendorPrices[item.id] || [],
+                        preferredVendor: item.preferredVendor || item.vendor || "",
+                        pack: item.pack,
+                        addedFromVendor: item.addedFromVendor,
+                    });
+                });
+                Object.entries(vendorCounts).forEach(([key, qty]) => {
+                    if (qty <= 0) return;
+                    const [vendor, vendorId] = key.split(":");
+                    const data = findVendorEntry(vendor, vendorId);
+                    if (!data) return;
+                    const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
+                    rows.push({
+                        kind: "vendor-only",
+                        id: key,
+                        name: data.name || `${vendorName} #${vendorId}`,
+                        category: data.category || "Other",
+                        qty,
+                        vendorPrices: [{
+                            vendor: vendorName, vendorId,
+                            price: data.price, pack: data.pack,
+                            brand: data.brand, unit: data.unit,
+                        }],
+                        preferredVendor: vendorName,
+                        pack: data.pack,
+                        vendorOnlyOrigin: vendorName,
+                    });
+                });
+                rows.sort((a, b) =>
+                    (a.category || "").localeCompare(b.category || "") ||
+                    (a.name || "").localeCompare(b.name || ""));
+                const vendorSet = new Set();
+                rows.forEach(r => r.vendorPrices.forEach(p => p.price != null && vendorSet.add(p.vendor)));
+                const vendorList = Array.from(vendorSet).sort();
+                const vendorTotals = {};
+                vendorList.forEach(v => vendorTotals[v] = { lineTotal: 0, items: 0, missing: 0 });
+                rows.forEach(r => {
+                    vendorList.forEach(v => {
+                        const p = r.vendorPrices.find(vp => vp.vendor === v);
+                        if (p && p.price) {
+                            vendorTotals[v].lineTotal += r.qty * p.price;
+                            vendorTotals[v].items += 1;
+                        } else {
+                            vendorTotals[v].missing += 1;
+                        }
+                    });
+                });
+                let bestMixSum = 0;
+                let uncovered = 0;
+                const bestMixByVendor = {};
+                vendorList.forEach(v => bestMixByVendor[v] = { lineTotal: 0, items: 0 });
+                rows.forEach(r => {
+                    const cheapest = r.vendorPrices.find(p => p.price != null);
+                    if (cheapest) {
+                        bestMixSum += r.qty * cheapest.price;
+                        if (!bestMixByVendor[cheapest.vendor]) bestMixByVendor[cheapest.vendor] = { lineTotal: 0, items: 0 };
+                        bestMixByVendor[cheapest.vendor].lineTotal += r.qty * cheapest.price;
+                        bestMixByVendor[cheapest.vendor].items += 1;
+                    } else {
+                        uncovered += 1;
+                    }
+                });
+                const totalItems = rows.length;
+                const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+                return {
+                    rows, vendorList, vendorTotals, bestMixSum, uncovered,
+                    bestMixByVendor, totalItems, totalQty,
+                };
+            }, [
+                showCart, inventory, vendorCounts, customInventory,
+                syscoPricingData, usfoodsPricingData, invToVendorPrices,
+                language,
+            ]);
+
             return (
                 <div className="p-4 pb-bottom-nav">
                     {/* Page header row — title on the left, compact labor
@@ -6563,94 +6693,19 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                 Cheapest vendor highlighted (🏆). Per-vendor totals + best-mix
                                 summary at the bottom so the orderer can decide if splitting
                                 between vendors is worth it. */}
-                            {showCart && (() => {
-                                // Helper: find the live vendor entry for a given vendor:vendorId combo
-                                const findVendorEntry = (vendor, vendorId) => {
-                                    const src = vendor === "sysco"
-                                        ? (syscoPricingData?.sorted || [])
-                                        : (usfoodsPricingData?.sorted || []);
-                                    const found = src.find(([k]) => k === vendorId);
-                                    return found ? found[1] : null;
-                                };
-
-                                // 1. Build cart rows. 2026-05-20 — Andrew:
-                                //    "i wan tto make sure that all inventory
-                                //    list all end up in the same cart". Walk
-                                //    every counted id in `inventory`, NOT just
-                                //    the active list's items — that way if the
-                                //    user switches lists between counts, every
-                                //    counted item still lands in one cart.
-                                //
-                                //    Lookup precedence: active customInventory
-                                //    first (so per-list overrides win), then
-                                //    the master INVENTORY_CATEGORIES catalog
-                                //    as a fallback for items not in the active
-                                //    list. Items unknown to both are skipped
-                                //    rather than crashing — defensive against
-                                //    stale ids in /inventory.
-                                const rows = [];
-                                const itemLookup = new Map();
-                                for (const cat of INVENTORY_CATEGORIES) {
-                                    for (const item of (cat.items || [])) {
-                                        itemLookup.set(item.id, { item, categoryName: cat.name });
-                                    }
-                                }
-                                for (const cat of customInventory) {
-                                    for (const item of (cat.items || [])) {
-                                        // Active list wins — it may have
-                                        // overrides for vendor / pack / price.
-                                        itemLookup.set(item.id, { item, categoryName: cat.name });
-                                    }
-                                }
-                                Object.entries(inventory).forEach(([id, rawQty]) => {
-                                    const qty = Number(rawQty) || 0;
-                                    if (qty <= 0) return;
-                                    const lookup = itemLookup.get(id);
-                                    if (!lookup) return; // unknown id — skip
-                                    const { item, categoryName } = lookup;
-                                    rows.push({
-                                        kind: "master",
-                                        id: item.id,
-                                        name: language === "es" && item.nameEs ? item.nameEs : item.name,
-                                        altName: item.name,
-                                        category: categoryName,
-                                        qty,
-                                        vendorPrices: invToVendorPrices[item.id] || [],
-                                        preferredVendor: item.preferredVendor || item.vendor || "",
-                                        pack: item.pack,
-                                        addedFromVendor: item.addedFromVendor,
-                                    });
-                                });
-                                Object.entries(vendorCounts).forEach(([key, qty]) => {
-                                    if (qty <= 0) return;
-                                    const [vendor, vendorId] = key.split(":");
-                                    const data = findVendorEntry(vendor, vendorId);
-                                    if (!data) return;
-                                    const vendorName = vendor === "sysco" ? "Sysco" : "US Foods";
-                                    rows.push({
-                                        kind: "vendor-only",
-                                        id: key,
-                                        name: data.name || `${vendorName} #${vendorId}`,
-                                        category: data.category || "Other",
-                                        qty,
-                                        vendorPrices: [{
-                                            vendor: vendorName, vendorId,
-                                            price: data.price, pack: data.pack,
-                                            brand: data.brand, unit: data.unit,
-                                        }],
-                                        preferredVendor: vendorName,
-                                        pack: data.pack,
-                                        vendorOnlyOrigin: vendorName,
-                                    });
-                                });
-                                rows.sort((a, b) =>
-                                    (a.category || "").localeCompare(b.category || "") ||
-                                    (a.name || "").localeCompare(b.name || ""));
-
-                                // 2. Find all distinct vendors that have at least one price across the cart
-                                const vendorSet = new Set();
-                                rows.forEach(r => r.vendorPrices.forEach(p => p.price != null && vendorSet.add(p.vendor)));
-                                const vendorList = Array.from(vendorSet).sort();
+                            {showCart && cartData && (() => {
+                                // 2026-05-29 perf — heavy derivations are
+                                // computed once at component scope via the
+                                // cartData useMemo above the return. The IIFE
+                                // is now a thin renderer that destructures
+                                // the memoized fields and constructs the
+                                // closure-bound helpers (cheap, identity-
+                                // changes-per-render is fine for handlers).
+                                const {
+                                    rows, vendorList, vendorTotals,
+                                    bestMixSum, uncovered, bestMixByVendor,
+                                    totalItems, totalQty,
+                                } = cartData;
                                 const vendorColor = (v) => v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
 
                                 // Quick-assign pill bar uses the canonical 8-vendor
@@ -6680,40 +6735,11 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     setCartVendorOverride({});
                                 };
 
-                                // 3. Per-vendor totals (if all items came from this vendor)
-                                const vendorTotals = {};
-                                vendorList.forEach(v => vendorTotals[v] = { lineTotal: 0, items: 0, missing: 0 });
-                                rows.forEach(r => {
-                                    vendorList.forEach(v => {
-                                        const p = r.vendorPrices.find(vp => vp.vendor === v);
-                                        if (p && p.price) {
-                                            vendorTotals[v].lineTotal += r.qty * p.price;
-                                            vendorTotals[v].items += 1;
-                                        } else {
-                                            vendorTotals[v].missing += 1;
-                                        }
-                                    });
-                                });
-
-                                // 4. Best mix: pick cheapest vendor available per item
-                                let bestMixSum = 0;
-                                let uncovered = 0;
-                                const bestMixByVendor = {};
-                                vendorList.forEach(v => bestMixByVendor[v] = { lineTotal: 0, items: 0 });
-                                rows.forEach(r => {
-                                    const cheapest = r.vendorPrices.find(p => p.price != null);
-                                    if (cheapest) {
-                                        bestMixSum += r.qty * cheapest.price;
-                                        if (!bestMixByVendor[cheapest.vendor]) bestMixByVendor[cheapest.vendor] = { lineTotal: 0, items: 0 };
-                                        bestMixByVendor[cheapest.vendor].lineTotal += r.qty * cheapest.price;
-                                        bestMixByVendor[cheapest.vendor].items += 1;
-                                    } else {
-                                        uncovered += 1;
-                                    }
-                                });
-
-                                const totalItems = rows.length;
-                                const totalQty = rows.reduce((s, r) => s + r.qty, 0);
+                                // Per-vendor totals, best-mix sums, totalItems,
+                                // totalQty all destructured above from cartData
+                                // (computed by the memoized derivation at
+                                // component scope — see the useMemo block
+                                // before this component's return).
 
                                 return (
                                     // 2026-05-27 — Andrew: "in inventory the cart
