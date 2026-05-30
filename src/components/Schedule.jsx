@@ -52,6 +52,9 @@ import {
     Printer, Calendar, Copy, Repeat, Ban,
 } from 'lucide-react';
 import ModalPortal from './ModalPortal';
+import ConfirmModal from './ConfirmModal';
+import OfferShiftModal from './OfferShiftModal';
+import TakeShiftModal from './TakeShiftModal';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -648,6 +651,40 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // a chip = shift created. "✏️" chip falls back to the full modal for
     // anything custom. Cleared on cell-click elsewhere or Esc.
     const [quickAddCell, setQuickAddCell] = useState(null); // { staff, dateStr } | null
+
+    // 2026-05-30 — "Up for grabs" UX rebuild (Phase 1).
+    //
+    // Three new state cells replace native browser confirm() / prompt()
+    // throughout the offer/take/approve/drag flows. Every destructive
+    // or state-changing action now routes through a glass ConfirmModal
+    // (per Andrew: "any delete or change always is followed by an are
+    // you sure type of question so nothing is accidentally deleted or
+    // moved, or dragged").
+    //
+    //   confirmDialog — { title, body, confirmLabel, tone, onConfirm } | null
+    //                   Generic "are you sure?" prompt. Pattern:
+    //                     setConfirmDialog({
+    //                       title: 'Cancel offer?',
+    //                       body:  '...',
+    //                       confirmLabel: 'Cancel offer',
+    //                       tone: 'danger',
+    //                       onConfirm: () => handleCancelOffer(shift),
+    //                     });
+    //                   ConfirmModal closes itself after onConfirm completes.
+    //
+    //   offerTarget   — Shift the user is offering. Setting it opens the
+    //                   OfferShiftModal (note + urgent toggle composer).
+    //                   The modal's onSubmit calls commitOfferShift, which
+    //                   does the actual Firestore write.
+    //
+    //   takeTarget    — Shift the user is taking. Setting it opens the
+    //                   TakeShiftModal (offerer note, conflict warning,
+    //                   hours preview, optional partial-pickup picker).
+    //                   onSubmit calls commitTakeShift, which writes
+    //                   pendingClaimBy + optional proposedSplit.
+    const [confirmDialog, setConfirmDialog] = useState(null);
+    const [offerTarget, setOfferTarget] = useState(null);
+    const [takeTarget, setTakeTarget] = useState(null);
     // Publish preview modal — opened by the "Publish drafts" button. Holds
     // the precomputed list of drafts + audit warnings so the manager can
     // SEE every shift before it goes live (vs the old native confirm()
@@ -2230,27 +2267,76 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     const tx_msg = (en) => en; // (kept English for transaction errors;
                                 // staff-facing toasts use tx() above.)
 
-    const handleOfferShift = async (shift) => {
-        const ok = confirm(tx(
-            `⚠ This shift on ${shift.date} from ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} is YOUR responsibility until someone takes it. You'll be notified when a manager approves the takeover. Confirm offer?`,
-            `⚠ Este turno el ${shift.date} de ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} es TU responsabilidad hasta que alguien lo tome. Te notificaremos cuando un gerente apruebe el cambio. ¿Confirmar oferta?`,
-        ));
-        if (!ok) return;
+    // 2026-05-30 — replaced native confirm() with OfferShiftModal.
+    // handleOfferShift now just opens the modal; the actual Firestore
+    // write happens in commitOfferShift, which the modal calls on submit.
+    // The modal adds two new fields the old binary confirm couldn't:
+    //   • offerNote — optional context message ("doctor appt", etc.)
+    //                 visible to pickers in their Take modal
+    //   • offerUrgent — opting in to immediate FCM fan-out + red-card
+    //                   styling (the same effect as the old Find Cover
+    //                   flow, unified into one composer)
+    const handleOfferShift = (shift) => {
+        if (!shift) return;
+        setOfferTarget(shift);
+    };
+    const commitOfferShift = async (shift, { note, urgent }) => {
         try {
             await updateDoc(doc(db, 'shifts', shift.id), {
                 offerStatus: 'open',
                 offeredBy: staffName,
                 offeredAt: serverTimestamp(),
-                // Casual offer — clear any prior cover-request flag so the
-                // visual / push semantics revert to plain "up for grabs".
-                coverNeeded: false,
+                offerNote: note || null,
+                offerUrgent: !!urgent,
+                // Urgent = same UX as Find Cover (red card + push fan-out).
+                coverNeeded: !!urgent,
+                coverNeededAt: urgent ? serverTimestamp() : null,
                 pendingClaimBy: null,
                 claimedAt: null,
+                // arrayUnion + ISO-string timestamp because Firestore
+                // disallows serverTimestamp() inside an array element.
+                transferHistory: arrayUnion({
+                    action: 'offered',
+                    by: staffName,
+                    at: new Date().toISOString(),
+                    note: note || null,
+                    urgent: !!urgent,
+                }),
                 updatedAt: serverTimestamp(),
             });
+            // FCM fan-out when the offer is urgent. Mirrors the qualified-
+            // staff filter from handleRequestCover (active, not the offerer,
+            // same side, same location, not on PTO). Failures swallowed
+            // per-staff so one bad token doesn't block the rest.
+            if (urgent) {
+                try {
+                    const shiftSide = shift.side || resolveStaffSide((staffList || []).find(s => s.name === shift.staffName));
+                    const sideLabel = shiftSide === 'boh' ? 'BOH' : 'FOH';
+                    const shiftLoc = shift.location || 'webster';
+                    const qualified = (staffList || []).filter(s =>
+                        s && s.name && s.active !== false &&
+                        s.name !== staffName &&
+                        resolveStaffSide(s) === shiftSide &&
+                        (shiftLoc === 'both' || s.location === 'both' || s.location === shiftLoc) &&
+                        !isStaffOffOn(s.name, shift.date)
+                    );
+                    const detail = `${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+                    await Promise.allSettled(qualified.map(s =>
+                        notify(s.name, 'cover_request',
+                            { en: `🆘 ${staffName} needs cover`,
+                              es: `🆘 ${staffName} necesita cobertura` },
+                            { en: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}`,
+                              es: `${sideLabel} · ${detail}${note ? ` · "${note}"` : ''}` },
+                            null, { tag: `cover_request:${shift.id}` })
+                    ));
+                } catch (e) { console.warn('Cover fan-out failed:', e); }
+            }
+            toast(tx(urgent ? '🆘 Urgent offer posted' : '📢 Offer posted',
+                      urgent ? '🆘 Oferta urgente publicada' : '📢 Oferta publicada'),
+                  { kind: 'success', duration: 2500 });
         } catch (e) {
             console.error('Offer shift failed:', e);
-            toast(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message);
+            toast(tx('Could not offer shift: ', 'No se pudo ofrecer: ') + e.message, { kind: 'error' });
         }
     };
 
@@ -2518,12 +2604,19 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // other's pendingClaimBy). The transaction reads the live shift, refuses
     // if it's not still 'open', and writes atomically — first writer wins,
     // second gets a clear error.
-    const handleTakeShift = async (shift) => {
-        const ok = confirm(tx(
-            `✅ This shift on ${shift.date} from ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} is now YOUR responsibility (pending manager approval). Confirm?`,
-            `✅ Este turno el ${shift.date} de ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} ahora es TU responsabilidad (pendiente de aprobación del gerente). ¿Confirmar?`,
-        ));
-        if (!ok) return;
+    //
+    // 2026-05-30 — replaced native confirm() with TakeShiftModal. The modal
+    // shows the offerer's note, picker's projected weekly hours, conflict
+    // warnings, and an optional PARTIAL PICKUP picker. If the picker only
+    // wants part of the shift (Andrew's "10-3 offered, take 10-1, original
+    // returns at 1" example), they pass { partial: { startTime, endTime } }
+    // — we stash that as `proposedSplit` on the doc and the manager's
+    // approval handler turns it into two shifts atomically.
+    const handleTakeShift = (shift) => {
+        if (!shift) return;
+        setTakeTarget(shift);
+    };
+    const commitTakeShift = async (shift, { partial } = {}) => {
         try {
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'shifts', shift.id);
@@ -2543,9 +2636,27 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     offerStatus: 'pending',
                     pendingClaimBy: staffName,
                     claimedAt: serverTimestamp(),
+                    // Partial pickup ("I can only do 10-1, not the full 10-3").
+                    // Manager's approval handler reads proposedSplit and, in
+                    // the same approval transaction, creates a 2nd shift doc
+                    // for the leftover assigned to the original holder.
+                    proposedSplit: partial && partial.startTime && partial.endTime
+                        ? { startTime: partial.startTime, endTime: partial.endTime }
+                        : null,
+                    transferHistory: arrayUnion({
+                        action: 'claimed',
+                        by: staffName,
+                        at: new Date().toISOString(),
+                        proposedSplit: partial && partial.startTime && partial.endTime
+                            ? { startTime: partial.startTime, endTime: partial.endTime }
+                            : null,
+                    }),
                     updatedAt: serverTimestamp(),
                 });
             });
+            toast(tx(partial ? '✋ Partial pickup posted — waiting for manager' : '✋ Take posted — waiting for manager',
+                      partial ? '✋ Toma parcial enviada — esperando gerente' : '✋ Toma enviada — esperando gerente'),
+                  { kind: 'success', duration: 3000 });
         } catch (e) {
             console.error('Take shift failed:', e);
             toast((tx('Could not take shift: ', 'No se pudo tomar: ')) + (e.message || e), { kind: 'error' });
@@ -2562,6 +2673,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         const oldOwner = shift.staffName;
         const newOwner = shift.pendingClaimBy;
         let detail = '';
+        let leftoverDetail = '';  // populated when splitting; drives notification copy
         try {
             await runTransaction(db, async (txn) => {
                 const ref = doc(db, 'shifts', shift.id);
@@ -2576,29 +2688,143 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                 if (live.approvedBy) {
                     throw new Error(tx(`Already approved by ${live.approvedBy}.`, `Ya aprobado por ${live.approvedBy}.`));
                 }
-                detail = `${live.date} ${formatTime12h(live.startTime)}–${formatTime12h(live.endTime)}`;
-                txn.update(ref, {
-                    staffName: live.pendingClaimBy, // use live value, not stale snapshot
-                    offerStatus: null,
-                    offeredBy: null,
-                    offeredAt: null,
-                    pendingClaimBy: null,
-                    claimedAt: null,
-                    approvedBy: staffName,
-                    approvedAt: serverTimestamp(),
-                    updatedAt: serverTimestamp(),
-                });
+                // ── 2026-05-30 — partial pickup / split support ─────────
+                // If the picker proposed a partial range via TakeShiftModal,
+                // the doc carries `proposedSplit: { startTime, endTime }`.
+                // We turn that into:
+                //   1. The original shift doc → picker's range only
+                //      (staffName=picker, startTime/endTime = split range)
+                //   2. 0, 1, or 2 NEW shift docs for the leftover, assigned
+                //      back to the original holder. Leftover = original time
+                //      MINUS the split range. For Andrew's example (orig 10-3,
+                //      picker takes 10-1) leftover = 1-3 (1 piece). For a
+                //      middle take (orig 10-3, picker takes 11-2) leftover =
+                //      10-11 + 2-3 (2 pieces).
+                // ALL writes happen inside this transaction, so a concurrent
+                // approval of another shift can never see a half-applied
+                // split. If anything throws, nothing commits.
+                const split = live.proposedSplit;
+                const isSplit = !!(split && split.startTime && split.endTime &&
+                    split.startTime >= live.startTime &&
+                    split.endTime <= live.endTime &&
+                    split.startTime < split.endTime &&
+                    !(split.startTime === live.startTime && split.endTime === live.endTime));
+
+                if (isSplit) {
+                    detail = `${live.date} ${formatTime12h(split.startTime)}–${formatTime12h(split.endTime)}`;
+                    // 1. Shrink + reassign the original doc → picker portion.
+                    txn.update(ref, {
+                        staffName: live.pendingClaimBy,
+                        startTime: split.startTime,
+                        endTime: split.endTime,
+                        offerStatus: null,
+                        offeredBy: null,
+                        offeredAt: null,
+                        offerNote: null,
+                        offerUrgent: false,
+                        coverNeeded: false,
+                        coverNeededAt: null,
+                        pendingClaimBy: null,
+                        claimedAt: null,
+                        proposedSplit: null,
+                        approvedBy: staffName,
+                        approvedAt: serverTimestamp(),
+                        transferHistory: arrayUnion({
+                            action: 'split-approved-picker',
+                            by: staffName,
+                            at: new Date().toISOString(),
+                            from: oldOwner,
+                            to: newOwner,
+                            startTime: split.startTime,
+                            endTime: split.endTime,
+                        }),
+                        updatedAt: serverTimestamp(),
+                    });
+                    // 2. Carve leftover into 0–2 contiguous pieces.
+                    const leftoverPieces = [];
+                    if (live.startTime < split.startTime) {
+                        leftoverPieces.push({ startTime: live.startTime, endTime: split.startTime });
+                    }
+                    if (split.endTime < live.endTime) {
+                        leftoverPieces.push({ startTime: split.endTime, endTime: live.endTime });
+                    }
+                    leftoverDetail = leftoverPieces.map(p => `${formatTime12h(p.startTime)}–${formatTime12h(p.endTime)}`).join(' + ');
+                    for (const piece of leftoverPieces) {
+                        const newShiftRef = doc(collection(db, 'shifts'));
+                        txn.set(newShiftRef, {
+                            staffName: oldOwner,
+                            side: live.side,
+                            location: live.location,
+                            date: live.date,
+                            startTime: piece.startTime,
+                            endTime: piece.endTime,
+                            role: live.role || null,
+                            notes: live.notes || null,
+                            published: live.published !== false,
+                            isDouble: false,
+                            splitFrom: shift.id,
+                            splitAt: serverTimestamp(),
+                            splitBy: staffName,
+                            transferHistory: [{
+                                action: 'split-created-leftover',
+                                by: staffName,
+                                at: new Date().toISOString(),
+                                from: shift.id,
+                                holder: oldOwner,
+                            }],
+                            createdAt: serverTimestamp(),
+                            updatedAt: serverTimestamp(),
+                        });
+                    }
+                } else {
+                    // FULL SWAP — no split, behave as before plus history entry.
+                    detail = `${live.date} ${formatTime12h(live.startTime)}–${formatTime12h(live.endTime)}`;
+                    txn.update(ref, {
+                        staffName: live.pendingClaimBy, // use live value, not stale snapshot
+                        offerStatus: null,
+                        offeredBy: null,
+                        offeredAt: null,
+                        offerNote: null,
+                        offerUrgent: false,
+                        coverNeeded: false,
+                        coverNeededAt: null,
+                        pendingClaimBy: null,
+                        claimedAt: null,
+                        proposedSplit: null,
+                        approvedBy: staffName,
+                        approvedAt: serverTimestamp(),
+                        transferHistory: arrayUnion({
+                            action: 'swap-approved',
+                            by: staffName,
+                            at: new Date().toISOString(),
+                            from: oldOwner,
+                            to: newOwner,
+                        }),
+                        updatedAt: serverTimestamp(),
+                    });
+                }
             });
             // Notifications outside the transaction — they hit a different
             // collection and shouldn't roll back the swap if push fails.
-            await notify(oldOwner, 'swap_approved',
-                { en: 'Swap approved', es: 'Cambio aprobado' },
-                { en: `Your shift on ${detail} is now ${newOwner}'s.`,
-                  es: `Tu turno del ${detail} ahora es de ${newOwner}.` });
-            await notify(newOwner, 'swap_approved',
-                { en: 'Shift assigned', es: 'Turno asignado' },
-                { en: `The shift on ${detail} is now yours.`,
-                  es: `El turno del ${detail} ahora es tuyo.` });
+            if (leftoverDetail) {
+                await notify(oldOwner, 'swap_approved',
+                    { en: 'Shift split approved', es: 'División de turno aprobada' },
+                    { en: `Your ${detail} portion is now ${newOwner}'s. You still cover: ${leftoverDetail}.`,
+                      es: `Tu porción ${detail} ahora es de ${newOwner}. Aún cubres: ${leftoverDetail}.` });
+                await notify(newOwner, 'swap_approved',
+                    { en: 'Partial shift assigned', es: 'Turno parcial asignado' },
+                    { en: `You're now on for ${detail}.`,
+                      es: `Ahora estás en ${detail}.` });
+            } else {
+                await notify(oldOwner, 'swap_approved',
+                    { en: 'Swap approved', es: 'Cambio aprobado' },
+                    { en: `Your shift on ${detail} is now ${newOwner}'s.`,
+                      es: `Tu turno del ${detail} ahora es de ${newOwner}.` });
+                await notify(newOwner, 'swap_approved',
+                    { en: 'Shift assigned', es: 'Turno asignado' },
+                    { en: `The shift on ${detail} is now yours.`,
+                      es: `El turno del ${detail} ahora es tuyo.` });
+            }
         } catch (e) {
             console.error('Approve failed:', e);
             toast((tx('Could not approve: ', 'No se pudo aprobar: ')) + (e.message || e), { kind: 'error' });
@@ -3487,17 +3713,11 @@ export default function Schedule({ staffName, language, storeLocation, staffList
         if (!entry?.id) return;
         if (entry.staffName !== staffName) return; // not yours
         const status = entry.status || 'pending';
-        // Status-aware confirm copy. Pending is one-tap (low stakes).
-        // Approved gets an explicit confirm because withdrawing it
-        // could leave gaps the manager needs to re-fill.
-        if (status === 'approved') {
-            if (!confirm(tx(
-                'Withdraw this approved time-off? Your manager will be notified so they can re-schedule you.',
-                '¿Retirar este tiempo libre aprobado? Tu gerente será notificado para poder volver a programarte.'
-            ))) return;
-        } else if (status === 'pending') {
-            if (!confirm(tx('Cancel this pending request?', '¿Cancelar esta solicitud pendiente?'))) return;
-        } // denied = no confirm, just dismiss
+        // 2026-05-30 — internal native confirm() removed. The SwapPanels
+        // callsite now wraps this in askCancelOwnPto which routes through
+        // the glass ConfirmModal with status-aware copy. Defense for any
+        // future direct callers: this is a deleteDoc, so callers must
+        // already know what they're doing.
         try {
             await deleteDoc(doc(db, 'time_off', entry.id));
             // Approved withdraws notify admins. Pending cancels stay
@@ -3609,23 +3829,10 @@ export default function Schedule({ staffName, language, storeLocation, staffList
     // Manager approves / denies a pending PTO request
     const handleApprovePto = async (entry) => {
         if (!canEdit) return;
-        // Conflict-detection: warn if approving leaves published shifts orphaned.
-        const start = entry.startDate || entry.date;
-        const end = entry.endDate || entry.date;
-        const conflicts = shifts.filter(sh =>
-            sh.staffName === entry.staffName && sh.published !== false &&
-            sh.date >= start && sh.date <= end);
-        if (conflicts.length > 0) {
-            const lines = conflicts.slice(0, 8).map(sh =>
-                `  · ${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}${sh.location ? ` · ${LOCATION_LABELS[sh.location] || sh.location}` : ''}`
-            ).join('\n');
-            const more = conflicts.length > 8 ? `\n  · ${tx(`...and ${conflicts.length - 8} more`, `...y ${conflicts.length - 8} más`)}` : '';
-            const ok = confirm(tx(
-                `⚠️ Approving this PTO will leave ${conflicts.length} published shift(s) UNCOVERED:\n\n${lines}${more}\n\nApprove anyway? (You'll need to reassign these shifts.)`,
-                `⚠️ Aprobar este tiempo libre dejará ${conflicts.length} turno(s) publicado(s) SIN CUBRIR:\n\n${lines}${more}\n\n¿Aprobar de todas formas?`,
-            ));
-            if (!ok) return;
-        }
+        // 2026-05-30 — internal native confirm() removed. The SwapPanels
+        // callsite wraps this in askApprovePto, which computes conflicts
+        // and renders them in the glass ConfirmModal body. Trust the
+        // caller: by the time this runs, the manager has acknowledged.
         try {
             // 2026-05-24 audit fix: was a bare updateDoc with no
             // current-status check. Two managers tapping Approve on the
@@ -4496,6 +4703,227 @@ ${dayBlocks}
         setShowAddModal(true);
     };
 
+    // ── 2026-05-30 — confirmation wrappers (askXxx pattern) ─────────────
+    // Every destructive or state-changing action in SwapPanels + the
+    // schedule grid drag-drop routes through these wrappers, which open
+    // a glass ConfirmModal before calling the real handler. Per Andrew:
+    // "any delete or change always is followed a are you sure type of
+    // question so nothing is accidentally deleted or moved, or dragged."
+    //
+    // Each wrapper builds the action-specific copy (status-aware for
+    // PTO, conflict-aware for approve-PTO, split-aware for approve-swap)
+    // and seeds setConfirmDialog. ConfirmModal owns its close lifecycle
+    // so we never call setConfirmDialog(null) from here.
+    //
+    // NOT wrapped — handleOfferShift / handleTakeShift open their own
+    // dedicated modals (OfferShiftModal / TakeShiftModal) which ARE the
+    // confirmation. Double-confirming would be annoying.
+    const askCancelOffer = (shift) => {
+        if (!shift) return;
+        setConfirmDialog({
+            title: tx('Cancel offer?', '¿Cancelar oferta?'),
+            body: tx(
+                "Staff who saw the offer will lose it. You will still be responsible for the shift.",
+                "El personal que vio la oferta la perderá. Seguirás siendo responsable del turno."
+            ),
+            confirmLabel: tx('Cancel offer', 'Cancelar oferta'),
+            tone: 'danger',
+            onConfirm: () => handleCancelOffer(shift),
+        });
+    };
+    const askApproveSwap = (shift) => {
+        if (!shift) return;
+        const splitInfo = shift.proposedSplit && shift.proposedSplit.startTime && shift.proposedSplit.endTime
+            ? tx(
+                `\n\nProposed partial pickup: ${shift.pendingClaimBy} takes ${formatTime12h(shift.proposedSplit.startTime)}–${formatTime12h(shift.proposedSplit.endTime)}. ${shift.staffName} keeps the leftover.`,
+                `\n\nToma parcial propuesta: ${shift.pendingClaimBy} toma ${formatTime12h(shift.proposedSplit.startTime)}–${formatTime12h(shift.proposedSplit.endTime)}. ${shift.staffName} mantiene el resto.`
+            )
+            : '';
+        setConfirmDialog({
+            title: tx('Approve this swap?', '¿Aprobar este cambio?'),
+            body: tx(
+                `${shift.pendingClaimBy} will take ${shift.staffName}'s ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)} shift. Both will be notified.`,
+                `${shift.pendingClaimBy} tomará el turno de ${shift.staffName} del ${shift.date} ${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}. Ambos serán notificados.`
+            ) + splitInfo,
+            confirmLabel: tx('Approve', 'Aprobar'),
+            tone: 'primary',
+            onConfirm: () => handleApproveSwap(shift),
+        });
+    };
+    const askDenySwap = (shift) => {
+        if (!shift) return;
+        setConfirmDialog({
+            title: tx('Deny this swap?', '¿Negar este cambio?'),
+            body: tx(
+                `${shift.pendingClaimBy} will not take the shift. It goes back to open offer (${shift.staffName} still responsible).`,
+                `${shift.pendingClaimBy} no tomará el turno. Volverá a oferta abierta (${shift.staffName} sigue responsable).`
+            ),
+            confirmLabel: tx('Deny', 'Negar'),
+            tone: 'danger',
+            onConfirm: () => handleDenySwap(shift),
+        });
+    };
+    const askApproveSwapRequest = (request) => {
+        if (!request) return;
+        const f = request.fromShiftSnapshot || {};
+        const t = request.toShiftSnapshot || {};
+        setConfirmDialog({
+            title: tx('Approve this swap request?', '¿Aprobar esta solicitud?'),
+            body: tx(
+                `${request.fromStaff} and ${request.toStaff} will exchange shifts:\n· ${request.fromStaff}: ${f.date} ${formatTime12h(f.startTime)}–${formatTime12h(f.endTime)}\n· ${request.toStaff}: ${t.date} ${formatTime12h(t.startTime)}–${formatTime12h(t.endTime)}`,
+                `${request.fromStaff} y ${request.toStaff} intercambiarán turnos:\n· ${request.fromStaff}: ${f.date} ${formatTime12h(f.startTime)}–${formatTime12h(f.endTime)}\n· ${request.toStaff}: ${t.date} ${formatTime12h(t.startTime)}–${formatTime12h(t.endTime)}`
+            ),
+            confirmLabel: tx('Approve swap', 'Aprobar'),
+            tone: 'primary',
+            onConfirm: () => handleApproveSwapRequest(request),
+        });
+    };
+    const askDenySwapRequest = (request) => {
+        if (!request) return;
+        setConfirmDialog({
+            title: tx('Deny this swap request?', '¿Negar esta solicitud?'),
+            body: tx(
+                `${request.fromStaff} and ${request.toStaff} will not exchange shifts.`,
+                `${request.fromStaff} y ${request.toStaff} no intercambiarán turnos.`
+            ),
+            confirmLabel: tx('Deny', 'Negar'),
+            tone: 'danger',
+            onConfirm: () => handleDenySwapRequest(request),
+        });
+    };
+    const askApprovePto = (entry) => {
+        if (!entry) return;
+        // Compute conflicts so manager sees orphaned shifts inline.
+        // (Was a native confirm() inside handleApprovePto — moved here.)
+        const start = entry.startDate || entry.date;
+        const end = entry.endDate || entry.date;
+        const conflicts = shifts.filter(sh =>
+            sh.staffName === entry.staffName && sh.published !== false &&
+            sh.date >= start && sh.date <= end);
+        const range = start + (end !== start ? ` → ${end}` : '');
+        let body = tx(
+            `Approve ${entry.staffName}'s time-off for ${range}? They will be notified.`,
+            `¿Aprobar el tiempo libre de ${entry.staffName} del ${range}? Será notificado.`
+        );
+        if (conflicts.length > 0) {
+            const lines = conflicts.slice(0, 6).map(sh =>
+                `· ${sh.date} ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)}`
+            ).join('\n');
+            const more = conflicts.length > 6 ? tx(`\n· ...and ${conflicts.length - 6} more`, `\n· ...y ${conflicts.length - 6} más`) : '';
+            body += tx(
+                `\n\n⚠️ This will leave ${conflicts.length} published shift(s) UNCOVERED:\n${lines}${more}\n\nYou will need to reassign these.`,
+                `\n\n⚠️ Esto dejará ${conflicts.length} turno(s) SIN CUBRIR:\n${lines}${more}\n\nTendrás que reasignarlos.`
+            );
+        }
+        setConfirmDialog({
+            title: tx('Approve PTO?', '¿Aprobar PTO?'),
+            body,
+            confirmLabel: tx('Approve PTO', 'Aprobar PTO'),
+            tone: conflicts.length > 0 ? 'danger' : 'primary',
+            onConfirm: () => handleApprovePto(entry),
+        });
+    };
+    const askDenyPto = (entry) => {
+        if (!entry) return;
+        const range = (entry.startDate || entry.date) + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+        setConfirmDialog({
+            title: tx('Deny PTO?', '¿Negar PTO?'),
+            body: tx(
+                `${entry.staffName} will be notified that the time-off for ${range} was denied.`,
+                `${entry.staffName} será notificado que el tiempo libre del ${range} fue negado.`
+            ),
+            confirmLabel: tx('Deny', 'Negar'),
+            tone: 'danger',
+            onConfirm: () => handleDenyPto(entry),
+        });
+    };
+    const askCancelOwnPto = (entry) => {
+        if (!entry) return;
+        const status = entry.status || 'pending';
+        const range = (entry.startDate || entry.date) + (entry.endDate && entry.endDate !== entry.startDate ? ` → ${entry.endDate}` : '');
+        // Denied entries skip confirmation (silent dismiss) — matches the
+        // old native-confirm behavior in handleCancelOwnPto.
+        if (status === 'denied') {
+            handleCancelOwnPto(entry);
+            return;
+        }
+        setConfirmDialog({
+            title: status === 'approved'
+                ? tx('Withdraw this approved time-off?', '¿Retirar este tiempo libre aprobado?')
+                : tx('Cancel this pending request?', '¿Cancelar esta solicitud pendiente?'),
+            body: status === 'approved'
+                ? tx(
+                    `Your manager will be notified so they can re-schedule you for ${range}.`,
+                    `Tu gerente será notificado para volver a programarte para ${range}.`
+                )
+                : tx(
+                    `Your request for ${range} will be removed.`,
+                    `Tu solicitud para ${range} será eliminada.`
+                ),
+            confirmLabel: status === 'approved' ? tx('Withdraw', 'Retirar') : tx('Cancel request', 'Cancelar'),
+            tone: 'danger',
+            onConfirm: () => handleCancelOwnPto(entry),
+        });
+    };
+    const askDropShift = (shiftId, newStaffName, newDate) => {
+        const shift = shifts.find(s => s.id === shiftId);
+        if (!shift) return;
+        if (shift.staffName === newStaffName && shift.date === newDate) return; // no-op
+        // Hard-reject guards (closed date / PTO) stay as toast — those
+        // are not "are you sure?" questions, they're rejections.
+        if (dateClosed(newDate)) {
+            toast(tx('Cannot drop on a closed date.', 'No puedes soltar en una fecha cerrada.'));
+            return;
+        }
+        if (isStaffOffOn(newStaffName, newDate)) {
+            toast(tx(`${newStaffName} is on approved time-off that date.`, `${newStaffName} tiene tiempo libre aprobado esa fecha.`));
+            return;
+        }
+        const detail = `${formatTime12h(shift.startTime)}–${formatTime12h(shift.endTime)}`;
+        setConfirmDialog({
+            title: tx('Move shift?', '¿Mover turno?'),
+            body: tx(
+                `Move ${shift.staffName}'s ${shift.date} ${detail} shift to ${newDate} (${newStaffName}).`,
+                `Mover el turno de ${shift.staffName} del ${shift.date} ${detail} al ${newDate} (${newStaffName}).`
+            ),
+            confirmLabel: tx('Move', 'Mover'),
+            tone: 'primary',
+            onConfirm: () => handleDropShift(shiftId, newStaffName, newDate),
+        });
+    };
+
+    // Hours/conflict helpers for TakeShiftModal — show the picker what
+    // taking the shift would do to their week and warn about overlaps.
+    // Both run only when the modal is mounted, so cost is bounded.
+    const computeWeeklyHoursFor = (targetDate) => {
+        if (!targetDate || !staffName) return 0;
+        const d = parseLocalDate(targetDate);
+        if (!d) return 0;
+        const dayOfWeek = d.getDay();
+        const wStart = addDays(d, -dayOfWeek);
+        const wEnd = addDays(wStart, 7);
+        const wStartStr = toDateStr(wStart);
+        const wEndStr = toDateStr(wEnd);
+        let hours = 0;
+        for (const sh of shifts) {
+            if (sh.staffName !== staffName) continue;
+            if (sh.published === false) continue;
+            if (sh.date < wStartStr || sh.date >= wEndStr) continue;
+            hours += hoursBetween(sh.startTime, sh.endTime, !!sh.isDouble);
+        }
+        return hours;
+    };
+    const computeConflictsFor = (targetShift) => {
+        if (!targetShift || !staffName) return [];
+        return shifts.filter(sh =>
+            sh.staffName === staffName &&
+            sh.id !== targetShift.id &&
+            sh.date === targetShift.date &&
+            sh.startTime < targetShift.endTime &&
+            sh.endTime > targetShift.startTime
+        );
+    };
+
     // ── Render ──
     return (
         <div className="p-4 pb-bottom-nav print:p-2 print:pb-0">
@@ -5213,17 +5641,17 @@ ${dayBlocks}
                 canEdit={canEdit}
                 isEn={isEn}
                 onTake={handleTakeShift}
-                onCancelOffer={handleCancelOffer}
-                onApprove={handleApproveSwap}
-                onDeny={handleDenySwap}
+                onCancelOffer={askCancelOffer}
+                onApprove={askApproveSwap}
+                onDeny={askDenySwap}
                 storeLocation={storeLocation}
                 timeOff={viewerTimeOff}
-                onApprovePto={handleApprovePto}
-                onDenyPto={handleDenyPto}
-                onCancelOwnPto={handleCancelOwnPto}
+                onApprovePto={askApprovePto}
+                onDenyPto={askDenyPto}
+                onCancelOwnPto={askCancelOwnPto}
                 swapRequests={swapRequests}
-                onApproveSwapRequest={handleApproveSwapRequest}
-                onDenySwapRequest={handleDenySwapRequest}
+                onApproveSwapRequest={askApproveSwapRequest}
+                onDenySwapRequest={askDenySwapRequest}
             />
 
             {loading ? (
@@ -5267,7 +5695,7 @@ ${dayBlocks}
                                     }
                                 }}
                                 onTakeShift={handleTakeShift}
-                                onCancelOffer={handleCancelOffer}
+                                onCancelOffer={askCancelOffer}
                                 /* Speed slot add — day/list views. Click a "+ slot"
                                    chip on a day cell → opens the StaffingNeedModal
                                    pre-filled to that date. */
@@ -5286,7 +5714,7 @@ ${dayBlocks}
                                 blocksByDate={blocksByDate}
                                 onFillSlot={() => {}}
                                 onTakeShift={handleTakeShift}
-                                onCancelOffer={handleCancelOffer}
+                                onCancelOffer={askCancelOffer}
                             />
                         </>
                     )}
@@ -5443,14 +5871,14 @@ ${dayBlocks}
                                 onStaffClick={(name) => setPersonFilter(name)}
                                 onOfferShift={handleOfferShift}
                                 onTakeShift={handleTakeShift}
-                                onCancelOffer={handleCancelOffer}
+                                onCancelOffer={askCancelOffer}
                                 /* Find Cover — urgent push to qualified staff.
                                    See handleRequestCover above for filter logic
                                    (same side, location-compat, not on PTO). */
                                 onRequestCover={handleRequestCover}
                                 blocksByDate={blocksByDate}
                                 eventsByDate={eventsByDate}
-                                onDropShift={handleDropShift}
+                                onDropShift={askDropShift}
                                 onUpdateShiftTimes={handleUpdateShiftTimes}
                                 isStaffOffOn={isStaffOffOn}
                                 timeOff={viewerTimeOff}
@@ -5489,7 +5917,7 @@ ${dayBlocks}
                                         onDeleteShift={handleDeleteShift}
                                         onOfferShift={handleOfferShift}
                                         onTakeShift={handleTakeShift}
-                                        onCancelOffer={handleCancelOffer}
+                                        onCancelOffer={askCancelOffer}
                                         onRequestCover={handleRequestCover}
                                     />
                                 )}
@@ -5503,7 +5931,7 @@ ${dayBlocks}
                                         staffSummary={staffSummary}
                                         onOfferShift={handleOfferShift}
                                         onTakeShift={handleTakeShift}
-                                        onCancelOffer={handleCancelOffer}
+                                        onCancelOffer={askCancelOffer}
                                         onRequestCover={handleRequestCover}
                                     />
                                 )}
@@ -5523,8 +5951,8 @@ ${dayBlocks}
                                         isEn={isEn}
                                         currentStaffName={staffName}
                                         canEdit={canEdit}
-                                        onApprove={handleApprovePto}
-                                        onDeny={handleDenyPto}
+                                        onApprove={askApprovePto}
+                                        onDeny={askDenyPto}
                                         onRemove={handleRemoveTimeOff}
                                     />
                                 )}
@@ -5869,6 +6297,40 @@ ${dayBlocks}
                     isEn={isEn}
                     notifPermission={notifPermission}
                     onRequestPermission={requestNotifPermission}
+                />
+            )}
+
+            {/* 2026-05-30 — confirmation + offer/take modals. Mounted at
+                the end of the JSX so they paint on top of everything else.
+                Each is rendered conditionally based on its target-state
+                cell (confirmDialog / offerTarget / takeTarget). */}
+            {confirmDialog && (
+                <ConfirmModal
+                    {...confirmDialog}
+                    onClose={() => setConfirmDialog(null)}
+                    language={language}
+                />
+            )}
+            {offerTarget && (
+                <OfferShiftModal
+                    shift={offerTarget}
+                    formatTime12h={formatTime12h}
+                    locationLabel={LOCATION_LABELS[offerTarget.location] || offerTarget.location}
+                    onClose={() => setOfferTarget(null)}
+                    onSubmit={(payload) => commitOfferShift(offerTarget, payload)}
+                    language={language}
+                />
+            )}
+            {takeTarget && (
+                <TakeShiftModal
+                    shift={takeTarget}
+                    formatTime12h={formatTime12h}
+                    locationLabel={LOCATION_LABELS[takeTarget.location] || takeTarget.location}
+                    weeklyHoursBefore={computeWeeklyHoursFor(takeTarget.date)}
+                    conflicts={computeConflictsFor(takeTarget)}
+                    onClose={() => setTakeTarget(null)}
+                    onSubmit={(payload) => commitTakeShift(takeTarget, payload)}
+                    language={language}
                 />
             )}
         </div>
