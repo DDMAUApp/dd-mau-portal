@@ -3126,7 +3126,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     // Refresh the per-item "last ordered" summary so the
                     // badge under each item updates without a page reload.
                     reloadLastEnteredByItem().catch(() => {});
-                } catch (err) { console.error("Error saving inventory snapshot:", err); }
+                } catch (err) {
+                    console.error("Error saving inventory snapshot:", err);
+                    // 2026-05-30 audit fix — previously a silent console
+                    // failure. Inventory snapshot save is high-stakes: if
+                    // it doesn't land, the staffer thinks the count was
+                    // archived to history but it's lost on next session.
+                    toast(language === 'es'
+                        ? '⚠ No se pudo guardar el inventario. Intenta de nuevo.'
+                        : '⚠ Could not save the inventory snapshot. Please try again.',
+                        { kind: 'error' });
+                }
             };
 
             // updateInventoryCount(itemId, newCount, delta?)
@@ -3524,9 +3534,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                     if (err?.code === "not-found") {
                         try {
                             await setDoc(ref, { vendorCounts: next, customInventory, date: new Date().toISOString() }, { merge: true });
-                        } catch (e) { console.error("Error creating inventory (vendorCounts):", e); }
+                        } catch (e) {
+                            console.error("Error creating inventory (vendorCounts):", e);
+                            // 2026-05-30 audit — surface to staff so they
+                            // don't think a cart add worked when it didn't.
+                            toast(language === 'es'
+                                ? '⚠ No se pudo guardar el conteo del proveedor.'
+                                : '⚠ Could not save vendor count.',
+                                { kind: 'error' });
+                        }
                     } else {
                         console.error("Error updating vendor count:", err);
+                        toast(language === 'es'
+                            ? '⚠ No se pudo actualizar el conteo del proveedor.'
+                            : '⚠ Could not update vendor count.',
+                            { kind: 'error' });
                     }
                 }
             };
@@ -3554,7 +3576,21 @@ export default function Operations({ language, staffList, staffName, storeLocati
                             await setDoc(ref, { counts: resetCounts, countMeta: {}, vendorCounts: {}, customInventory, date: new Date().toISOString() });
                         } else throw err;
                     }
-                } catch (err) { console.error("Error saving/resetting inventory:", err); }
+                    // 2026-05-30 audit — confirm-on-success because the local
+                    // state was already zeroed optimistically. Without the
+                    // toast, a silent failure leaves the staffer staring at
+                    // a fresh-looking page that wasn't actually persisted.
+                    toast(language === 'es'
+                        ? '✓ Inventario guardado y reiniciado'
+                        : '✓ Inventory saved + reset',
+                        { kind: 'success' });
+                } catch (err) {
+                    console.error("Error saving/resetting inventory:", err);
+                    toast(language === 'es'
+                        ? '⚠ Falló al guardar/reiniciar. Tu cuenta local se reinició pero NO se guardó — actualiza la página antes de seguir.'
+                        : '⚠ Save+reset failed. Your local count was zeroed but did NOT save — refresh the page before continuing.',
+                        { kind: 'error' });
+                }
                 setInventorySaving(false);
                 setShowSaveConfirm(false);
             };
