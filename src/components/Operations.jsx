@@ -6810,7 +6810,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                 return (
                                                                     <tr
                                                                         key={r.id}
-                                                                        className={`border-t transition ${
+                                                                        className={`border-t border-gray-300 transition ${
                                                                             isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50"
                                                                         }`}
                                                                         style={isOverridden ? { boxShadow: 'inset 3px 0 0 0 #b45309' } : undefined}
@@ -7152,7 +7152,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                 );
                                             })()}
                                             {subcats.map((subGroup, subIdx) => (
-                                                <div key={subIdx}>
+                                                // 2026-05-29 — Andrew: "lets put lines to
+                                                // separate the items so its easier to follow".
+                                                // The wrapping divide-y class lays a single
+                                                // 1px gray line between every direct child,
+                                                // i.e. the subcategory header AND every item
+                                                // row. Compact view doesn't get extra padding
+                                                // so the lines also serve as the row guide
+                                                // when scanning quickly.
+                                                <div key={subIdx} className="divide-y divide-gray-200">
                                                     {/* Subcategory header — also acts as a
                                                         TAP-TO-DROP zone when movingItem is
                                                         set. Highlighted amber while a move is
@@ -7980,7 +7988,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                                 <span className="text-xs font-bold text-gray-500 uppercase">{language === "es" ? category.nameEs : category.name}</span>
                                                                 {countedInCat > 0 && <span className="text-xs text-mint-700 font-bold">{countedInCat} {"\u{2713}"}</span>}
                                                             </div>
-                                                            <div className="divide-y divide-gray-100">
+                                                            <div className="divide-y divide-gray-200">
                                                                 {filteredItems.map((item) => {
                                                                     const count = inventory[item.id] || 0;
                                                                     const isMoving = splitMovingItem && splitMovingItem.itemId === item.id;
