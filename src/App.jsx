@@ -714,6 +714,32 @@ export default function App() {
     useEffect(() => { SS.set("activeLocation", activeLocation); }, [activeLocation]);
     useEffect(() => { SS.set("language", language); }, [language]);
     useEffect(() => { SS.set("activeTab", activeTab); }, [activeTab]);
+
+    // ── Silent-denial toast (audit 2026-05-30) ─────────────────────────
+    // When a user navigates to a tab they don't have access to,
+    // renderV2Body's fall-through bounces them home. Without feedback
+    // that felt like a broken link. We flag the denial during render
+    // (deniedTabRef set inside renderV2Body) and fire a one-shot toast
+    // here in a post-commit useEffect.
+    //
+    // CRITICAL: this ref + effect MUST live up here alongside the
+    // other unconditional hooks, NOT next to renderV2Body. The
+    // component has 4 early-return branches between this line and
+    // renderV2Body (onboarding, !staffName, blocking-check null,
+    // pendingBlockingCount > 0). Putting hooks AFTER an early return
+    // violates rules-of-hooks (hook count changes between renders,
+    // React white-screens). Learned the hard way 2026-05-30 — a
+    // user signed in and got a white page because the hook count
+    // jumped from N (lock screen) to N+2 (signed in).
+    const deniedTabRef = useRef(null);
+    useEffect(() => {
+        if (deniedTabRef.current === activeTab) {
+            toast(language === 'es'
+                ? 'No tienes acceso a esa página'
+                : "You don't have access to that page");
+        }
+    }, [activeTab, language]);
+
     // ── Force-refresh broadcast ──────────────────────────────────────
     // Subscribes to /config/forceRefresh. When admin clicks the
     // "System Refresh" button, that doc's `triggeredAt` timestamp jumps.
@@ -1447,26 +1473,11 @@ export default function App() {
     // different frame. Per-tab access checks happen here (Operations
     // requires opsAccess, Recipes requires recipesAccess, etc.).
     //
-    // Silent-denial feedback (audit 2026-05-30): when a user navigates to
-    // a tab they don't have access to, the fall-through bounces them home
-    // — but without feedback that felt like a broken link. We now flag
-    // the denial during render (deniedTabRef) and fire a one-shot toast
-    // in a post-commit useEffect.
-    //
-    // Why the dance:
-    //   - Setting state during render is a hooks violation
-    //   - Calling toast() during render fires on every re-render (spam)
-    //   - useEffect with [activeTab] deps runs exactly once per tab change
-    //   - The ref carries the "deny happened" flag from render to effect
-    //     without causing a re-render itself
-    const deniedTabRef = useRef(null);
-    useEffect(() => {
-        if (deniedTabRef.current === activeTab) {
-            toast(language === 'es'
-                ? 'No tienes acceso a esa página'
-                : "You don't have access to that page");
-        }
-    }, [activeTab, language]);
+    // Silent-denial feedback: deniedTabRef + the matching useEffect live
+    // at the TOP of the App component (search for "Silent-denial toast")
+    // — they have to, because they're hooks and there are early-return
+    // branches between here and the top. We just *read/write* the ref
+    // below; the effect they pair with fires the toast after commit.
     const renderV2Body = () => {
             // Reset the deny flag at the top of every render. If we hit
             // the fall-through, we'll set it again before returning.
