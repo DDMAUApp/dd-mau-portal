@@ -7955,6 +7955,35 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
         (r.requestedDate >= today || r.status === 'pending')
     );
 
+    // 2026-05-27 — Andrew: "the time off request lets make that bar
+    // collapsible." PTO panels (myPto + pendingPto) opt into a
+    // collapse toggle by passing `collapsible` + `open` + `onToggle`.
+    // Other panels (open offers, swap requests) keep their always-
+    // rendered behavior by omitting those props. Default state for
+    // the PTO panels is collapsed (saves vertical real estate on the
+    // schedule page); preference persists per device via
+    // localStorage('ddmau:schedulePto:*Open').
+    //
+    // CRITICAL (audit 2026-05-30): these 4 hooks MUST live ABOVE the
+    // empty-state early-return below. They were originally placed below
+    // it, which intermittently crashed the Schedule page with "Rendered
+    // more hooks than during the previous render" any time the swap/PTO
+    // data transitioned empty↔non-empty (a snapshot landing flipped the
+    // hook count from 0 to 4 mid-session). Same bug class as the App.jsx
+    // login white-screen the same day. Do NOT move these back down.
+    const [myPtoOpen, setMyPtoOpen] = useState(() => {
+        try { return localStorage.getItem('ddmau:schedulePto:myOpen') === '1'; } catch { return false; }
+    });
+    const [pendingPtoOpen, setPendingPtoOpen] = useState(() => {
+        try { return localStorage.getItem('ddmau:schedulePto:pendingOpen') === '1'; } catch { return false; }
+    });
+    useEffect(() => {
+        try { localStorage.setItem('ddmau:schedulePto:myOpen', myPtoOpen ? '1' : '0'); } catch {}
+    }, [myPtoOpen]);
+    useEffect(() => {
+        try { localStorage.setItem('ddmau:schedulePto:pendingOpen', pendingPtoOpen ? '1' : '0'); } catch {}
+    }, [pendingPtoOpen]);
+
     if (openOffers.length === 0 && pending.length === 0 && myOpenOffers.length === 0 && pendingPto.length === 0 && myPto.length === 0 && pendingSwaps.length === 0 && mySwaps.length === 0) return null;
 
     const renderShiftLine = (sh) => `${sh.date} · ${formatTime12h(sh.startTime)}–${formatTime12h(sh.endTime)} · ${LOCATION_LABELS[sh.location] || sh.location}`;
@@ -7984,27 +8013,6 @@ function SwapPanels({ shifts, staffName, canEdit, isEn, onTake, onCancelOffer, o
         const date = d.toLocaleDateString(locale, { month: 'short', day: 'numeric' });
         return tx(`Submitted ${date} at ${time}`, `Enviado ${date} a las ${time}`);
     };
-
-    // 2026-05-27 — Andrew: "the time off request lets make that bar
-    // collapsible." PTO panels (myPto + pendingPto) opt into a
-    // collapse toggle by passing `collapsible` + `open` + `onToggle`.
-    // Other panels (open offers, swap requests) keep their always-
-    // rendered behavior by omitting those props. Default state for
-    // the PTO panels is collapsed (saves vertical real estate on the
-    // schedule page); preference persists per device via
-    // localStorage('ddmau:schedulePto:*Open').
-    const [myPtoOpen, setMyPtoOpen] = useState(() => {
-        try { return localStorage.getItem('ddmau:schedulePto:myOpen') === '1'; } catch { return false; }
-    });
-    const [pendingPtoOpen, setPendingPtoOpen] = useState(() => {
-        try { return localStorage.getItem('ddmau:schedulePto:pendingOpen') === '1'; } catch { return false; }
-    });
-    useEffect(() => {
-        try { localStorage.setItem('ddmau:schedulePto:myOpen', myPtoOpen ? '1' : '0'); } catch {}
-    }, [myPtoOpen]);
-    useEffect(() => {
-        try { localStorage.setItem('ddmau:schedulePto:pendingOpen', pendingPtoOpen ? '1' : '0'); } catch {}
-    }, [pendingPtoOpen]);
 
     // Reusable card chrome — clean white card with semantic accent stripe.
     // When `collapsible` + `open` + `onToggle` are provided, the header
