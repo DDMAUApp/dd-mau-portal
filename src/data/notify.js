@@ -19,6 +19,7 @@
 
 import { db } from '../firebase';
 import { collection, addDoc, doc, getDoc, setDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { isAdminId } from './staff';
 
 // HF-6, 2026-05-30: stable fallback tag bucket. The fallback path for
 // callers that didn't pass an explicit `tag` used to be
@@ -78,7 +79,7 @@ export async function getManagementRecipients() {
         const recs = [];
         for (const s of list) {
             if (!s || !s.name) continue;
-            const isOwner = s.id === 40 || s.id === 41;
+            const isOwner = isAdminId(s.id);
             const roleManager = s.role && /manager|owner/i.test(s.role);
             if (!isOwner && !roleManager) continue;
             // 2026-05-24 audit fix: was deduping by s.name — meaning two
@@ -115,7 +116,7 @@ export async function getAdminRecipients() {
         const recs = [];
         for (const s of list) {
             if (!s || !s.name) continue;
-            if (!(s.canViewOnboarding === true || s.id === 40 || s.id === 41)) continue;
+            if (!(s.canViewOnboarding === true || isAdminId(s.id))) continue;
             // 2026-05-24 audit fix: dedup by id, see getManagementRecipients.
             const dedupKey = s.id != null ? `id:${s.id}` : `name:${s.name}`;
             if (seen.has(dedupKey)) continue;

@@ -26,6 +26,7 @@ import { useState, useMemo } from 'react';
 import { db } from '../firebase';
 import { doc, runTransaction } from 'firebase/firestore';
 import { toast } from '../toast';
+import { isAdminId } from '../data/staff';
 // 2026-05-27 Batch F — Apple-HIG page header. Visual only.
 import { Bell } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
@@ -221,12 +222,12 @@ function ExpandedRecipientPicker({ type, activeStaff, committedReceivers, setSta
     const setAllOff = () => setReceivers(new Set());
     const setJustManagers = () => {
         const names = activeStaff
-            .filter((s) => s.id === 40 || s.id === 41 || /manager|owner/i.test(s.role || ''))
+            .filter((s) => isAdminId(s.id) || /manager|owner/i.test(s.role || ''))
             .map((s) => s.name);
         setReceivers(new Set(names));
     };
     const setJustAdmins = () => {
-        const names = activeStaff.filter((s) => s.id === 40 || s.id === 41).map((s) => s.name);
+        const names = activeStaff.filter((s) => isAdminId(s.id)).map((s) => s.name);
         setReceivers(new Set(names));
     };
 

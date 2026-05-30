@@ -4,6 +4,7 @@ import { doc, getDoc, setDoc, collection, getDocs, query, limit, writeBatch } fr
 import { onSnapshot } from 'firebase/firestore';
 import { t } from './data/translations';
 import { isAdmin, DEFAULT_STAFF, LOCATION_LABELS, canSeePage, canViewOnboarding } from './data/staff';
+import { toast } from './toast';
 import { enableFcmPush, disableFcmPush, onForegroundMessage } from './messaging';
 import { playKitchenBell } from './data/bell';
 // Components — eagerly loaded (needed immediately)
@@ -1445,7 +1446,31 @@ export default function App() {
     // paths, same gates, same race fixes as the deleted v1 — just a
     // different frame. Per-tab access checks happen here (Operations
     // requires opsAccess, Recipes requires recipesAccess, etc.).
+    //
+    // Silent-denial feedback (audit 2026-05-30): when a user navigates to
+    // a tab they don't have access to, the fall-through bounces them home
+    // — but without feedback that felt like a broken link. We now flag
+    // the denial during render (deniedTabRef) and fire a one-shot toast
+    // in a post-commit useEffect.
+    //
+    // Why the dance:
+    //   - Setting state during render is a hooks violation
+    //   - Calling toast() during render fires on every re-render (spam)
+    //   - useEffect with [activeTab] deps runs exactly once per tab change
+    //   - The ref carries the "deny happened" flag from render to effect
+    //     without causing a re-render itself
+    const deniedTabRef = useRef(null);
+    useEffect(() => {
+        if (deniedTabRef.current === activeTab) {
+            toast(language === 'es'
+                ? 'No tienes acceso a esa página'
+                : "You don't have access to that page");
+        }
+    }, [activeTab, language]);
     const renderV2Body = () => {
+            // Reset the deny flag at the top of every render. If we hit
+            // the fall-through, we'll set it again before returning.
+            deniedTabRef.current = null;
             if (activeTab === 'home') {
                 // Mobile gets a launcher (clean tile grid of every destination
                 // — staff open the app for a specific reason, not to browse a
@@ -1504,7 +1529,9 @@ export default function App() {
             // 📧 Inbox triage — owner-only (ids 40/41 via staffIsAdmin).
             if (activeTab === 'inbox' && staffIsAdmin) return <PageErrorBoundary tabName="Inbox" language={language}><InboxTriage language={language} staffName={staffName} staffList={staffList} /></PageErrorBoundary>;
             if (activeTab === 'onboarding' && hasOnboardingAccess) return <Onboarding language={language} staffName={staffName} staffList={staffList} storeLocation={effectiveLocation} onBack={() => setActiveTab('admin')} />;
-            // Tab not accessible — bounce home (uses same mobile/desktop split).
+            // Tab not accessible — flag for one-shot toast (see useEffect
+            // above) and bounce home (uses same mobile/desktop split).
+            deniedTabRef.current = activeTab;
             return isMobile ? (
                 <MobileHome
                     language={language}

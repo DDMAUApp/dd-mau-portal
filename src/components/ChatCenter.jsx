@@ -33,6 +33,7 @@ import {
     tierOf, canEditChat, previewOf, isChatUnread, formatChatTime,
 } from '../data/chat';
 import { canPostAnnouncements, canPostCoverageRequest, canDeleteChat } from '../data/chatPermissions';
+import { isAdminId } from '../data/staff';
 // 2026-05-27 — breadcrumb every chat-open + chat-back so the Sentry
 // timeline panel shows what the user did before any chat-related
 // error. Tiny, in-memory ring buffer; attached to the next error_logs
@@ -1051,7 +1052,7 @@ function matchesAudienceFilter(s, key) {
     const role = s.role || '';
     const isFoh = s.scheduleSide === 'foh' || s.side === 'foh' || /foh|front|server|cashier|host|bartender/i.test(role);
     const isBoh = s.scheduleSide === 'boh' || s.side === 'boh' || /boh|kitchen|cook|prep|dish/i.test(role);
-    const isMgr = s.id === 40 || s.id === 41 || /manager|owner/i.test(role);
+    const isMgr = isAdminId(s.id) || /manager|owner/i.test(role);
     const atLoc = (loc) => s.location === loc || s.location === 'both';
     switch (key) {
         case 'foh':           return isFoh;

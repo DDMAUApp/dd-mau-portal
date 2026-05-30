@@ -32,7 +32,7 @@ import {
     setDoc, serverTimestamp, writeBatch, runTransaction, arrayUnion,
     orderBy, limit, getDocs,
 } from 'firebase/firestore';
-import { canEditSchedule, isAdmin, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
+import { canEditSchedule, isAdmin, isAdminId, LOCATION_LABELS, isOnScheduleAt } from '../data/staff';
 import { getEventsForDate, EVENT_KIND_TONES } from '../data/calendarEvents';
 import { notifyAdmins, notifyStaff, notifyManagement } from '../data/notify';
 import { enableFcmPush } from '../messaging';
@@ -2985,7 +2985,7 @@ export default function Schedule({ staffName, language, storeLocation, staffList
                     const range = `${need.startTime || '?'}–${need.endTime || '?'}`;
                     const targets = (staffList || []).filter(s => {
                         if (!s?.name) return false;
-                        if (s.id === 40 || s.id === 41) return true; // admins
+                        if (isAdminId(s.id)) return true; // admins
                         if (s.role && /manager/i.test(s.role)) {
                             if (!need.location || need.location === 'both') return true;
                             return s.location === need.location || s.location === 'both';

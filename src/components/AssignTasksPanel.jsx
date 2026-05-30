@@ -55,6 +55,7 @@ import {
 } from '../data/assignedTasks';
 import { ClipboardList, Search, Plus, Check, X, ChevronDown, Trash2, UserPlus, Pencil } from 'lucide-react';
 import { PageHeader } from '../v2/PageShell';
+import { isAdminId } from '../data/staff';
 
 const tx = (en, es, isEs) => (isEs ? es : en);
 
@@ -90,10 +91,9 @@ function initialsOf(name) {
 // the `shiftLead: true` boolean OR a role string containing "shift
 // lead". Andrew 2026-05-28: assignees in the Tasks-tab kanban "can
 // only be managers or shift leads."
-const ADMIN_IDS = new Set([40, 41]);
 function isManagerLike(record, { includeShiftLeads = false } = {}) {
     if (!record) return false;
-    if (ADMIN_IDS.has(Number(record.id))) return true;
+    if (isAdminId(record.id)) return true;
     const roleText = String(record.role || '');
     if (/manager/i.test(roleText)) return true;
     if (includeShiftLeads) {

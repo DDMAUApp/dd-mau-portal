@@ -3,6 +3,8 @@
 // These get tested standalone (see chat.test.js) and reused across
 // ChatCenter / ChatThread / ChatSettingsModal so the permission model
 // has a single source of truth.
+
+import { isAdminId } from './staff';
 //
 // ── Chat schema (Firestore /chats/{chatId}) ────────────────────────────
 //   type:            'dm' | 'group' | 'channel'
@@ -172,7 +174,7 @@ export function channelMembersFor(key, staffList) {
 }
 
 function isManagerRole(s) {
-    if (s.id === 40 || s.id === 41) return true; // owners
+    if (isAdminId(s.id)) return true; // owners
     return s.role && /manager|owner/i.test(s.role);
 }
 

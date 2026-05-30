@@ -9,6 +9,24 @@ export const ADMIN_IDS = [40, 41];
 // but new code should use isAdmin(name, staffList) which checks IDs.
 export const ADMIN_NAMES = ["Andrew Shih", "Julie Shih"];
 
+// ID-only admin check. Use this anywhere you already have a staff record
+// (or just the numeric id) and you want to know "is this an owner?"
+// without round-tripping through a name lookup.
+//
+// Audit 2026-05-30: replaces ~9 inline copies of `s.id === 40 || s.id === 41`
+// scattered through the codebase. Single source of truth so that adding a
+// third admin (manager promotion, business partner) is one edit to ADMIN_IDS
+// instead of grep-and-pray across every component.
+//
+// Tolerates string ids ("40") and missing/non-numeric ids (returns false)
+// so callers don't have to defensively coerce. Returns true/false only.
+export function isAdminId(id) {
+  if (id === null || id === undefined) return false;
+  const n = Number(id);
+  if (!Number.isFinite(n)) return false;
+  return ADMIN_IDS.includes(n);
+}
+
 // Returns true iff the staff member with this name has an ADMIN_ID.
 // Requires staffList so we can resolve name → id. If staffList is missing,
 // we fall back to the legacy name list (transitional only — every callsite

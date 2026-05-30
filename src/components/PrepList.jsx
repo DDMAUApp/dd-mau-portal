@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useDeferredValue, useMemo } from 'react';
 import { db } from '../firebase';
-import { doc, setDoc, updateDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, onSnapshot, runTransaction } from 'firebase/firestore';
 import { PREP_STATIONS } from '../data/prepList';
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { escapeHtml as esc } from '../data/htmlEscape';
@@ -187,13 +187,30 @@ export default function PrepList({ language, staffName, storeLocation, staffList
         setDoneItems(emptyDone);
         setPrepMeta(emptyMeta);
         try {
-            await setDoc(doc(db, "ops", "prepList_" + storeLocation), {
-                onHand: emptyOnHand,
-                doneItems: emptyDone,
-                prepMeta: emptyMeta,
-                customStations: stations,
-                busyMode: busyMode,
-                date: new Date().toISOString()
+            // Audit 2026-05-30: was setDoc() in a read-modify-write pattern
+            // that clobbered concurrent saves. If a manager hit "Reset day"
+            // while another device was mid-save (debounced savePrep), the
+            // save could land *after* the reset and leave half-empty state.
+            //
+            // Wrapping in runTransaction means: any concurrent write to the
+            // same doc between our read and write forces a retry on a fresh
+            // snapshot. The retry then becomes a no-op since the data we're
+            // writing (empty maps + current stations) is the same regardless
+            // of what the concurrent writer did. End state is deterministic.
+            //
+            // Pairs with the savePrepRaw race fix in the earlier audit pass
+            // (see comment block ~line 99).
+            const ref = doc(db, "ops", "prepList_" + storeLocation);
+            await runTransaction(db, async (tx) => {
+                await tx.get(ref); // read for conflict detection
+                tx.set(ref, {
+                    onHand: emptyOnHand,
+                    doneItems: emptyDone,
+                    prepMeta: emptyMeta,
+                    customStations: stations,
+                    busyMode: busyMode,
+                    date: new Date().toISOString()
+                });
             });
         } catch (err) { console.error("Error resetting prep:", err); }
     };

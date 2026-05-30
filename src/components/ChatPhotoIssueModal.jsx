@@ -20,6 +20,7 @@ import {
 } from 'firebase/firestore';
 import { ref as sref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { recordAudit } from '../data/audit';
+import { isAdminId } from '../data/staff';
 import { notifyStaff } from '../data/notify';
 import { channelDocId, ISSUE_CATEGORIES, ISSUE_URGENCIES } from '../data/chat';
 import { toast } from '../toast';
@@ -127,7 +128,7 @@ export default function ChatPhotoIssueModal({
 
             // 5. Notify managers (FCM). Emergency = pierces quiet hours.
             const managers = (staffList || [])
-                .filter(s => s.id === 40 || s.id === 41 || /manager|owner/i.test(s.role || ''))
+                .filter(s => isAdminId(s.id) || /manager|owner/i.test(s.role || ''))
                 .filter(s => s.name !== staffName)
                 .map(s => s.name);
 

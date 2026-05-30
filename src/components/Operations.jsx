@@ -3,7 +3,7 @@ import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, serverTimestamp, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
 import { t, autoTranslateItem } from '../data/translations';
-import { isAdmin, LOCATION_LABELS, canViewLabor } from '../data/staff';
+import { isAdmin, isAdminId, LOCATION_LABELS, canViewLabor } from '../data/staff';
 import { getLaborStatus, getLaborStatusHint } from '../data/labor';
 import { INVENTORY_CATEGORIES, INVENTORY_LOCATIONS, INVENTORY_VENDORS, normalizeVendor } from '../data/inventory';
 import { subscribeActiveList } from '../data/inventoryLists';
@@ -3259,7 +3259,7 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 const targets = (staffList || []).filter(s => {
                     if (!s?.name) return false;
                     if (s.name === staffName) return false;
-                    if (s.id === 40 || s.id === 41) return true;
+                    if (isAdminId(s.id)) return true;
                     if (s.role && /manager/i.test(s.role)) {
                         return !s.location || s.location === storeLocation || s.location === 'both';
                     }
