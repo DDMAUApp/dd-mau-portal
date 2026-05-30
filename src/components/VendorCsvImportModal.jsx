@@ -26,6 +26,7 @@ import { useState, useMemo, useRef, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, setDoc, updateDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { recordAudit } from '../data/audit';
+import ModalPortal from './ModalPortal';
 
 // Common column-header aliases for the three fields the parser
 // needs. Lowercase + non-alphanumeric stripped before lookup.
@@ -746,6 +747,7 @@ export default function VendorCsvImportModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div className="bg-white w-full md:max-w-2xl md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
                 onClick={(e) => e.stopPropagation()}>
@@ -957,6 +959,7 @@ export default function VendorCsvImportModal({
                 )}
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

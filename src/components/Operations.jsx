@@ -51,6 +51,7 @@ const WallTasksAdmin = lazy(() => import('./WallTasksAdmin'));
 // Lazy so the modal chunk doesn't enter the graph unless admin opens
 // it; the modal is admin/manager-only.
 const AssigneePickerModal = lazy(() => import('./AssigneePickerModal'));
+import ModalPortal from './ModalPortal';
 
 // Constants
 // Time-period concept (morning/afternoon/night) was tried and abandoned — only
@@ -6331,6 +6332,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             await mergeMasterItems(mergeSource.catIdx, mergeSource.itemIdx, targetCatIdx, targetItemIdx);
                         };
                         return (
+                            <ModalPortal>
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2">
                                 <div className="bg-white rounded-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border-2 border-purple-300">
                                     <div className="px-4 py-3 bg-purple-700 text-white flex items-start justify-between gap-2">
@@ -6392,6 +6394,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     </div>
                                 </div>
                             </div>
+                            </ModalPortal>
                         );
                     })()}
 
@@ -6475,6 +6478,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                             }
                         };
                         return (
+                            <ModalPortal>
                             <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-2">
                                 <div className="bg-white rounded-2xl w-full sm:max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl border-2 border-purple-300">
                                     {/* Header */}
@@ -6586,6 +6590,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     </div>
                                 </div>
                             </div>
+                            </ModalPortal>
                         );
                     })()}
 
@@ -7011,6 +7016,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     // the modal is no longer centered on the
                                     // dimmed scrim — it visually floats off the
                                     // corner like a Settings popover.
+                                    <ModalPortal>
                                     <div
                                         className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-end sm:items-start justify-center sm:justify-end p-2 sm:p-6 sm:pt-20"
                                         onClick={() => setShowCart(false)}
@@ -7227,6 +7233,7 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                             </div>
                                         </div>
                                     </div>
+                                    </ModalPortal>
                                 );
                             })()}
 
@@ -10026,6 +10033,7 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
         });
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center"
             onClick={onClose}>
             <div className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
@@ -10127,6 +10135,7 @@ function RecentOrdersHistoryModal({ storeLocation, setInventory, currentInventor
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

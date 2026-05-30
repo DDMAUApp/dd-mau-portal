@@ -51,6 +51,7 @@ import {
     // More-menu items
     Printer, Calendar, Copy, Repeat, Ban,
 } from 'lucide-react';
+import ModalPortal from './ModalPortal';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
@@ -5624,6 +5625,7 @@ ${dayBlocks}
                         ? tx('Shift you just resized', 'Turno que acabas de cambiar')
                         : tx('Shift you just moved', 'Turno que acabas de mover');
                 return (
+                    <ModalPortal>
                     <div className="fixed inset-0 z-[60] bg-black/60 flex items-center justify-center p-4">
                         <div className="relative max-w-sm w-full">
                             {/* Flashing red ring layer — pulses without
@@ -5672,6 +5674,7 @@ ${dayBlocks}
                             </div>
                         </div>
                     </div>
+                    </ModalPortal>
                 );
             })()}
             {showTimeOffModal && (
@@ -8406,6 +8409,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
     const canSubmit = form.staffName && form.date && form.startTime && form.endTime && hours > 0 && !isOnClosedDate;
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
@@ -8665,6 +8669,7 @@ function AddShiftModal({ onClose, onSave, staffList, storeLocation, isEn, prefil
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -8752,6 +8757,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
     ];
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[90vh] overflow-y-auto sm:shadow-2xl">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
@@ -8993,6 +8999,7 @@ function BlackoutsModal({ onClose, onAdd, onRemove, blocks, storeLocation, isEn,
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9035,6 +9042,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
     const update = (k, v) => setForm(f => ({ ...f, [k]: v }));
     const canSubmit = form.staffName && form.startDate && form.endDate && form.startDate <= form.endDate;
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -9125,6 +9133,7 @@ function TimeOffModal({ onClose, onAdd, onRemove, entries, staffList, isEn, canE
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9154,6 +9163,7 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
         // the modal sits just below it, not behind it. Inner card uses
         // rounded-2xl on all sides (no more bottom-sheet flush-to-edge
         // styling since the modal isn't at the edge anymore).
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center p-2 sm:p-4 pt-16 sm:pt-20">
             <div className="glass-sheet w-full sm:max-w-md rounded-2xl max-h-[calc(100vh-90px)] sm:max-h-[calc(100vh-120px)] overflow-hidden flex flex-col shadow-2xl">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between shrink-0">
@@ -9203,6 +9213,7 @@ function PtoRequestModal({ onClose, onSubmit, staffName, isEn }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9284,6 +9295,7 @@ function SwapShiftModal({ onClose, shifts, staffList, staffName, storeLocation, 
     );
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0">
@@ -9406,6 +9418,7 @@ function SwapShiftModal({ onClose, shifts, staffList, staffName, storeLocation, 
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9439,6 +9452,7 @@ function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
         onClose();
     };
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-sm sm:rounded-2xl rounded-t-2xl">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -9485,6 +9499,7 @@ function MyBirthdayModal({ onClose, staffList, staffName, onSave, isEn }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9513,6 +9528,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
         onClose();
     };
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -9567,6 +9583,7 @@ function MyAvailabilityModal({ onClose, staffList, staffName, onSave, isEn }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9649,6 +9666,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
     const otherwise = rows.filter(r => r.status !== 'available');
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -9770,6 +9788,7 @@ function AvailableStaffModal({ dateStr, onClose, sideStaff, shifts, storeLocatio
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -9919,6 +9938,7 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
         if (e.target === e.currentTarget) onClose();
     };
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/40 z-50 flex justify-end"
             onMouseDown={handleBackdrop}
             onTouchStart={handleBackdrop}>
@@ -9974,6 +9994,7 @@ function NotificationsDrawer({ notifications, onClose, onMarkRead, onMarkAllRead
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -10048,6 +10069,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
         ];
     const isPresetActive = (p) => form.startTime === p.start && form.endTime === p.end;
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] overflow-y-auto">
                 <div className="sticky top-0 bg-white border-b border-dd-line p-4 flex items-center justify-between">
@@ -10212,6 +10234,7 @@ function StaffingNeedModal({ onClose, onSave, storeLocation, side, weekStart, is
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -10250,6 +10273,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
         (s, d) => s + hoursBetween(d.startTime, d.endTime, !!d.isDouble), 0);
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 {/* Header */}
@@ -10354,6 +10378,7 @@ function PublishPreviewModal({ preview, side, weekStart, isEn, onCancel, onConfi
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -10363,6 +10388,7 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
     const date = parseLocalDate(dateStr);
     const dayLabel = date ? (isEn ? DAYS_EN : DAYS_ES)[date.getDay()] : '';
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
@@ -10420,6 +10446,7 @@ function FillSlotChooserModal({ chooser, onClose, onAssignSlot, onCustomShift, i
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -10565,6 +10592,7 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, we
     }));
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -10798,6 +10826,7 @@ function TemplateEditorModal({ initial, onClose, onSave, storeLocation, side, we
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -10902,6 +10931,7 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
         onApply(pickedTemplate, dateStrs);
     };
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -11064,6 +11094,7 @@ function ApplyTemplateModal({ templates, onClose, onApply, onEdit, onCreate, onD
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -11135,6 +11166,7 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
     const canSave = editing && editing.staffName && editing.daysOfWeek.length > 0 && editing.startTime && editing.endTime && editing.startTime < editing.endTime;
     const sortedStaff = [...(staffList || [])].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="glass-sheet w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-gray-200 p-4 flex items-center justify-between">
@@ -11310,5 +11342,6 @@ function RecurringShiftsModal({ rules, staffList, storeLocation, side, weekStart
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

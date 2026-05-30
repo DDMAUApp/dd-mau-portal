@@ -56,6 +56,7 @@
 import { useState, useMemo, useRef } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc } from 'firebase/firestore';
+import ModalPortal from './ModalPortal';
 
 // Canonical role list — mirrors AdminPanel.roleOptions so dropdowns
 // match the rest of the staff UI. Kept in sync manually; if either
@@ -499,6 +500,7 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
     // ─────────────────────────────────────────────────────────────────
     // Render. Single full-screen-ish modal, stage switches the body.
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/60 flex items-start justify-center p-4 overflow-y-auto">
             <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full my-8">
                 {/* Header — same across stages, shows breadcrumb */}
@@ -848,5 +850,6 @@ export default function ImportStaffModal({ existingStaff, defaultLocation, langu
                 )}
             </div>
         </div>
+        </ModalPortal>
     );
 }

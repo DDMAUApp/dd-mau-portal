@@ -35,6 +35,7 @@ import {
     clockOut,
 } from '../data/offsiteClock';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 // Session-marker key. The presence of this in sessionStorage means
 // the app has already rendered the prompt once during this browser
@@ -161,6 +162,7 @@ export default function OffsiteClockPrompt({
     const isClockOut = kind === 'clock_out';
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-[60] bg-black/55 flex items-end md:items-center justify-center p-3"
              role="dialog"
              aria-modal="true">
@@ -245,5 +247,6 @@ export default function OffsiteClockPrompt({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

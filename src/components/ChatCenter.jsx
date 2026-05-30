@@ -41,6 +41,7 @@ import { breadcrumb } from '../data/logger';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 // Lazy children. Andrew 2026-05-23: use the explicit `.then(m =>
 // ({ default: m.default }))` form instead of bare `lazy(() =>
@@ -728,6 +729,7 @@ export default function ChatCenter({
 
             {/* ── Action menu (expanded "+" FAB) ───────────── */}
             {showActionMenu && (
+                <ModalPortal>
                 <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={() => setShowActionMenu(false)}>
                     <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl p-2 shadow-xl" onClick={(e) => e.stopPropagation()}>
                         <div className="md:hidden flex justify-center pt-1 pb-2">
@@ -779,6 +781,7 @@ export default function ChatCenter({
                         </button>
                     </div>
                 </div>
+                </ModalPortal>
             )}
 
             {/* ── Feature modals (all lazy) ──────────────────── */}
@@ -1201,6 +1204,7 @@ function NewChatModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[88vh] md:max-h-[80vh] shadow-xl"
@@ -1364,6 +1368,7 @@ function NewChatModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -1454,6 +1459,7 @@ function ChatListActionSheet({ chat, viewer, isAdmin, staffName, isEs, onClose, 
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl p-2 shadow-xl" onClick={(e) => e.stopPropagation()}>
                 <div className="md:hidden flex justify-center pt-1 pb-2">
@@ -1491,5 +1497,6 @@ function ChatListActionSheet({ chat, viewer, isAdmin, staffName, isEs, onClose, 
                 </button>
             </div>
         </div>
+        </ModalPortal>
     );
 }

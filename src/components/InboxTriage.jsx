@@ -23,6 +23,7 @@ import {
     setDoc, addDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 // Default seed list for /config/inbox_categories on first ever load.
 // Andrew 2026-05-26: "make the classifications bubbles able to add
@@ -655,6 +656,7 @@ function RoutingRulesModal({ categoryId, routingRules, categories, staffList, ac
 
     if (!cat) return null;
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
             onClick={onClose}>
             <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
@@ -749,6 +751,7 @@ function RoutingRulesModal({ categoryId, routingRules, categories, staffList, ac
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -825,6 +828,7 @@ function SendToStaffModal({ item, categories, staffList, actorName, language, on
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
             onClick={onClose}>
             <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
@@ -902,6 +906,7 @@ function SendToStaffModal({ item, categories, staffList, actorName, language, on
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -998,6 +1003,7 @@ function CategoryEditorModal({ mode, categoryId, categories, actorName, language
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
             onClick={onClose}>
             <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[90vh]"
@@ -1078,6 +1084,7 @@ function CategoryEditorModal({ mode, categoryId, categories, actorName, language
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -1151,6 +1158,7 @@ function ClassifyQueueModal({ items: itemsLive, categories, actorName, language,
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-2"
             onClick={onClose}>
             <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl flex flex-col max-h-[92vh]"
@@ -1236,5 +1244,6 @@ function ClassifyQueueModal({ items: itemsLive, categories, actorName, language,
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

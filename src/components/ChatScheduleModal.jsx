@@ -16,6 +16,7 @@
 // through this component.
 
 import { useState, useMemo } from 'react';
+import ModalPortal from './ModalPortal';
 
 export default function ChatScheduleModal({
     language = 'en', onPick, onClose, defaultMinutesFromNow = 60,
@@ -78,6 +79,7 @@ export default function ChatScheduleModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-sm md:rounded-2xl rounded-t-2xl flex flex-col shadow-xl"
@@ -154,6 +156,7 @@ export default function ChatScheduleModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

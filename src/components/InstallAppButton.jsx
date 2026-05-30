@@ -1,4 +1,5 @@
 import { useState, useEffect, lazy, Suspense } from 'react';
+import ModalPortal from './ModalPortal';
 
 // Lazy-load the full install splash (IOSSteps / AndroidSteps / DesktopHint).
 // 2026-05-24: lock-screen Install button used to do nothing on platforms
@@ -114,6 +115,7 @@ export default function InstallAppButton({ language, compact = false }) {
 // dismiss the overlay.
 function InstallGuideOverlay({ language, onClose }) {
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-white overflow-y-auto" role="dialog" aria-modal="true">
             <Suspense fallback={
                 <div className="min-h-screen flex items-center justify-center text-sm text-dd-text-2">
@@ -123,6 +125,7 @@ function InstallGuideOverlay({ language, onClose }) {
                 <InstallSplash language={language} onSkip={onClose} />
             </Suspense>
         </div>
+        </ModalPortal>
     );
 }
 

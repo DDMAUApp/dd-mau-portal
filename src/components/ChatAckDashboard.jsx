@@ -19,6 +19,7 @@ import { notifyStaff } from '../data/notify';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 import TranslatableText from './TranslatableText';
+import ModalPortal from './ModalPortal';
 
 export default function ChatAckDashboard({
     chat, message, language = 'en', staffName, viewer, onClose,
@@ -112,6 +113,7 @@ export default function ChatAckDashboard({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[90vh] shadow-xl"
@@ -223,6 +225,7 @@ export default function ChatAckDashboard({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

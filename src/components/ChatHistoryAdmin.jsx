@@ -24,6 +24,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
+import ModalPortal from './ModalPortal';
 // previewOf turns a chat doc's `lastMessage` OBJECT (senderName/type/
 // text/deleted/etc.) into a display string. Important: lastMessage is
 // NOT a string — initial version of this file assumed it was and
@@ -281,6 +282,7 @@ function ChatHistoryViewerModal({ chat, language, onClose }) {
         : (isEs ? '(sin nombre)' : '(unnamed)'));
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center justify-center"
             onClick={onClose}>
             <div className="bg-white w-full md:max-w-2xl md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
@@ -351,6 +353,7 @@ function ChatHistoryViewerModal({ chat, language, onClose }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
