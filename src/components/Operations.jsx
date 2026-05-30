@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue, lazy, Suspense, memo } from 'react';
 import { db, storage } from '../firebase';
 import { doc, onSnapshot, setDoc, getDoc, getDocs, updateDoc, addDoc, query, collection, orderBy, limit, where, writeBatch, serverTimestamp, deleteDoc, deleteField, arrayUnion, runTransaction, increment } from 'firebase/firestore';
 import { ref, getDownloadURL, uploadBytes, deleteObject } from 'firebase/storage';
@@ -223,6 +223,82 @@ const itemMatchesSearch = (item, searchLower) => {
     if (item.nameEs && String(item.nameEs).toLowerCase().includes(searchLower)) return true;
     return false;
 };
+
+// Vendor-color helper — pure, module-scope so it can be passed
+// into React.memo'd children without breaking shallow-equality
+// (function identity stays stable for the lifetime of the bundle).
+function vendorColorFor(v) {
+    return v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
+}
+
+// CartRow — one `<tr>` of the cart comparison table. Memoized so
+// typing a count, toggling a vendor override, or any unrelated
+// Operations re-render does NOT re-render the other 199 rows.
+//
+// Andrew 2026-05-29 perf batch D #2. The cart's comparison table
+// can hold 200+ items × 8 vendor columns = 1600+ cells. Before
+// memoization, ANY parent re-render reconciled every cell.
+//
+// Props are all stable primitives or stable references:
+//   r            — row object identity is stable because cartData
+//                  is memoized at the parent (same array, same
+//                  object refs across unrelated re-renders).
+//   vendorList   — stable for the same reason.
+//   myEffVendor  — string or empty string; only changes for THIS
+//                  row when this row's override changes.
+//   isOverridden — boolean; same story.
+// React.memo's default shallow compare is sufficient.
+const CartRow = memo(function CartRow({ r, vendorList, myEffVendor, isOverridden }) {
+    const cheapestVendor = r.vendorPrices.find(p => p.price != null)?.vendor;
+    const isVendorOnly = r.kind === "vendor-only";
+    return (
+        <tr
+            className={`border-t border-gray-300 transition ${
+                isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50"
+            }`}
+            style={isOverridden ? { boxShadow: 'inset 3px 0 0 0 #b45309' } : undefined}
+        >
+            <td className="px-3 py-2">
+                <div className="font-medium text-gray-800 flex items-center gap-1 flex-wrap">
+                    {isVendorOnly && (
+                        <span className={`text-[9px] font-bold px-1 py-0.5 rounded border bg-${vendorColorFor(r.vendorOnlyOrigin)}-100 text-${vendorColorFor(r.vendorOnlyOrigin)}-700 border-${vendorColorFor(r.vendorOnlyOrigin)}-300`}>
+                            {r.vendorOnlyOrigin}
+                        </span>
+                    )}
+                    {r.addedFromVendor && (
+                        <span className={`w-1.5 h-1.5 rounded-full bg-${vendorColorFor(r.addedFromVendor)}-500`} title={`Added from ${r.addedFromVendor}`} />
+                    )}
+                    <span>{r.name}</span>
+                    {myEffVendor && (
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                            isOverridden
+                                ? 'bg-amber-100 text-amber-700 border border-amber-300'
+                                : 'bg-gray-100 text-gray-500 border border-gray-200'
+                        }`}>
+                            {isOverridden ? '📌 ' : ''}{myEffVendor}
+                        </span>
+                    )}
+                </div>
+                <div className="text-[10px] text-gray-400">{r.category}{r.pack ? ` · ${r.pack}` : ""}</div>
+            </td>
+            <td className="text-center px-2 py-2 font-bold text-mint-700">{r.qty}</td>
+            {vendorList.map(v => {
+                const p = r.vendorPrices.find(vp => vp.vendor === v);
+                if (!p || p.price == null) return <td key={v} className="text-right px-2 py-2 text-gray-300 text-xs">—</td>;
+                const isCheapest = v === cheapestVendor && r.vendorPrices.filter(vp => vp.price != null).length > 1;
+                const lineTotal = r.qty * p.price;
+                return (
+                    <td key={v} className={`text-right px-2 py-2 ${isCheapest ? "bg-green-50" : ""}`}>
+                        <div className={`text-sm ${isCheapest ? "font-bold text-green-700" : "text-gray-700"}`}>
+                            {isCheapest && "🏆 "}${p.price.toFixed(2)}
+                        </div>
+                        <div className="text-[10px] text-gray-500">= ${lineTotal.toFixed(2)}{p.pack ? ` · ${p.pack}` : ""}</div>
+                    </td>
+                );
+            })}
+        </tr>
+    );
+});
 
 export default function Operations({ language, staffList, staffName, storeLocation }) {
 
@@ -6706,7 +6782,10 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                     bestMixSum, uncovered, bestMixByVendor,
                                     totalItems, totalQty,
                                 } = cartData;
-                                const vendorColor = (v) => v === "Sysco" ? "blue" : v === "US Foods" ? "orange" : "gray";
+                                // vendorColor helper used to live here; now
+                                // the rows render through the memoized
+                                // <CartRow> at module scope which calls
+                                // vendorColorFor() directly.
 
                                 // Quick-assign pill bar uses the canonical 8-vendor
                                 // list from inventory.js. Order is fixed (Andrew's
@@ -6828,54 +6907,15 @@ ${taskHtml || '<p style="text-align:center;color:#9ca3af;padding:40px">No tasks 
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {rows.map(r => {
-                                                                const cheapestVendor = r.vendorPrices.find(p => p.price != null)?.vendor;
-                                                                const isVendorOnly = r.kind === "vendor-only";
-                                                                const myEffVendor = effectiveVendor(r);
-                                                                const isOverridden = !!cartVendorOverride[r.id];
-                                                                return (
-                                                                    <tr
-                                                                        key={r.id}
-                                                                        className={`border-t border-gray-300 transition ${
-                                                                            isVendorOnly ? "bg-orange-50/40" : "hover:bg-gray-50"
-                                                                        }`}
-                                                                        style={isOverridden ? { boxShadow: 'inset 3px 0 0 0 #b45309' } : undefined}
-                                                                    >
-                                                                        <td className="px-3 py-2">
-                                                                            <div className="font-medium text-gray-800 flex items-center gap-1 flex-wrap">
-                                                                                {isVendorOnly && <span className={`text-[9px] font-bold px-1 py-0.5 rounded border bg-${vendorColor(r.vendorOnlyOrigin)}-100 text-${vendorColor(r.vendorOnlyOrigin)}-700 border-${vendorColor(r.vendorOnlyOrigin)}-300`}>{r.vendorOnlyOrigin}</span>}
-                                                                                {r.addedFromVendor && <span className={`w-1.5 h-1.5 rounded-full bg-${vendorColor(r.addedFromVendor)}-500`} title={`Added from ${r.addedFromVendor}`} />}
-                                                                                <span>{r.name}</span>
-                                                                                {myEffVendor && (
-                                                                                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
-                                                                                        isOverridden
-                                                                                            ? 'bg-amber-100 text-amber-700 border border-amber-300'
-                                                                                            : 'bg-gray-100 text-gray-500 border border-gray-200'
-                                                                                    }`}>
-                                                                                        {isOverridden ? '📌 ' : ''}{myEffVendor}
-                                                                                    </span>
-                                                                                )}
-                                                                            </div>
-                                                                            <div className="text-[10px] text-gray-400">{r.category}{r.pack ? ` · ${r.pack}` : ""}</div>
-                                                                        </td>
-                                                                        <td className="text-center px-2 py-2 font-bold text-mint-700">{r.qty}</td>
-                                                                        {vendorList.map(v => {
-                                                                            const p = r.vendorPrices.find(vp => vp.vendor === v);
-                                                                            if (!p || p.price == null) return <td key={v} className="text-right px-2 py-2 text-gray-300 text-xs">—</td>;
-                                                                            const isCheapest = v === cheapestVendor && r.vendorPrices.filter(vp => vp.price != null).length > 1;
-                                                                            const lineTotal = r.qty * p.price;
-                                                                            return (
-                                                                                <td key={v} className={`text-right px-2 py-2 ${isCheapest ? "bg-green-50" : ""}`}>
-                                                                                    <div className={`text-sm ${isCheapest ? "font-bold text-green-700" : "text-gray-700"}`}>
-                                                                                        {isCheapest && "🏆 "}${p.price.toFixed(2)}
-                                                                                    </div>
-                                                                                    <div className="text-[10px] text-gray-500">= ${lineTotal.toFixed(2)}{p.pack ? ` · ${p.pack}` : ""}</div>
-                                                                                </td>
-                                                                            );
-                                                                        })}
-                                                                    </tr>
-                                                                );
-                                                            })}
+                                                            {rows.map(r => (
+                                                                <CartRow
+                                                                    key={r.id}
+                                                                    r={r}
+                                                                    vendorList={vendorList}
+                                                                    myEffVendor={effectiveVendor(r)}
+                                                                    isOverridden={!!cartVendorOverride[r.id]}
+                                                                />
+                                                            ))}
                                                         </tbody>
                                                     </table>
                                                 )}
