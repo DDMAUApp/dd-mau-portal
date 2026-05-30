@@ -43,7 +43,7 @@
 
 import { db } from '../firebase';
 import {
-    collection, doc, getDoc, onSnapshot, query, where,
+    collection, doc, getDoc, onSnapshot, query, where, limit,
     writeBatch, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
 
@@ -55,7 +55,10 @@ import {
 // Firestore index — a single where() on staffId is enough.
 export function subscribeAssignmentsForStaff(staffId, callback) {
     if (staffId == null || typeof callback !== 'function') return () => {};
-    const q = query(collection(db, 'assigned_tasks'), where('staffId', '==', staffId));
+    // PERF, 2026-05-30: capped at 200. Done tasks accumulate forever; a
+    // staffer with months of history would otherwise stream every row on
+    // every cold mount. 200 covers active + ~recent done.
+    const q = query(collection(db, 'assigned_tasks'), where('staffId', '==', staffId), limit(200));
     return onSnapshot(q, (snap) => {
         const out = [];
         snap.forEach((d) => out.push({ id: d.id, ...(d.data() || {}) }));
@@ -94,10 +97,13 @@ export function subscribeTaskLibrary(side, callback) {
 // Returns assignments sorted assignedAt desc; client groups by staffId.
 export function subscribeOpenAssignments(side, callback) {
     if (!side || typeof callback !== 'function') return () => {};
+    // PERF, 2026-05-30: capped at 500. Even with a full team backlog this
+    // is generous (would mean >20 open tasks per staffer for 25 staff).
     const q = query(
         collection(db, 'assigned_tasks'),
         where('side', '==', side),
         where('done', '==', false),
+        limit(500),
     );
     return onSnapshot(q, (snap) => {
         const out = [];

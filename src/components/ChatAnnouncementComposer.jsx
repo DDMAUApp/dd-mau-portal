@@ -27,6 +27,7 @@ import { canPostAnnouncements } from '../data/chatPermissions';
 import { channelDocId, AUTO_CHANNELS } from '../data/chat';
 import { translateMessage, detectLanguageHint } from '../data/translation';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 export default function ChatAnnouncementComposer({
     language = 'en', staffName, staffList, viewer, isAdmin, isManager,
@@ -163,12 +164,14 @@ export default function ChatAnnouncementComposer({
 
     if (!canPost) {
         return (
+            <ModalPortal>
             <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={onClose}>
                 <div className="bg-white rounded-xl p-6 max-w-sm" onClick={(e) => e.stopPropagation()}>
                     <p className="text-dd-text mb-3">{tx('Only managers can post announcements.', 'Solo los gerentes pueden publicar anuncios.')}</p>
                     <button onClick={onClose} className="px-4 py-2 bg-dd-bg rounded font-bold text-sm">{tx('Close', 'Cerrar')}</button>
                 </div>
             </div>
+            </ModalPortal>
         );
     }
 
@@ -335,6 +338,7 @@ export default function ChatAnnouncementComposer({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-lg md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
@@ -579,5 +583,6 @@ export default function ChatAnnouncementComposer({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

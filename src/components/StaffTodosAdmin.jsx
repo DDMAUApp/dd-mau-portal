@@ -24,6 +24,7 @@ import {
     deleteCustomTodo,
 } from '../data/staffTodos';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 const DEEP_LINKS = [
     { id: '',            en: '(none)',         es: '(ninguno)' },
@@ -312,6 +313,7 @@ function TodoEditor({ todo, staffList, staffName, isEs, onClose }) {
     }, [staffList]);
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={onClose}>
             <div onClick={(e) => e.stopPropagation()}
                 className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
@@ -488,5 +490,6 @@ function TodoEditor({ todo, staffList, staffName, isEs, onClose }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

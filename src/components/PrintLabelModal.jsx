@@ -27,6 +27,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 import { ALLERGEN_ORDER, allergenLabel } from '../data/allergens';
 import {
     buildLabelPayload,
@@ -222,7 +223,12 @@ export default function PrintLabelModal({
         }
     };
 
+    // ModalPortal lifts this modal out of any backdrop-filter ancestor
+    // (glass-card etc) so position:fixed lands on the viewport rather
+    // than on the nearest containing block. See ModalPortal.jsx for the
+    // full rationale.
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl max-h-[95vh] sm:max-h-[90vh] flex flex-col">
                 {/* Header */}
@@ -481,6 +487,7 @@ export default function PrintLabelModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

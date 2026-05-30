@@ -31,6 +31,7 @@ import {
     deriveVendorsFromInventory,
 } from '../data/orderSession';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 export default function OrderMode({
     language = 'en',
@@ -84,6 +85,7 @@ export default function OrderMode({
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-[55] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3">
             <div className="bg-white w-full sm:max-w-3xl max-h-[100dvh] sm:max-h-[95vh] sm:rounded-2xl flex flex-col overflow-hidden">
                 {/* Header */}
@@ -137,6 +139,7 @@ export default function OrderMode({
                 )}
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -556,6 +559,7 @@ function PartialQtyDialog({ tx, itemName, originalQty, currentVendor, onClose, o
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3"
              onClick={onClose}>
             <div className="bg-white w-full sm:max-w-sm p-5 rounded-t-2xl sm:rounded-2xl space-y-3"
@@ -627,6 +631,7 @@ function PartialQtyDialog({ tx, itemName, originalQty, currentVendor, onClose, o
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -825,6 +830,7 @@ function VendorEditor({ tx, configVendors, derivedVendors, staffName, onClose })
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-[65] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-3">
             <div className="bg-white w-full sm:max-w-md max-h-[90vh] rounded-t-2xl sm:rounded-2xl flex flex-col overflow-hidden">
                 <div className="border-b border-dd-line p-3 flex items-center justify-between">
@@ -905,6 +911,7 @@ function VendorEditor({ tx, configVendors, derivedVendors, staffName, onClose })
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

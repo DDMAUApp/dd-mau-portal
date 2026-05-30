@@ -13,6 +13,7 @@ import { toast } from '../toast';
 import { COMPONENT_KIND_TONE } from '../data/itemBuild';
 import { getBuildOverride, saveBuildOverride, deleteBuildOverride } from '../data/buildOverrides';
 import { saveCustomItem, deleteCustomItem, makeCustomItemSlug } from '../data/customItems';
+import ModalPortal from './ModalPortal';
 
 const KIND_OPTIONS = ['base', 'topping', 'protein', 'sauce', 'broth', 'side', 'garnish'];
 
@@ -229,6 +230,7 @@ export default function BuildEditorModal({
     const removeNote = (i) => setNotes(ns => ns.filter((_, j) => j !== i));
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl h-[100dvh] sm:h-auto sm:max-h-[92vh] flex flex-col">
                 {/* Header */}
@@ -458,5 +460,6 @@ export default function BuildEditorModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

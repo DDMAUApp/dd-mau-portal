@@ -81,6 +81,18 @@ export default function MaintenanceRequest({ language, staffName, storeLocation 
                 try {
                     let photoUrl = null;
                     if (photoFile) {
+                        // 2026-05-30 audit fix — early-reject oversize photos
+                        // (the storage rule caps at 10 MB but the failure
+                        // arrives minutes later on cellular). 10 MB matches
+                        // the rule + the Onboarding pattern.
+                        if (photoFile.size > 10 * 1024 * 1024) {
+                            setSubmitting(false);
+                            toast(language === 'es'
+                                ? 'La foto es muy grande (máx 10 MB)'
+                                : 'Photo is too large (max 10 MB)',
+                                { kind: 'error' });
+                            return;
+                        }
                         const photoPath = "maintenance-photos/" + Date.now() + "_" + photoFile.name;
                         photoRef = ref(storage, photoPath);
                         await uploadBytes(photoRef, photoFile);

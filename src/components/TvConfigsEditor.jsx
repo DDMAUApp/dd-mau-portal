@@ -16,6 +16,7 @@ import {
 import { uploadMenuFile } from '../data/menuImageUpload';
 import { generatePromo } from '../data/aiGeneratePromo';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 // Lazy because the hit-zone editor pulls in a fair amount of UI
 // state + per-zone rendering that most admin views don't need.
@@ -697,6 +698,7 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/40"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
@@ -1454,5 +1456,6 @@ function EditTvConfigModal({ initial, baseUrl, onClose, byName, tx }) {
                 </Suspense>
             )}
         </div>
+        </ModalPortal>
     );
 }

@@ -25,6 +25,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 import { subscribePrinterConfig, printFreeText, getLabelSizePresets, DEFAULT_LABEL_SIZE_PRESET } from '../data/labelPrinting';
 
 const RECENTS_KEY = 'ddmau:printCenter:recents';
@@ -225,7 +226,10 @@ export default function PrintCenter({
         setStampSignature(tpl.stampSignature);
     };
 
+    // ModalPortal: lifts modal out of any backdrop-filter ancestor so
+    // position:fixed lands on the viewport (see ModalPortal.jsx).
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl h-[100dvh] sm:h-auto sm:max-h-[92vh] flex flex-col">
                 {/* Header */}
@@ -531,6 +535,7 @@ export default function PrintCenter({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

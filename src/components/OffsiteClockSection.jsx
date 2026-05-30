@@ -31,6 +31,7 @@ import {
 } from '../data/offsiteClock';
 import { toast } from '../toast';
 import AssigneePickerModal from './AssigneePickerModal';
+import ModalPortal from './ModalPortal';
 
 export default function OffsiteClockSection({
     language = 'en', staffName, staffList, viewer,
@@ -614,6 +615,7 @@ function EditTimesModal({ shift, isEs, locale, onClose, onSaved, adminName, admi
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-5 space-y-3 modal-scroll-lock">
                 <div className="flex items-center justify-between mb-1">
@@ -729,5 +731,6 @@ function EditTimesModal({ shift, isEs, locale, onClose, onSaved, adminName, admi
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

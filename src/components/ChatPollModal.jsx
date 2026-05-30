@@ -16,6 +16,7 @@
 
 import { useState } from 'react';
 import { POLL_LIMITS } from '../data/chat';
+import ModalPortal from './ModalPortal';
 
 const PRESETS = [
     { key: 'none',   en: 'No deadline',  es: 'Sin fecha',   hours: 0 },
@@ -78,6 +79,7 @@ export default function ChatPollModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
@@ -207,5 +209,6 @@ export default function ChatPollModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

@@ -28,6 +28,7 @@ import {
 import { INVENTORY_CATEGORIES } from '../data/inventory';
 import { normalize, expandQueryTermsTight, haystackMatches } from '../data/chatSearch';
 import { useAiSearch } from '../data/aiSearch';
+import ModalPortal from './ModalPortal';
 import { toast } from '../toast';
 
 export default function InventoryListsAdmin({
@@ -48,6 +49,7 @@ export default function InventoryListsAdmin({
     const editing = useMemo(() => lists.find(l => l.id === editingId), [lists, editingId]);
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
             {/* Force EXPLICIT height instead of max-h-. With max-h-,
                 the modal shrinks to its content, which then collapses
@@ -178,6 +180,7 @@ export default function InventoryListsAdmin({
                 />
             )}
         </div>
+        </ModalPortal>
     );
 }
 
@@ -303,6 +306,7 @@ function NewListModal({ tx, language, staffName, existingLists, onClose, onCreat
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-[60] bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md p-5 rounded-t-2xl sm:rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
@@ -359,6 +363,7 @@ function NewListModal({ tx, language, staffName, existingLists, onClose, onCreat
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

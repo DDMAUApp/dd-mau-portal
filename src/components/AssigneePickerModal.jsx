@@ -20,6 +20,7 @@
 // request candidate, etc.).
 
 import { useEffect, useMemo, useState } from 'react';
+import ModalPortal from './ModalPortal';
 
 export default function AssigneePickerModal({
     open,
@@ -121,6 +122,7 @@ export default function AssigneePickerModal({
 
     if (!open) return null;
     return (
+        <ModalPortal>
         <div
             className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center"
             onClick={onClose}
@@ -263,5 +265,6 @@ export default function AssigneePickerModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

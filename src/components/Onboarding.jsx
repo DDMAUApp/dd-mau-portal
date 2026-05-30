@@ -16,7 +16,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { db, storage } from '../firebase';
 import {
     collection, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot,
-    serverTimestamp, query, orderBy, getDoc, deleteField,
+    serverTimestamp, query, orderBy, limit, getDoc, deleteField,
 } from 'firebase/firestore';
 import { LETTER_BODY_EN, LETTER_BODY_ES, letterVars } from './OnboardingOfferLetter';
 import { ref as sref, listAll, getDownloadURL, getBytes, getMetadata, deleteObject } from 'firebase/storage';
@@ -36,6 +36,7 @@ import {
 } from '../data/applyForm';
 import { lazy as reactLazy, Suspense as ReactSuspense } from 'react';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 const OnboardingTemplateEditor = reactLazy(() => import('./OnboardingTemplateEditor'));
 const OnboardingEmployerFill = reactLazy(() => import('./OnboardingEmployerFill'));
 
@@ -68,8 +69,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     const [loading, setLoading] = useState(true);
 
     // Subscribe to hires.
+    // PERF, 2026-05-30: bounded at 500. AdminPanel already caps a similar
+    // listener at 500 — matching it here. Active+archived hires together
+    // shouldn't grow past this for years.
     useEffect(() => {
-        const q = query(collection(db, 'onboarding_hires'), orderBy('createdAt', 'desc'));
+        const q = query(collection(db, 'onboarding_hires'), orderBy('createdAt', 'desc'), limit(500));
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
@@ -83,8 +87,11 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     }, []);
 
     // Subscribe to applications (lock-screen submissions).
+    // PERF, 2026-05-30: bounded at 500. Public Apply form can rack up
+    // applications fast; the 180-day expirAndPurgeApplications CF keeps
+    // the long-tail in check, this just caps the live listener.
     useEffect(() => {
-        const q = query(collection(db, 'onboarding_applications'), orderBy('createdAt', 'desc'));
+        const q = query(collection(db, 'onboarding_applications'), orderBy('createdAt', 'desc'), limit(500));
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
@@ -94,8 +101,10 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
     }, []);
 
     // Subscribe to templates so we can show which docs have a PDF prepared.
+    // PERF, 2026-05-30: bounded at 100 — templates are admin-uploaded
+    // PDFs (W-4, MO W-4, DD form). Unlikely to ever cross 20.
     useEffect(() => {
-        const unsub = onSnapshot(collection(db, 'onboarding_templates'), (snap) => {
+        const unsub = onSnapshot(query(collection(db, 'onboarding_templates'), limit(100)), (snap) => {
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
             setTemplates(list);
@@ -428,16 +437,33 @@ export default function Onboarding({ language, staffName, staffList, storeLocati
                                 }
                             }}
                             onResend={async () => {
-                                const token = makeInviteToken();
-                                const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-                                await setDoc(doc(db, 'onboarding_invites', token), {
-                                    hireId: selected.id,
-                                    createdAt: new Date().toISOString(),
-                                    expiresAt,
-                                    used: false,
-                                });
-                                writeAudit('invite_resent', { hireId: selected.id, token });
-                                setInviteSheet({ hire: selected, token, url: buildInviteUrl(token) });
+                                // 2026-05-30 audit fix — wrap in try/catch.
+                                // The previous unguarded version would still
+                                // open the success "invite sheet" even when
+                                // the setDoc rejected (e.g. rules denial,
+                                // offline), leaving the admin to believe the
+                                // link was minted when the hire never
+                                // received a working URL. Now we only stamp
+                                // the audit + open the sheet on success;
+                                // failure surfaces a toast.
+                                try {
+                                    const token = makeInviteToken();
+                                    const expiresAt = new Date(Date.now() + INVITE_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+                                    await setDoc(doc(db, 'onboarding_invites', token), {
+                                        hireId: selected.id,
+                                        createdAt: new Date().toISOString(),
+                                        expiresAt,
+                                        used: false,
+                                    });
+                                    writeAudit('invite_resent', { hireId: selected.id, token });
+                                    setInviteSheet({ hire: selected, token, url: buildInviteUrl(token) });
+                                } catch (e) {
+                                    console.error('Resend invite failed:', e);
+                                    toast(tx(
+                                        'Could not resend invite: ' + (e?.message || e),
+                                        'No se pudo reenviar la invitación: ' + (e?.message || e),
+                                    ), { kind: 'error' });
+                                }
                             }}
                             onEdit={() => {
                                 // Re-use the AddHireModal in edit mode by
@@ -1041,6 +1067,7 @@ function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-2xl sm:rounded-2xl rounded-t-2xl max-h-[95vh] flex flex-col">
                 <div className="border-b border-dd-line p-4 flex items-start justify-between gap-2 flex-shrink-0 safe-top">
@@ -1100,6 +1127,7 @@ function OfferLetterEditor({ hire, isEs, staffName, onWriteAudit, onClose }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -1740,6 +1768,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             {/* Modal layout: header + footer flex-shrink-0, middle body
                 gets flex-1 + overflow-y-auto so the form scrolls when its
@@ -1910,6 +1939,7 @@ function AddHireModal({ isEs, prefill, storeLocation, staffName, onClose, onCrea
                 </div>
             </form>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -1964,6 +1994,7 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
         : null;
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-md sm:rounded-2xl rounded-t-2xl">
                 <div className="border-b border-dd-line p-4 flex items-center justify-between safe-top">
@@ -2021,6 +2052,7 @@ function InviteSheet({ hire, token, url, isEs, onClose }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
@@ -2999,6 +3031,7 @@ function PolicyPreview({ enTitle, enBody, esTitle, esBody, isEs, onClose }) {
         return () => window.removeEventListener('keydown', onKey);
     }, [onClose]);
     return (
+        <ModalPortal>
         <div
             className="fixed inset-0 z-50 bg-black/60 flex items-end sm:items-center justify-center p-3"
             onClick={onClose}
@@ -3054,6 +3087,7 @@ function PolicyPreview({ enTitle, enBody, esTitle, esBody, isEs, onClose }) {
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

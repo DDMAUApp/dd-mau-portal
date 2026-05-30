@@ -120,7 +120,14 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
             }, { merge: true });
             setSavedAt(new Date());
         } catch (e) {
+            // 2026-05-30 audit fix — surface save failure. A manager
+            // typing an end-of-shift handoff during a slammed close was
+            // losing their entire draft with zero signal.
             console.error('Save draft failed:', e);
+            toast(tx(
+                'Handoff draft did not save — check your connection',
+                'El borrador no se guardó — verifica tu conexión',
+            ), { kind: 'error' });
         }
     };
 
@@ -187,7 +194,13 @@ export default function ShiftHandoff({ language, staffName, staffList, storeLoca
         if (!canEditPmNotes) return;
         try {
             await updateDoc(docRef, { pmNotes: text, pmNotesBy: staffName, pmNotesAt: new Date().toISOString() });
-        } catch (e) { console.error('PM notes save failed:', e); }
+        } catch (e) {
+            console.error('PM notes save failed:', e);
+            toast(tx(
+                'PM notes did not save — try again',
+                'Las notas PM no se guardaron — intenta de nuevo',
+            ), { kind: 'error' });
+        }
     };
 
     const updateSection = (id, value) => {

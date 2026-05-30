@@ -18,6 +18,7 @@ import { useState, useEffect } from 'react';
 import { onSnapshot, doc, setDoc, addDoc, collection, serverTimestamp, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 // 2026-05-27 — first migration off the silent-console.warn pattern.
 // Main 86 doc subscription is the critical-path read for this page,
 // so it gets the loading/error/retry treatment. The other three
@@ -486,6 +487,7 @@ function Eighty6SettingsModal({ settings, recipients, isEs, sending, onClose, on
         return `${h12}${period}`;
     };
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
             <div className="bg-white w-full sm:max-w-lg sm:rounded-2xl rounded-t-2xl max-h-[92vh] flex flex-col">
                 <div className="border-b border-dd-line p-4 flex items-center justify-between flex-shrink-0">
@@ -586,6 +588,7 @@ function Eighty6SettingsModal({ settings, recipients, isEs, sending, onClose, on
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

@@ -28,6 +28,7 @@ import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { channelDocId } from '../data/chat';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 export default function ChatCoverageRequestModal({
     language = 'en', staffName, staffList, viewer, onClose, onPosted,
@@ -78,6 +79,7 @@ export default function ChatCoverageRequestModal({
 
     if (myShifts.length === 0) {
         return (
+            <ModalPortal>
             <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={onClose}>
                 <div className="bg-white rounded-xl p-6 max-w-sm" onClick={(e) => e.stopPropagation()}>
                     <h2 className="text-lg font-black mb-2">🙋 {tx('No upcoming shifts', 'Sin turnos próximos')}</h2>
@@ -88,6 +90,7 @@ export default function ChatCoverageRequestModal({
                     <button onClick={onClose} className="px-4 py-2 bg-dd-bg rounded font-bold text-sm">{tx('Close', 'Cerrar')}</button>
                 </div>
             </div>
+            </ModalPortal>
         );
     }
 
@@ -190,6 +193,7 @@ export default function ChatCoverageRequestModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[90vh] shadow-xl" onClick={(e) => e.stopPropagation()}>
                 <div className="md:hidden flex justify-center pt-2 pb-1">
@@ -271,5 +275,6 @@ export default function ChatCoverageRequestModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

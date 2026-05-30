@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { MENU_DATA } from '../data/menu';
 import { bakePriceOverlaysIntoImage } from '../data/menuImageUpload';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 // Default hit zone size when admin single-clicks (fraction of image):
 // 14% wide × 4% tall — close to a typical menu item row.
@@ -287,6 +288,7 @@ export default function HitZoneEditor({
     } : null;
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/60"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[95vh] flex flex-col overflow-hidden shadow-2xl">
@@ -532,5 +534,6 @@ export default function HitZoneEditor({
                 </footer>
             </div>
         </div>
+        </ModalPortal>
     );
 }

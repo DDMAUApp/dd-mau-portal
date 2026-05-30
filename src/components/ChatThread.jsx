@@ -54,7 +54,11 @@ import { parseMentions, QUICK_REACTIONS, canEditChat, ISSUE_URGENCIES, ISSUE_CAT
 // edit to ALWAYS_DELIVER_TYPES can't accidentally re-introduce silent
 // chat suppression. `offShiftMembers` import deleted (no remaining
 // callers in this file).
-import { INVENTORY_CATEGORIES } from '../data/inventory';
+// PERF, 2026-05-30: removed `INVENTORY_CATEGORIES` import — it lived
+// here only to forward into the lazy ChatEightySixModal, which means the
+// 68KB inventory blob shipped with every chat first-paint. ChatEightySixModal
+// now imports it directly inside its own lazy chunk; the prop fallback in
+// that file does the work.
 import { postEightySixToChat } from '../data/eightySixChat';
 import { canPostAnnouncements, canPinMessages, canConvertToTask, canDeleteAnyMessage, canDeleteOwnMessage, canClaimCoverage, canApproveCoverage } from '../data/chatPermissions';
 import { notifyStaff } from '../data/notify';
@@ -68,6 +72,7 @@ import { claimCoverage, approveCoverage, denyCoverage, withdrawCoverage } from '
 import { toast } from '../toast';
 import { fixText as aiFixText } from '../data/aiFixText';
 import TranslatableText, { renderWithMentions } from './TranslatableText';
+import ModalPortal from './ModalPortal';
 
 // Lazy-load the heavier modals — keeps the chat-thread chunk small for
 // the common case where the user just scrolls + types.
@@ -1756,7 +1761,16 @@ function ChatThreadInner({
                                 && msg.createdAt?.toMillis && prev?.createdAt?.toMillis
                                 && (msg.createdAt.toMillis() - prev.createdAt.toMillis()) < 5 * 60 * 1000;
                             return (
-                                <MessageBubbleInner
+                                // PERF-1, 2026-05-30: was rendering
+                                // `MessageBubbleInner` directly, which silently
+                                // bypassed the `memo()` wrapper + custom equality
+                                // comparator defined ~360 lines below as
+                                // `MessageBubble`. Every keystroke in the composer
+                                // and every snapshot fan-out re-rendered every
+                                // visible bubble. Switching to `MessageBubble`
+                                // re-engages the comparator and limits re-renders
+                                // to the bubbles whose data actually changed.
+                                <MessageBubble
                                     key={msg.id}
                                     message={msg}
                                     chat={chat}
@@ -2062,7 +2076,6 @@ function ChatThreadInner({
                     <ChatEightySixModal
                         language={language}
                         viewer={viewer}
-                        inventory={INVENTORY_CATEGORIES}
                         busy={posting86}
                         onClose={() => setShow86Modal(false)}
                         onPost={handlePost86}
@@ -2745,12 +2758,14 @@ function MediaImage({ url, alt }) {
                 className="rounded-lg w-auto max-w-full max-h-[360px] object-cover cursor-zoom-in bg-dd-bg/40"
             />
             {zoom && (
+                <ModalPortal>
                 <div
                     className="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
                     onClick={() => setZoom(false)}
                 >
                     <img src={url} alt={alt} className="max-w-full max-h-full object-contain" />
                 </div>
+                </ModalPortal>
             )}
         </>
     );
@@ -4216,6 +4231,7 @@ function PollCard({ message, isMine, isEs, staffName, viewer, isAdmin, onVote, o
 function ScheduledListDrawer({ items, isEs, onCancel, onClose }) {
     const tx = (en, es) => isEs ? es : en;
     return (
+        <ModalPortal>
         <>
             <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
             <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[460px] sm:max-w-[92vw] z-50 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[85vh] flex flex-col"
@@ -4267,6 +4283,7 @@ function ScheduledListDrawer({ items, isEs, onCancel, onClose }) {
                 </div>
             </div>
         </>
+        </ModalPortal>
     );
 }
 
@@ -4351,6 +4368,7 @@ function SeenBySheet({
     const nudgeAllTargets = notSeen.filter(n => !recentlyNudged.has(n));
 
     return (
+        <ModalPortal>
         <>
             <div className="fixed inset-0 bg-black/40 z-50" onClick={onClose} />
             <div className="fixed inset-x-0 bottom-0 sm:bottom-auto sm:top-1/2 sm:left-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[460px] sm:max-w-[92vw] z-50 bg-white shadow-2xl rounded-t-2xl sm:rounded-2xl max-h-[80vh] flex flex-col"
@@ -4450,6 +4468,7 @@ function SeenBySheet({
                 </div>
             </div>
         </>
+        </ModalPortal>
     );
 }
 

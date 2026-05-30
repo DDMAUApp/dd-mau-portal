@@ -29,6 +29,7 @@ import {
     applyMenuOverrides, makeMenuItemSlug,
 } from '../data/menuOverrides';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 // Lazy because the import modal pulls in pdfjs + the Claude vision
 // pipeline. Most admin views don't need it.
@@ -378,6 +379,7 @@ function EditModal({ editing, categories, onClose, byName, tx }) {
     };
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/40"
             onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
@@ -550,5 +552,6 @@ function EditModal({ editing, categories, onClose, byName, tx }) {
                 </footer>
             </div>
         </div>
+        </ModalPortal>
     );
 }

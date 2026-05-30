@@ -18,6 +18,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { subscribeTvConfigVersions, rollbackTvConfig } from '../data/tvConfigs';
+import ModalPortal from './ModalPortal';
 
 export default function TvConfigVersionsModal({
     language = 'en', staffName, tvId, label, onClose,
@@ -60,6 +61,7 @@ export default function TvConfigVersionsModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4" onClick={onClose}>
             <div className="bg-white rounded-2xl shadow-xl max-w-xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
@@ -119,6 +121,7 @@ export default function TvConfigVersionsModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

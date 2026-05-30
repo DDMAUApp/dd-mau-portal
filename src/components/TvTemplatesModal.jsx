@@ -23,6 +23,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { TV_TEMPLATES } from '../data/tvTemplates';
 import { saveTvConfig, makeTvId } from '../data/tvConfigs';
+import ModalPortal from './ModalPortal';
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -84,6 +85,7 @@ export default function TvTemplatesModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4" onClick={onClose}>
             <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[90vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
                 <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-dd-line shrink-0">
@@ -212,5 +214,6 @@ export default function TvTemplatesModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

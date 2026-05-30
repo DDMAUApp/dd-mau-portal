@@ -18,6 +18,7 @@ import { db } from '../firebase';
 import { collection, query, orderBy, limit, getDocs } from 'firebase/firestore';
 import { chatDisplayName, ChatAvatar } from './ChatShared';
 import { expandQueryTerms, buildHaystack, haystackMatches } from '../data/chatSearch';
+import ModalPortal from './ModalPortal';
 
 export default function ChatSearchPanel({
     chats, language = 'en', staffName, viewer, onClose, onJump,
@@ -142,6 +143,7 @@ export default function ChatSearchPanel({
     }, [messagesByChat]);
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-stretch md:items-center justify-center" onClick={onClose}>
             {/* Container — full-screen on mobile (h-full bounded between
                 top: 0 and bottom: 0), modal-sized on md+.  Padding-bottom
@@ -259,6 +261,7 @@ export default function ChatSearchPanel({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

@@ -23,6 +23,7 @@ import { recordAudit } from '../data/audit';
 import { notifyStaff } from '../data/notify';
 import { channelDocId, ISSUE_CATEGORIES, ISSUE_URGENCIES } from '../data/chat';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 export default function ChatPhotoIssueModal({
     language = 'en', staffName, staffList, viewer, storeLocation,
@@ -163,6 +164,7 @@ export default function ChatPhotoIssueModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl" onClick={(e) => e.stopPropagation()}>
                 <div className="md:hidden flex justify-center pt-2 pb-1">
@@ -285,5 +287,6 @@ export default function ChatPhotoIssueModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

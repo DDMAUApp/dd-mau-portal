@@ -1247,9 +1247,17 @@ export default function InsuranceEnrollment({ language, staffName, staffList }) 
               <label className="text-xs font-bold text-gray-600 block mb-1">
                 {L("Date", "Fecha")}
               </label>
+              {/* 2026-05-30 audit fix — use Chicago-tz date instead of
+                  toISOString() which gives UTC. Central-time users signing
+                  after ~7pm got tomorrow's date pre-filled on a Missouri
+                  HR document. en-CA gives ISO YYYY-MM-DD format which
+                  matches the input[type=date] spec exactly. */}
               <input
                 type="date"
-                value={form.signatureDate || new Date().toISOString().split("T")[0]}
+                value={form.signatureDate || new Intl.DateTimeFormat('en-CA', {
+                  timeZone: 'America/Chicago',
+                  year: 'numeric', month: '2-digit', day: '2-digit',
+                }).format(new Date())}
                 onChange={e => updateField("signatureDate", e.target.value)}
                 className="w-full border-2 border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-mint-500 focus:outline-none"
               />

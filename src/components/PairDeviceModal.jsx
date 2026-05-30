@@ -26,6 +26,7 @@ import {
     createPairingCode, formatPairingCode, subscribePairingCode,
     assignTvIdToCode, cancelPairingCode, PAIRING_TTL_MS,
 } from '../data/devicePairing';
+import ModalPortal from './ModalPortal';
 
 const LOC_LABEL = { webster: 'Webster', maryland: 'MD Heights' };
 
@@ -134,6 +135,7 @@ export default function PairDeviceModal({ language = 'en', staffName, configs = 
 
     // ── Render ────────────────────────────────────────────────
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center px-4" onClick={handleClose}>
             <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
                 {/* Header */}
@@ -262,6 +264,7 @@ export default function PairDeviceModal({ language = 'en', staffName, configs = 
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

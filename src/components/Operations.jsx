@@ -334,9 +334,13 @@ const LocationItemRow = memo(function LocationItemRow({
                     {pack && ` · ${pack}`}
                 </div>
             </div>
-            <div className="flex items-center gap-1 flex-shrink-0">
+            {/* 2026-05-30 audit fix — bumped counter buttons from 36px (w-9 h-9)
+                to 44px (w-11 h-11) to hit Apple HIG minimum tap target, and
+                widened the gap so an oily-finger rush count doesn't mis-tap
+                +/-. Input grew proportionally (w-14 h-11). */}
+            <div className="flex items-center gap-2 flex-shrink-0">
                 <button onClick={() => onUpdate(id, Math.max(0, count - 1), -1)}
-                    className={`w-9 h-9 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
+                    className={`w-11 h-11 rounded-lg font-bold text-lg flex items-center justify-center transition ${count > 0 ? 'bg-red-100 text-red-700 hover:bg-red-200' : 'bg-gray-100 text-gray-400'}`}>{"\u{2212}"}</button>
                 <input
                     type="text"
                     inputMode="numeric"
@@ -349,9 +353,9 @@ const LocationItemRow = memo(function LocationItemRow({
                         onUpdate(id, Math.max(0, n));
                     }}
                     onFocus={(e) => e.target.select()}
-                    className="w-12 h-9 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
+                    className="w-14 h-11 text-center text-base font-bold rounded-lg border-2 border-gray-200 bg-white text-gray-800 focus:border-mint-500 focus:outline-none tabular-nums" />
                 <button onClick={() => onUpdate(id, count + 1, 1)}
-                    className="w-9 h-9 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
+                    className="w-11 h-11 rounded-lg bg-mint-100 text-mint-700 hover:bg-mint-200 font-bold text-lg flex items-center justify-center transition">{"+"}</button>
             </div>
         </div>
     );
@@ -2941,6 +2945,17 @@ export default function Operations({ language, staffList, staffName, storeLocati
                 // Reset the input so the same file can be reselected after a failed upload.
                 if (e.target) e.target.value = "";
                 if (!file) return;
+                // 2026-05-30 audit fix — early-reject oversize photos. The
+                // storage rule caps at 10 MB but a 50 MB iPhone photo would
+                // tie up the upload spinner for minutes on cellular before
+                // the rule rejected it. Matches the limit in MaintenanceRequest.
+                if (file.size > 10 * 1024 * 1024) {
+                    toast(language === 'es'
+                        ? 'La foto es muy grande (máx 10 MB)'
+                        : 'Photo is too large (max 10 MB)',
+                        { kind: 'error' });
+                    return;
+                }
                 // Re-entry guard: a rapid second tap (mobile Safari double-fire) must not start a parallel upload.
                 // FIX (2026-05-14): ref instead of state — see comment on photoUploadInProgressRef.
                 if (photoUploadInProgressRef.current) return;
@@ -2982,7 +2997,9 @@ export default function Operations({ language, staffList, staffName, storeLocati
                         try { await deleteObject(photoRef); }
                         catch (cleanupErr) { console.warn("Photo orphan cleanup failed:", cleanupErr); }
                     }
-                    toast(language === "es" ? "Error al subir foto" : "Error uploading photo");
+                    // 2026-05-30 audit fix — removed second toast call here
+                    // (was "Error al subir foto" / "Error uploading photo"),
+                    // duplicate of the bilingual toast already fired above.
                 }
                 setCapturingPhoto(null);
                 photoUploadInProgressRef.current = false;

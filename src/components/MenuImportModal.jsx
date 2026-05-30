@@ -23,6 +23,7 @@ import { uploadMenuFile } from '../data/menuImageUpload';
 import { extractMenuFromImages } from '../data/aiExtractMenu';
 import { saveMenuOverride, makeMenuItemSlug } from '../data/menuOverrides';
 import { toast } from '../toast';
+import ModalPortal from './ModalPortal';
 
 export default function MenuImportModal({ language = 'en', byName, onClose }) {
     const isEs = language === 'es';
@@ -186,6 +187,7 @@ export default function MenuImportModal({ language = 'en', byName, onClose }) {
     }, [rows]);
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/50"
             onClick={(e) => { if (e.target === e.currentTarget && stage !== 'extracting' && stage !== 'applying') onClose(); }}>
             <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[92vh] flex flex-col overflow-hidden shadow-2xl">
@@ -323,6 +325,7 @@ export default function MenuImportModal({ language = 'en', byName, onClose }) {
                 )}
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

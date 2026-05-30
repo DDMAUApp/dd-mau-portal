@@ -20,9 +20,15 @@
 // handler) so we don't duplicate write paths.
 
 import { useMemo, useState } from 'react';
+// PERF, 2026-05-30: pulled the inventory import down from ChatThread so
+// the ~68KB inventory blob loads with this lazy modal instead of the
+// always-eager ChatThread chunk. The `inventory` prop is now optional —
+// caller can omit it and we fall back to the live INVENTORY_CATEGORIES.
+import { INVENTORY_CATEGORIES } from '../data/inventory';
+import ModalPortal from './ModalPortal';
 
 export default function ChatEightySixModal({
-    language = 'en', viewer, inventory = [], onClose, onPost, busy = false,
+    language = 'en', viewer, inventory = INVENTORY_CATEGORIES, onClose, onPost, busy = false,
 }) {
     const isEs = language === 'es';
     const tx = (en, es) => isEs ? es : en;
@@ -73,6 +79,7 @@ export default function ChatEightySixModal({
     }
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[92vh] shadow-xl"
@@ -168,6 +175,7 @@ export default function ChatEightySixModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 

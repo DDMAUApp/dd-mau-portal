@@ -20,7 +20,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '../firebase';
-import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, updateDoc, deleteDoc, serverTimestamp, query, where, limit } from 'firebase/firestore';
 import { isAdmin, LOCATION_LABELS } from '../data/staff';
 import { toast } from '../toast';
 // 2026-05-27 Batch B — Apple-HIG page header. Visual only.
@@ -62,8 +62,10 @@ export default function TardinessTracker({ language, staffName, staffList, store
     // doesn't matter.
     useEffect(() => {
         const q = storeLocation === 'both'
-            ? query(collection(db, 'tardies'))
-            : query(collection(db, 'tardies'), where('storeBranch', '==', storeLocation));
+            // PERF, 2026-05-30: bounded at 500. Was unbounded — every cold
+            // mount streamed every tardy ever recorded.
+            ? query(collection(db, 'tardies'), limit(500))
+            : query(collection(db, 'tardies'), where('storeBranch', '==', storeLocation), limit(500));
         const unsub = onSnapshot(q, (snap) => {
             const items = [];
             snap.forEach(d => items.push({ id: d.id, ...d.data() }));

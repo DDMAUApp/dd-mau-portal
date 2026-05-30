@@ -33,7 +33,7 @@
 
 import { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '../firebase';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { postEightySixToChat } from '../data/eightySixChat';
 
 const AppDataContext = createContext(null);
@@ -57,16 +57,22 @@ export function AppDataProvider({ staffName, storeLocation, staffListReady = fal
     useEffect(() => {
         if (!staffName) return;
         if (!staffListReady) return;
-        const q = query(collection(db, 'notifications'), where('forStaff', '==', staffName));
+        // PERF, 2026-05-30: bounded at 100 + ordered server-side. Before
+        // this, the listener pulled every notification ever addressed to
+        // this staffer — years of history streamed on every cold mount.
+        // 100 is comfortably above the unread-only count the badge needs
+        // AND large enough that the drawer's "show all" mode still feels
+        // populated; older entries can be loaded with a Load More cursor
+        // when/if anyone asks for it.
+        const q = query(
+            collection(db, 'notifications'),
+            where('forStaff', '==', staffName),
+            orderBy('createdAt', 'desc'),
+            limit(100),
+        );
         const unsub = onSnapshot(q, (snap) => {
             const list = [];
             snap.forEach(d => list.push({ id: d.id, ...d.data() }));
-            // Sort newest first (createdAt is a Firestore Timestamp)
-            list.sort((a, b) => {
-                const at = a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
-                const bt = b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
-                return bt - at;
-            });
             setNotifications(list);
         }, (err) => console.warn('notifications snapshot failed:', err));
         return () => unsub();

@@ -31,7 +31,7 @@
 
 import { db } from '../firebase';
 import {
-    collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc,
+    collection, doc, onSnapshot, addDoc, updateDoc, deleteDoc, query, limit,
     serverTimestamp,
 } from 'firebase/firestore';
 
@@ -110,7 +110,8 @@ export function getAutoTodos(viewer) {
 // Callback receives [{ id, ...doc }] sorted by createdAt desc.
 export function subscribeCustomTodos(staffName, callback) {
     if (!staffName || typeof callback !== 'function') return () => {};
-    const ref = collection(db, 'staff_todos');
+    // PERF, 2026-05-30: bounded at 200. Active+archived together cap.
+    const ref = query(collection(db, 'staff_todos'), limit(200));
     return onSnapshot(ref, (snap) => {
         const out = [];
         snap.forEach(d => {
@@ -142,7 +143,8 @@ export function subscribeCustomTodos(staffName, callback) {
 // filter, includes archived (`active: false`) so admin can restore them.
 export function subscribeAllCustomTodos(callback) {
     if (typeof callback !== 'function') return () => {};
-    const ref = collection(db, 'staff_todos');
+    // PERF, 2026-05-30: bounded at 500 (admin view needs more headroom).
+    const ref = query(collection(db, 'staff_todos'), limit(500));
     return onSnapshot(ref, (snap) => {
         const out = [];
         snap.forEach(d => out.push({ id: d.id, ...(d.data() || {}) }));

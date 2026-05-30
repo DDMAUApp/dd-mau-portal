@@ -23,6 +23,7 @@ import { canDeleteChat } from '../data/chatPermissions';
 import { recordAudit } from '../data/audit';
 import { toast } from '../toast';
 import { ChatAvatar, chatDisplayName } from './ChatShared';
+import ModalPortal from './ModalPortal';
 
 export default function ChatSettingsModal({
     chat, language, staffName, staffList, isAdmin, viewer, onClose, onDeleted,
@@ -374,6 +375,7 @@ export default function ChatSettingsModal({
     })();
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div
                 className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[90vh] shadow-xl"
@@ -702,5 +704,6 @@ export default function ChatSettingsModal({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }

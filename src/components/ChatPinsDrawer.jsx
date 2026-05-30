@@ -12,6 +12,7 @@ import { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
 import TranslatableText from './TranslatableText';
+import ModalPortal from './ModalPortal';
 
 export default function ChatPinsDrawer({
     chat, language = 'en', staffName,
@@ -48,6 +49,7 @@ export default function ChatPinsDrawer({
     }, [chat?.id]);
 
     return (
+        <ModalPortal>
         <div className="fixed inset-0 z-50 bg-black/50 flex items-end md:items-center justify-center" onClick={onClose}>
             <div className="bg-white w-full md:max-w-md md:rounded-2xl rounded-t-2xl flex flex-col max-h-[80vh] shadow-xl" onClick={(e) => e.stopPropagation()}>
                 <div className="md:hidden flex justify-center pt-2 pb-1">
@@ -102,6 +104,7 @@ export default function ChatPinsDrawer({
                 </div>
             </div>
         </div>
+        </ModalPortal>
     );
 }
 
