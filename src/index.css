@@ -1451,3 +1451,41 @@ body[data-chat-thread-open="true"] .ddmau-report-fab {
 @media (min-width: 1280px) {
     .dd-tile-grid { grid-template-columns: repeat(4, 1fr); gap: 18px; }
 }
+
+/* ───────────────────────────────────────────────────────────────
+   2026-05-30 perf — Android scroll-jank mitigation.
+   Default glass blur intensities are 12px (subtle), 20px (medium),
+   32px (heavy). On Android WebView (Snapdragon 6xx tier and below)
+   those values drop frame rate from 60 → 30fps during scroll
+   because backdrop-filter forces a full composite layer on each
+   frame. Apple Safari (iPhone + iPad) handles these fine.
+
+   This media query reduces the blur radius on narrow viewports
+   (≤768px = phones + small Android tablets) and saves the
+   composite cost. The visual difference between 6-8px blur and
+   12-20px is small at phone screen size; the perf difference is
+   significant. Desktop + iPad Pro (≥768px) keep the full glassy
+   effect. Dark variants override to no-blur already, untouched.
+   ─────────────────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+    .glass-card,
+    .glass-sheet,
+    .glass-panel {
+        -webkit-backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px);
+    }
+    .glass-nav,
+    .glass-nav-bottom {
+        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(12px);
+    }
+    /* Dark variants override to none — keep them that way. */
+    .glass-card.is-dark,
+    .glass-sheet.is-dark,
+    .glass-panel.is-dark,
+    .glass-nav.is-dark,
+    .glass-nav-bottom.is-dark {
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+    }
+}

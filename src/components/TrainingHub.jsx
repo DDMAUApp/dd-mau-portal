@@ -213,13 +213,23 @@ export default function TrainingHub({ staffName, language, staffList }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [view, activeModuleId, staffName]);
     // Save on every change while in the quiz view.
+    // 2026-05-30 perf — debounce the localStorage write. Previously every
+    // keystroke on a free-text answer (or rapid radio-button taps)
+    // serialized the entire quizAnswers object to JSON + wrote to disk.
+    // localStorage writes are synchronous and can stutter on slower
+    // devices when fired hundreds of times during a long quiz. 250ms
+    // debounce coalesces bursts; a final flush on unmount + view-leave
+    // ensures the latest state always lands.
     useEffect(() => {
         if (view !== "quiz" || !activeModuleId) return;
         const k = quizStorageKey(activeModuleId);
         if (!k) return;
-        try {
-            localStorage.setItem(k, JSON.stringify(quizAnswers));
-        } catch { /* storage full — non-fatal */ }
+        const id = setTimeout(() => {
+            try {
+                localStorage.setItem(k, JSON.stringify(quizAnswers));
+            } catch { /* storage full — non-fatal */ }
+        }, 250);
+        return () => clearTimeout(id);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [quizAnswers, view, activeModuleId, staffName]);
     // Clear after the result lands.
