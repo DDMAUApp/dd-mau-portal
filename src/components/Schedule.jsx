@@ -7206,6 +7206,43 @@ function WeeklyGrid({ weekStart, staffSummary, shifts, isEn, currentStaffName, c
 // arrive as new refs each render — future pass can useCallback them
 // at the parent for full benefit, but memo costs ~nothing so it's
 // fine to land it now.
+// 2026-05-30 perf — ShiftCube custom equality comparator.
+//
+// Schedule scroll was lagging because every parent re-render created
+// new inline functions for the 6 onXxx callbacks. memo() with the
+// default shallow compare saw "function ref changed" and re-rendered
+// every visible cube even when its shift data was unchanged.
+//
+// Same proven pattern ChatThread's MessageBubble uses (line ~2626):
+// explicitly compare the props we care about, ignore function refs.
+// The handlers always read fresh state from their parent's closure
+// when called, so ignoring identity is safe — they never get stale.
+//
+// shift is an object — its identity comes from the visibleShifts
+// useMemo, which preserves shift refs across renders unless Firestore
+// fires a snapshot for that shift. Comparing by shift.id catches the
+// "different shift in same cell" case; the rest of msgFieldsEqual-
+// style field checks catch "same shift, fields changed" updates.
+function shiftFieldsEqual(a, b) {
+    if (a === b) return true;
+    if (!a || !b) return false;
+    if (a.id !== b.id) return false;
+    if (a.startTime !== b.startTime) return false;
+    if (a.endTime !== b.endTime) return false;
+    if (a.staffName !== b.staffName) return false;
+    if (a.date !== b.date) return false;
+    if (a.location !== b.location) return false;
+    if (a.side !== b.side) return false;
+    if (a.published !== b.published) return false;
+    if ((a.offerStatus || '') !== (b.offerStatus || '')) return false;
+    if ((a.offeredBy || '') !== (b.offeredBy || '')) return false;
+    if ((a.coverStatus || '') !== (b.coverStatus || '')) return false;
+    if ((a.coverApprovedBy || '') !== (b.coverApprovedBy || '')) return false;
+    if ((a.notes || '') !== (b.notes || '')) return false;
+    if ((a.doubleDay || false) !== (b.doubleDay || false)) return false;
+    if ((a.role || '') !== (b.role || '')) return false;
+    return true;
+}
 const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide, isMinor, isShiftLead, canEdit, onDelete, isEn, compact, currentStaffName, onOfferShift, onCancelOffer, onRequestCover, draggable, isDoubleDay, dayShiftCount, onUpdateShiftTimes,
     // Multi-select: shift+click toggles. Parent owns the Set of selected ids.
     isSelected = false, onToggleSelection,
@@ -7577,6 +7614,33 @@ const ShiftCube = memo(function ShiftCube({ shift, staffRole, staffScheduleSide,
             )}
         </div>
     );
+}, (prev, next) => {
+    // Wrapped in try/catch so any unexpected throw falls through to
+    // "re-render anyway" instead of crashing the schedule into the
+    // ErrorBoundary. The audit catches the rare case; the comparator
+    // itself never throws into React.
+    try {
+        if (prev.staffRole !== next.staffRole) return false;
+        if (prev.staffScheduleSide !== next.staffScheduleSide) return false;
+        if (prev.isMinor !== next.isMinor) return false;
+        if (prev.isShiftLead !== next.isShiftLead) return false;
+        if (prev.canEdit !== next.canEdit) return false;
+        if (prev.isEn !== next.isEn) return false;
+        if (prev.compact !== next.compact) return false;
+        if (prev.currentStaffName !== next.currentStaffName) return false;
+        if (prev.draggable !== next.draggable) return false;
+        if (prev.isDoubleDay !== next.isDoubleDay) return false;
+        if (prev.dayShiftCount !== next.dayShiftCount) return false;
+        if (prev.isSelected !== next.isSelected) return false;
+        if (!shiftFieldsEqual(prev.shift, next.shift)) return false;
+        // onDelete/onOfferShift/onCancelOffer/onRequestCover/
+        // onUpdateShiftTimes/onToggleSelection — intentionally not
+        // compared. They always read fresh state when called.
+        return true;
+    } catch (e) {
+        console.warn('ShiftCube comparator threw — falling back to re-render', e);
+        return false;
+    }
 });
 
 function DailyView({ weekStart, selectedDayIdx, setSelectedDayIdx, shifts, staffSummary, isEn, currentStaffName, canEdit, onDeleteShift, onOfferShift, onTakeShift, onCancelOffer, onRequestCover }) {
